@@ -1,6 +1,6 @@
 # union-operator
 
-![Version: v0.0.1](https://img.shields.io/badge/Version-v0.0.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.0.1](https://img.shields.io/badge/AppVersion-v0.0.1-informational?style=flat-square)
+![Version: v0.0.1-local](https://img.shields.io/badge/Version-v0.0.1--local-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: v0.0.1](https://img.shields.io/badge/AppVersion-v0.0.1-informational?style=flat-square)
 
 Deploys Union Operator to onboard a k8s cluster to Union Cloud
 
@@ -8,8 +8,8 @@ Deploys Union Operator to onboard a k8s cluster to Union Cloud
 
 | Repository | Name | Version |
 |------------|------|---------|
-| https://flyteorg.github.io/flyte/ | union(flyte-core) | v1.9.0 |
-| https://opencost.github.io/opencost-helm-chart | opencost | v1.19.3 |
+| file://../../../flyte/charts/flyte-core | union(flyte-core) | 0.1.10 |
+| https://opencost.github.io/opencost-helm-chart | opencost | 1.29.0 |
 
 ### SANDBOX INSTALLATION:
 - [Install helm 3](https://helm.sh/docs/intro/install/)
@@ -34,16 +34,51 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
+| dgxagent.additionalContainers | list | `[]` | Appends additional containers to the deployment spec. May include template values. |
+| dgxagent.additionalEnvs | list | `[]` | Appends additional envs to the deployment spec. May include template values |
+| dgxagent.additionalVolumeMounts | list | `[]` | Appends additional volume mounts to the main container's spec. May include template values. |
+| dgxagent.additionalVolumes | list | `[]` | Appends additional volumes to the deployment spec. May include template values. |
+| dgxagent.affinity | object | `{}` | affinity for flyteagent deployment |
+| dgxagent.autoscaling.maxReplicas | int | `5` |  |
+| dgxagent.autoscaling.minReplicas | int | `1` |  |
+| dgxagent.autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| dgxagent.autoscaling.targetMemoryUtilizationPercentage | int | `80` |  |
+| dgxagent.configPath | string | `"/etc/flyteagent/config/*.yaml"` | Default regex string for searching configuration files |
+| dgxagent.enabled | bool | `false` |  |
+| dgxagent.extraArgs | object | `{}` | Appends extra command line arguments to the main command |
+| dgxagent.image.pullPolicy | string | `"Always"` | Docker image pull policy |
+| dgxagent.image.repository | string | `"ghcr.io/unionai/dgx-agent"` | Docker image for flyteagent deployment |
+| dgxagent.image.tag | string | `"v1"` | Docker image tag |
+| dgxagent.nodeSelector | object | `{}` | nodeSelector for flyteagent deployment |
+| dgxagent.podAnnotations | object | `{}` | Annotations for flyteagent pods |
+| dgxagent.ports.containerPort | int | `8000` |  |
+| dgxagent.ports.name | string | `"agent-grpc"` |  |
+| dgxagent.priorityClassName | string | `""` | Sets priorityClassName for datacatalog pod(s). |
+| dgxagent.prometheusPort.containerPort | int | `9090` |  |
+| dgxagent.prometheusPort.name | string | `"agent-metric"` |  |
+| dgxagent.replicaCount | int | `1` | Replicas count for flyteagent deployment |
+| dgxagent.resources | object | `{"limits":{"cpu":"1.5","ephemeral-storage":"100Mi","memory":"3000Mi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"2000Mi"}}` | Default resources requests and limits for flyteagent deployment |
+| dgxagent.service | object | `{"clusterIP":"None","type":"ClusterIP"}` | Service settings for flyteagent |
+| dgxagent.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for flyteagent |
+| dgxagent.serviceAccount.annotations | object | `{}` | Annotations for ServiceAccount attached to flyteagent pods |
+| dgxagent.serviceAccount.create | bool | `true` | Should a service account be created for flyteagent |
+| dgxagent.serviceAccount.imagePullSecrets | list | `[]` | ImagePullSecrets to automatically assign to the service account |
+| dgxagent.tolerations | list | `[]` | tolerations for flyteagent deployment |
 | flyteagent.additionalContainers | list | `[]` | Appends additional containers to the deployment spec. May include template values. |
+| flyteagent.additionalEnvs | list | `[]` | Appends additional envs to the deployment spec. May include template values |
 | flyteagent.additionalVolumeMounts | list | `[]` | Appends additional volume mounts to the main container's spec. May include template values. |
 | flyteagent.additionalVolumes | list | `[]` | Appends additional volumes to the deployment spec. May include template values. |
 | flyteagent.affinity | object | `{}` | affinity for flyteagent deployment |
+| flyteagent.autoscaling.maxReplicas | int | `5` |  |
+| flyteagent.autoscaling.minReplicas | int | `1` |  |
+| flyteagent.autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
+| flyteagent.autoscaling.targetMemoryUtilizationPercentage | int | `80` |  |
 | flyteagent.configPath | string | `"/etc/flyteagent/config/*.yaml"` | Default regex string for searching configuration files |
 | flyteagent.enabled | bool | `false` |  |
 | flyteagent.extraArgs | object | `{}` | Appends extra command line arguments to the main command |
 | flyteagent.image.pullPolicy | string | `"IfNotPresent"` | Docker image pull policy |
 | flyteagent.image.repository | string | `"ghcr.io/flyteorg/flyteagent"` | Docker image for flyteagent deployment |
-| flyteagent.image.tag | string | `"ga-v1"` | Docker image tag |
+| flyteagent.image.tag | string | `"ga-v5"` | Docker image tag |
 | flyteagent.nodeSelector | object | `{}` | nodeSelector for flyteagent deployment |
 | flyteagent.podAnnotations | object | `{}` | Annotations for flyteagent pods |
 | flyteagent.ports.containerPort | int | `8000` |  |
@@ -52,7 +87,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | flyteagent.prometheusPort.containerPort | int | `9090` |  |
 | flyteagent.prometheusPort.name | string | `"agent-metric"` |  |
 | flyteagent.replicaCount | int | `1` | Replicas count for flyteagent deployment |
-| flyteagent.resources | object | `{"limits":{"cpu":"500m","ephemeral-storage":"100Mi","memory":"500Mi"},"requests":{"cpu":"10m","ephemeral-storage":"50Mi","memory":"50Mi"}}` | Default resources requests and limits for flyteagent deployment |
+| flyteagent.resources | object | `{"limits":{"cpu":"1.5","ephemeral-storage":"100Mi","memory":"1500Mi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"1000Mi"}}` | Default resources requests and limits for flyteagent deployment |
 | flyteagent.service | object | `{"clusterIP":"None","type":"ClusterIP"}` | Service settings for flyteagent |
 | flyteagent.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for flyteagent |
 | flyteagent.serviceAccount.annotations | object | `{}` | Annotations for ServiceAccount attached to flyteagent pods |
@@ -77,6 +112,10 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | opencost.opencost.prometheus.external.enabled | bool | `false` |  |
 | opencost.opencost.prometheus.internal.enabled | bool | `false` |  |
 | opencost.opencost.ui.enabled | bool | `false` |  |
+| taskNamespaceNetworkPolicy.blockIMDS | bool | `true` | Blocks pods in task namespaces from accessing metadata server and from retrieving cloud provider credentials |
+| taskNamespaceNetworkPolicy.blockInternalIPs | bool | `true` | Blocks pods in task namespaces from accessing internal IPs other than kube-dns and kube-api |
+| taskNamespaceNetworkPolicy.enabled | bool | `false` | Enables a global network policy for task namespaces |
+| taskNamespaceNetworkPolicy.selector | string | `"union.ai/namespace-type == \"flyte\""` | Selector for task namespaces |
 | union.appId | string | `"<App Id from uctl create app>"` |  |
 | union.appSecret | string | `"<App Secret from uctl create app>"` |  |
 | union.cloudUrl | string | `"<Union Cloud URL>"` |  |
@@ -106,11 +145,11 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.cluster_resource_manager.templates[2].value | string | `"apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: project-quota\n  namespace: {{ namespace }}\nspec:\n  hard:\n    limits.cpu: {{ projectQuotaCpu }}\n    limits.memory: {{ projectQuotaMemory }}\n    requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}\n"` |  |
 | union.collectUsages.enabled | bool | `false` |  |
 | union.common.ingress.enabled | bool | `false` |  |
-| union.configmap | object | `{"admin":{"admin":{"clientId":"{{ tpl .Values.appId . }}","clientSecretLocation":"/etc/secrets/client_secret","endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false},"event":{"capacity":1000,"rate":500,"type":"admin"}},"catalog":{"catalog-cache":{"endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false,"type":"datacatalog","use-admin-auth":true}},"core":{"cache":{"max_size_mbs":1024,"target_gc_percent":70},"manager":{"shard":{"shard-count":3,"type":"Hash"}},"propeller":{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":40},"webhook":{"certDir":"/etc/webhook/certs","serviceName":"flyte-pod-webhook"}},"enabled_plugins":{"tasks":{"task-plugins":{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array"]}}},"k8s":{"plugins":{"k8s":{"default-cpus":"100m","default-memory":"100Mi"}}},"logger":{"logger":{"level":4,"show-source":true}},"resource_manager":{"propeller":{"resourcemanager":{"type":"noop"}}},"task_logs":{"plugins":{"logs":{"cloudwatch-enabled":false,"kubernetes-enabled":true}}}}` | ----------------------------------------------------------------- CONFIGMAPS SETTINGS |
+| union.configmap | object | `{"admin":{"admin":{"clientId":"{{ tpl .Values.appId . }}","clientSecretLocation":"/etc/secrets/client_secret","endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false},"event":{"capacity":1000,"rate":500,"type":"admin"}},"catalog":{"catalog-cache":{"endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false,"type":"datacatalog","use-admin-auth":true}},"core":{"cache":{"max_size_mbs":1024,"target_gc_percent":70},"manager":{"shard":{"shard-count":3,"type":"Hash"}},"propeller":{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":100},"webhook":{"certDir":"/etc/webhook/certs","serviceName":"flyte-pod-webhook"}},"enabled_plugins":{"tasks":{"task-plugins":{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array"]}}},"k8s":{"plugins":{"k8s":{"default-cpus":"100m","default-memory":"100Mi"}}},"logger":{"logger":{"level":4,"show-source":true}},"resource_manager":{"propeller":{"resourcemanager":{"type":"noop"}}},"task_logs":{"plugins":{"logs":{"cloudwatch-enabled":false,"kubernetes-enabled":true}}}}` | ----------------------------------------------------------------- CONFIGMAPS SETTINGS |
 | union.configmap.admin | object | `{"admin":{"clientId":"{{ tpl .Values.appId . }}","clientSecretLocation":"/etc/secrets/client_secret","endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false},"event":{"capacity":1000,"rate":500,"type":"admin"}}` | Admin Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/subworkflow/launchplan#AdminConfig) |
 | union.configmap.catalog | object | `{"catalog-cache":{"endpoint":"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}","insecure":false,"type":"datacatalog","use-admin-auth":true}}` | Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config) Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config) |
-| union.configmap.core | object | `{"cache":{"max_size_mbs":1024,"target_gc_percent":70},"manager":{"shard":{"shard-count":3,"type":"Hash"}},"propeller":{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":40},"webhook":{"certDir":"/etc/webhook/certs","serviceName":"flyte-pod-webhook"}}` | Core propeller configuration |
-| union.configmap.core.propeller | object | `{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":40}` | Propeller config specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config). These values are chosen to match a mix of [propeller config defaults](https://github.com/flyteorg/flytepropeller/blob/cbfcdf3396346bf83bd8e885d21803a5e53108ee/pkg/controller/config/config.go#L51-L114) (many of which are overridden in the Chart's [values.yaml](https://github.com/flyteorg/flyte/blob/e6fa8120dc0be4c46e789270c89fcfef3f6289f9/charts/flyte-core/values.yaml#L671-L703)), along with cloud-specific settings from [here](https://github.com/flyteorg/flyte/blob/e6fa8120dc0be4c46e789270c89fcfef3f6289f9/charts/flyte-core/values-eks.yaml#L233-L246). |
+| union.configmap.core | object | `{"cache":{"max_size_mbs":1024,"target_gc_percent":70},"manager":{"shard":{"shard-count":3,"type":"Hash"}},"propeller":{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":100},"webhook":{"certDir":"/etc/webhook/certs","serviceName":"flyte-pod-webhook"}}` | Core propeller configuration |
+| union.configmap.core.propeller | object | `{"event-config":{"raw-output-policy":"inline"},"gc-interval":"12h","kube-client-config":{"burst":25,"qps":100,"timeout":"30s"},"leader-election":{"enabled":false},"max-workflow-retries":50,"queue":{"batch-size":-1,"batching-interval":"1s","queue":{"base-delay":"0s","capacity":10000,"max-delay":"60s","rate":1000,"type":"maxof"},"sub-queue":{"capacity":10000,"rate":1000,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"{{ tpl .Values.metadataBucketPrefix $ }}","workers":100}` | Propeller config specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config). These values are chosen to match a mix of [propeller config defaults](https://github.com/flyteorg/flytepropeller/blob/cbfcdf3396346bf83bd8e885d21803a5e53108ee/pkg/controller/config/config.go#L51-L114) (many of which are overridden in the Chart's [values.yaml](https://github.com/flyteorg/flyte/blob/e6fa8120dc0be4c46e789270c89fcfef3f6289f9/charts/flyte-core/values.yaml#L671-L703)), along with cloud-specific settings from [here](https://github.com/flyteorg/flyte/blob/e6fa8120dc0be4c46e789270c89fcfef3f6289f9/charts/flyte-core/values-eks.yaml#L233-L246). |
 | union.configmap.enabled_plugins.tasks | object | `{"task-plugins":{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array"]}}` | Tasks specific configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#GetConfig) |
 | union.configmap.enabled_plugins.tasks.task-plugins | object | `{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array"]}` | Plugins configuration, [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#TaskPluginConfig) |
 | union.configmap.enabled_plugins.tasks.task-plugins.enabled-plugins | list | `["container","sidecar","k8s-array"]` | [Enabled Plugins](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/config#Config). Enable sagemaker*, athena if you install the backend plugins |
@@ -132,11 +171,13 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.flytepropeller.clusterName | string | `" {{- $previous := lookup \"v1\" \"Secret\" (.Release.Namespace) (printf \"%v-cluster-name\" (include \"union-operator.fullname\" .)) -}} {{- if (tpl .Values.clusterName .) -}} {{- (tpl .Values.clusterName .) -}} {{- else if $previous -}} {{- $previous.data.cluster_name | b64dec -}} {{- else -}} {{- $newName := include \"newClusterName\" . -}} {{- $newName -}} {{- end -}}"` |  |
 | union.flytepropeller.configPath | string | `"/etc/flyte/config/*.yaml"` | Default regex string for searching configuration files |
 | union.flytepropeller.enabled | bool | `true` |  |
-| union.flytepropeller.manager | bool | `true` |  |
+| union.flytepropeller.image.repository | string | `"public.ecr.aws/p0i0a9q8/unionoperator"` |  |
+| union.flytepropeller.image.tag | string | `"invalid-version"` |  |
 | union.flytepropeller.nodeSelector | object | `{}` | nodeSelector for Flytepropeller deployment |
 | union.flytepropeller.podAnnotations | object | `{}` | Annotations for Flytepropeller pods |
+| union.flytepropeller.priorityClassName | string | `"system-cluster-critical"` |  |
 | union.flytepropeller.replicaCount | int | `1` | Replicas count for Flytepropeller deployment |
-| union.flytepropeller.resources | object | `{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"3670m","ephemeral-storage":"100Mi","memory":"4Gi"}}` | Default resources requests and limits for Flytepropeller deployment |
+| union.flytepropeller.resources | object | `{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"3400m","ephemeral-storage":"100Mi","memory":"4Gi"}}` | Default resources requests and limits for Flytepropeller deployment |
 | union.flytepropeller.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for FlytePropeller |
 | union.flytepropeller.serviceAccount.annotations | object | `{}` | Annotations for ServiceAccount attached to FlytePropeller pods |
 | union.flytepropeller.serviceAccount.create | bool | `true` | Should a service account be created for FlytePropeller |
@@ -144,6 +185,23 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.flytepropeller.tolerations | list | `[]` | tolerations for Flytepropeller deployment |
 | union.flytescheduler.enabled | bool | `false` |  |
 | union.metadataBucketPrefix | string | `"s3://my-s3-bucket"` |  |
+| union.objectStore.bucket | string | `"opencompute-staging-sample-tenant"` |  |
+| union.objectStore.enabled | bool | `false` |  |
+| union.objectStore.redis.host | string | `"clustercfg.objectstore-staging.p7pazr.memorydb.us-east-2.amazonaws.com:6379"` |  |
+| union.objectStore.resources.limits.cpu | string | `"1"` |  |
+| union.objectStore.resources.limits.ephemeral-storage | string | `"500Mi"` |  |
+| union.objectStore.resources.limits.memory | string | `"1Gi"` |  |
+| union.objectStore.resources.requests.cpu | string | `"100m"` |  |
+| union.objectStore.resources.requests.ephemeral-storage | string | `"100Mi"` |  |
+| union.objectStore.resources.requests.memory | string | `"128Mi"` |  |
+| union.objectStore.secrets.create | bool | `false` |  |
+| union.objectStore.secrets.mount | bool | `false` |  |
+| union.objectStore.secrets.redisAuthToken | string | `""` |  |
+| union.objectStore.service.grpcPort | int | `8089` |  |
+| union.objectStore.service.httpPort | int | `8080` |  |
+| union.objectStore.serviceAccount.annotations | object | `{}` |  |
+| union.objectStore.serviceAccount.create | bool | `true` |  |
+| union.objectStore.serviceAccount.name | string | `""` |  |
 | union.proxy.autoscaling.enabled | bool | `false` |  |
 | union.proxy.autoscaling.maxReplicas | int | `100` |  |
 | union.proxy.autoscaling.minReplicas | int | `2` |  |
@@ -160,6 +218,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.proxy.serviceAccount.annotations | object | `{}` |  |
 | union.proxy.serviceAccount.create | bool | `true` |  |
 | union.proxy.serviceAccount.name | string | `""` |  |
+| union.resourcequotas.create | bool | `false` |  |
 | union.secrets.adminOauthClientCredentials.clientSecret | string | `"{{ tpl .Values.appSecret . }}"` |  |
 | union.secrets.create | bool | `true` |  |
 | union.sparkoperator | object | `{"enabled":false,"plugin_config":{"plugins":{"spark":{"spark-config-default":[{"spark.driver.cores":"1"},{"spark.executorEnv.HTTP2_DISABLE":"true"},{"spark.hadoop.fs.AbstractFileSystem.s3.impl":"org.apache.hadoop.fs.s3a.S3A"},{"spark.hadoop.fs.AbstractFileSystem.s3a.impl":"org.apache.hadoop.fs.s3a.S3A"},{"spark.hadoop.fs.AbstractFileSystem.s3n.impl":"org.apache.hadoop.fs.s3a.S3A"},{"spark.hadoop.fs.s3.impl":"org.apache.hadoop.fs.s3a.S3AFileSystem"},{"spark.hadoop.fs.s3a.acl.default":"BucketOwnerFullControl"},{"spark.hadoop.fs.s3a.impl":"org.apache.hadoop.fs.s3a.S3AFileSystem"},{"spark.hadoop.fs.s3n.impl":"org.apache.hadoop.fs.s3a.S3AFileSystem"},{"spark.kubernetes.allocation.batch.size":"50"},{"spark.kubernetes.driverEnv.HTTP2_DISABLE":"true"},{"spark.network.timeout":"600s"},{"spark.executorEnv.KUBERNETES_REQUEST_TIMEOUT":100000},{"spark.executorEnv.AWS_METADATA_SERVICE_NUM_ATTEMPTS":20},{"spark.executorEnv.AWS_METADATA_SERVICE_TIMEOUT":5},{"spark.executor.heartbeatInterval":"60s"},{"spark.hadoop.fs.s3a.aws.credentials.provider":"com.amazonaws.auth.WebIdentityTokenCredentialsProvider"}]}}}}` | Optional: Spark Plugin using the Spark Operator |
@@ -171,7 +230,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.storage.gcs | string | `nil` | settings for storage type gcs |
 | union.storage.s3 | object | `{"region":"us-east-1"}` | settings for storage type s3 |
 | union.storage.type | string | `"sandbox"` | Sets the storage type. Supported values are sandbox, s3, gcs and custom. |
-| union.unionoperator | object | `{"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":100,"minReplicas":1,"targetCPUUtilizationPercentage":80},"configmapOverrides":{},"fullnameOverride":"","image":{"pullPolicy":"IfNotPresent","repository":"public.ecr.aws/p0i0a9q8/unionoperator","tag":"78bcc9d5df2d9a2708c10d4f3233be8158fad2d7"},"imagePullSecrets":[],"nameOverride":"","nodeSelector":{},"podAnnotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"10254","prometheus.io/scrape":"true"},"podSecurityContext":{},"priorityClassName":"system-cluster-critical","replicaCount":1,"resources":{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"4Gi"}},"securityContext":{},"service":{"port":80,"type":"ClusterIP"},"serviceAccount":{"annotations":{},"create":true,"name":""},"tolerations":[]}` | ---------------------------------------------------- |
+| union.unionoperator | object | `{"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":100,"minReplicas":1,"targetCPUUtilizationPercentage":80},"configmapOverrides":{},"fullnameOverride":"","image":{"pullPolicy":"IfNotPresent","repository":"public.ecr.aws/p0i0a9q8/unionoperator","tag":"v0.0.16"},"imagePullSecrets":[],"nameOverride":"","nodeSelector":{},"podAnnotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"10254","prometheus.io/scrape":"true"},"podSecurityContext":{},"replicaCount":1,"resources":{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"4Gi"}},"securityContext":{},"service":{"port":80,"type":"ClusterIP"},"serviceAccount":{"annotations":{},"create":true,"name":""},"tolerations":[]}` | ---------------------------------------------------- |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key | string | `"ami_type"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator | string | `"In"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0] | string | `"AL2_x86_64_GPU"` |  |
@@ -189,7 +248,6 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.unionoperatorMonitoring.dcgmExporter.image.tag | string | `"3.1.7-3.1.4-ubuntu20.04"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.kubeletPath | string | `"/var/lib/kubelet/pod-resources"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.podSecurityContext | object | `{}` |  |
-| union.unionoperatorMonitoring.dcgmExporter.resources.limits.cpu | string | `"100m"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.resources.limits.ephemeral-storage | string | `"500Mi"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.resources.limits.memory | string | `"400Mi"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.resources.requests.cpu | string | `"100m"` |  |
@@ -213,6 +271,8 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.unionoperatorMonitoring.dcgmExporter.tolerations[1].operator | string | `"Exists"` |  |
 | union.unionoperatorMonitoring.enabled | bool | `false` |  |
 | union.unionoperatorMonitoring.extraScrapeConfigs | list | `[]` |  |
+| union.unionoperatorMonitoring.fluentbit.kubernetesLabel | string | `"app.kubernetes.io/name=aws-for-fluent-bit"` |  |
+| union.unionoperatorMonitoring.fluentbit.namespace | string | `"kube-system"` |  |
 | union.unionoperatorMonitoring.flytePropeller.enabled | bool | `false` |  |
 | union.unionoperatorMonitoring.kubeStateMetrics.autoscaling.enabled | bool | `false` |  |
 | union.unionoperatorMonitoring.kubeStateMetrics.image.pullPolicy | string | `"IfNotPresent"` |  |
@@ -235,18 +295,6 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.unionoperatorMonitoring.opencost.enabled | bool | `false` |  |
 | union.unionoperatorMonitoring.opencost.scrape | bool | `false` |  |
 | union.unionoperatorMonitoring.prometheus.autoscaling.enabled | bool | `false` |  |
-| union.unionoperatorMonitoring.prometheus.critical.autoscaling.enabled | bool | `false` |  |
-| union.unionoperatorMonitoring.prometheus.critical.enabled | bool | `true` |  |
-| union.unionoperatorMonitoring.prometheus.critical.externalUrl | string | `"/prometheus-crit/"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.replicaCount | int | `1` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.limits.cpu | string | `"1"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.limits.ephemeral-storage | string | `"500Mi"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.limits.memory | string | `"500Mi"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.requests.cpu | string | `"1"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.requests.ephemeral-storage | string | `"500Mi"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.resources.requests.memory | string | `"500Mi"` |  |
-| union.unionoperatorMonitoring.prometheus.critical.storage.persistent | bool | `false` |  |
-| union.unionoperatorMonitoring.prometheus.critical.storage.retention.size | string | `"200MB"` |  |
 | union.unionoperatorMonitoring.prometheus.externalUrl | string | `"/prometheus/"` |  |
 | union.unionoperatorMonitoring.prometheus.image.pullPolicy | string | `"IfNotPresent"` |  |
 | union.unionoperatorMonitoring.prometheus.image.repository | string | `"prom/prometheus"` |  |
@@ -285,6 +333,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.unionoperatorSparkHistoryServer.image.tag | string | `"k8s_spark-a3b97943563cfc952b5683525763578685a93694"` |  |
 | union.unionoperatorSparkHistoryServer.nodeSelector | object | `{}` |  |
 | union.unionoperatorSparkHistoryServer.podSecurityContext | object | `{}` |  |
+| union.unionoperatorSparkHistoryServer.proxyHost | string | `""` |  |
 | union.unionoperatorSparkHistoryServer.replicaCount | int | `1` |  |
 | union.unionoperatorSparkHistoryServer.resources.limits.cpu | string | `"1"` |  |
 | union.unionoperatorSparkHistoryServer.resources.limits.ephemeral-storage | string | `"500Mi"` |  |

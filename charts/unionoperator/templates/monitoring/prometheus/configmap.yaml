@@ -1,39 +1,4 @@
 {{- if .Values.union.unionoperatorMonitoring.enabled -}}
-{{- if .Values.union.unionoperatorMonitoring.prometheus.critical.enabled -}}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: {{ include "union-operator.fullname" . }}-prometheus-crit
-  labels:
-    {{- include "unionoperatorMonitoring.prometheus.critical.labels" . | nindent 4 }}
-data:
-  prometheus.yml: |
-    global:
-      scrape_interval:     15s
-      evaluation_interval: 15s
-    alerting:
-      alertmanagers:
-      - static_configs:
-        - targets:
-    rule_files:
-      - rules.yml
-    scrape_configs:
-      - job_name: 'kube-state-metrics'
-        static_configs:
-        - targets: ['kube-state-metrics.kube-system.svc.cluster.local:{{ .Values.union.unionoperatorMonitoring.kubeStateMetrics.service.port }}']
-        metric_relabel_configs:
-        - separator: ;
-          source_labels: [__name__]
-          regex: kube_node_labels|kube_node_status_condition
-          action: keep
-  rules.yml: |
-    groups:
-      - name: rollup
-        rules:
-        - record: instance_type:kube_node_labels:sum
-          expr: sum by (label_cloud_google_com_gke_accelerator, label_cloud_google_com_gke_preemptible, label_eks_amazonaws_com_capacity_type, label_flyte_org_node_role, label_node_group_name, label_node_kubernetes_io_instance_type, label_node_pool_name, label_topology_kubernetes_io_region) (kube_node_labels{job="kube-state-metrics"})
-{{- end }}
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -60,18 +25,61 @@ data:
         - source_labels: [__name__]
           regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_storage_size_bytes
           action: keep
+      - job_name: 'karpenter'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+        - role: endpoints
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_namespace
+          - __meta_kubernetes_service_name
+          - __meta_kubernetes_endpoint_port_name
+          action: keep
+          regex: karpenter;karpenter;http-metrics
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'karpenter_pods_state'
+          action: drop
+        - source_labels: [__name__]
+          # Remove metrics created per AWS instance type
+          regex: karpenter_cloudprovider_instance_type_.*
+          action: drop
       - job_name: 'kube-state-metrics'
         static_configs:
         - targets: ['kube-state-metrics.kube-system.svc.cluster.local:{{ .Values.union.unionoperatorMonitoring.kubeStateMetrics.service.port }}']
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_condition)|kube_namespace_labels
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_condition)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated).*
           action: keep
         - separator: ;
           source_labels: [__name__, phase]
           regex: kube_pod_status_phase;(Succeeded|Failed)
           action: drop
+        # Drop select Flyte Pod metrics to mitiggate high cardinality.
+        - separator: ;
+          source_labels: [__name__, pod]
+          regex: '(kube_pod_container_status_(waiting|terminated).*);[a-zA-Z0-9]+-n[0-9]+-[0-9]+.*$'
+          action: drop
+        # Consolidate AWS node groups and GCP node pools
+        - source_labels: [label_node_group_name]
+          target_label: label_group_name
+          regex: '(.*)'  # copy the value as is
+          action: replace
+        - source_labels: [label_node_pool_name]
+          target_label: label_group_name
+          regex: '(.*)'  # copy the value as is
+          action: replace
+        - source_labels: [label_node_group_name, label_node_pool_name]
+          target_label: label_group_name
+          regex: '.*'  # fallback case when both labels are missing
+          replacement: 'unknown'
+          action: replace
+        # Replace insert nodename to assist Grafana joins
+        - source_labels: [node]
+          target_label: nodename
+          regex: '(.*)'  # copy the value as is
+          action: replace
         {{- with .Values.union.unionoperatorMonitoring.scrapeConfigs.kubeStateMetrics.extraMetricRelabelConfigs }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -93,7 +101,7 @@ data:
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes
           action: keep
         relabel_configs:
         - separator: ;
@@ -123,7 +131,7 @@ data:
             - "{{ include "union-operator.namespace" . }}"
           selectors:
           - role: "pod"
-            label: "app=flytepropeller"
+            label: "app.kubernetes.io/name=flytepropeller"
         metric_relabel_configs:
         - source_labels: [__name__]
           regex: "flyte:propeller:all:free_workers_count|\
@@ -156,9 +164,134 @@ data:
           regex: container_.*|.*_labels|.*_cost
           action: keep
       {{- end}}
+      {{- if .Values.flyteagent.enabled }}
+      - job_name: 'flyteagent'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - "{{ include "union-operator.namespace" . }}"
+          selectors:
+            - role: "pod"
+              label: "app.kubernetes.io/name=flyteagent"
+        metric_relabel_configs:
+        - source_labels: [ task_type ]
+          regex: 'airflow|bigquery_query_job_task|sleep|sensor'
+          action: keep
+      {{- end}}
       {{- with .Values.union.unionoperatorMonitoring.extraScrapeConfigs }}
       {{- toYaml . | nindent 6 }}
       {{- end }}
+      - job_name: 'fluentbit'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "{{ .Values.union.unionoperatorMonitoring.fluentbit.namespace }}"
+          selectors:
+          - role: "pod"
+            label: "{{ .Values.union.unionoperatorMonitoring.fluentbit.kubernetesLabel }}"
+        relabel_configs:
+        - source_labels: [__metrics_path__]
+          target_label: __metrics_path__
+          replacement: /api/v1/metrics/prometheus
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:2020
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        - regex: pod
+          action: labeldrop
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "fluentbit_input_bytes_total|\
+            fluentbit_output_proc_records_total|\
+            fluentbit_output_dropped_records_total|\
+            fluentbit_output_proc_bytes_total"
+          action: keep
+      - job_name: 'node-exporter'
+        scrape_interval: 60s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "app.kubernetes.io/name=prometheus-node-exporter"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9100
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        - regex: pod
+          action: labeldrop
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'node_cpu_guest_seconds_total|node_filesystem.*|node_network.*'
+          action: drop
+      - job_name: 'coredns'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "eks.amazonaws.com/component=coredns"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9153
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "coredns_panics_total|\
+            coredns_dns_requests_total|\
+            coredns_dns_request_duration_seconds.*|\
+            coredns_dns_responses_total"
+          action: keep
+      - job_name: 'kubernetes-apiservers'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_namespace
+          - __meta_kubernetes_service_name
+          - __meta_kubernetes_endpoint_port_name
+          action: keep
+          regex: default;kubernetes;https
+        metric_relabel_configs:
+        - action: replace
+          source_labels: [resource]
+          target_label: 'resource'
+          replacement: 'union_cloud_replacement'
+          regex: 'workqueue_.*'
+        - action: keep
+          regex: (apiserver_request_.*|apiserver_response_.*|workqueue_.*);(pods|nodes|union_cloud_replacement)
+          source_labels:
+          - __name__
+          - resource
   rules.yml: |
     groups:
       - name: rollup
@@ -170,21 +303,70 @@ data:
         - record: namespace_phase:kube_pod_status_phase:sum
           expr: sum by (namespace, label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
         - record: namespace_type:pod:container_cpu_usage_seconds_total:count
-          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
         - record: namespace:pod:container_cpu_usage_seconds_total:count
-          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
         - record: pod:container_cpu_usage_seconds_total:sum
-          expr: sum by (namespace, pod) (container_cpu_usage_seconds_total{namespace="{{ include "union-operator.namespace" . }}", image!="", job="kubernetes-cadvisor"})
+          expr: sum by (namespace, pod) (container_cpu_usage_seconds_total{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
         - record: pod:container_memory_working_set_bytes:sum
-          expr: sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ include "union-operator.namespace" . }}", image!="", job="kubernetes-cadvisor"})
+          expr: sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
+        - record: pod:container_spec_memory_limit_bytes:sum
+          expr: sum by (namespace, pod) (container_spec_memory_limit_bytes{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
+        - record: container:container_memory_working_set_bytes:sum
+          expr: sum by (namespace, pod, name) (container_memory_working_set_bytes{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
+        - record: container:container_spec_memory_limit_bytes:sum
+          expr: sum by (namespace, pod, name) (container_spec_memory_limit_bytes{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
         - record: pod:kube_pod_container_resource_requests:sum
-          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_requests{namespace="{{ include "union-operator.namespace" . }}", resource=~"cpu|memory", job="kube-state-metrics"})
+          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_requests{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", resource=~"cpu|memory", job="kube-state-metrics"})
         - record: pod:kube_pod_container_resource_limits:sum
-          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_limits{namespace="{{ include "union-operator.namespace" . }}", resource=~"cpu|memory", job="kube-state-metrics"})
+          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_limits{namespace=~"{{ include "union-operator.namespace" . }}|kube-system", resource=~"cpu|memory", job="kube-state-metrics"})
         - record: job:up:sum
           expr: sum by (job) (up)
         - record: job:up:count
           expr: count by (job) (up)
         - record: flyte_agent_request_latency_seconds:mean1m
           expr: sum(rate(flyte_agent_request_latency_seconds_sum[1m])) / sum(rate(flyte_agent_request_latency_seconds_count[1m]))
+        - record: name:time_series_cardinality:count
+          expr: sum by (name)(label_replace(count by(__name__) ({__name__=~".+"}), "name", "$1", "__name__", "(.+)"))
+        # Fluentbit Rules
+        - record: fluentbit_input_bytes_total:sum
+          expr: sum(fluentbit_input_bytes_total)
+        - record: fluentbit_output_dropped_records_total:sum
+          expr: sum(fluentbit_output_dropped_records_total)
+        - record: fluentbit_output_proc_bytes_total:sum
+          expr: sum(fluentbit_output_proc_bytes_total)
+        - record: instance:fluentbit_output_proc_records_total:rate_sum
+          expr: sum by(instance)(rate(fluentbit_output_proc_records_total[2m]))
+        # Node-exporter rules
+        # Copied from kube-prometheus-stack rules, can be remove and switch the Prometheus Operator CRD managed rules
+        # Reference: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/templates/prometheus/rules-1.14/node-exporter.rules.yaml#L67
+        - record: ethtool:conntrack_allowance_exceeded:sum
+          expr: sum(node_ethtool_conntrack_allowance_exceeded)
+        - record: instance:node_num_cpu:sum
+          expr: |-
+            count without (cpu, mode) (
+              node_cpu_seconds_total{job="node-exporter",mode="idle"}
+            )
+        - record: instance:node_cpu_utilisation:rate5m
+          expr: |-
+            1 - avg without (cpu) (
+              sum without (mode) (rate(node_cpu_seconds_total{job="node-exporter", mode=~"idle|iowait|steal"}[5m]))
+            )
+        - record: instance:node_load1_per_cpu:ratio
+          expr: |-
+            (
+              node_load1{job="node-exporter"}
+            /
+              instance:node_num_cpu:sum{job="node-exporter"}
+            )
+        - record: instance:node_memory_utilisation:ratio
+          expr: |-
+            1 - (
+              node_memory_MemAvailable_bytes{job="node-exporter"}
+            /
+              node_memory_MemTotal_bytes{job="node-exporter"}
+            )
+        - record: instance:node_vmstat_pgmajfault:rate5m
+          expr: rate(node_vmstat_pgmajfault{job="node-exporter"}[5m])
+
 {{- end }}

@@ -22,9 +22,13 @@ spec:
     spec:
       volumes:
         - name: config-volume
-          configMap:
-            name: {{ include "union-operator.fullname" . }}
-      priorityClassName: {{ .Values.union.unionoperator.priorityClassName }}
+          projected:
+            sources:
+            - configMap:
+                name: {{ include "union-operator.fullname" . }}
+            - configMap:
+                name: flyte-clusterresourcesync-config
+      priorityClassName: {{ .Values.union.unionoperator.priorityClassName | default "system-cluster-critical" }}
       {{- with .Values.union.unionoperator.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -52,6 +56,9 @@ spec:
           ports:
             - name: http
               containerPort: 8089
+              protocol: TCP
+            - name: grpc
+              containerPort: 8080
               protocol: TCP
             - name: debug
               containerPort: 10254

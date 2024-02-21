@@ -24,12 +24,26 @@ spec:
         - command:
             - pyflyte
             - serve
+            - agent
           image: "{{ .Values.flyteagent.image.repository }}:{{ .Values.flyteagent.image.tag }}"
           imagePullPolicy: "{{ .Values.flyteagent.image.pullPolicy }}"
           name: flyteagent
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
           env:
             - name: AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT
               value: "google-cloud-platform://"
+            {{- with .Values.flyteagent.additionalEnvs -}}
+            {{ tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.flyteagent.ports.containerPort }}
               name: {{ .Values.flyteagent.ports.name }}
@@ -37,7 +51,7 @@ spec:
               name: {{ .Values.flyteagent.prometheusPort.name }}
           resources: {{- toYaml .Values.flyteagent.resources | nindent 12 }}
           {{- with .Values.flyteagent.additionalVolumeMounts -}}
-          {{ tpl (toYaml .) $ | nindent 8 }}
+          {{ tpl (toYaml .) $ | nindent 10 }}
           {{- end }}
       {{- with .Values.flyteagent.additionalContainers -}}
       {{- tpl (toYaml .) $ | nindent 6}}

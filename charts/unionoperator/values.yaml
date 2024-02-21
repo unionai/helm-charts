@@ -42,6 +42,9 @@ union:
     adminOauthClientCredentials:
       clientSecret: '{{ tpl .Values.appSecret . }}'
 
+  resourcequotas:
+    create: false
+
   flyteadmin:
     enabled: false
   flytescheduler:
@@ -56,6 +59,7 @@ union:
 
   flytepropeller:
     enabled: true
+    priorityClassName: "system-cluster-critical"
     # -- Replicas count for Flytepropeller deployment
     replicaCount: 1
     # -- Default resources requests and limits for Flytepropeller deployment
@@ -65,7 +69,7 @@ union:
         ephemeral-storage: 500Mi
         memory: "8Gi"
       requests:
-        cpu: "3670m"
+        cpu: "3400m"
         ephemeral-storage: 100Mi
         memory: "4Gi"
     cacheSizeMbs: 0
@@ -99,7 +103,9 @@ union:
       {{- $newName := include "newClusterName" . -}}
       {{- $newName -}}
       {{- end -}}'
-    manager: true
+    image:
+      repository: public.ecr.aws/p0i0a9q8/unionoperator
+      tag: "invalid-version"
   #
   #
   # CLUSTER RESOURCE MANAGER (SYNC) SETTINGS
@@ -247,7 +253,7 @@ union:
       # along with cloud-specific settings from [here](https://github.com/flyteorg/flyte/blob/e6fa8120dc0be4c46e789270c89fcfef3f6289f9/charts/flyte-core/values-eks.yaml#L233-L246).
       propeller:
         rawoutput-prefix: '{{ tpl .Values.metadataBucketPrefix $ }}'
-        workers: 40
+        workers: 100
         max-workflow-retries: 50
         leader-election:
           enabled: false
@@ -364,9 +370,43 @@ union:
   common:
     ingress:
       enabled: false
+  objectStore:
+    enabled: false
+    secrets:
+      create: false
+      mount: false
+      redisAuthToken: ""
+    bucket: "opencompute-staging-sample-tenant"
+    redis:
+      host: clustercfg.objectstore-staging.p7pazr.memorydb.us-east-2.amazonaws.com:6379
+    service:
+      httpPort: 8080
+      grpcPort: 8089
+    serviceAccount:
+      # Specifies whether a service account should be created
+      create: true
+      # Annotations to add to the service account
+      annotations: { }
+      # The name of the service account to use.
+      # If not set and create is true, a name is generated using the fullname template
+      name: ""
+    resources:
+      # We usually recommend not to specify default resources and to leave this as a conscious
+      # choice for the user. This also increases chances charts run on environments with little
+      # resources, such as Minikube. If you do want to specify resources, uncomment the following
+      # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
+      limits:
+        cpu: "1"
+        ephemeral-storage: 500Mi
+        memory: "1Gi"
+      requests:
+        cpu: "100m"
+        ephemeral-storage: 100Mi
+        memory: "128Mi"
+
   proxy:
     prof-port: 10254
-    replicaCount: &minReplicaCount 2
+    replicaCount: &proxy-minReplicaCount 2
     service:
       port: 8080
     serviceAccount:
@@ -394,7 +434,7 @@ union:
 
     autoscaling:
       enabled: false
-      minReplicas: *minReplicaCount
+      minReplicas: *proxy-minReplicaCount
       maxReplicas: 100
       targetCPUUtilizationPercentage: 80
       # targetMemoryUtilizationPercentage: 80
@@ -403,14 +443,13 @@ union:
   # Core dependencies that should be configured for Flyte to work on any platform
   # ------------------------------------------------------
   unionoperator:
-    priorityClassName: "system-cluster-critical"
-    replicaCount: &minReplicaCount 1
+    replicaCount: &unionoperator-minReplicaCount 1
 
     image:
       repository: public.ecr.aws/p0i0a9q8/unionoperator
       pullPolicy: IfNotPresent
       # Overrides the image tag whose default is the chart appVersion.
-      tag: 2da8e8bf09cc6ce4898b6911149e81c5b95f140f # UNION_OPERATOR_TAG
+      tag: "v0.0.16" # UNION_OPERATOR_TAG
 
     imagePullSecrets: []
     nameOverride: ""
@@ -463,7 +502,7 @@ union:
 
     autoscaling:
       enabled: false
-      minReplicas: *minReplicaCount
+      minReplicas: *unionoperator-minReplicaCount
       maxReplicas: 100
       targetCPUUtilizationPercentage: 80
       # targetMemoryUtilizationPercentage: 80
@@ -478,7 +517,7 @@ union:
 
   unionoperatorSparkHistoryServer:
     enabled: false
-    replicaCount: &minReplicaCount 1
+    replicaCount: &unionoperatorSparkHistoryServer-minReplicaCount 1
 
     image:
       repository: ghcr.io/flyteorg/flytecookbook
@@ -516,7 +555,7 @@ union:
 
     autoscaling:
       enabled: false
-      minReplicas: *minReplicaCount
+      minReplicas: *unionoperatorSparkHistoryServer-minReplicaCount
       maxReplicas: 10
       targetCPUUtilizationPercentage: 80
       targetMemoryUtilizationPercentage: 80
@@ -528,6 +567,8 @@ union:
     affinity: { }
 
     configmapOverrides: { }
+
+    proxyHost: ""
 
   unionoperatorMonitoring:
     enabled: false
@@ -556,31 +597,6 @@ union:
           cpu: "1"
           ephemeral-storage: 500Mi
           memory: "500Mi"
-
-      critical:
-        enabled: true
-        autoscaling:
-          enabled: false
-
-        replicaCount: 1
-
-        externalUrl: /prometheus-crit/
-
-        storage:
-          persistent: false
-          retention:
-            # size should strictly be less than the sizePerReplica in case of persistent, else less than ephemeral-storage
-            size: 200MB
-
-        resources:
-          limits:
-            cpu: "1"
-            ephemeral-storage: 500Mi
-            memory: "500Mi"
-          requests:
-            cpu: "1"
-            ephemeral-storage: 500Mi
-            memory: "500Mi"
 
       image:
         repository: prom/prometheus
@@ -696,7 +712,6 @@ union:
           operator: Exists
       resources:
         limits:
-          cpu: 100m
           ephemeral-storage: 500Mi
           memory: 400Mi
         requests:
@@ -716,6 +731,13 @@ union:
     opencost:
       enabled: false
       scrape: false
+
+    fluentbit:
+      # Namespace to scrape for fluent-bit metrics
+      namespace: kube-system
+      # Label name=value to select the pod within the specified namespace
+      kubernetesLabel: app.kubernetes.io/name=aws-for-fluent-bit
+
     scrapeConfigs:
       kubeStateMetrics:
         extraMetricRelabelConfigs: []
@@ -784,7 +806,7 @@ flyteagent:
     # -- Docker image for flyteagent deployment
     repository: ghcr.io/flyteorg/flyteagent
     # -- Docker image tag
-    tag: ga-v1
+    tag: ga-v5
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   ports:
@@ -796,13 +818,13 @@ flyteagent:
   # -- Default resources requests and limits for flyteagent deployment
   resources:
     limits:
-      cpu: 500m
+      cpu: "1.5"
       ephemeral-storage: 100Mi
-      memory: 500Mi
+      memory: 1500Mi
     requests:
-      cpu: 10m
-      ephemeral-storage: 50Mi
-      memory: 50Mi
+      cpu: "1"
+      ephemeral-storage: 100Mi
+      memory: 1000Mi
   # -- Default regex string for searching configuration files
   configPath: /etc/flyteagent/config/*.yaml
   # -- Service settings for flyteagent
@@ -832,7 +854,94 @@ flyteagent:
   additionalVolumeMounts: []
   # -- Appends additional containers to the deployment spec. May include template values.
   additionalContainers: []
+  # -- Appends additional envs to the deployment spec. May include template values
+  additionalEnvs: []
   # -- Appends extra command line arguments to the main command
   extraArgs: {}
   # -- Sets priorityClassName for datacatalog pod(s).
   priorityClassName: ""
+
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+dgxagent:
+  enabled: false
+  # -- Replicas count for flyteagent deployment
+  replicaCount: 1
+  image:
+    # -- Docker image for flyteagent deployment
+    repository: ghcr.io/unionai/dgx-agent
+    # -- Docker image tag
+    tag: v1
+    # -- Docker image pull policy
+    pullPolicy: Always
+  ports:
+    containerPort: 8000
+    name: agent-grpc
+  prometheusPort:
+    containerPort: 9090
+    name: agent-metric
+  # -- Default resources requests and limits for flyteagent deployment
+  resources:
+    limits:
+      cpu: "1.5"
+      ephemeral-storage: 100Mi
+      memory: 3000Mi
+    requests:
+      cpu: "1"
+      ephemeral-storage: 100Mi
+      memory: 2000Mi
+  # -- Default regex string for searching configuration files
+  configPath: /etc/flyteagent/config/*.yaml
+  # -- Service settings for flyteagent
+  service:
+    type: ClusterIP
+    # Use headless service for flyteagent
+    clusterIP: None
+  # -- Configuration for service accounts for flyteagent
+  serviceAccount:
+    # -- Should a service account be created for flyteagent
+    create: true
+    # -- Annotations for ServiceAccount attached to flyteagent pods
+    annotations: {}
+    # -- ImagePullSecrets to automatically assign to the service account
+    imagePullSecrets: []
+  # -- Annotations for flyteagent pods
+  podAnnotations: {}
+  # -- nodeSelector for flyteagent deployment
+  nodeSelector: {}
+  # -- tolerations for flyteagent deployment
+  tolerations: []
+  # -- affinity for flyteagent deployment
+  affinity: {}
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []
+  # -- Appends additional containers to the deployment spec. May include template values.
+  additionalContainers: []
+  # -- Appends additional envs to the deployment spec. May include template values
+  additionalEnvs: []
+  # -- Appends extra command line arguments to the main command
+  extraArgs: {}
+  # -- Sets priorityClassName for datacatalog pod(s).
+  priorityClassName: ""
+
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+taskNamespaceNetworkPolicy:
+  # -- Enables a global network policy for task namespaces
+  enabled: false
+  # -- Selector for task namespaces
+  selector: union.ai/namespace-type == "flyte"
+  # -- Blocks pods in task namespaces from accessing internal IPs other than kube-dns and kube-api
+  blockInternalIPs: true
+  # -- Blocks pods in task namespaces from accessing metadata server and from retrieving cloud provider credentials
+  blockIMDS: true

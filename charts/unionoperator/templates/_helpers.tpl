@@ -42,7 +42,7 @@ Expand the name of the chart.
 {{- end -}}
 
 {{- define "union-operator.bucket" -}}
-{{- (split "/" (.Values.union.metadataBucketPrefix | trimPrefix "s3://" | trimPrefix "gs://" | trimPrefix "az://"))._0 -}}
+{{- (split "/" (.Values.union.metadataBucketPrefix | trimPrefix "s3://" | trimPrefix "gs://" | trimPrefix "az://" | trimPrefix "unionmeta://" | trimPrefix "union://" ))._0 -}}
 {{- end -}}
 
 {{- define "minio.name" -}}
@@ -115,6 +115,18 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 
 {{/*
+Object-Store labels
+*/}}
+{{- define "object-store.labels" -}}
+helm.sh/chart: {{ include "union-operator.chart" . }}
+{{ include "object-store.selectorLabels" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+{{- end }}
+
+{{/*
 Spark history Server labels
 */}}
 {{- define "unionoperatorSparkHistoryServer.labels" -}}
@@ -132,6 +144,14 @@ Proxy selector labels
 {{- define "proxy.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "union-operator.name" . }}-proxy
 app.kubernetes.io/instance: {{ .Release.Name }}-proxy
+{{- end }}
+
+{{/*
+Object-Store selector labels
+*/}}
+{{- define "object-store.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "union-operator.name" . }}-object-store
+app.kubernetes.io/instance: {{ .Release.Name }}-object-store
 {{- end }}
 
 {{/*
@@ -166,31 +186,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{/*
-Prometheus Critical Server labels
-*/}}
-{{- define "unionoperatorMonitoring.prometheus.critical.labels" -}}
-helm.sh/chart: {{ include "union-operator.chart" . }}
-{{ include "unionoperatorMonitoring.prometheus.critical.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-
-{{/*
 Prometheus Server selector labels
 */}}
 {{- define "unionoperatorMonitoring.prometheus.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "union-operator.name" . }}-prometheus
 app.kubernetes.io/instance: {{ .Release.Name }}-prometheus
-{{- end }}
-
-{{/*
-Prometheus Critical Server selector labels
-*/}}
-{{- define "unionoperatorMonitoring.prometheus.critical.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "union-operator.name" . }}-prometheus-crit
-app.kubernetes.io/instance: {{ .Release.Name }}-prometheus-crit
 {{- end }}
 
 {{/*
@@ -292,6 +292,22 @@ helm.sh/chart: {{ include "flyte.chart" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "dgxagent.name" -}}
+dgxagent
+{{- end -}}
+
+{{- define "dgxagent.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "dgxagent.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "dgxagent.labels" -}}
+{{ include "dgxagent.selectorLabels" . }}
+helm.sh/chart: {{ include "flyte.chart" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+
 {{- define "union-storage.base" -}}
 storage:
 {{- if eq .Values.union.storage.type "s3" }}
@@ -328,6 +344,13 @@ storage:
   signedUrl:
     stowConfigOverride:
       endpoint: http://localhost:30084
+{{- else if eq .Values.union.storage.type "unionmeta" }}
+  type: stow
+  container: {{ .Values.union.storage.bucketName | quote }}
+  stow:
+    kind: unionmeta
+    config:
+      address: dns:///union-operator-object-store.{{ .Release.Namespace }}.svc.cluster.local:8089
 {{- else if eq .Values.union.storage.type "custom" }}
 {{- with .Values.union.storage.custom -}}
   {{ tpl (toYaml .) $ | nindent 2 }}

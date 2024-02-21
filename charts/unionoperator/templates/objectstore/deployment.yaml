@@ -1,16 +1,18 @@
+{{ if .Values.union.objectStore.enabled -}}
 apiVersion: apps/v1
+# TODO(haytham): Create a separate deployment for metadata store
 kind: Deployment
 metadata:
-  name: {{ include "union-operator.fullname" . }}
+  name: {{ include "union-operator.fullname" . }}-object-store
   labels:
-    {{- include "union-operator.labels" . | nindent 4 }}
+    {{- include "object-store.labels" . | nindent 4 }}
 spec:
   {{- if not .Values.union.unionoperator.autoscaling.enabled }}
   replicas: {{ .Values.union.unionoperator.replicaCount }}
   {{- end }}
   selector:
     matchLabels:
-      {{- include "union-operator.selectorLabels" . | nindent 6 }}
+      {{- include "object-store.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       annotations:
@@ -19,9 +21,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
-        {{- include "union-operator.selectorLabels" . | nindent 8 }}
+        {{- include "object-store.selectorLabels" . | nindent 8 }}
     spec:
-      priorityClassName: {{ .Values.union.unionoperator.priorityClassName | default "system-cluster-critical" }}
+      priorityClassName: {{ .Values.union.unionoperator.priorityClassName }}
       {{- with .Values.union.unionoperator.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -32,12 +34,14 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: {{ include "union-operator.fullname" . }}
-        - name: secret-volume
+            name: {{ include "union-operator.fullname" . }}-object-store
+{{ if .Values.union.objectStore.secrets.mount }}
+        - name: secrets
           secret:
-            secretName: {{ include "union-operator.fullname" . }}
+            secretName: {{ include "union-operator.fullname" . }}-object-store
+{{- end }}
       containers:
-        - name: {{ .Chart.Name }}
+        - name: {{ .Chart.Name }}-object-store
           securityContext:
             {{- toYaml .Values.union.unionoperator.securityContext | nindent 12 }}
           image: "{{ .Values.union.unionoperator.image.repository }}:{{ .Values.union.unionoperator.image.tag | default .Chart.AppVersion }}"
@@ -48,14 +52,11 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
-            - mountPath: /etc/union/secret
-              name: secret-volume
+{{ if .Values.union.objectStore.secrets.mount }}
+            - mountPath: /etc/secrets/
+              name: secrets
+{{- end }}
           env:
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "union-operator.fullname" . }}-cluster-name
-                  key: cluster_name
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -63,14 +64,10 @@ spec:
             - name: DEPLOYMENT_NAME
               value: {{ include "union-operator.fullname" . }}
           args:
-            - operator
+            - objectstore
             - serve
             - --config
             - /etc/union/config/*.yaml
-            - --operator.clusterId.name
-            - "$(CLUSTER_NAME)"
-            - --operator.tunnel.k8sSecretName
-            - {{ include "union-operator.fullname" . }}
           ports:
             - name: grpc
               containerPort: 8080
@@ -81,27 +78,6 @@ spec:
             - name: debug
               containerPort: 10254
               protocol: TCP
-
-        {{- if .Values.union.enableTunnelService }}
-        - name: "tunnel"
-          securityContext:
-            {{- toYaml .Values.union.unionoperator.securityContext | nindent 12 }}
-          image: cloudflare/cloudflared:2023.10.0
-          imagePullPolicy: {{ .Values.union.unionoperator.image.pullPolicy }}
-          args:
-            - tunnel
-            - --no-autoupdate
-            - run
-            - --token
-            - $(TUNNEL_TOKEN)
-          env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "union-operator.fullname" . }}
-                  key: tunnel_token
-                  optional: true
-        {{- end }}
       {{- with .Values.union.unionoperator.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -114,3 +90,4 @@ spec:
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+{{ end }}
