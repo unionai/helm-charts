@@ -17,6 +17,23 @@ kind: Namespace
 metadata:
   name: flytesnacks-production
 ---
+# Source: union-operator/charts/kube-prometheus-stack/charts/prometheus-node-exporter/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-operator-prometheus-node-exporter
+  namespace: kube-system
+  labels:
+    helm.sh/chart: prometheus-node-exporter-4.34.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: prometheus-node-exporter
+    app.kubernetes.io/name: prometheus-node-exporter
+    app.kubernetes.io/instance: union-operator
+    app.kubernetes.io/version: "1.8.0"
+    jobLabel: node-exporter
+    release: union-operator
+---
 # Source: union-operator/charts/union/templates/propeller/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -86,16 +103,6 @@ metadata:
     app.kubernetes.io/version: "v0.0.1"
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: union-operator/charts/union/templates/common/secret-auth.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-secret-auth
-  namespace: union
-type: Opaque
-stringData:
-  client_secret: 'ghijklm'
----
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Create an empty secret that the first propeller pod will populate
 apiVersion: v1
@@ -104,15 +111,6 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
 type: Opaque
----
-# Source: union-operator/templates/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: union-operator
-type: Opaque
-stringData:
-  app_secret: ghijklm
 ---
 # Source: union-operator/templates/secret.yaml
 apiVersion: v1
@@ -187,8 +185,31 @@ metadata:
     helm.sh/chart: union-v0.1.10
     app.kubernetes.io/managed-by: Helm
 data:
+  storage.yaml: | 
+    storage:
+      type: minio
+      container: "my-s3-bucket-prod"
+      stow:
+        kind: s3
+        config:
+          access_key_id: minio
+          auth_type: accesskey
+          secret_key: miniostorage
+          disable_ssl: true
+          endpoint: http://minio.union.svc.cluster.local:9000
+          region: us-east-1
+      signedUrl:
+        stowConfigOverride:
+          endpoint: http://minio.union.svc.cluster.local:9000
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   cluster_resources.yaml: | 
     cluster_resources:
+      clusterName: 'clustername'
       customData:
       - production:
         - projectQuotaCpu:
@@ -226,6 +247,18 @@ data:
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
+    clusterResourcesPrivate:
+      app:
+        isSelfServe: false
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'abcdef'
+        clientSecretLocation: /etc/union/secret/app_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+      connection:
+        host: 'dns:///playground.hosted.unionai.cloud'
   admin.yaml: | 
     admin:
       clientId: 'abcdef'
@@ -273,15 +306,16 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
+      cache-endpoint: 'dns:///playground.hosted.unionai.cloud'
       endpoint: 'dns:///playground.hosted.unionai.cloud'
       insecure: false
-      type: datacatalog
+      type: fallback
       use-admin-auth: true
   copilot.yaml: | 
     plugins:
       k8s:
         co-pilot:
-          image: public.ecr.aws/unionai-flyte/flytecopilot:52845ec8c96be193aee997b9b6909fa15d809e30
+          image: public.ecr.aws/unionai-flyte/flytecopilot:a5098e39861491470c7839c629bb29252dcf9904
           name: flyte-copilot-
           start-timeout: 30s
   core.yaml: | 
@@ -347,6 +381,7 @@ data:
           sidecar: sidecar
         enabled-plugins:
         - container
+        - echo
         - sidecar
         - k8s-array
   k8s.yaml: | 
@@ -381,14 +416,18 @@ data:
           region: us-east-1
       signedUrl:
         stowConfigOverride:
-          endpoint: http://localhost:30084
+          endpoint: http://minio.union.svc.cluster.local:9000
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   cache.yaml: |
-    cache:
-      max_size_mbs: 0
-      target_gc_percent: 70
+    storage:
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   task_logs.yaml: | 
     plugins:
       logs:
@@ -417,7 +456,11 @@ data:
         clientSecretLocation: /etc/union/secret/app_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+    authorizer:
+      type: noop
     operator:
+      syncClusterConfig:
+        enabled: true
       enabled: true
       enableTunnelService: true
       clusterId:
@@ -439,14 +482,18 @@ data:
         gcpProjectId: dummy-gcs-projectId
       collectUsages:
         enabled: true
+      computeResourceManager:
+        
+        enabled: false
+        type: ""
   logger.yaml: |
     logger:
       level: 4
       show-source: true
   storage.yaml: | 
     storage:
-      type: minio
       container: "my-s3-bucket-prod"
+      type: minio
       stow:
         kind: s3
         config:
@@ -462,6 +509,9 @@ data:
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
 ---
 # Source: union-operator/charts/union/templates/propeller/crds/flyteworkflow.yaml
 apiVersion: apiextensions.k8s.io/v1
@@ -606,6 +656,7 @@ rules:
       - secrets
       - services
       - serviceaccounts
+      - clusterrolebindings
     verbs:
       - '*'
 ---
@@ -624,6 +675,7 @@ rules:
   - apiGroups:
       - '*'
     resources:
+      - events
       - flyteworkflows
       - pods/log
       - pods
@@ -670,6 +722,23 @@ rules:
       - configmaps
       - podtemplates
       - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - revisions
+      - configurations
+      - services
     verbs:
       - get
       - list
@@ -728,6 +797,31 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: clustersync-resource
+subjects:
+  - kind: ServiceAccount
+    name: clustersync-resource
+    namespace: union
+---
+# Source: union-operator/templates/cluster-resource-sync.yaml
+# This role binding is required in order to create
+# other CRBs that grant the system:auth-delegator permission.
+#
+# This is primarily used by customers using HashiCorp Vault and
+# Kubernetes Authentication.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clustersync-resource-auth-delegator
+  labels:
+    helm.sh/chart: union-operator-v0.0.1-local
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: union-operator
+    app.kubernetes.io/version: "v0.0.1"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
     name: clustersync-resource
@@ -837,6 +931,60 @@ subjects:
     name: union-operator
     namespace: union
 ---
+# Source: union-operator/charts/kube-prometheus-stack/charts/prometheus-node-exporter/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-prometheus-node-exporter
+  namespace: kube-system
+  labels:
+    helm.sh/chart: prometheus-node-exporter-4.34.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: prometheus-node-exporter
+    app.kubernetes.io/name: prometheus-node-exporter
+    app.kubernetes.io/instance: union-operator
+    app.kubernetes.io/version: "1.8.0"
+    jobLabel: node-exporter
+    release: union-operator
+  annotations:
+    prometheus.io/scrape: "true"
+spec:
+  type: ClusterIP
+  ports:
+    - port: 9100
+      targetPort: 9100
+      protocol: TCP
+      name: http-metrics
+  selector:
+    app.kubernetes.io/name: prometheus-node-exporter
+    app.kubernetes.io/instance: union-operator
+---
+# Source: union-operator/charts/union/templates/propeller/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: union-operator
+    helm.sh/chart: union-v0.1.10
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      protocol: TCP
+      port: 10254
+    - name: fasttask
+      port: 15605
+      protocol: TCP
+      targetPort: 15605
+  selector: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: union-operator
+---
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Service
 apiVersion: v1
@@ -929,17 +1077,270 @@ spec:
     app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: union-operator
 ---
-# Source: union-operator/templates/service.yaml
-apiVersion: v1
-kind: Service
+# Source: union-operator/charts/kube-prometheus-stack/charts/prometheus-node-exporter/templates/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
 metadata:
-  name: flytepropeller
-spec:
-  ports:
-    - port: 10254
-  selector:
-    app.kubernetes.io/name: flytepropeller
+  name: union-operator-prometheus-node-exporter
+  namespace: kube-system
+  labels:
+    helm.sh/chart: prometheus-node-exporter-4.34.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: prometheus-node-exporter
+    app.kubernetes.io/name: prometheus-node-exporter
     app.kubernetes.io/instance: union-operator
+    app.kubernetes.io/version: "1.8.0"
+    jobLabel: node-exporter
+    release: union-operator
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-node-exporter
+      app.kubernetes.io/instance: union-operator
+  revisionHistoryLimit: 10
+  updateStrategy:
+    rollingUpdate:
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict: "true"
+      labels:
+        helm.sh/chart: prometheus-node-exporter-4.34.0
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: metrics
+        app.kubernetes.io/part-of: prometheus-node-exporter
+        app.kubernetes.io/name: prometheus-node-exporter
+        app.kubernetes.io/instance: union-operator
+        app.kubernetes.io/version: "1.8.0"
+        jobLabel: node-exporter
+        release: union-operator
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+      priorityClassName: system-node-critical
+      serviceAccountName: union-operator-prometheus-node-exporter
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.8.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --path.udev.data=/host/root/run/udev/data
+            - --web.listen-address=[$(HOST_IP)]:9100
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$
+            - --no-collector.arp
+            - --no-collector.bonding
+            - --no-collector.btrfs
+            - --no-collector.cpufreq
+            - --no-collector.edac
+            - --no-collector.ethtool
+            - --no-collector.entropy
+            - --no-collector.fibrechannel
+            - --no-collector.filefd
+            - --no-collector.hwmon
+            - --no-collector.infiniband
+            - --no-collector.ipvs
+            - --no-collector.nfs
+            - --no-collector.nfsd
+            - --no-collector.powersupplyclass
+            - --no-collector.rapl
+            - --no-collector.schedstat
+            - --no-collector.sockstat
+            - --no-collector.softnet
+            - --no-collector.textfile
+            - --no-collector.thermal_zone
+            - --no-collector.timex
+            - --no-collector.udp_queues
+            - --no-collector.mdadm
+            - --collector.conntrack
+          securityContext:
+            readOnlyRootFilesystem: true
+          env:
+            - name: HOST_IP
+              value: 0.0.0.0
+          ports:
+            - name: http-metrics
+              containerPort: 9100
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 3
+            httpGet:
+              httpHeaders:
+              path: /
+              port: 9100
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              httpHeaders:
+              path: /
+              port: 9100
+              scheme: HTTP
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          resources:
+            limits:
+              cpu: 50m
+              memory: 100Mi
+            requests:
+              cpu: 10m
+              memory: 10Mi
+          volumeMounts:
+            - name: proc
+              mountPath: /host/proc
+              readOnly:  true
+            - name: sys
+              mountPath: /host/sys
+              readOnly: true
+            - name: root
+              mountPath: /host/root
+              mountPropagation: HostToContainer
+              readOnly: true
+      hostNetwork: true
+      hostPID: true
+      nodeSelector:
+        kubernetes.io/os: linux
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: root
+          hostPath:
+            path: /
+---
+# Source: union-operator/templates/monitoring/dcgm-exporter/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: dcgm-exporter
+  namespace: kube-system
+  labels:
+    helm.sh/chart: union-operator-v0.0.1-local
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: union-operator-dcgm-exporter
+    app.kubernetes.io/version: "v0.0.1"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: "dcgm-exporter"
+spec:
+  updateStrategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+      app.kubernetes.io/instance: union-operator-dcgm-exporter
+      app.kubernetes.io/component: "dcgm-exporter"
+  template:
+    metadata:
+      annotations:
+      labels:
+        app.kubernetes.io/name: dcgm-exporter
+        app.kubernetes.io/instance: union-operator-dcgm-exporter
+        app.kubernetes.io/component: "dcgm-exporter"
+    spec:
+      priorityClassName: system-node-critical
+      serviceAccountName: dcgm-exporter
+      securityContext:
+        {}
+      volumes:
+        - name: "pod-gpu-resources"
+          hostPath:
+            path: /var/lib/kubelet/pod-resources
+        - name: "nvidia-install-dir-host"
+          hostPath:
+            path: "/home/kubernetes/bin/nvidia"
+      containers:
+        - name: exporter
+          image: "nvcr.io/nvidia/k8s/dcgm-exporter:3.1.7-3.1.4-ubuntu20.04"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            capabilities:
+              add:
+              - SYS_ADMIN
+            privileged: true
+            runAsNonRoot: false
+            runAsUser: 0
+          args:
+          - -f
+          - /etc/dcgm-exporter/dcp-metrics-included.csv
+          env:
+            - name: "DCGM_EXPORTER_KUBERNETES"
+              value: "true"
+            - name: "DCGM_EXPORTER_LISTEN"
+              value: ":9400"
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          ports:
+            - name: "metrics"
+              containerPort: 9400
+          volumeMounts:
+            - name: "pod-gpu-resources"
+              readOnly: true
+              mountPath: "/var/lib/kubelet/pod-resources"
+            - mountPath: /usr/local/nvidia
+              name: nvidia-install-dir-host
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9400
+            initialDelaySeconds: 45
+            periodSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9400
+            initialDelaySeconds: 45
+          resources:
+            limits:
+              ephemeral-storage: 500Mi
+              memory: 400Mi
+            requests:
+              cpu: 100m
+              ephemeral-storage: 500Mi
+              memory: 128Mi
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: ami_type
+                operator: In
+                values:
+                - AL2_x86_64_GPU
+            - matchExpressions:
+              - key: cloud.google.com/gke-accelerator
+                operator: Exists
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Exists
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Exists
 ---
 # Source: union-operator/charts/union/templates/clusterresourcesync/deployment.yaml
 apiVersion: apps/v1
@@ -961,7 +1362,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f349b9998d56456d2ea22803ea3bf3a140c8a95c26b2a7a8f5316ddbd4e6695"
+        configChecksum: "d3ab92700f8eebc1dc76d798c1f1a9a130d00210ed1e299cd8df7062f3eb606"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
+        prometheus.io/scrape: "true"
       labels: 
         app.kubernetes.io/name: flyteclusterresourcesync
         app.kubernetes.io/instance: union-operator
@@ -970,14 +1374,30 @@ spec:
     spec:
       containers:
         - command:
-            - flyteadmin
+            - clusterresource
             - --config
             - /etc/flyte/config/*.yaml
             - clusterresource
             - run
-          image: "public.ecr.aws/unionai-flyte/flyteadmin:52845ec8c96be193aee997b9b6909fa15d809e30"
+          env:
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.cpu
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:invalid-version"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 500m
+              memory: 100Mi
           volumeMounts:
           - name: auth
             mountPath: /etc/secrets/
@@ -985,6 +1405,12 @@ spec:
             name: resource-templates
           - mountPath: /etc/flyte/config
             name: config-volume
+          - mountPath: /etc/union/secret
+            name: union-cloud-auth
+          ports:
+          - containerPort: 10254
+            name: debug
+            protocol: TCP
       serviceAccountName: clustersync-resource
       volumes:
         
@@ -996,7 +1422,10 @@ spec:
           name: config-volume
         - name: auth
           secret:
-            secretName: flyte-secret-auth
+            secretName: union-base
+        - name: union-cloud-auth
+          secret:
+            secretName: union-base
 ---
 # Source: union-operator/charts/union/templates/propeller/deployment.yaml
 apiVersion: apps/v1
@@ -1018,17 +1447,19 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "184df0cb27841afa1863b66433d738ab3d3df3adc6b8b410308e991f4526eb2"
+        configChecksum: "18e978086264494db85942e14a749068f6fe9be299b9dcaaa2c0010af1c7b69"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
       labels: 
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: union-operator
         helm.sh/chart: union-v0.1.10
         app.kubernetes.io/managed-by: Helm
     spec:
-      securityContext:
+      securityContext: 
         fsGroup: 65534
+        fsGroupChangePolicy: Always
         runAsUser: 1001
-        fsGroupChangePolicy: "Always"
       priorityClassName: system-cluster-critical
       containers:
       - command:
@@ -1046,6 +1477,14 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+        - name: GOMAXPROCS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
         image: "public.ecr.aws/p0i0a9q8/unionoperator:invalid-version"
         imagePullPolicy: "IfNotPresent"
         name: flytepropeller
@@ -1057,7 +1496,7 @@ spec:
             ephemeral-storage: 500Mi
             memory: 8Gi
           requests:
-            cpu: 3400m
+            cpu: 3000m
             ephemeral-storage: 100Mi
             memory: 4Gi
         volumeMounts:
@@ -1073,7 +1512,7 @@ spec:
         name: config-volume
       - name: auth
         secret:
-          secretName: flyte-secret-auth
+          secretName: union-base
 ---
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Create the actual deployment
@@ -1095,13 +1534,15 @@ spec:
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/version: invalid-version
       annotations:
-        configChecksum: "184df0cb27841afa1863b66433d738ab3d3df3adc6b8b410308e991f4526eb2"
+        configChecksum: "18e978086264494db85942e14a749068f6fe9be299b9dcaaa2c0010af1c7b69"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
     spec:
-      securityContext:
+      securityContext: 
         fsGroup: 65534
+        fsGroupChangePolicy: Always
         runAsNonRoot: true
         runAsUser: 1001
-        fsGroupChangePolicy: "Always"
         seLinuxOptions:
           type: spc_t
       serviceAccountName: flyte-pod-webhook
@@ -1125,6 +1566,14 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.cpu
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -1151,12 +1600,25 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
           ports:
           - containerPort: 9443
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
@@ -1250,6 +1712,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
 ---
 # Source: union-operator/templates/deployment.yaml
 apiVersion: apps/v1
@@ -1271,7 +1741,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4341ef0fcb10cb4840ad1672078aa55caf6f6220216627f2bc36f7d33a7560d"
+        configChecksum: "133b1d0090a7e55b7836a59b133d1c450b58c4678f040c8ab467fc4009c9669"
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
         prometheus.io/scrape: "true"
@@ -1289,7 +1759,7 @@ spec:
             name: union-operator
         - name: secret-volume
           secret:
-            secretName: union-operator
+            secretName: union-base
       containers:
         - name: union-operator
           securityContext:
@@ -1323,6 +1793,14 @@ spec:
                   fieldPath: metadata.namespace
             - name: DEPLOYMENT_NAME
               value: union-operator
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
           args:
             - operator
             - serve
@@ -1331,7 +1809,7 @@ spec:
             - --operator.clusterId.name
             - "$(CLUSTER_NAME)"
             - --operator.tunnel.k8sSecretName
-            - union-operator
+            - union-base
           ports:
             - name: grpc
               containerPort: 8080
@@ -1345,7 +1823,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: cloudflare/cloudflared:2023.10.0
+          image: cloudflare/cloudflared:2024.6.1
           imagePullPolicy: IfNotPresent
           args:
             - tunnel
@@ -1357,7 +1835,7 @@ spec:
             - name: TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: union-operator
+                  name: union-base
                   key: tunnel_token
                   optional: true
 ---

@@ -42,7 +42,7 @@ Expand the name of the chart.
 {{- end -}}
 
 {{- define "union-operator.bucket" -}}
-{{- (split "/" (.Values.union.metadataBucketPrefix | trimPrefix "s3://" | trimPrefix "gs://" | trimPrefix "az://" | trimPrefix "unionmeta://" | trimPrefix "union://" ))._0 -}}
+{{- (split "/" (.Values.union.metadataBucketPrefix | trimPrefix "s3://" | trimPrefix "gs://" | trimPrefix "az://" | trimPrefix "unionmeta://" | trimPrefix "union://" | trimPrefix "abfs://" ))._0 -}}
 {{- end -}}
 
 {{- define "minio.name" -}}
@@ -309,10 +309,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 
 {{- define "union-storage.base" -}}
-storage:
 {{- if eq .Values.union.storage.type "s3" }}
   type: s3
-  container: {{ .Values.union.storage.bucketName | quote }}
   connection:
     auth-type: {{ .Values.union.storage.s3.authType }}
     region: {{ .Values.union.storage.s3.region }}
@@ -328,10 +326,8 @@ storage:
       json: ""
       project_id: {{ .Values.union.storage.gcs.projectId }}
       scopes: https://www.googleapis.com/auth/cloud-platform
-  container: {{ .Values.union.storage.bucketName | quote }}
 {{- else if eq .Values.union.storage.type "sandbox" }}
   type: minio
-  container: {{ .Values.union.storage.bucketName | quote }}
   stow:
     kind: s3
     config:
@@ -346,7 +342,6 @@ storage:
       endpoint: http://localhost:30084
 {{- else if eq .Values.union.storage.type "unionmeta" }}
   type: stow
-  container: {{ .Values.union.storage.bucketName | quote }}
   stow:
     kind: unionmeta
     config:
@@ -356,11 +351,85 @@ storage:
   {{ tpl (toYaml .) $ | nindent 2 }}
 {{- end }}
 {{- end }}
-{{- end }}
-
-{{- define "union-storage" -}}
-{{ include "union-storage.base" .}}
   enable-multicontainer: {{ .Values.union.storage.enableMultiContainer }}
   limits:
     maxDownloadMBs: {{ .Values.union.storage.limits.maxDownloadMBs }}
+  cache:
+    max_size_mbs: {{ .Values.union.storage.cache.maxSizeMBs }}
+    target_gc_percent: {{ .Values.union.storage.cache.targetGCPercent }}
+{{- end }}
+
+{{- define "union-storage" -}}
+storage:
+{{- if ne .Values.union.storage.type "custom" }}
+  container: {{ .Values.union.storage.bucketName | quote}}
+{{- end }}
+{{- include "union-storage.base" .}}
+{{- end }}
+
+{{- define "union-fast-registration-storage" -}}
+fastRegistrationStorage:
+  container: {{ .Values.union.storage.fastRegistrationBucketName | quote}}
+{{- include "union-storage.base" .}}
+{{- end }}
+
+{{- define "getClusterName" -}}
+  {{- $previous := lookup "v1" "Secret" .Release.Namespace (printf "%v-cluster-name" (include "union-operator.fullname" .)) -}}
+  {{- if (tpl .Values.clusterName .) -}}
+    {{- (tpl .Values.clusterName .) -}}
+  {{- else if $previous -}}
+    {{- $previous.data.cluster_name | b64dec -}}
+  {{- else -}}
+    {{- include "newClusterName" . -}}
+  {{- end -}}
+{{- end -}}
+
+{{- define "kubeventmonitor.name" -}}
+{{ include "union-operator.name" . }}-{{ .Values.union.kubeeventmonitor.name }}
+{{- end }}
+
+{{/*
+Kube event monitor selector labels
+*/}}
+{{- define "kubeeventmonitor.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kubeventmonitor.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}-kubeeventmonitor
+{{- end }}
+
+{{/*
+Kube event monitor
+*/}}
+{{- define "kubeeventmonitor.labels" -}}
+helm.sh/chart: {{ include "union-operator.chart" . }}
+{{ include "kubeeventmonitor.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Kube event monitor service account name
+*/}}
+{{- define "kubeeventmonitor.serviceAccountName" -}}
+{{- if  .Values.union.kubeeventmonitor.serviceAccount.create }}
+{{- default .Values.union.kubeeventmonitor.name  .Values.union.kubeeventmonitor.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.union.kubeeventmonitor.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Create a full name prefix for serving resources
+*/}}
+{{- define "serving.fullname" -}}
+{{- $name := include "union-operator.fullname" . }}
+{{- printf "%s-serving" $name }}
+{{- end }}
+
+{{/*
+Name of the serving-envoy-bootstrap ConfigMap
+*/}}
+{{- define "serving.envoyBootstrapConfigMapName" -}}
+{{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}

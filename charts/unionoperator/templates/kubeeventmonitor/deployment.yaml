@@ -1,0 +1,99 @@
+{{- if .Values.union.kubeeventmonitor.enabled -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kubeventmonitor.name" . }}
+  labels:
+    {{- include "kubeeventmonitor.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.union.kubeeventmonitor.autoscaling.enabled }}
+  replicas: {{ .Values.union.kubeeventmonitor.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "kubeeventmonitor.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: {{ .Values.union.kubeeventmonitor.prometheus.path | quote }}
+        prometheus.io/port: {{ .Values.union.kubeeventmonitor.prometheus.port | quote }}
+        {{- with .Values.union.kubeeventmonitor.prometheus.enabled }}
+        prometheus.io/scrape: "true"
+        {{- end }}
+      {{- with .Values.union.kubeeventmonitor.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "kubeeventmonitor.selectorLabels" . | nindent 8 }}
+        {{- with .Values.union.kubeeventmonitor.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.union.kubeeventmonitor.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "kubeeventmonitor.serviceAccountName" . }}
+      {{- with .Values.union.kubeeventmonitor.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Values.union.kubeeventmonitor.name }}
+          {{- with .Values.union.kubeeventmonitor.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: "{{ .Values.union.unionoperator.image.repository }}:{{ .Values.union.unionoperator.image.tag | default .Chart.AppVersion }}"
+          args:
+            - kube-event-monitor
+            - --config=/etc/kubeeventmonitor/config.json
+            - --pprof-port={{ .Values.union.kubeeventmonitor.prometheus.port }}
+            - --metrics-namespace={{ .Values.union.kubeeventmonitor.prometheus.metricsNamespace }}
+          imagePullPolicy: {{ .Values.union.kubeeventmonitor.image.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          env:
+          - name: LOG_LEVEL
+            value: {{ .Values.union.kubeeventmonitor.logLevel | quote }}
+          {{- with  .Values.union.kubeeventmonitor.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with  .Values.union.kubeeventmonitor.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.union.kubeeventmonitor.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /etc/kubeeventmonitor
+              name: config-volume
+          {{- with .Values.union.kubeeventmonitor.volumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if .Values.union.kubeeventmonitor.prometheus.enabled }}
+          ports:
+          - containerPort: {{ .Values.union.kubeeventmonitor.prometheus.port }}
+            name: debug
+            protocol: TCP
+          {{- end }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "kubeventmonitor.name" . | quote }}
+      {{- with .Values.union.kubeeventmonitor.volumes }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.union.kubeeventmonitor.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.union.kubeeventmonitor.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.union.kubeeventmonitor.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{ end }}

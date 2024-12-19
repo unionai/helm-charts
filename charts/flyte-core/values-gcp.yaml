@@ -5,7 +5,10 @@ userSettings:
   googleProjectId: <PROJECT-ID>
   dbHost: <CLOUD-SQL-IP>
   dbPassword: <DBPASSWORD>
-  bucketName: <BUCKETNAME>
+# These two storage buckets could be the same or you could specify different buckets if required. Both keys are required.
+# Learn more https://docs.flyte.org/en/latest/concepts/data_management.html#understand-how-flyte-handles-data 
+  bucketName: <METADATA_BUCKET_NAME> 
+  rawDataBucketName: <RAW_DATA_BUCKET_NAME> 
   hostName: <HOSTNAME>
 
 #
@@ -76,6 +79,41 @@ datacatalog:
             matchLabels:
               app.kubernetes.io/name: datacatalog
           topologyKey: kubernetes.io/hostname
+
+#
+# CACHESERVICE
+#
+
+cacheservice:
+  replicaCount: 1
+  serviceAccount:
+    # -- If the service account is created by you, make this false, else a new service account will be created and the iam-role-flyte will be added
+    # you can change the name of this role
+    create: true
+    annotations:
+      # Needed for gcp workload identity to function
+      # https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity
+      iam.gke.io/gcp-service-account: gsa-cacheservice@{{ .Values.userSettings.googleProjectId }}.iam.gserviceaccount.com
+  resources:
+    limits:
+      cpu: 500m
+      ephemeral-storage: 2Gi
+    requests:
+      cpu: 50m
+      ephemeral-storage: 2Gi
+      memory: 200Mi
+  service:
+    annotations:
+      # Required for the ingress to properly route grpc traffic to grpc port
+      cloud.google.com/app-protocols: '{"grpc":"HTTP2"}'
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cacheservice
+          topologyKey: kubernetes.io/hostname
+
 
 #
 # FLYTEPROPELLER
@@ -232,7 +270,8 @@ configmap:
   adminServer:
     server:
       httpPort: 8088
-      grpcPort: 8089
+      grpc:
+        port: 8089
       security:
         secure: false
         useAuth: false
@@ -267,7 +306,7 @@ configmap:
 
   core:
     propeller:
-      rawoutput-prefix: "gs://{{ .Values.userSettings.bucketName }}/"
+      rawoutput-prefix: "gs://{{ .Values.userSettings.rawDataBucketName }}/"
       workers: 40
       gc-interval: 12h
       max-workflow-retries: 50
@@ -292,6 +331,8 @@ configmap:
           - container
           - sidecar
           - k8s-array
+          - agent-service
+          - echo
         default-for-task-types:
           container: container
           sidecar: sidecar

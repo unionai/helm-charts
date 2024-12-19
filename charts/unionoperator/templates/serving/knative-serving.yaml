@@ -1,0 +1,68 @@
+{{- if .Values.serving.enabled }}
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: {{ include "serving.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+spec:
+  high-availability:
+    replicas: {{ .Values.serving.replicas }}
+  ingress:
+    kourier:
+      enabled: true
+      bootstrap-configmap: "{{ include "serving.envoyBootstrapConfigMapName" . }}"
+      service-type: ClusterIP
+  config:
+    deployment:
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+  registry:
+    override:
+      # TODO(jeev): Wire up Union fork of Envoy
+      3scale-kourier-gateway/kourier-gateway: ghcr.io/unionai/envoy:cad2fe234707252037523e24f33014ba7f603fc4
+      # TODO(jeev): Wire up Union fork of Kourier
+      net-kourier-controller/controller: ghcr.io/unionai/kourier@sha256:f8f711f047e89a646916587894251816d6d3bb8f49f311241445bc6758661f8a
+  workloads:
+  - name: 3scale-kourier-gateway
+    env:
+    - container: kourier-gateway
+      envVars:
+      - name: UNION_AUTHZ_TENANTPATTERN
+        value: "^[^.]+\\.apps\\.(.+)$"
+      - name: UNION_AUTHZ_TENANTAUTHURL
+        value: "https://$1/me"
+      - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
+        value: "https://$1/login"
+    resources:
+    - container: kourier-gateway
+      limits:
+        cpu: "2"
+        memory: 2Gi
+      requests:
+        cpu: "1"
+        memory: 1Gi
+  - name: net-kourier-controller
+    env:
+    - container: controller
+      envVars:
+      - name: KOURIER_UNION_AUTHZ_ENABLED
+        value: "true"
+    resources:
+    - container: controller
+      limits:
+        cpu: "1"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 500Mi
+{{- end }}

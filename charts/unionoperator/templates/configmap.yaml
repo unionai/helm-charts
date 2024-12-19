@@ -15,7 +15,15 @@ data:
         clientSecretLocation: /etc/union/secret/app_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+    authorizer:
+      type: noop
     operator:
+     {{- if .Values.union.enableAppService }}
+      apps:
+        enabled: true
+     {{- end }}
+      syncClusterConfig:
+        enabled: {{ tpl (.Values.union.syncClusterConfig.enabled | toString) $ }}
       enabled: {{ tpl (.Values.union.enabled | toString) $ }}
       enableTunnelService: {{ tpl (.Values.union.enableTunnelService | toString) $ }}
       clusterId:
@@ -24,6 +32,12 @@ data:
         propeller:
           endpoint: http://flytepropeller.{{ include "union-operator.namespace" . }}.svc.cluster.local:{{ print (index .Values.union.configmap.core.propeller "prof-port") }}
           {{- if .Values.union.unionoperatorDependencies }}
+          {{- if .Values.union.unionoperatorDependencies.timeout }}
+          timeout: {{ tpl (.Values.union.unionoperatorDependencies.timeout | toString) $ }}
+          {{- end }}
+          {{- if .Values.union.unionoperatorDependencies.interval }}
+          interval: {{ tpl (.Values.union.unionoperatorDependencies.interval | toString) $ }}
+          {{- end }}
           {{- if .Values.union.unionoperatorDependencies.unhealthyThreshold }}
           unhealthyThreshold: {{ tpl (.Values.union.unionoperatorDependencies.unhealthyThreshold | toString) $ }}
           {{- end }}
@@ -31,6 +45,12 @@ data:
         proxy:
           endpoint: http://union-operator-proxy.{{ include "union-operator.namespace" . }}.svc.cluster.local:{{ print (index .Values.union.proxy "prof-port") }}
           {{- if .Values.union.unionoperatorDependencies }}
+          {{- if .Values.union.unionoperatorDependencies.timeout }}
+          timeout: {{ tpl (.Values.union.unionoperatorDependencies.timeout | toString) $ }}
+          {{- end }}
+          {{- if .Values.union.unionoperatorDependencies.interval }}
+          interval: {{ tpl (.Values.union.unionoperatorDependencies.interval | toString) $ }}
+          {{- end }}
           {{- if .Values.union.unionoperatorDependencies.unhealthyThreshold }}
           unhealthyThreshold: {{ tpl (.Values.union.unionoperatorDependencies.unhealthyThreshold | toString) $ }}
           {{- end }}
@@ -39,6 +59,12 @@ data:
         spark-hs:
           endpoint: http://union-operator-spark-hs.{{ include "union-operator.namespace" . }}.svc.cluster.local:{{ print (index .Values.union.proxy "prof-port") }}
           {{- if .Values.union.unionoperatorDependencies }}
+          {{- if .Values.union.unionoperatorDependencies.timeout }}
+          timeout: {{ tpl (.Values.union.unionoperatorDependencies.timeout | toString) $ }}
+          {{- end }}
+          {{- if .Values.union.unionoperatorDependencies.interval }}
+          interval: {{ tpl (.Values.union.unionoperatorDependencies.interval | toString) $ }}
+          {{- end }}
           {{- if .Values.union.unionoperatorDependencies.unhealthyThreshold }}
           unhealthyThreshold: {{ tpl (.Values.union.unionoperatorDependencies.unhealthyThreshold | toString) $ }}
           {{- end }}
@@ -48,6 +74,12 @@ data:
         prometheus:
           endpoint: http://{{ include "union-operator.fullname" . }}-prometheus.{{ include "union-operator.namespace" . }}.svc.cluster.local:{{ printf "%d/prometheus/-/healthy" (int (index .Values.union.unionoperatorMonitoring.prometheus.service "port")) }}
           {{- if .Values.union.unionoperatorDependencies }}
+          {{- if .Values.union.unionoperatorDependencies.timeout }}
+          timeout: {{ tpl (.Values.union.unionoperatorDependencies.timeout | toString) $ }}
+          {{- end }}
+          {{- if .Values.union.unionoperatorDependencies.interval }}
+          interval: {{ tpl (.Values.union.unionoperatorDependencies.interval | toString) $ }}
+          {{- end }}
           {{- if  .Values.union.unionoperatorDependencies.unhealthyThreshold }}
           unhealthyThreshold: {{ tpl (.Values.union.unionoperatorDependencies.unhealthyThreshold | toString) $ }}
           {{- end }}
@@ -68,12 +100,23 @@ data:
 {{- if .Values.union.storage.customStorageConfig}}
         customStorageConfig: {{ tpl (.Values.union.storage.customStorageConfig | toString) $ }}
 {{- end }}
+      computeResourceManager:
+        {{ tpl (.Values.union.computeResourceManager | toYaml) $ | nindent 8 }}
+{{- if .Values.union.objectStore.enabled}}
+    proxy:
+      serverlessConfig:
+        enabled: true
+        objectStoreServiceEndpoint: 'dns:///union-operator-object-store.{{ include "union-operator.namespace" . }}.svc.cluster.local:{{ tpl (.Values.union.objectStore.service.grpcPort | toString) $ }}'
+{{- end }}
   logger.yaml: |
     logger:
       level: 4
       show-source: true
 {{- with .Values.union.unionoperator.configmapOverrides }}
   config-overrides.yaml: |
-  {{- toYaml . | nindent 4 }}
+  {{- tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
   storage.yaml: | {{ tpl (include "union-storage" .) $ | nindent 4 }}
+{{- if .Values.union.storage.fastRegistrationBucketName }}
+  fast_registration_storage.yaml: | {{ tpl (include "union-fast-registration-storage" .) $ | nindent 4 }}
+{{- end }}

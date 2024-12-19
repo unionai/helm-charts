@@ -20,6 +20,9 @@ spec:
       {{- end }}
       labels:
         {{- include "union-operator.selectorLabels" . | nindent 8 }}
+        {{- with .Values.union.unionoperator.additionalLabels }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       priorityClassName: {{ .Values.union.unionoperator.priorityClassName | default "system-cluster-critical" }}
       {{- with .Values.union.unionoperator.imagePullSecrets }}
@@ -35,7 +38,7 @@ spec:
             name: {{ include "union-operator.fullname" . }}
         - name: secret-volume
           secret:
-            secretName: {{ include "union-operator.fullname" . }}
+            secretName: {{ .Values.union.unionoperator.secretName}}
       containers:
         - name: {{ .Chart.Name }}
           securityContext:
@@ -62,6 +65,9 @@ spec:
                   fieldPath: metadata.namespace
             - name: DEPLOYMENT_NAME
               value: {{ include "union-operator.fullname" . }}
+            {{- with .Values.union.unionoperator.podEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           args:
             - operator
             - serve
@@ -70,7 +76,7 @@ spec:
             - --operator.clusterId.name
             - "$(CLUSTER_NAME)"
             - --operator.tunnel.k8sSecretName
-            - {{ include "union-operator.fullname" . }}
+            - {{ .Values.union.unionoperator.secretName }}
           ports:
             - name: grpc
               containerPort: 8080
@@ -86,7 +92,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {{- toYaml .Values.union.unionoperator.securityContext | nindent 12 }}
-          image: cloudflare/cloudflared:2023.10.0
+          image: cloudflare/cloudflared:2024.6.1
           imagePullPolicy: {{ .Values.union.unionoperator.image.pullPolicy }}
           args:
             - tunnel
@@ -98,7 +104,7 @@ spec:
             - name: TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "union-operator.fullname" . }}
+                  name: {{ .Values.union.unionoperator.secretName }}
                   key: tunnel_token
                   optional: true
         {{- end }}

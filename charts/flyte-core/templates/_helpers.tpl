@@ -79,7 +79,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
-
 {{- define "datacatalog.name" -}}
 datacatalog
 {{- end -}}
@@ -102,24 +101,24 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{- define "flyteagent.name" -}}
-flyteagent
+{{- define "cacheservice.name" -}}
+cacheservice
 {{- end -}}
 
-{{- define "flyteagent.selectorLabels" -}}
-app.kubernetes.io/name: {{ template "flyteagent.name" . }}
+{{- define "cacheservice.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "cacheservice.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "flyteagent.labels" -}}
-{{ include "flyteagent.selectorLabels" . }}
+{{- define "cacheservice.labels" -}}
+{{ include "cacheservice.selectorLabels" . }}
 helm.sh/chart: {{ include "flyte.chart" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "flyteagent.podLabels" -}}
-{{ include "flyteagent.labels" . }}
-{{- with .Values.flyteagent.podLabels }}
+{{- define "cacheservice.podLabels" -}}
+{{ include "cacheservice.labels" . }}
+{{- with .Values.cacheservice.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
@@ -247,7 +246,7 @@ storage:
       region: us-east-1
   signedUrl:
     stowConfigOverride:
-      endpoint: http://localhost:30084
+      endpoint: http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000
 {{- else if eq .Values.storage.type "custom" }}
 {{- with .Values.storage.custom -}}
   {{ tpl (toYaml .) $ | nindent 2 }}
@@ -260,4 +259,7 @@ storage:
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
     maxDownloadMBs: {{ .Values.storage.limits.maxDownloadMBs }}
+  cache:
+    max_size_mbs: {{ .Values.storage.cache.maxSizeMBs }}
+    target_gc_percent: {{ .Values.storage.cache.targetGCPercent }}
 {{- end }}

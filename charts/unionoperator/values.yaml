@@ -6,9 +6,10 @@ union:
   enabled: true
   # -- Enable the usage of tunnel service using cloudflare tunnels. This works only if the union services has this service enabled.
   enableTunnelService: false
+  # -- Enable the usage of app service using cloudflare tunnels.
+  enableAppService: false
   cloudUrl: "<Union Cloud URL>"
   appId: "<App Id from uctl create app>"
-  appSecret: "<App Secret from uctl create app>"
   metadataBucketPrefix: s3://my-s3-bucket
   clusterName: ""
   # Something like 'iam.gke.io/gcp-service-account' for GCP or 'eks.amazonaws.com/role-arn' for AWS
@@ -16,6 +17,8 @@ union:
   # Flyte user role with permissions to patch onto project service accounts e.g. arn:aws:iam::ACCOUNT_ID:role/flyte_project_role
   userRoleAnnotationValue: "bar"
   collectUsages:
+    enabled: true
+  syncClusterConfig:
     enabled: true
   #
   # STORAGE SETTINGS
@@ -36,11 +39,12 @@ union:
     custom: { }
 
   secrets:
-    # set to false if you want to create this secret yourself, for example using the external-secrets-operator
-    # see charts/unionoperator/templates/secret.yaml for the structure of the secret
-    create: true
+    # Okta application secret managed by union-base helm chart.
+    create: false
     adminOauthClientCredentials:
-      clientSecret: '{{ tpl .Values.appSecret . }}'
+      secretName: union-base
+      # Intentionally empty to prevent secret creation
+      clientSecret: ""
 
   resourcequotas:
     create: false
@@ -49,14 +53,17 @@ union:
     enabled: false
     image:
       repository: public.ecr.aws/unionai-flyte/flyteadmin
-      tag: "invalid-version"
-      
+      tag: 2024.12.01
+
   flytescheduler:
     enabled: false
   flyteconsole:
     enabled: false
   datacatalog:
     enabled: false
+  cacheservice:
+    enabled: false
+
   #
   # FLYTEPROPELLER SETTINGS
   #
@@ -73,7 +80,7 @@ union:
         ephemeral-storage: 500Mi
         memory: "8Gi"
       requests:
-        cpu: "3400m"
+        cpu: "3000m"
         ephemeral-storage: 100Mi
         memory: "4Gi"
     cacheSizeMbs: 0
@@ -97,28 +104,41 @@ union:
     tolerations: [ ]
     # -- affinity for Flytepropeller deployment
     affinity: { }
-    clusterName: '
-      {{- $previous := lookup "v1" "Secret" (.Release.Namespace) (printf "%v-cluster-name" (include "union-operator.fullname" .)) -}}
-      {{- if (tpl .Values.clusterName .) -}}
-      {{- (tpl .Values.clusterName .) -}}
-      {{- else if $previous -}}
-      {{- $previous.data.cluster_name | b64dec -}}
-      {{- else -}}
-      {{- $newName := include "newClusterName" . -}}
-      {{- $newName -}}
-      {{- end -}}'
+    clusterName: '{{ include "getClusterName" . }}'
     image:
       repository: public.ecr.aws/p0i0a9q8/unionoperator
-      tag: 2024.2.2
+      tag: 2024.12.01
+    service:
+      enabled: true
+      additionalPorts:
+        - name: fasttask
+          port: 15605
+          targetPort: 15605
+          protocol: TCP
+    podEnv:
+      - name: GOMEMLIMIT
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.memory
+      - name: GOMAXPROCS
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.cpu
   #
   #
   # CLUSTER RESOURCE MANAGER (SYNC) SETTINGS
   #
-
+  # Be sure to update deploy/tenant/helm/values-eks.yaml after modifications to this section.
+  # See https://github.com/unionai/cloud/pull/7497 for more information.
   cluster_resource_manager:
     enabled: true
+    unionCallbackEnabled: true
     standalone_deploy: true
     service_account_name: clustersync-resource
+    rootCommand: clusterresource
+    image:
+      repository: public.ecr.aws/p0i0a9q8/unionoperator
+      tag: 2024.12.01
     config:
       cluster_resources:
         standaloneDeployment: true
@@ -156,6 +176,20 @@ union:
                   value: '{{ tpl .Values.userRoleAnnotationKey . }}'
               - defaultUserRoleValue:
                   value: '{{ tpl .Values.userRoleAnnotationValue . }}'
+        clusterName: '{{ include "getClusterName" . }}'
+      clusterResourcesPrivate:
+        app:
+          isSelfServe: false
+      union:
+        connection:
+          host: '{{- printf "dns:///%s" (.Values.cloudUrl | trimPrefix "dns:///" | trimPrefix "http://" | trimPrefix "https://") -}}'
+        auth:
+          type: ClientSecret
+          clientId: '{{ tpl .Values.appId . }}'
+          clientSecretLocation: /etc/union/secret/app_secret
+          authorizationMetadataKey: "flyte-authorization"
+          tokenRefreshWindow: 5m
+    secretName: union-base
     templates:
       # -- Template for namespaces resources
       - key: a_namespace.yaml
@@ -193,6 +227,24 @@ union:
               limits.cpu: {{ projectQuotaCpu }}
               limits.memory: {{ projectQuotaMemory }}
               requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+    resources:
+      limits:
+        cpu: "1"
+        memory: "500Mi"
+      requests:
+        cpu: "500m"
+        memory: "100Mi"
+    prometheus:
+      enabled: true
+    podEnv:
+      - name: GOMEMLIMIT
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.memory
+      - name: GOMAXPROCS
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.cpu
 
   #
   # WEBHOOK SETTINGS
@@ -216,6 +268,15 @@ union:
       annotations:
         projectcontour.io/upstream-protocol.h2c: grpc
       type: ClusterIP
+    podEnv:
+      - name: GOMEMLIMIT
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.memory
+      - name: GOMAXPROCS
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.cpu
 
   # --------------------------------------------------------------------
   # Specializing your deployment using configuration
@@ -240,8 +301,9 @@ union:
     # Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config)
     catalog:
       catalog-cache:
+        cache-endpoint: '{{- printf "dns:///%s" (.Values.cloudUrl | trimPrefix "dns:///" | trimPrefix "http://" | trimPrefix "https://") -}}'
         endpoint: '{{- printf "dns:///%s" (.Values.cloudUrl | trimPrefix "dns:///" | trimPrefix "http://" | trimPrefix "https://") -}}'
-        type: datacatalog
+        type: fallback
         insecure: false
         use-admin-auth: true
 
@@ -308,6 +370,7 @@ union:
           # plugins
           enabled-plugins:
             - container
+            - echo
             - sidecar
             - k8s-array
           default-for-task-types:
@@ -377,6 +440,7 @@ union:
             - spark.executorEnv.AWS_METADATA_SERVICE_NUM_ATTEMPTS: 20
             - spark.executorEnv.AWS_METADATA_SERVICE_TIMEOUT: 5
             - spark.executor.heartbeatInterval: 60s
+            - spark.ui.proxyRedirectUri: "{{.Values.cloudUrl}}"
             - spark.hadoop.fs.s3a.aws.credentials.provider: com.amazonaws.auth.WebIdentityTokenCredentialsProvider
 
   common:
@@ -384,6 +448,8 @@ union:
       enabled: false
   objectStore:
     enabled: false
+    replicaCount: &objectstore-minReplicaCount 1
+    maxMessageSizeBytes: 104857600 # 100MB
     secrets:
       create: false
       mount: false
@@ -415,6 +481,23 @@ union:
         cpu: "100m"
         ephemeral-storage: 100Mi
         memory: "128Mi"
+    autoscaling:
+      enabled: false
+      minReplicas: *objectstore-minReplicaCount
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 80
+    livenessProbe:
+      httpGet:
+        path: /healthcheck
+        port: debug
+      initialDelaySeconds: 3
+      periodSeconds: 3
+    readinessProbe:
+      httpGet:
+        path: /healthcheck
+        port: debug
+      initialDelaySeconds: 3
+      periodSeconds: 3
 
   proxy:
     prof-port: 10254
@@ -444,6 +527,16 @@ union:
         ephemeral-storage: 100Mi
         memory: "128Mi"
 
+    podEnv:
+      - name: GOMEMLIMIT
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.memory
+      - name: GOMAXPROCS
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.cpu
+
     autoscaling:
       enabled: false
       minReplicas: *proxy-minReplicaCount
@@ -460,15 +553,19 @@ union:
     image:
       repository: public.ecr.aws/p0i0a9q8/unionoperator
       pullPolicy: IfNotPresent
-      tag: 2024.2.2
+      tag: 2024.12.01
 
     imagePullSecrets: []
     nameOverride: ""
     fullnameOverride: ""
 
+    secretName: union-base
+
     serviceAccount:
       # Specifies whether a service account should be created
       create: true
+      # Automatically mount a ServiceAccount's API credentials?
+      automount: true
       # Annotations to add to the service account
       annotations: { }
       # The name of the service account to use.
@@ -492,6 +589,16 @@ union:
     # readOnlyRootFilesystem: true
     # runAsNonRoot: true
     # runAsUser: 1000
+
+    podEnv:
+      - name: GOMEMLIMIT
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.memory
+      - name: GOMAXPROCS
+        valueFrom:
+          resourceFieldRef:
+            resource: limits.cpu
 
     service:
       type: ClusterIP
@@ -525,6 +632,8 @@ union:
     affinity: { }
 
     configmapOverrides: { }
+
+    additionalLabels: { }
 
   unionoperatorSparkHistoryServer:
     enabled: false
@@ -635,11 +744,30 @@ union:
         type: ClusterIP
         port: 80
 
+      topologyKey: topology.kubernetes.io/zone
+
+      cadvisor:
+        metricsNameRegex:
+          # cadvisor metrics for flyte executions
+          default: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+          # cadvisor metrics for flyte executions and kube-system and union services
+          extended: (container_spec_cpu_quota|container_spec_cpu_period|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|container_spec_memory_limit_bytes|container_fs_inodes_free|container_fs_inodes_total)
+
+        # Additional metric_relabel_configs for cadvisor Prometheus jobs
+        additional_metric_relabel_configs: []
+
+      kubernetesPods:
+
+        # Additional metric_relabel_configs for cadvisor Kubernetes pods jobs
+        additional_metric_relabel_configs: []
+
     kubeStateMetrics:
       replicaCount: 1
       image:
         repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
-        tag: v2.8.1
+        # Ref: https://github.com/kubernetes/kube-state-metrics?tab=readme-ov-file#compatibility-matrix
+        # Most Dataplanes are running 1.28, therefore pin to 2.11.0 kube-state-metrics
+        tag: v2.11.0
         pullPolicy: IfNotPresent
 
       serviceAccount:
@@ -674,6 +802,7 @@ union:
         enabled: false
 
     dcgmExporter:
+      enabled: true
       image:
         repository: nvcr.io/nvidia/k8s/dcgm-exporter
         tag: 3.1.7-3.1.4-ubuntu20.04
@@ -716,10 +845,10 @@ union:
                 operator: Exists
       tolerations:
         - effect: NoSchedule
-          key: nvidia.com/gpu
+          key: flyte.org/node-role
           operator: Exists
         - effect: NoSchedule
-          key: flyte.org/node-role
+          key: nvidia.com/gpu
           operator: Exists
       resources:
         limits:
@@ -742,6 +871,7 @@ union:
     opencost:
       enabled: false
       scrape: false
+      alpha: false
 
     fluentbit:
       # Namespace to scrape for fluent-bit metrics
@@ -753,6 +883,123 @@ union:
       kubeStateMetrics:
         extraMetricRelabelConfigs: []
     extraScrapeConfigs: []
+
+  kubePrometheusStack:
+    enabled: true
+
+  kubeeventmonitor:
+    enabled: false
+    # Name to be used for this specific component
+    # Will be prefixed with union-operator generated name
+    name: kubeeventmonitor
+
+    # Log level from flyte/flytestdlib/config.go
+    logLevel: 4 # 4 is info
+
+    # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
+    replicaCount: 1
+
+    # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+    image:
+      repository: public.ecr.aws/p0i0a9q8/unionoperator
+      tag: "invalid-version"
+      # This sets the pull policy for images.
+      pullPolicy: IfNotPresent
+
+    # Application specific configuration to filter for specific pods
+    config:
+      selectors: {}
+
+    # Enable metrics scraping
+    prometheus:
+      enabled: true # Default to true
+      path: /metrics
+      port: 10254
+      metricsNamespace: "kubeeventmonitor"
+
+    # This is for the secretes for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
+    imagePullSecrets: []
+
+    # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+    serviceAccount:
+      # Specifies whether a service account should be created
+      create: true
+      # Automatically mount a ServiceAccount's API credentials?
+      automount: true
+      # Annotations to add to the service account
+      annotations: {}
+      # The name of the service account to use.
+      # If not set and create is true, a name is generated using the fullname template
+      name: ""
+
+    # This is for setting Kubernetes Annotations to a Pod.
+    # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+    podAnnotations: {}
+    # This is for setting Kubernetes Labels to a Pod.
+    # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+    podLabels: {}
+
+    podSecurityContext: {}
+      # fsGroup: 2000
+
+    securityContext: {}
+      # capabilities:
+      #   drop:
+      #   - ALL
+      # readOnlyRootFilesystem: true
+      # runAsNonRoot: true
+      # runAsUser: 1000
+
+    resources:
+      # -- Requests are the minimum set of resources needed for this pod
+      requests:
+        cpu: 10m
+        memory: 128Mi
+      # -- Limits are the maximum set of resources needed for this pod
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+    # This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+    livenessProbe: {}
+      # httpGet:
+      #   path: /
+      #   port: http
+    readinessProbe: {}
+      # httpGet:
+      #   path: /
+      #   port: http
+
+    # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 100
+      targetCPUUtilizationPercentage: 80
+      # targetMemoryUtilizationPercentage: 80
+
+    # Additional volumes on the output Deployment definition.
+    volumes: []
+    # - name: foo
+    #   secret:
+    #     secretName: mysecret
+    #     optional: false
+
+    # Additional volumeMounts on the output Deployment definition.
+    volumeMounts: []
+    # - name: foo
+    #   mountPath: "/etc/foo"
+    #   readOnly: true
+
+    nodeSelector: {}
+
+    tolerations: []
+
+    affinity: {}
+
+  computeResourceManager:
+    enabled: false
+    type: ""
 
 opencost:
   # Values documented at https://github.com/opencost/opencost-helm-chart/tree/main/charts/opencost
@@ -768,6 +1015,14 @@ opencost:
 
     ui:
       enabled: false
+    exporter:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 500Mi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
 
 minio:
   # -- Replicas count for Minio deployment
@@ -812,12 +1067,14 @@ minio:
 flyteagent:
   enabled: false
   # -- Replicas count for flyteagent deployment
-  replicaCount: 1
+  replicaCount: 2
   image:
     # -- Docker image for flyteagent deployment
-    repository: ghcr.io/flyteorg/flyteagent
+    repository: ghcr.io/unionai/flyte-conformance-agent
     # -- Docker image tag
-    tag: ga-v5
+    # https://github.com/unionai/flyte-conformance/blob/main/mock_agent/Dockerfile
+    # https://github.com/unionai/flyte-conformance/pkgs/container/flyte-conformance-agent
+    tag: cec690330a330bfd68b4e68215676fb994b32796
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
   ports:
@@ -836,7 +1093,7 @@ flyteagent:
       cpu: "1"
       ephemeral-storage: 100Mi
       memory: 1000Mi
-  # -- Default regex string for searching configuration files
+  # -- Default glob string for searching configuration files
   configPath: /etc/flyteagent/config/*.yaml
   # -- Service settings for flyteagent
   service:
@@ -873,7 +1130,7 @@ flyteagent:
   priorityClassName: ""
 
   autoscaling:
-    minReplicas: 1
+    minReplicas: 2
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
@@ -881,7 +1138,7 @@ flyteagent:
 dgxagent:
   enabled: false
   # -- Replicas count for flyteagent deployment
-  replicaCount: 1
+  replicaCount: 2
   image:
     # -- Docker image for flyteagent deployment
     repository: ghcr.io/unionai/dgx-agent
@@ -905,7 +1162,7 @@ dgxagent:
       cpu: "1"
       ephemeral-storage: 100Mi
       memory: 2000Mi
-  # -- Default regex string for searching configuration files
+  # -- Default glob string for searching configuration files
   configPath: /etc/flyteagent/config/*.yaml
   # -- Service settings for flyteagent
   service:
@@ -942,7 +1199,7 @@ dgxagent:
   priorityClassName: ""
 
   autoscaling:
-    minReplicas: 1
+    minReplicas: 2
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
@@ -952,7 +1209,230 @@ taskNamespaceNetworkPolicy:
   enabled: false
   # -- Selector for task namespaces
   selector: union.ai/namespace-type == "flyte"
-  # -- Blocks pods in task namespaces from accessing internal IPs other than kube-dns and kube-api
+  # -- Blocks pods in task namespaces from accessing internal IPs other than kube-dns and union-operator namespace
   blockInternalIPs: true
   # -- Blocks pods in task namespaces from accessing metadata server and from retrieving cloud provider credentials
   blockIMDS: true
+
+kube-prometheus-stack:
+  fullnameOverride: metrics
+  # kube-prometheus-stack
+  #
+  # Installed after Union Operator managed Prometheus. Can be used to decouple Prometheus and related services
+  # from Union Operator helm chart.
+  #
+  # Reference: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack
+
+  ## Setting to true produces cleaner custom resource names
+  cleanPrometheusOperatorObjectNames: true
+
+  ## Labels to apply to all resources
+  ##
+  commonLabels: {}
+
+  ## Do not use this Helm chart to install CRDs. This would force us to update CRDs manually as
+  ## we upgrade this Helm chart.
+  ##
+  ## Instead install the prometheus-operator-crd specific helm chart as sibling to this chart
+  ## https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus-operator-crds
+  crds:
+    enabled: false
+
+  ## Create default rules for monitoring the cluster
+  ##
+  # We can utilize useful pre-built queries incrementally as to pace
+  # the introduction of more unique time series
+  defaultRules:
+    create: false
+
+  ## Provide custom recording or alerting rules to be deployed into the cluster.
+  ##
+  additionalPrometheusRulesMap: {}
+  #  rule-name:
+  #    groups:
+  #    - name: my_group
+  #      rules:
+  #      - record: my_record
+  #        expr: 100 * my_record
+
+  ##
+  # Enable when we enable Prometheus services from
+  global:
+    rbac:
+      create: false
+
+  ## Components to Enable once we migrate to using Prometheus Operator
+  #
+
+  # Flag to disable all component scrapers
+  kubernetesServiceMonitors:
+    enabled: false
+  kubeApiServer: ## Component scraping the kube api server
+    enabled: false
+  kubelet:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  coreDns:
+    enabled: false
+  # # Should never have to enable as GCP and AWS use CoreDNS
+  # kubeDns:
+  #   enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeStateMetrics:
+    enabled: false
+  ##
+  # Configuration for kube-state-metrics subchart
+  # Reference: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-state-metrics
+  #
+  # kube-state-metrics:
+  #   ...
+
+  ## Deploy node exporter as a daemonset to all nodes
+  ##
+  nodeExporter:
+    enabled: true
+    operatingSystems:
+      linux:
+        enabled: true
+      darwin:
+        enabled: false
+
+  ##
+  # Configuration for prometheus-node-exporter subchart
+  # Reference: https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus-node-exporter/values.yaml
+  prometheus-node-exporter:
+    # Place in Kube-system as a critical system component with high priority
+    namespaceOverride: kube-system
+    priorityClassName: system-node-critical
+    updateStrategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxUnavailable: 25%
+    extraArgs:
+      - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+      - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|tmpfs)$
+      - --no-collector.arp
+      - --no-collector.bonding
+      - --no-collector.btrfs
+      - --no-collector.cpufreq
+      - --no-collector.edac
+      - --no-collector.ethtool
+      - --no-collector.entropy
+      - --no-collector.fibrechannel
+      - --no-collector.filefd
+      - --no-collector.hwmon
+      - --no-collector.infiniband
+      - --no-collector.ipvs
+      - --no-collector.nfs
+      - --no-collector.nfsd
+      - --no-collector.powersupplyclass
+      - --no-collector.rapl
+      - --no-collector.schedstat
+      - --no-collector.sockstat
+      - --no-collector.softnet
+      - --no-collector.textfile
+      - --no-collector.thermal_zone
+      - --no-collector.timex
+      - --no-collector.udp_queues
+      - --no-collector.mdadm
+      - --collector.conntrack # Required for tracking conntrack limits.
+    resources:
+      limits:
+        cpu: 50m
+        memory: 100Mi
+      requests:
+        cpu: 10m
+        memory: 10Mi
+    prometheus:
+      monitor:
+        enabled: false # Leave disabled
+      podMonitor:
+        enabled: false # Enable when Prometheus Operator is enabled
+
+  ##
+  ## Manages Prometheus and Alertmanager components
+  ## Reference(s):
+  ## * https://github.com/prometheus-operator/prometheus-operator
+  ## * https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/templates/prometheus-operator
+  prometheusOperator:
+    enabled: false # Enable when ready to have Prometheus Operator ready to manage Prometheus instances
+
+    ## Number of old replicasets to retain ##
+    # revisionHistoryLimit: 5
+
+    ## Create a servicemonitor for the operator
+    ##
+    # serviceMonitor:
+    #   selfMonitor: true
+
+    ## Resource limits & requests
+    ##
+    # resources:
+    #   limits:
+    #     cpu: 200m
+    #     memory: 200Mi
+    #   requests:
+    #     cpu: 100m
+    #     memory: 100Mi
+
+  ## Deploy a Prometheus instance
+  ##
+  prometheus:
+    enabled: false # Enable when ready to switch from Union Operator managed Prometheus.
+
+    ## Have Helm chart provision service account for least privelige access.
+    ## Can change if Kubernetes service account needs access to AWS or GCP resources.
+    ##
+    ## Service account for Prometheuses to use.
+    ## ref: https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+    ##
+    # serviceAccount:
+    #   create: true
+    #   name: ""
+    #   annotations: {}
+
+    ## Configure pod disruption budgets for Prometheus
+    ## ref: https://kubernetes.io/docs/tasks/run-application/configure-pdb/#specifying-a-poddisruptionbudget
+    ## This configuration is immutable once created and will require the PDB to be deleted to be changed
+    ## https://github.com/kubernetes/kubernetes/issues/45398
+    ##
+    # podDisruptionBudget:
+    #   enabled: true
+    #   minAvailable: 1
+
+    # Enable monitoring of Prometheus through Prometheus Operator
+    # serviceMonitor:
+    #   selfMonitor: false
+
+    ##
+    # Prometheus CRD Spec,
+    # Would have to do a methodical migration from Union Prometheus if desired
+    #
+    ## Settings affecting prometheusSpec
+    ## ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/api.md#prometheusspec
+    ##
+    # prometheusSpec:
+      # ...
+
+  ## Services to never deploy to Data Planes NOT deploy
+  alertmanager:
+    enabled: false
+  grafana:
+    enabled: false
+
+serving:
+  # -- Enables the serving component. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work.
+  enabled: false
+  # -- The number of replicas to create for all components for high availability.
+  replicas: 2
+  # -- Enables scraping of metrics from the serving component
+  metrics: false
+
+kueue-resources:
+  enabled: false

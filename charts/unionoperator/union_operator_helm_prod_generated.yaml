@@ -130,16 +130,6 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: arn:aws:iam::479331373192:role/opencompute-staging-sample-tenant-adminflyterole
 ---
-# Source: union-operator/charts/union/templates/common/secret-auth.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-secret-auth
-  namespace: union
-type: Opaque
-stringData:
-  client_secret: 'ghijklm'
----
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Create an empty secret that the first propeller pod will populate
 apiVersion: v1
@@ -148,15 +138,6 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
 type: Opaque
----
-# Source: union-operator/templates/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: union-operator
-type: Opaque
-stringData:
-  app_secret: ghijklm
 ---
 # Source: union-operator/templates/secret.yaml
 apiVersion: v1
@@ -231,8 +212,22 @@ metadata:
     helm.sh/chart: union-v0.1.10
     app.kubernetes.io/managed-by: Helm
 data:
+  storage.yaml: | 
+    storage:
+      type: s3
+      container: "opencompute-staging-sample-tenant"
+      connection:
+        auth-type: iam
+        region: us-east-2
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   cluster_resources.yaml: | 
     cluster_resources:
+      clusterName: 'clustername'
       customData:
       - production:
         - projectQuotaCpu:
@@ -270,6 +265,18 @@ data:
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
+    clusterResourcesPrivate:
+      app:
+        isSelfServe: false
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'abcdef'
+        clientSecretLocation: /etc/union/secret/app_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+      connection:
+        host: 'dns:///playground.hosted.unionai.cloud'
   admin.yaml: | 
     admin:
       clientId: 'abcdef'
@@ -317,15 +324,16 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
+      cache-endpoint: 'dns:///playground.hosted.unionai.cloud'
       endpoint: 'dns:///playground.hosted.unionai.cloud'
       insecure: false
-      type: datacatalog
+      type: fallback
       use-admin-auth: true
   copilot.yaml: | 
     plugins:
       k8s:
         co-pilot:
-          image: public.ecr.aws/unionai-flyte/flytecopilot:52845ec8c96be193aee997b9b6909fa15d809e30
+          image: public.ecr.aws/unionai-flyte/flytecopilot:a5098e39861491470c7839c629bb29252dcf9904
           name: flyte-copilot-
           start-timeout: 30s
   core.yaml: | 
@@ -386,15 +394,25 @@ data:
     tasks:
       task-plugins:
         default-for-task-types:
+          actor: fast-task
           container: container
           container_array: k8s-array
           sidecar: sidecar
         enabled-plugins:
         - container
-        - sidecar
+        - echo
+        - fast-task
         - k8s-array
+        - sidecar
   k8s.yaml: | 
     plugins:
+      fasttask:
+        additional-worker-args:
+        - --last-ack-grace-period-seconds
+        - "120"
+        callback-uri: http://flytepropeller.union.svc.cluster.local:15605
+        grace-period-status-not-found: 2m
+        grace-period-workers-unavailable: 5m
       k8s:
         default-cpus: 100m
         default-env-vars: []
@@ -417,10 +435,14 @@ data:
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   cache.yaml: |
-    cache:
-      max_size_mbs: 0
-      target_gc_percent: 70
+    storage:
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
   task_logs.yaml: | 
     plugins:
       logs:
@@ -449,7 +471,11 @@ data:
         clientSecretLocation: /etc/union/secret/app_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+    authorizer:
+      type: noop
     operator:
+      syncClusterConfig:
+        enabled: true
       enabled: true
       enableTunnelService: true
       clusterId:
@@ -473,20 +499,27 @@ data:
         gcpProjectId: dummy-gcs-projectId
       collectUsages:
         enabled: true
+      computeResourceManager:
+        
+        enabled: false
+        type: ""
   logger.yaml: |
     logger:
       level: 4
       show-source: true
   storage.yaml: | 
     storage:
-      type: s3
       container: "opencompute-staging-sample-tenant"
+      type: s3
       connection:
         auth-type: iam
         region: us-east-2
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
 ---
 # Source: union-operator/templates/monitoring/prometheus/configmap.yaml
 apiVersion: v1
@@ -517,66 +550,72 @@ data:
         - targets: ['localhost:9090']
         metric_relabel_configs:
         - source_labels: [__name__]
-          regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_storage_size_bytes
+          regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_storage_size_bytes|.+_(limit|failed|missed|failures)_total
           action: keep
       - job_name: 'karpenter'
         scrape_interval: 30s
         kubernetes_sd_configs:
         - role: endpoints
+          namespaces:
+            names:
+              - karpenter
+              - kube-system
         relabel_configs:
         - source_labels:
-          - __meta_kubernetes_namespace
           - __meta_kubernetes_service_name
           - __meta_kubernetes_endpoint_port_name
           action: keep
-          regex: karpenter;karpenter;http-metrics
+          regex: karpenter;(http-metrics|webhook-metrics)
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: kubernetes_service_name
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          target_label: endpoint_port
         metric_relabel_configs:
         - source_labels: [__name__]
-          regex: 'karpenter_pods_state'
-          action: drop
-        - source_labels: [__name__]
-          # Remove metrics created per AWS instance type
-          regex: karpenter_cloudprovider_instance_type_.*
-          action: drop
+          regex: 'karpenter_cloudprovider_errors_total'
+          action: keep
       - job_name: 'kube-state-metrics'
         static_configs:
         - targets: ['kube-state-metrics.kube-system.svc.cluster.local:8080']
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_condition)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated).*
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
           action: keep
         - separator: ;
           source_labels: [__name__, phase]
           regex: kube_pod_status_phase;(Succeeded|Failed)
           action: drop
-        # Drop select Flyte Pod metrics to mitiggate high cardinality.
-        - separator: ;
-          source_labels: [__name__, pod]
-          regex: '(kube_pod_container_status_(waiting|terminated).*);[a-zA-Z0-9]+-n[0-9]+-[0-9]+.*$'
-          action: drop
-        # Consolidate AWS node groups and GCP node pools
-        - source_labels: [label_node_group_name]
-          target_label: label_group_name
-          regex: '(.*)'  # copy the value as is
-          action: replace
-        - source_labels: [label_node_pool_name]
-          target_label: label_group_name
-          regex: '(.*)'  # copy the value as is
-          action: replace
-        - source_labels: [label_node_group_name, label_node_pool_name]
-          target_label: label_group_name
-          regex: '.*'  # fallback case when both labels are missing
-          replacement: 'unknown'
-          action: replace
         # Replace insert nodename to assist Grafana joins
         - source_labels: [node]
           target_label: nodename
           regex: '(.*)'  # copy the value as is
           action: replace
+        # Ensure all cloud provider group names populate label_node_pool_name
+        - source_labels: [label_node_group_name]
+          action: replace
+          # Assume GCP environments don't have label_node_group_name
+          regex: (.+)
+          target_label: label_node_pool_name
       - job_name: 'gpu-metrics'
         static_configs:
         - targets: ['dcgm-exporter.kube-system.svc.cluster.local:9400']
+      - job_name: union-mountpoint
+        metrics_path: /metrics
+        scheme: http
+        kubernetes_sd_configs:
+          - role: node
+            namespaces:
+             names: []
+        relabel_configs:
+          - source_labels: [__address__]
+            action: replace
+            regex: ([^:]+):.*
+            replacement: $1:9000
+            target_label: __address__
+      # cAdvisor metrics shared between Task resource monitoring and operational monitoring
       - job_name: kubernetes-cadvisor
         metrics_path: /metrics
         scheme: https
@@ -592,7 +631,7 @@ data:
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_spec_memory_limit_bytes
+          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
           action: keep
         relabel_configs:
         - separator: ;
@@ -610,9 +649,40 @@ data:
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
           action: replace
-      - job_name: 'union-metrics'
-        static_configs:
-        - targets: ['union-operator.union.svc.cluster.local']
+      # cAdvisor metrics for operational monitoring but not intended to be used with Task resource monitoring
+      - job_name: kubernetes-cadvisor-extended
+        metrics_path: /metrics
+        scheme: https
+        kubernetes_sd_configs:
+        - api_server: null
+          role: node
+          namespaces:
+            names: []
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [namespace, __name__]
+          regex: (union|kube-system|karpenter);(container_spec_cpu_quota|container_spec_cpu_period|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|container_spec_memory_limit_bytes|container_fs_inodes_free|container_fs_inodes_total)
+          action: keep
+        relabel_configs:
+        - separator: ;
+          regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - separator: ;
+          regex: (.*)
+          target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace
       - job_name: 'fluentbit'
         kubernetes_sd_configs:
         - role: pod
@@ -668,8 +738,20 @@ data:
           action: labeldrop
         metric_relabel_configs:
         - source_labels: [__name__]
-          regex: 'node_cpu_guest_seconds_total|node_filesystem.*|node_network.*'
+          regex: 'node_cpu_guest_seconds_total|node_filesystem_files|node_filesystem_files_free|node_filesystem_readonly|node_filesystem_free_bytes'
           action: drop
+        - source_labels: [__name__]
+          regex: 'node_network_(a|c|d|f|i|m|n|p|s|u).*|node_network_receive_(c|d|f|m|n|q).*|node_network_transmit_(c|d|f|m|n|q).*'
+          action: drop
+        - source_labels: [__name__]
+          regex: 'node_nf_conntrack_stat.*'
+          action: drop
+        - source_labels: [__name__, mountpoint]
+          separator: ;
+          regex: 'node_filesystem_[^;]+;(?:(/data/union-persistent)|.*)'
+          action: replace
+          replacement: '$1'
+          target_label: mountpoint
       - job_name: 'coredns'
         kubernetes_sd_configs:
         - role: pod
@@ -694,7 +776,34 @@ data:
           regex: "coredns_panics_total|\
             coredns_dns_requests_total|\
             coredns_dns_request_duration_seconds.*|\
-            coredns_dns_responses_total"
+            coredns_dns_responses_total|\
+            coredns_forward_.*"
+          action: keep
+      # CoreDNS forward proxy specific metrics
+      #   Filters for "forward" in the proxy_name label
+      - job_name: 'coredns-forward-proxy'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "eks.amazonaws.com/component=coredns"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9153
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        metric_relabel_configs:
+        - source_labels: [__name__, proxy_name]
+          separator: ;
+          regex: 'coredns_proxy_(.*)|forward'
           action: keep
       - job_name: 'kubernetes-apiservers'
         scrape_interval: 30s
@@ -719,38 +828,82 @@ data:
           replacement: 'union_cloud_replacement'
           regex: 'workqueue_.*'
         - action: keep
-          regex: (apiserver_request_.*|apiserver_response_.*|workqueue_.*);(pods|nodes|union_cloud_replacement)
+          regex: (apiserver_request_.*|apiserver_response_.*|apiserver_storage_objects|workqueue_.*);(flyteworkflows\.flyte\.lyft\.com|nodes|pods|union_cloud_replacement)
           source_labels:
           - __name__
           - resource
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "union"
+        relabel_configs:
+        # Flytepropeller is scraped with "flyte-propeller" job
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          regex: flytepropeller
+          action: drop
+        # Serving Envoy is scraped with "serving-envoy" job
+        - source_labels: [__meta_kubernetes_pod_label_app]
+          regex: 3scale-kourier-gateway
+          action: drop
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+          action: keep
+          regex: true
+        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+          action: replace
+          target_label: __metrics_path__
+          regex: (.+)
+        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+          action: replace
+          regex: ([^:]+)(?::\d+)?;(\d+)
+          replacement: $1:$2
+          target_label: __address__
+        # Add namespace as a label
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        # Add pod name as a label
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        # Add container name as a label
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          action: replace
+          target_label: container
   rules.yml: |
     groups:
       - name: rollup
         rules:
         - record: instance_type:kube_node_labels:sum
           expr: sum by (label_cloud_google_com_gke_accelerator, label_cloud_google_com_gke_preemptible, label_eks_amazonaws_com_capacity_type, label_flyte_org_node_role, label_node_group_name, label_node_kubernetes_io_instance_type, label_node_pool_name, label_topology_kubernetes_io_region) (kube_node_labels{job="kube-state-metrics"})
+        - record: deployment:kube_deployment_status_replicas_unavailable:sum
+          expr: sum by (deployment,namespace) (kube_deployment_status_replicas_unavailable{})
+        - record: daemonset:kube_daemonset_status_number_unavailable:sum
+          expr: sum by(daemonset,namespace)(kube_daemonset_status_number_unavailable{})
         - record: phase:kube_pod_status_phase:sum
           expr: sum by (label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
         - record: namespace_phase:kube_pod_status_phase:sum
           expr: sum by (namespace, label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
+        # Pods OOM killed over a 10 minute window
+        - record: pod:oomkilled:5m_count
+          expr: (kube_pod_container_status_restarts_total{namespace=~"union|kube-system"} - kube_pod_container_status_restarts_total offset 5m >= 1) and ignoring (reason) min_over_time(kube_pod_container_status_last_terminated_reason{reason="OOMKilled"}[5m]) == 1
         - record: namespace_type:pod:container_cpu_usage_seconds_total:count
-          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
         - record: namespace:pod:container_cpu_usage_seconds_total:count
-          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job="kubernetes-cadvisor", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
-        - record: pod:container_cpu_usage_seconds_total:sum
-          expr: sum by (namespace, pod) (container_cpu_usage_seconds_total{namespace=~"union|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
-        - record: pod:container_memory_working_set_bytes:sum
-          expr: sum by (namespace, pod) (container_memory_working_set_bytes{namespace=~"union|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
-        - record: pod:container_spec_memory_limit_bytes:sum
-          expr: sum by (namespace, pod) (container_spec_memory_limit_bytes{namespace=~"union|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
+          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+        - record: container:container_cpu_usage_seconds_total:rate_sum
+          expr: sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*", namespace=~"union|kube-system"}[5m])) by (namespace, pod, container)
         - record: container:container_memory_working_set_bytes:sum
-          expr: sum by (namespace, pod, name) (container_memory_working_set_bytes{namespace=~"union|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
+          expr: sum by (namespace, pod, container) (container_memory_working_set_bytes{namespace=~"union|kube-system", image!="", job=~"kubernetes-cadvisor.*", name!=""})
         - record: container:container_spec_memory_limit_bytes:sum
-          expr: sum by (namespace, pod, name) (container_spec_memory_limit_bytes{namespace=~"union|kube-system", image!="", job="kubernetes-cadvisor", name!=""})
-        - record: pod:kube_pod_container_resource_requests:sum
-          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_requests{namespace=~"union|kube-system", resource=~"cpu|memory", job="kube-state-metrics"})
-        - record: pod:kube_pod_container_resource_limits:sum
-          expr: sum by (namespace, pod, resource) (kube_pod_container_resource_limits{namespace=~"union|kube-system", resource=~"cpu|memory", job="kube-state-metrics"})
+          expr: sum by (namespace, pod, container) (container_spec_memory_limit_bytes{namespace=~"union|kube-system", image!="", job=~"kubernetes-cadvisor.*", name!=""})
+        - record: container:cpu_utilization
+          expr: (sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*", namespace=~"union|kube-system"}[5m])) by (namespace, pod, container) / sum(container_spec_cpu_quota{container!=""}/container_spec_cpu_period{container!=""}) by (namespace, pod, container)) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels
+        - record: container:memory_utilization
+          expr: (sum(container_memory_working_set_bytes{name!="", job=~"kubernetes-cadvisor.*", namespace=~"union|kube-system"}) BY (namespace, pod, container) / sum(container_spec_memory_limit_bytes{name!=""} > 0) BY (namespace, pod, container)) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels
+        - record: container:throttle_rate
+          expr: sum by (container, pod, namespace) (increase(container_cpu_cfs_throttled_periods_total{container!="", job=~"kubernetes-cadvisor.*", namespace=~"union|kube-system"}[5m])) / sum by (container, pod, namespace)(increase(container_cpu_cfs_periods_total[5m])) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels
         - record: job:up:sum
           expr: sum by (job) (up)
         - record: job:up:count
@@ -771,8 +924,6 @@ data:
         # Node-exporter rules
         # Copied from kube-prometheus-stack rules, can be remove and switch the Prometheus Operator CRD managed rules
         # Reference: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/templates/prometheus/rules-1.14/node-exporter.rules.yaml#L67
-        - record: ethtool:conntrack_allowance_exceeded:sum
-          expr: sum(node_ethtool_conntrack_allowance_exceeded)
         - record: instance:node_num_cpu:sum
           expr: |-
             count without (cpu, mode) (
@@ -799,6 +950,64 @@ data:
             )
         - record: instance:node_vmstat_pgmajfault:rate5m
           expr: rate(node_vmstat_pgmajfault{job="node-exporter"}[5m])
+        - record: k8s_client_request_total_unlabeled
+          expr: sum(k8s_client_request_total) without (code, method)
+        - record: k8s_client_request_latency_unlabeled_bucket
+          expr: sum(k8s_client_request_latency_bucket) without (verb)
+        - record: k8s_client_request_latency_unlabeled_count
+          expr: sum(k8s_client_request_latency_count) without (verb)
+        - record: k8s_client_request_latency_unlabeled_sum
+          expr: sum(k8s_client_request_latency_sum) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_bucket
+          expr: sum(k8s_client_rate_limiter_latency_bucket) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_count
+          expr: sum(k8s_client_rate_limiter_latency_count) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_sum
+          expr: sum(k8s_client_rate_limiter_latency_sum) without (verb)
+        # Pre-compute node information to be easily utilized with Node exporter time series
+        # Inject nodename, and selected Kubernertes Labels. Feel free to add more labels as needed.
+        # Notes:
+        # * filtering out -secondary node pool names to remove many to many join node_pool_name value change
+        # * Default node groups (operator, etc) won't have certain labels including but not limited to label_flyte_org_node_role
+        - record: node:common_labels
+          expr: node_uname_info{nodename=~".+"} * on(nodename) group_left(label_node_pool_name, label_node_kubernetes_io_instance_type, label_flyte_org_node_role, label_union_ai_node_role) count by (nodename, label_node_pool_name, label_node_kubernetes_io_instance_type, label_flyte_org_node_role, label_union_ai_node_role)(kube_node_labels{label_node_pool_name!~".*-secondary", job="kube-state-metrics"})
+
+        # Approximation of AWS ENI conntrack allowance
+        - record: node_nf_conntrack_entry_utilization
+          expr: node_nf_conntrack_entries / node_nf_conntrack_entries_limit
+
+        # Node network
+        # Cloud Providers like AWS create time series per ENI, this can
+        # dramatically increase cardinality. AWS Network throughput is primarily
+        # bottlenecked by instance tier limits.
+        - record: instance:node_network_receive_bytes_total:sum
+          expr: sum by (instance) (node_network_receive_bytes_total)
+        - record: instance:node_network_transmit_bytes_total:sum
+          expr: sum by (instance) (node_network_transmit_bytes_total)
+        - record: instance:node_network_receive_errs_total:sum
+          expr: sum by (instance) (node_network_receive_errs_total)
+        - record: instance:node_network_transmit_errs_total:sum
+          expr: sum by (instance) (node_network_transmit_errs_total)
+        - record: instance:node_network_receive_packets_total:sum
+          expr: sum by (instance) (node_network_receive_packets_total)
+        - record: instance:node_network_transmit_packets_total:sum
+          expr: sum by (instance) (node_network_transmit_packets_total)
+
+        # Count active Flyte namespaces, useful for approximating active users in serverless environments
+        - record: namespace:flyte:total
+          expr: count(kube_namespace_labels{label_union_ai_namespace_type="flyte"})
+
+        # Count the number of reasons why Pods are terminating or waiting.
+        - record: node:namespace:kube_pod_container_status_last_terminated_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_last_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+        - record: node:namespace:kube_pod_container_status_terminated_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+        - record: node:namespace:kube_pod_container_status_waiting_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_waiting_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+
+        # Count the number of observed kubelet versions
+        - record: node:kubelet_version:count
+          expr: count by (kubelet_version)(label_replace(kube_node_info, "kubelet_version", "$1", "kubelet_version", "v([0-9]+\\.[0-9]+).*"))
 ---
 # Source: union-operator/charts/union/templates/propeller/crds/flyteworkflow.yaml
 apiVersion: apiextensions.k8s.io/v1
@@ -943,6 +1152,7 @@ rules:
       - secrets
       - services
       - serviceaccounts
+      - clusterrolebindings
     verbs:
       - '*'
 ---
@@ -952,11 +1162,14 @@ kind: ClusterRole
 metadata:
   name: kube-state-metrics
 rules:
-  - apiGroups: [""]
+  - apiGroups: ["", "apps"]
     resources:
       - namespaces
       - nodes
       - pods
+      - deployments
+      - daemonsets
+      - resourcequotas
     verbs: ["get", "list", "watch"]
 ---
 # Source: union-operator/templates/monitoring/prometheus/rbac.yaml
@@ -1004,6 +1217,7 @@ rules:
   - apiGroups:
       - '*'
     resources:
+      - events
       - flyteworkflows
       - pods/log
       - pods
@@ -1052,6 +1266,23 @@ rules:
       - configmaps
       - podtemplates
       - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - revisions
+      - configurations
+      - services
     verbs:
       - get
       - list
@@ -1110,6 +1341,31 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: clustersync-resource
+subjects:
+  - kind: ServiceAccount
+    name: clustersync-resource
+    namespace: union
+---
+# Source: union-operator/templates/cluster-resource-sync.yaml
+# This role binding is required in order to create
+# other CRBs that grant the system:auth-delegator permission.
+#
+# This is primarily used by customers using HashiCorp Vault and
+# Kubernetes Authentication.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clustersync-resource-auth-delegator
+  labels:
+    helm.sh/chart: union-operator-v0.0.1-local
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: union-operator
+    app.kubernetes.io/version: "v0.0.1"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
     name: clustersync-resource
@@ -1259,6 +1515,31 @@ subjects:
     name: union-operator
     namespace: union
 ---
+# Source: union-operator/charts/union/templates/propeller/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: union-operator
+    helm.sh/chart: union-v0.1.10
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http-metrics
+      protocol: TCP
+      port: 10254
+    - name: fasttask
+      port: 15605
+      protocol: TCP
+      targetPort: 15605
+  selector: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: union-operator
+---
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Service
 apiVersion: v1
@@ -1394,130 +1675,6 @@ spec:
     app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: union-operator
 ---
-# Source: union-operator/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: flytepropeller
-spec:
-  ports:
-    - port: 10254
-  selector:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: union-operator
----
-# Source: union-operator/templates/monitoring/dcgm-exporter/daemonset.yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: dcgm-exporter
-  namespace: kube-system
-  labels:
-    helm.sh/chart: union-operator-v0.0.1-local
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: union-operator-dcgm-exporter
-    app.kubernetes.io/version: "v0.0.1"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
-spec:
-  updateStrategy:
-    type: RollingUpdate
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: dcgm-exporter
-      app.kubernetes.io/instance: union-operator-dcgm-exporter
-      app.kubernetes.io/component: "dcgm-exporter"
-  template:
-    metadata:
-      annotations:
-      labels:
-        app.kubernetes.io/name: dcgm-exporter
-        app.kubernetes.io/instance: union-operator-dcgm-exporter
-        app.kubernetes.io/component: "dcgm-exporter"
-    spec:
-      priorityClassName: system-node-critical
-      serviceAccountName: dcgm-exporter
-      securityContext:
-        {}
-      volumes:
-        - name: "pod-gpu-resources"
-          hostPath:
-            path: /var/lib/kubelet/pod-resources
-        - name: "nvidia-install-dir-host"
-          hostPath:
-            path: "/home/kubernetes/bin/nvidia"
-      containers:
-        - name: exporter
-          image: "nvcr.io/nvidia/k8s/dcgm-exporter:3.1.7-3.1.4-ubuntu20.04"
-          imagePullPolicy: IfNotPresent
-          securityContext:
-            capabilities:
-              add:
-              - SYS_ADMIN
-            privileged: true
-            runAsNonRoot: false
-            runAsUser: 0
-          args:
-          - -f
-          - /etc/dcgm-exporter/dcp-metrics-included.csv
-          env:
-            - name: "DCGM_EXPORTER_KUBERNETES"
-              value: "true"
-            - name: "DCGM_EXPORTER_LISTEN"
-              value: ":9400"
-            - name: NODE_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.nodeName
-          ports:
-            - name: "metrics"
-              containerPort: 9400
-          volumeMounts:
-            - name: "pod-gpu-resources"
-              readOnly: true
-              mountPath: "/var/lib/kubelet/pod-resources"
-            - mountPath: /usr/local/nvidia
-              name: nvidia-install-dir-host
-              readOnly: true
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 9400
-            initialDelaySeconds: 45
-            periodSeconds: 5
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 9400
-            initialDelaySeconds: 45
-          resources:
-            limits:
-              ephemeral-storage: 500Mi
-              memory: 400Mi
-            requests:
-              cpu: 100m
-              ephemeral-storage: 500Mi
-              memory: 128Mi
-      affinity:
-        nodeAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            nodeSelectorTerms:
-            - matchExpressions:
-              - key: ami_type
-                operator: In
-                values:
-                - AL2_x86_64_GPU
-            - matchExpressions:
-              - key: cloud.google.com/gke-accelerator
-                operator: Exists
-      tolerations:
-        - effect: NoSchedule
-          key: nvidia.com/gpu
-          operator: Exists
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Exists
----
 # Source: union-operator/charts/union/templates/clusterresourcesync/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -1538,7 +1695,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f349b9998d56456d2ea22803ea3bf3a140c8a95c26b2a7a8f5316ddbd4e6695"
+        configChecksum: "0a945edb269129e7ae27889a5c2e0c8fb753e487221d90197fdccdc61578a0b"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
+        prometheus.io/scrape: "true"
       labels: 
         app.kubernetes.io/name: flyteclusterresourcesync
         app.kubernetes.io/instance: union-operator
@@ -1547,14 +1707,30 @@ spec:
     spec:
       containers:
         - command:
-            - flyteadmin
+            - clusterresource
             - --config
             - /etc/flyte/config/*.yaml
             - clusterresource
             - run
-          image: "public.ecr.aws/unionai-flyte/flyteadmin:52845ec8c96be193aee997b9b6909fa15d809e30"
+          env:
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.cpu
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:invalid-version"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 500m
+              memory: 100Mi
           volumeMounts:
           - name: auth
             mountPath: /etc/secrets/
@@ -1562,6 +1738,12 @@ spec:
             name: resource-templates
           - mountPath: /etc/flyte/config
             name: config-volume
+          - mountPath: /etc/union/secret
+            name: union-cloud-auth
+          ports:
+          - containerPort: 10254
+            name: debug
+            protocol: TCP
       serviceAccountName: clustersync-resource
       volumes:
         
@@ -1573,7 +1755,10 @@ spec:
           name: config-volume
         - name: auth
           secret:
-            secretName: flyte-secret-auth
+            secretName: union-base
+        - name: union-cloud-auth
+          secret:
+            secretName: union-base
 ---
 # Source: union-operator/charts/union/templates/propeller/deployment.yaml
 apiVersion: apps/v1
@@ -1595,17 +1780,19 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "de675216313f0abe5e1d505bc4f8eb6051e90f2b919e773ba94153dacf95615"
+        configChecksum: "8a3410e331f31fe0722986f1ec4a4aee53f8c5806eab569a0cc0c71fc87e20b"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
       labels: 
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: union-operator
         helm.sh/chart: union-v0.1.10
         app.kubernetes.io/managed-by: Helm
     spec:
-      securityContext:
+      securityContext: 
         fsGroup: 65534
+        fsGroupChangePolicy: Always
         runAsUser: 1001
-        fsGroupChangePolicy: "Always"
       priorityClassName: system-cluster-critical
       containers:
       - command:
@@ -1623,6 +1810,14 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: GOMEMLIMIT
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.memory
+        - name: GOMAXPROCS
+          valueFrom:
+            resourceFieldRef:
+              resource: limits.cpu
         image: "public.ecr.aws/p0i0a9q8/unionoperator:invalid-version"
         imagePullPolicy: "IfNotPresent"
         name: flytepropeller
@@ -1634,7 +1829,7 @@ spec:
             ephemeral-storage: 500Mi
             memory: 8Gi
           requests:
-            cpu: 3400m
+            cpu: 3000m
             ephemeral-storage: 100Mi
             memory: 4Gi
         volumeMounts:
@@ -1650,7 +1845,7 @@ spec:
         name: config-volume
       - name: auth
         secret:
-          secretName: flyte-secret-auth
+          secretName: union-base
 ---
 # Source: union-operator/charts/union/templates/propeller/webhook.yaml
 # Create the actual deployment
@@ -1672,13 +1867,15 @@ spec:
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/version: invalid-version
       annotations:
-        configChecksum: "de675216313f0abe5e1d505bc4f8eb6051e90f2b919e773ba94153dacf95615"
+        configChecksum: "8a3410e331f31fe0722986f1ec4a4aee53f8c5806eab569a0cc0c71fc87e20b"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "10254"
     spec:
-      securityContext:
+      securityContext: 
         fsGroup: 65534
+        fsGroupChangePolicy: Always
         runAsNonRoot: true
         runAsUser: 1001
-        fsGroupChangePolicy: "Always"
         seLinuxOptions:
           type: spc_t
       serviceAccountName: flyte-pod-webhook
@@ -1702,6 +1899,14 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                resource: limits.cpu
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -1728,12 +1933,25 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
           ports:
           - containerPort: 9443
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
@@ -1827,6 +2045,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
 ---
 # Source: union-operator/templates/deployment.yaml
 apiVersion: apps/v1
@@ -1848,7 +2074,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "298eb846a498ff07322a3ec33da35940290d3a245152a0fa7d9848ac766ee23"
+        configChecksum: "224835a729c7e516753ba903f4be99de52b53f6ad8f9287d4302771f63bc101"
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
         prometheus.io/scrape: "true"
@@ -1866,7 +2092,7 @@ spec:
             name: union-operator
         - name: secret-volume
           secret:
-            secretName: union-operator
+            secretName: union-base
       containers:
         - name: union-operator
           securityContext:
@@ -1900,6 +2126,14 @@ spec:
                   fieldPath: metadata.namespace
             - name: DEPLOYMENT_NAME
               value: union-operator
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
           args:
             - operator
             - serve
@@ -1908,7 +2142,7 @@ spec:
             - --operator.clusterId.name
             - "$(CLUSTER_NAME)"
             - --operator.tunnel.k8sSecretName
-            - union-operator
+            - union-base
           ports:
             - name: grpc
               containerPort: 8080
@@ -1922,7 +2156,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: cloudflare/cloudflared:2023.10.0
+          image: cloudflare/cloudflared:2024.6.1
           imagePullPolicy: IfNotPresent
           args:
             - tunnel
@@ -1934,7 +2168,7 @@ spec:
             - name: TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: union-operator
+                  name: union-base
                   key: tunnel_token
                   optional: true
 ---
@@ -1970,8 +2204,8 @@ spec:
       containers:
         - args:
             - --port=8080
-            - --resources=namespaces,nodes,pods
-            - --metric-labels-allowlist=namespaces=[union.ai/namespace-type],nodes=[cloud.google.com/gke-accelerator,cloud.google.com/gke-preemptible,eks.amazonaws.com/capacityType,flyte.org/node-role,node.kubernetes.io/instance-type,node_group_name,node_pool_name,topology.kubernetes.io/region,topology.kubernetes.io/zone]
+            - --resources=namespaces,nodes,pods,deployments,daemonsets,resourcequotas
+            - --metric-labels-allowlist=namespaces=[union.ai/namespace-type,kubernetes.io/metadata.name],nodes=[cloud.google.com/gke-accelerator,cloud.google.com/gke-preemptible,eks.amazonaws.com/capacityType,flyte.org/node-role,node.kubernetes.io/instance-type,node_group_name,node_pool_name,topology.kubernetes.io/region,topology.kubernetes.io/zone,union.ai/node-role,cloud.google.com/gke-nodepool,karpenter.sh/nodepool],deployments=[app.kubernetes.io/instance],daemonsets=[app.kubernetes.io/name]
           livenessProbe:
             failureThreshold: 3
             httpGet:
@@ -1993,7 +2227,7 @@ spec:
             successThreshold: 1
             timeoutSeconds: 5
           name: union-operator
-          image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.8.1"
+          image: "registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.11.0"
           imagePullPolicy: IfNotPresent
           securityContext:
             allowPrivilegeEscalation: false
@@ -2032,7 +2266,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "02550ae046dad1c38679a7e6580d524aa9e61264160abb1f6cfc8d3ce3091ee"
+        configChecksum: "864702161ebab8fa2dc3b4e5698c9bacddf862603532b4cb337ce21c2091c41"
       labels:
         app.kubernetes.io/name: union-operator-prometheus
         app.kubernetes.io/instance: union-operator-prometheus
