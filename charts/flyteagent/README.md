@@ -1,6 +1,6 @@
 # flyteagent
 
-![Version: 2024.12.01](https://img.shields.io/badge/Version-2024.12.01-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
+![Version: 2024.12.2](https://img.shields.io/badge/Version-2024.12.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
 
 A Helm chart for Flyte agent
 

@@ -1,6 +1,6 @@
 # union-operator
 
-![Version: 2024.12.01](https://img.shields.io/badge/Version-2024.12.01-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2024.12.01](https://img.shields.io/badge/AppVersion-2024.12.01-informational?style=flat-square)
+![Version: 2024.12.2](https://img.shields.io/badge/Version-2024.12.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2024.12.2](https://img.shields.io/badge/AppVersion-2024.12.2-informational?style=flat-square)
 
 Deploys Union Operator to onboard a k8s cluster to Union Cloud
 
@@ -8,7 +8,7 @@ Deploys Union Operator to onboard a k8s cluster to Union Cloud
 
 | Repository | Name | Version |
 |------------|------|---------|
-| file://../flyte-core | union(flyte-core) | 2024.12.01 |
+| file://../flyte-core | union(flyte-core) | 2024.12.2 |
 | https://opencost.github.io/opencost-helm-chart | opencost | 1.42.0 |
 | https://prometheus-community.github.io/helm-charts | kube-prometheus-stack | 59.1.0 |
 
@@ -215,7 +215,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.cluster_resource_manager.config.union.connection.host | string | `"{{- printf \"dns:///%s\" (.Values.cloudUrl | trimPrefix \"dns:///\" | trimPrefix \"http://\" | trimPrefix \"https://\") -}}"` |  |
 | union.cluster_resource_manager.enabled | bool | `true` |  |
 | union.cluster_resource_manager.image.repository | string | `"public.ecr.aws/p0i0a9q8/unionoperator"` |  |
-| union.cluster_resource_manager.image.tag | string | `"2024.12.01"` |  |
+| union.cluster_resource_manager.image.tag | string | `"2024.12.2"` |  |
 | union.cluster_resource_manager.podEnv[0].name | string | `"GOMEMLIMIT"` |  |
 | union.cluster_resource_manager.podEnv[0].valueFrom.resourceFieldRef.resource | string | `"limits.memory"` |  |
 | union.cluster_resource_manager.podEnv[1].name | string | `"GOMAXPROCS"` |  |
@@ -259,7 +259,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.enabled | bool | `true` | Mark cluster as healthy and ready to accept incoming workflows |
 | union.flyteadmin.enabled | bool | `false` |  |
 | union.flyteadmin.image.repository | string | `"public.ecr.aws/unionai-flyte/flyteadmin"` |  |
-| union.flyteadmin.image.tag | string | `"2024.12.01"` |  |
+| union.flyteadmin.image.tag | string | `"2024.12.2"` |  |
 | union.flyteconsole.enabled | bool | `false` |  |
 | union.flytepropeller.affinity | object | `{}` | affinity for Flytepropeller deployment |
 | union.flytepropeller.cacheSizeMbs | int | `0` |  |
@@ -268,7 +268,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.flytepropeller.configPath | string | `"/etc/flyte/config/*.yaml"` | Default regex string for searching configuration files |
 | union.flytepropeller.enabled | bool | `true` |  |
 | union.flytepropeller.image.repository | string | `"public.ecr.aws/p0i0a9q8/unionoperator"` |  |
-| union.flytepropeller.image.tag | string | `"2024.12.01"` |  |
+| union.flytepropeller.image.tag | string | `"2024.12.2"` |  |
 | union.flytepropeller.nodeSelector | object | `{}` | nodeSelector for Flytepropeller deployment |
 | union.flytepropeller.podAnnotations | object | `{}` | Annotations for Flytepropeller pods |
 | union.flytepropeller.podEnv[0].name | string | `"GOMEMLIMIT"` |  |
@@ -390,7 +390,7 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.storage.s3 | object | `{"region":"us-east-1"}` | settings for storage type s3 |
 | union.storage.type | string | `"sandbox"` | Sets the storage type. Supported values are sandbox, s3, gcs and custom. |
 | union.syncClusterConfig.enabled | bool | `true` |  |
-| union.unionoperator | object | `{"additionalLabels":{},"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":100,"minReplicas":1,"targetCPUUtilizationPercentage":80},"configmapOverrides":{},"fullnameOverride":"","image":{"pullPolicy":"IfNotPresent","repository":"public.ecr.aws/p0i0a9q8/unionoperator","tag":"2024.12.01"},"imagePullSecrets":[],"nameOverride":"","nodeSelector":{},"podAnnotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"10254","prometheus.io/scrape":"true"},"podEnv":[{"name":"GOMEMLIMIT","valueFrom":{"resourceFieldRef":{"resource":"limits.memory"}}},{"name":"GOMAXPROCS","valueFrom":{"resourceFieldRef":{"resource":"limits.cpu"}}}],"podSecurityContext":{},"replicaCount":1,"resources":{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"4Gi"}},"secretName":"union-base","securityContext":{},"service":{"port":80,"type":"ClusterIP"},"serviceAccount":{"annotations":{},"automount":true,"create":true,"name":""},"tolerations":[]}` | ---------------------------------------------------- |
+| union.unionoperator | object | `{"additionalLabels":{},"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":100,"minReplicas":1,"targetCPUUtilizationPercentage":80},"configmapOverrides":{},"fullnameOverride":"","image":{"pullPolicy":"IfNotPresent","repository":"public.ecr.aws/p0i0a9q8/unionoperator","tag":"2024.12.2"},"imagePullSecrets":[],"nameOverride":"","nodeSelector":{},"podAnnotations":{"prometheus.io/path":"/metrics","prometheus.io/port":"10254","prometheus.io/scrape":"true"},"podEnv":[{"name":"GOMEMLIMIT","valueFrom":{"resourceFieldRef":{"resource":"limits.memory"}}},{"name":"GOMAXPROCS","valueFrom":{"resourceFieldRef":{"resource":"limits.cpu"}}}],"podSecurityContext":{},"replicaCount":1,"resources":{"limits":{"cpu":"4","ephemeral-storage":"500Mi","memory":"8Gi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"4Gi"}},"secretName":"union-base","securityContext":{},"service":{"port":80,"type":"ClusterIP"},"serviceAccount":{"annotations":{},"automount":true,"create":true,"name":""},"tolerations":[]}` | ---------------------------------------------------- |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key | string | `"ami_type"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator | string | `"In"` |  |
 | union.unionoperatorMonitoring.dcgmExporter.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].values[0] | string | `"AL2_x86_64_GPU"` |  |
@@ -464,7 +464,6 @@ helm upgrade -f values.yaml union-operator unionai/union-operator -n union-opera
 | union.unionoperatorMonitoring.prometheus.image.pullPolicy | string | `"IfNotPresent"` |  |
 | union.unionoperatorMonitoring.prometheus.image.repository | string | `"prom/prometheus"` |  |
 | union.unionoperatorMonitoring.prometheus.image.tag | string | `"v2.43.0"` |  |
-| union.unionoperatorMonitoring.prometheus.kubernetesPods.additional_metric_relabel_configs | list | `[]` |  |
 | union.unionoperatorMonitoring.prometheus.podSecurityContext.fsGroup | int | `65534` |  |
 | union.unionoperatorMonitoring.prometheus.podSecurityContext.runAsNonRoot | bool | `true` |  |
 | union.unionoperatorMonitoring.prometheus.podSecurityContext.runAsUser | int | `65534` |  |

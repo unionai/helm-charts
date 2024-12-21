@@ -211,6 +211,9 @@ data:
             process_.*"
           action: keep
         relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
         - source_labels: [__meta_kubernetes_pod_name]
           action: replace
           target_label: kubernetes_pod_name
@@ -423,33 +426,19 @@ data:
           source_labels:
           - __name__
           - resource
-      - job_name: 'kubernetes-pods'
+      - job_name: 'union-pods'
         kubernetes_sd_configs:
         - role: pod
           namespaces:
             names:
             - "{{ include "union-operator.namespace" . }}"
         relabel_configs:
-        # Flytepropeller is scraped with "flyte-propeller" job
         - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
-          regex: flytepropeller
-          action: drop
-        # Serving Envoy is scraped with "serving-envoy" job
-        - source_labels: [__meta_kubernetes_pod_label_app]
-          regex: 3scale-kourier-gateway
-          action: drop
-        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
           action: keep
-          regex: true
-        - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
-          action: replace
-          target_label: __metrics_path__
-          regex: (.+)
-        - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
-          action: replace
-          regex: ([^:]+)(?::\d+)?;(\d+)
-          replacement: $1:$2
-          target_label: __address__
+          regex: flyteclusterresourcesync|union-operator|union-operator-proxy
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          action: keep
+          regex: debug
         # Add namespace as a label
         - source_labels: [__meta_kubernetes_namespace]
           action: replace
@@ -462,10 +451,6 @@ data:
         - source_labels: [__meta_kubernetes_pod_container_name]
           action: replace
           target_label: container
-        {{- with .Values.union.unionoperatorMonitoring.prometheus.kubernetesPods.additional_metric_relabel_configs }}
-        metric_relabel_configs:
-        {{- toYaml . | nindent 8 }}
-        {{- end }}
       {{- if index .Values "kueue-resources" "enabled" }}
       - job_name: 'kueue'
         scrape_interval: 30s
@@ -522,6 +507,79 @@ data:
       {{- end }}
   rules.yml: |
     groups:
+      {{- if .Values.union.unionoperatorMonitoring.opencost.enabled }}
+      # Granular aggregations of cost
+      - name: resources_rollup_15s
+        interval: 15s
+        rules:
+          - record: execution_id:mem_usage_bytes_total:sum
+            expr: sum by (label_project, label_domain, label_workflow_name, label_execution_id, node) (max by (namespace, pod) ((sum by (namespace, pod) (container_memory_working_set_bytes{namespace!="",pod!="",image!=""}) > sum by (namespace, pod) (kube_pod_container_resource_requests{namespace!="",pod!="",resource="memory"})) or sum by (namespace, pod) (kube_pod_container_resource_requests{namespace!="",pod!="",resource="memory"})) * on (namespace, pod) group_left(label_domain, label_project, label_execution_id, label_workflow_name) (kube_pod_labels{label_domain!="", label_project!="", label_execution_id!="", label_workflow_name!=""}) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase="Running"} == 1)) * on (namespace, pod) group_left(node) (kube_pod_info))
+          - record: execution_id:cpu_usage:sum
+            expr: sum by (label_project, label_domain, label_workflow_name, label_execution_id, node) (max by (namespace, pod) ((sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])) > sum by (namespace, pod) (kube_pod_container_resource_requests{namespace!="",pod!="",resource="cpu"})) or sum by (namespace, pod) (kube_pod_container_resource_requests{namespace!="",pod!="",resource="cpu"})) * on (namespace, pod) group_left(label_domain, label_project, label_execution_id, label_workflow_name) (kube_pod_labels{label_domain!="",label_project!="",label_execution_id!="",label_workflow_name!=""}) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase="Running"} == 1)) * on (namespace, pod) group_left(node) (kube_pod_info))
+          - record: execution_id:gpu_usage:sum
+            expr: sum by (label_project, label_domain, label_workflow_name, label_execution_id, node) (container_gpu_allocation * on (namespace, pod) group_left(label_domain, label_project, label_execution_id, label_workflow_name) (kube_pod_labels{label_domain!="", label_project!="", label_execution_id!="", label_workflow_name!=""}) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase="Running"} == 1)) * on (namespace, pod) group_left(node) (kube_pod_info))
+          #- record: execution_id:pvc_usage:sum
+          #  expr: sum by (label_project, label_domain, label_workflow_name, label_execution_id, persistentvolume) (pod_pvc_allocation) * on (namespace, pod) group_left(label_domain, label_project, label_execution_id, label_workflow_name) (kube_pod_labels{label_domain!="", label_project!="", label_execution_id!="", label_workflow_name!=""}) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase="Running"} == 1)) * on (namespace, pod) group_left(node) (kube_pod_info)
+      # Aggregate the above into visible metrics
+      - name: cost_rollup_15m
+        interval: 15m
+        rules:
+          - record: execution_id:mem_cost:sum15m
+            expr: >
+              sum by (label_execution_id, label_domain, label_project, label_workflow_name) (
+              (
+                sum_over_time(
+                  execution_id:mem_usage_bytes_total:sum[15m:15s]
+                )
+                / (1024.0 * 1024.0 * 1024.0 * 60.0)  # Convert bytes to GB and divide by 60 for cost normalization (there are 60 15-second intervals in 15 minutes)
+                ) * on (node) group_left() (
+                  avg by (node) (node_ram_hourly_cost / 4.0  # Convert hourly cost to 15-minute cost
+                  )
+                )
+              )
+            labels:
+              type: Memory
+          - record: execution_id:cpu_cost:sum15m
+            expr: >
+              sum by (label_execution_id, label_domain, label_project, label_workflow_name) (
+              (
+                sum_over_time(
+                    execution_id:cpu_usage:sum[15m:15s]) / 60.0  # Divide by 60 for cost normalization (there are 60 15-second intervals in 15 minutes)
+                )
+                * on (node) group_left() (
+                  avg by (node) (node_cpu_hourly_cost / 4.0  # Convert hourly cost to 15-minute cost
+                  )
+                )
+              )
+            labels:
+              type: CPU
+          - record: execution_id:gpu_cost:sum15m
+            expr: >
+              sum by (label_execution_id, label_domain, label_project, label_workflow_name) (
+              (
+                sum_over_time(
+                  execution_id:gpu_usage:sum[15m:15s])/ 60.0  # Normalize GPU usage to per-minute cost
+                )
+                * on (node) group_left() (
+                  avg by (node) (node_gpu_hourly_cost / 4.0  # Convert hourly GPU cost to 15-minute cost
+                  )
+                )
+              )
+            labels:
+              type: GPU
+          #- record: execution_id:pvc_cost:sum15m
+          #  expr: >
+          #    sum by (label_execution_id, label_domain, label_project, label_workflow_name) (
+          #    (
+          #      sum_over_time(
+          #        execution_id:pvc_usage:sum[15m:15s])/ (1024.0 * 1024.0 * 1024.0 * 60.0)  # Convert bytes to GB and divide by 60 for cost normalization (there are 60 15-second intervals in 15 minutes)
+          #      )
+          #      * on (persistentvolume) group_left() (
+          #        avg by (persistentvolume) (pv_hourly_cost / 4.0  # Convert hourly PV cost to 15-minute cost
+          #        )
+          #      )
+          #    )
+      {{- end }}
       - name: rollup
         rules:
         - record: instance_type:kube_node_labels:sum

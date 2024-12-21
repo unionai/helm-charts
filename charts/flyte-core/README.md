@@ -1,6 +1,6 @@
 # flyte-core
 
-![Version: 2024.12.01](https://img.shields.io/badge/Version-2024.12.01-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
+![Version: 2024.12.2](https://img.shields.io/badge/Version-2024.12.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square)
 
 A Helm chart for Flyte core
 
@@ -8,7 +8,7 @@ A Helm chart for Flyte core
 
 | Repository | Name | Version |
 |------------|------|---------|
-| file://../flyteagent | flyteagent(flyteagent) | 2024.12.01 |
+| file://../flyteagent | flyteagent(flyteagent) | 2024.12.2 |
 
 ### Flyte INSTALLATION:
 - [Install helm 3](https://helm.sh/docs/intro/install/)
