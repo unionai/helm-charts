@@ -1,0 +1,41 @@
+{{- if .Values.clusterresourcesync.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-clusterresourcesync-config
+  namespace: {{ .Release.Namespace }}
+  labels: {{ include "clusterresourcesync.labels" . | nindent 4 }}
+data:
+  {{- with .Values.clusterresourcesync.config }}
+  cluster_resources.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.config.admin }}
+  admin.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.config.domain }}
+  domain.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.config.namespace_config }}
+  namespace_config.yaml: | {{ toYaml . | nindent 4 }}
+  {{- end }}
+
+  {{- with .Values.config.clusters }}
+  clusters.yaml: |
+    clusters:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clusterresource-template
+  namespace: {{ .Release.Namespace }}
+  labels: {{ include "clusterresourcesync.labels" . | nindent 4 }}
+data:
+{{- range .Values.clusterresourcesync.templates }}
+  {{ .key }}.yaml: | {{ .value | nindent 4 }}
+{{- end }}

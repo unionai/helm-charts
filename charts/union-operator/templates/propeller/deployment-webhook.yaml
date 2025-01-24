@@ -1,0 +1,162 @@
+# Create an empty secret that the first propeller pod will populate
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flyte-pod-webhook
+  namespace: {{ .Release.Namespace }}
+type: Opaque
+---
+# Create the actual deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flytepropeller-webhook
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: flytepropeller-webhook
+spec:
+  selector:
+    matchLabels:
+      app: flytepropeller-webhook
+  template:
+    metadata:
+      labels:
+        app: flytepropeller-webhook
+        app.kubernetes.io/name: flytepropeller-webhook
+        {{- with .Values.flytepropellerwebhook.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/propeller/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.flytepropellerwebhook.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.integration.prometheus }}
+        prometheus.io/scrape: "true"
+        {{- end }}
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: {{ index .Values.config.core.propeller "prof-port" | quote }}
+    spec:
+      {{- with .Values.flytepropellerwebhook.securityContext }}
+      securityContext: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      serviceAccountName: flytepropeller-webhook-system
+      {{- if .Values.flytepropellerwebhook.priorityClassName }}
+      priorityClassName: {{ .Values.flytepropellerwebhook.priorityClassName }}
+      {{- end }}
+      initContainers:
+        - name: generate-secrets
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
+          imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
+          command:
+            - flytepropeller
+          args:
+            - webhook
+            - init-certs
+            - --config
+            - /etc/flyte/config/*.yaml
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+        {{- if .Values.flytepropellerwebhook.podEnv -}}
+        {{- with .Values.flytepropellerwebhook.podEnv -}}
+        {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+      containers:
+        - name: webhook
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
+          imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
+          command:
+            - flytepropeller
+          args:
+            - webhook
+            - --config
+            - /etc/flyte/config/*.yaml
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+        {{- if .Values.flytepropellerwebhook.podEnv -}}
+        {{- with .Values.flytepropellerwebhook.podEnv -}}
+        {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- end }}
+          ports:
+            - containerPort: 9443
+            - containerPort: {{ index .Values.config.core.propeller "prof-port" }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          {{- with .Values.flytepropellerwebhook.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+              readOnly: true
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+      volumes:
+        - name: config-volume
+          configMap:
+            name: flyte-propeller-config
+        - name: webhook-certs
+          secret:
+            secretName: flyte-pod-webhook
+      {{- with .Values.flytepropellerwebhook.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flytepropeller-webhook
+  namespace: {{ .Release.Namespace }}
+  {{- with .Values.flytepropellerwebhook.service.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    app: flytepropeller-webhook
+  ports:
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 9443
