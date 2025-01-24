@@ -224,7 +224,7 @@ access the storage is injected.
 Health check URL helpers
 */}}
 {{- define "prometheus.health.url" -}}
-http://union-operator-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
+http://{{ template "kube-prometheus-stack.fullname" . }}-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
