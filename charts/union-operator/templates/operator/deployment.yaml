@@ -15,16 +15,14 @@ spec:
     metadata:
       annotations:
         configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
-      {{- with .Values.operator.podAnnotations }}
+        {{- with .Values.operator.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
-      labels:
-        {{- include "operator.selectorLabels" . | nindent 8 }}
-        {{- with .Values.operator.podLabels }}
-          {{- toYaml . | nindent 8 }}
         {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "operator.selectorLabels" . | nindent 6 }}
     spec:
-      priorityClassName: {{ .Values.operator.priorityClassName | default "system-cluster-critical" }}
+      priorityClassName: {{ .Values.operator.priorityClassName }}
       {{- with .Values.operator.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -40,7 +38,7 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
       containers:
-        - name: {{ .Chart.Name }}
+        - name: oeprator
           securityContext:
             {{- toYaml .Values.operator.securityContext | nindent 12 }}
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
@@ -54,29 +52,7 @@ spec:
             - mountPath: /etc/union/secret
               name: secret-volume
           env:
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "union-operator.fullname" . }}-cluster-name
-                  key: cluster_name
-            - name: DEPLOYMENT_NAME
-              value: {{ include "union-operator.fullname" . }}
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
+            {{- include "global.podEnvVars" . | nindent 10 }}
             {{- with .Values.operator.podEnv }}
             {{- toYaml . | nindent 10 }}
             {{- end }}

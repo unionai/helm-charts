@@ -15,14 +15,13 @@ spec:
   template:
     metadata:
       annotations:
-      {{- with .Values.proxy.podAnnotations }}
+        configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.proxy.podAnnotations }}
         {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
       labels:
         {{- include "proxy.selectorLabels" . | nindent 8 }}
-        {{- with .Values.proxy.podLabels }}
-          {{- toYaml . | nindent 8 }}
-        {{- end }}
     spec:
       volumes:
         - name: config-volume
@@ -32,7 +31,7 @@ spec:
                 name: {{ include "union-operator.fullname" . }}
             - configMap:
                 name: flyte-clusterresourcesync-config
-      priorityClassName: {{ .Values.proxy.priorityClassName | default "system-cluster-critical" }}
+      priorityClassName: {{ .Values.proxy.priorityClassName }}
       {{- with .Values.proxy.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -41,10 +40,10 @@ spec:
       securityContext:
         {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
       containers:
-        - name: {{ .Chart.Name }}-proxy
+        - name: operator-proxy
           securityContext:
             {{- toYaml .Values.proxy.securityContext | nindent 12 }}
-          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
           imagePullPolicy: {{ .Values.image.union.pullPolicy }}
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -68,24 +67,9 @@ spec:
               containerPort: 10254
               protocol: TCP
           env:
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
+            {{- include "global.podEnvVars" . | nindent 10 }}
             {{- with .Values.proxy.podEnv }}
-            {{- toYaml . | nindent 12 }}
+            {{- toYaml . | nindent 10 }}
             {{- end }}
       {{- with .Values.proxy.nodeSelector }}
       nodeSelector:

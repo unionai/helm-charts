@@ -48,8 +48,27 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropeller.podLabels" -}}
+{{ include "global.podLabels" . }}
 {{ include "flytepropeller.labels" . }}
 {{- with .Values.flytepropeller.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "flytepropellerwebhook.selectorLabels" -}}
+app.kubernetes.io/name: flytepropellerwebhook
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "flytepropellerwebhook.labels" -}}
+{{ include "flytepropellerwebhook.selectorLabels" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "flytepropellerwebhook.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "flytepropellerwebhook.labels" . }}
+{{- with .Values.flytepropellerwebhook.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
@@ -196,11 +215,11 @@ plugins:
       {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
 {{- end -}}
 
-{{- define "extraPodEnvVars" -}}
+{{- define "additionalPodEnvVars" -}}
 plugins:
   k8s:
     default-env-vars:
-      {{ .Values.extraPodEnvVars | toYaml | indent 6 }}
+      {{ .Values.additionalPodEnvVars | toYaml | indent 6 }}
 {{- end -}}
 
 {{/*
@@ -209,7 +228,7 @@ key authentication is used, the appropriate environment variables to
 access the storage is injected.
 */}}
 {{- define "k8s.plugins" -}}
-{{- $extra := include "extraPodEnvVars" . | fromYaml }}
+{{- $extra := include "additionalPodEnvVars" . | fromYaml }}
 {{- $plugins := merge .Values.config.k8s $extra }}
 {{- if and (.Values.storage.injectPodEnvVars) (eq .Values.storage.authType "accesskey") }}
 {{- $injected := include "k8s.default-env-vars" . | fromYaml }}
@@ -233,4 +252,52 @@ http://flytepropeller.{{ .Release.Namespace }}.svc.cluster.local:10254
 
 {{- define "proxy.health.url" -}}
 http://union-operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
+{{- end -}}
+
+{{/*
+Global pod annotations
+*/}}
+{{- define "global.podAnnotations" -}}
+{{- if .Values.monitoring.prometheus }}
+prometheus.io/scrape: "true"
+{{- end }}
+prometheus.io/path: "/metrics"
+prometheus.io/port: "10254"
+{{- with .Values.additionalPodAnnotations }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Global pod labels
+*/}}
+{{- define "global.podLabels" -}}
+{{- with .Values.additionalPodLabels }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Global pod environment variables
+*/}}
+{{- define "global.podEnvVars" -}}
+- name: POD_NAME
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.name
+- name: POD_NAMESPACE
+  valueFrom:
+    fieldRef:
+      fieldPath: metadata.namespace
+- name: GOMEMLIMIT
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.memory
+- name: GOMAXPROCS
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.cpu
+{{- with .Values.additionalPodEnvVars }}
+{{- toYaml .}}
+{{- end }}
 {{- end -}}
