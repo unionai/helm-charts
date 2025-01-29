@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "union-operator.fullname" . }}-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "proxy.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.proxy.autoscaling.enabled }}
+  replicas: {{ .Values.proxy.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "proxy.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.proxy.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "proxy.selectorLabels" . | nindent 8 }}
+    spec:
+      volumes:
+        - name: config-volume
+          projected:
+            sources:
+            - configMap:
+                name: {{ include "union-operator.fullname" . }}
+            - configMap:
+                name: flyte-clusterresourcesync-config
+      priorityClassName: {{ .Values.proxy.priorityClassName }}
+      {{- with .Values.proxy.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "proxy.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
+      containers:
+        - name: operator-proxy
+          securityContext:
+            {{- toYaml .Values.proxy.securityContext | nindent 12 }}
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            {{- toYaml .Values.proxy.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /etc/union/config
+              name: config-volume
+          args:
+            - operator
+            - proxy
+            - --config
+            - /etc/union/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          env:
+            {{- include "global.podEnvVars" . | nindent 10 }}
+            {{- with .Values.proxy.podEnv }}
+            {{- toYaml . | nindent 10 }}
+            {{- end }}
+      {{- with .Values.proxy.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.proxy.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

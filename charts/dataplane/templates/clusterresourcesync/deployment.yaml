@@ -1,0 +1,84 @@
+{{- if .Values.clusterresourcesync.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syncresources
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "clusterresourcesync.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "clusterresourcesync.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/clusterresourcesync/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.clusterresourcesync.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        {{- include "clusterresourcesync.podLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - command:
+            - clusterresource
+            - --config
+            - /etc/flyte/config/*.yaml
+            - clusterresource
+            - run
+          env:
+            {{- include "global.podEnvVars" . | nindent 10 }}
+            {{- if .Values.clusterresourcesync.podEnv -}}
+            {{- with .Values.clusterresourcesync.podEnv -}}
+            {{- toYaml . | nindent 10 }}
+            {{- end }}
+            {{- end }}
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag }}"
+          imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
+          name: sync-cluster-resources
+          {{- with .Values.clusterresourcesync.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+          {{- if .Values.secrets.admin.enabled }}
+            - name: auth
+              mountPath: /etc/union/secret
+          {{- end }}
+            - name: resource-templates
+              mountPath: /etc/flyte/clusterresource/templates
+            - name: config-volume
+              mountPath: /etc/flyte/config
+          {{- if gt (len .Values.config.clusters.labelClusterMap) 0 }}
+            - mountPath: /var/run/credentials
+              name: cluster-secrets
+          {{- end }}
+          ports:
+            - containerPort: 10254
+      serviceAccountName: {{ .Values.clusterresourcesync.serviceAccountName }}
+      volumes:
+        - configMap:
+            name: clusterresource-template
+          name: resource-templates
+        - configMap:
+            name: flyte-clusterresourcesync-config
+          name: config-volume
+        {{- if gt (len .Values.config.clusters.labelClusterMap) 0 }}
+        - name: cluster-secrets
+          secret:
+            secretName: cluster-credentials
+        {{- end }}
+        {{- if .Values.clusterresourcesync.config.cluster_resources.standaloneDeployment }}
+        {{- if .Values.secrets.admin.enabled }}
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+        {{- end }}
+        {{- end }}
+      {{- with .Values.clusterresourcesync.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- end }}

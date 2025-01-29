@@ -1,0 +1,715 @@
+nameOverride: ""
+fullnameOverride: ""
+host: "foo.unionai.cloud"
+clusterName: ""
+orgName: ""
+provider: "metal"
+
+additionalPodEnvVars: { }
+additionalPodAnnotations: { }
+additionalPodLabels: { }
+
+# TODO(rob): Figure out what a good general non-provider specific value would be
+#   for these.
+userRoleAnnotationKey: "eks.amazonaws.com/role-arn"
+userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
+
+clusterresourcesync:
+  enabled: true
+  unionCallbackEnabled: true
+  # service_account_name: clustersync-resource
+  serviceAccountName: ""
+  podAnnotations: { }
+  podEnv: { }
+  nodeSelector: { }
+  config:
+    cluster_resources:
+      standaloneDeployment: true
+      customData:
+        - production:
+            - projectQuotaCpu:
+                value: "4096"
+            - projectQuotaMemory:
+                value: "2Ti"
+            - projectQuotaNvidiaGpu:
+                value: "256"
+            - defaultUserRoleKey:
+                value: '{{ tpl .Values.userRoleAnnotationKey . }}'
+            - defaultUserRoleValue:
+                value: '{{ tpl .Values.userRoleAnnotationValue . }}'
+        - staging:
+            - projectQuotaCpu:
+                value: "4096"
+            - projectQuotaMemory:
+                value: "2Ti"
+            - projectQuotaNvidiaGpu:
+                value: "256"
+            - defaultUserRoleKey:
+                value: '{{ tpl .Values.userRoleAnnotationKey . }}'
+            - defaultUserRoleValue:
+                value: '{{ tpl .Values.userRoleAnnotationValue . }}'
+        - development:
+            - projectQuotaCpu:
+                value: "4096"
+            - projectQuotaMemory:
+                value: "2Ti"
+            - projectQuotaNvidiaGpu:
+                value: "256"
+            - defaultUserRoleKey:
+                value: '{{ tpl .Values.userRoleAnnotationKey . }}'
+            - defaultUserRoleValue:
+                value: '{{ tpl .Values.userRoleAnnotationValue . }}'
+      clusterName: '{{ include "getClusterName" . }}'
+    clusterResourcesPrivate:
+      app:
+        isSelfServe: false
+    union:
+      connection:
+        host: 'dns:///{{ tpl .Values.host . }}'
+      auth:
+        type: ClientSecret
+        clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
+        clientSecretLocation: /etc/union/secret/client_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+  secretName: union-base
+  templates:
+    # -- Template for namespaces resources
+    - key: a_namespace.yaml
+      value: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: {{ namespace }}
+          labels:
+            union.ai/namespace-type: flyte
+        spec:
+          finalizers:
+          - kubernetes
+
+    # -- Patch default service account
+    - key: b_default_service_account.yaml
+      value: |
+        apiVersion: v1
+        kind: ServiceAccount
+        metadata:
+          name: default
+          namespace: {{ namespace }}
+          annotations:
+            {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}
+
+    - key: c_project_resource_quota.yaml
+      value: |
+        apiVersion: v1
+        kind: ResourceQuota
+        metadata:
+          name: project-quota
+          namespace: {{ namespace }}
+        spec:
+          hard:
+            limits.cpu: {{ projectQuotaCpu }}
+            limits.memory: {{ projectQuotaMemory }}
+            requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+  resources:
+    limits:
+      cpu: "1"
+      memory: "500Mi"
+    requests:
+      cpu: "500m"
+      memory: "100Mi"
+
+config:
+  # -- Admin Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/subworkflow/launchplan#AdminConfig)
+  admin:
+    event:
+      type: admin
+      rate: 500
+      capacity: 1000
+    admin:
+      endpoint: 'dns:///{{ tpl .Values.host . }}'
+      clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
+      clientSecretLocation: /etc/union/secret/client_secret
+      insecure: false
+  authorizer:
+    type: noop
+  # -- Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config)
+  # Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config)
+  catalog:
+    catalog-cache:
+      endpoint: datacatalog:89
+      type: datacatalog
+      insecure: true
+  catalog_cache: { }
+  clusters:
+    labelClusterMap: { }
+    clusterConfigs: [ ]
+  # -- Copilot configuration
+  copilot:
+    plugins:
+      k8s:
+        # -- Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig)
+        co-pilot:
+          name: flyte-copilot-
+          image: "{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}"
+          start-timeout: 30s
+  # -- Core propeller configuration
+  core:
+    # -- follows the structure specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config).
+    propeller:
+      rawoutput-prefix: "s3://{{ .Values.storage.bucketName }}"
+      metadata-prefix: metadata/propeller
+      workers: 4
+      max-workflow-retries: 30
+      workflow-reeval-duration: 30s
+      downstream-eval-duration: 30s
+      limit-namespace: "all"
+      prof-port: 10254
+      metrics-prefix: flyte
+      enable-admin-launcher: true
+      leader-election:
+        lock-config-map:
+          name: propeller-leader
+          namespace: union
+        enabled: true
+        lease-duration: 15s
+        renew-deadline: 10s
+        retry-period: 2s
+      queue:
+        type: batch
+        batching-interval: 2s
+        batch-size: -1
+        queue:
+          type: maxof
+          rate: 100
+          capacity: 1000
+          base-delay: 5s
+          max-delay: 120s
+        sub-queue:
+          type: bucket
+          rate: 10
+          capacity: 100
+      literal-offloading-config:
+        enabled: true
+    webhook:
+      certDir: /etc/webhook/certs
+      serviceName: flyte-pod-webhook
+    # -- For Workflow store use configuration [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/workflowstore#Config)
+    #
+  # -- Datacatalog server config
+  datacatalogServer:
+    datacatalog:
+      storage-prefix: metadata/datacatalog
+      metrics-scope: datacatalog
+      profiler-port: 10254
+      heartbeat-grace-period-multiplier: 3
+      max-reservation-heartbeat: 30s
+    application:
+      grpcPort: 8089
+      httpPort: 8080
+      grpcServerReflection: true
+  # -- Domains configuration for Flyte projects. This enables the specified number of domains across all projects in Flyte.
+  domain:
+    domains:
+      - id: development
+        name: development
+      - id: staging
+        name: staging
+      - id: production
+        name: production
+  enabled_plugins:
+    # -- Tasks specific configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#GetConfig)
+    tasks:
+      # -- Plugins configuration, [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#TaskPluginConfig)
+      task-plugins:
+        # -- [Enabled Plugins](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/config#Config). Enable sagemaker*, athena if you install the backend
+        # plugins
+        enabled-plugins:
+          - container
+          - sidecar
+          - k8s-array
+          - agent-service
+          - echo
+        default-for-task-types:
+          container: container
+          sidecar: sidecar
+          container_array: k8s-array
+          # -- Uncomment to enable task type that uses Flyte Agent
+          # bigquery_query_job_task: agent-service
+  # -- Kubernetes specific Flyte configuration
+  k8s:
+    plugins:
+      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+      k8s:
+        default-env-vars: [ ]
+        default-cpus: 100m
+        default-memory: 100Mi
+  logger:
+    show-source: true
+    level: 4
+  operator:
+    enabled: true
+    apps:
+      enabled: false
+    syncClusterConfig:
+      enabled: false
+    enableTunnelService: true
+    clusterId:
+      organization: "{{ .Values.orgName }}"
+    clusterData:
+      appId: "{{ .Values.secrets.admin.clientId }}"
+      cloudHostName: "{{ .Values.host }}"
+      # TODO: make me configurable.  This is not just the prefix in our current helm charts.
+      metadataBucketPrefix: "s3://"
+      bucketName: "{{ .Values.storage.bucketName }}"
+      bucketRegion: "{{ .Values.storage.region }}"
+      userRoleKey: "{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"
+      userRole: "{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"
+      # TODO: this will most likely be stow/custom for everything I do here.
+      storageType: "{{ .Values.provider }}"
+      gcpProjectId: "{{ .Values.storage.gcp.projectId }}"
+    collectUsages:
+      enabled: true
+    dependenciesHeartbeat:
+      propeller:
+        endpoint: '{{ include "propeller.health.url" . }}'
+      proxy:
+        endpoint: '{{ include "proxy.health.url" . }}'
+      prometheus:
+        endpoint: '{{ include "prometheus.health.url" . }}'
+    # TODO: Remove me.  I need to get the included text and dump it.
+    customStorageConfig: "" # this is another thing that needs conditional work
+  qubole: { }
+  remoteData:
+    remoteData:
+      region: "us-east-1"
+      scheme: "local"
+      signedUrls:
+        durationMinutes: 3
+  # -- Resource manager configuration
+  resource_manager:
+    # -- resource manager configuration
+    propeller:
+      resourcemanager:
+        type: noop
+  # Refer to the full [structure](https://pkg.go.dev/github.com/lyft/flyteadmin@v0.3.37/pkg/runtime/interfaces#ApplicationConfig) for documentation.
+  schedulerConfig:
+    scheduler:
+      metricsScope: "flyte:"
+      profilerPort: 10254
+  # -- Section that configures how the Task logs are displayed on the UI. This has to be changed based on your actual logging provider.
+  # Refer to [structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/logs#LogConfig) to understand how to configure various
+  # logging engines
+  task_logs:
+    plugins:
+      logs:
+        kubernetes-enabled: false
+        # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
+        cloudwatch-enabled: false
+  # -- Task default resources configuration
+  # Refer to the full [structure](https://pkg.go.dev/github.com/lyft/flyteadmin@v0.3.37/pkg/runtime/interfaces#TaskResourceConfiguration).
+  task_resource_defaults:
+    # -- Task default resources parameters
+    task_resources:
+      defaults:
+        cpu: 100m
+        memory: 500Mi
+      limits:
+        cpu: 2
+        memory: 1Gi
+        # Maybe `0`?
+        gpu: 1
+  union:
+    connection:
+      host: "dns:///{{ .Values.host }}"
+    auth:
+      type: ClientSecret
+      clientId: "{{ .Values.secrets.admin.clientId }}"
+      clientSecretLocation: /etc/union/secret/client_secret
+      authorizationMetadataKey: "flyte-authorization"
+      tokenRefreshWindow: 5m
+
+databricks:
+  enabled: false
+  plugin_config: { }
+
+dcgmExporter:
+  arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
+  serviceAccount:
+    create: true
+    annotations: { }
+    name: "dcgm-exporter-system"
+  podSecurityContext: { }
+  securityContext:
+    runAsNonRoot: false
+    runAsUser: 0
+    privileged: true
+    capabilities:
+      add: [ "SYS_ADMIN" ]
+  affinity: { }
+  tolerations: { }
+  resources:
+    limits:
+      cpu: 100m
+      ephemeral-storage: 500Mi
+      memory: 400Mi
+    requests:
+      cpu: 100m
+      ephemeral-storage: 500Mi
+      memory: 128Mi
+  kubeletPath: "/var/lib/kubelet/pod-resources"
+  extraHostVolumes:
+    - name: nvidia-install-dir-host
+      hostPath: /home/kubernetes/bin/nvidia
+  extraVolumeMounts:
+    - name: nvidia-install-dir-host
+      mountPath: /usr/local/nvidia
+      readOnly: true
+
+flyteagent:
+  enabled: false
+  plugin_config: { }
+
+flytepropeller:
+  enabled: true
+  priorityClassName: "system-cluster-critical"
+  # -- Replicas count for Flytepropeller deployment
+  replicaCount: 1
+  # -- Default resources requests and limits for Flytepropeller deployment
+  resources:
+    limits:
+      cpu: "1"
+      ephemeral-storage: 500Mi
+      memory: "2Gi"
+    requests:
+      cpu: "1"
+      ephemeral-storage: 500Mi
+      memory: "2Gi"
+
+  cacheSizeMbs: 0
+
+  # -- Default regex string for searching configuration files
+  configPath: /etc/flyte/config/*.yaml
+
+  # -- Configuration for service accounts for FlytePropeller
+  serviceAccount:
+    # -- Should a service account be created for FlytePropeller
+    create: true
+    # -- Annotations for ServiceAccount attached to FlytePropeller pods
+    annotations: { }
+    # -- ImapgePullSecrets to automatically assign to the service account
+    imagePullSecrets: [ ]
+  # -- Labels for the Flytepropeller pods
+  podLabels: { }
+  # -- Annotations for Flytepropeller pods
+  podAnnotations: { }
+  # -- nodeSelector for Flytepropeller deployment
+  nodeSelector: { }
+  # -- tolerations for Flytepropeller deployment
+  tolerations: [ ]
+  # -- affinity for Flytepropeller deployment
+  affinity: { }
+  # -- extra arguments to pass to propeller.
+  extraArgs: { }
+
+  # TODO: merge volumes and volume mounts
+  additionalVolumeMounts: { }
+  additionalVolumes: { }
+
+  additionalContainers: { }
+  terminationMessagePolicy: ""
+
+  service:
+    enabled: true
+    additionalPorts:
+      - name: fasttask
+        port: 15605
+        targetPort: 15605
+        protocol: TCP
+
+  podEnv: { }
+
+flytepropellerwebhook:
+  # -- enable or disable secrets webhook
+  enabled: true
+  # -- Replicas
+  replicaCount: 1
+  # -- Sets priorityClassName for webhook pod
+  priorityClassName: ""
+  # -- Configuration for service accounts for the webhook
+  serviceAccount:
+    # -- Should a service account be created for the webhook
+    create: true
+    # -- ImagePullSecrets to automatically assign to the service account
+    imagePullSecrets: []
+
+  # -- Service settings for the webhook
+  service:
+    annotations:
+      projectcontour.io/upstream-protocol.h2c: grpc
+    type: ClusterIP
+
+  # -- Annotations for webhook pods
+  podAnnotations: {}
+  # -- Additional webhook container environment variables
+  podEnv: {}
+  # -- Labels for webhook pods
+  podLabels: {}
+  # -- nodeSelector for webhook deployment
+  nodeSelector: {}
+  # -- Sets securityContext for webhook pod(s).
+  securityContext:
+    fsGroup: 65534
+    runAsNonRoot: true
+    runAsUser: 1001
+    fsGroupChangePolicy: "Always"
+    seLinuxOptions:
+      type: spc_t
+
+  resources:
+    requests:
+      cpu: 200m
+      ephemeral-storage: 500Mi
+      memory: 500Mi
+
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
+
+image:
+  tunnel:
+    repository: cloudflare/cloudflared
+    tag: 2024.6.1
+    pullPolicy: IfNotPresent
+  union:
+    repository: public.ecr.aws/p0i0a9q8/unionoperator
+    tag: 2025.01.0
+    pullPolicy: IfNotPresent
+  kubeStateMetrics:
+    repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+    tag: v2.11.0
+    pullPolicy: IfNotPresent
+  dcgmExporter:
+    repository: nvcr.io/nvidia/k8s/dcgm-exporter
+    tag: 3.1.7-3.1.4-ubuntu20.04
+    pullPolicy: IfNotPresent
+  flytecopilot:
+    repository: "cr.flyte.org/flyteorg/flytecopilot"
+    tag: "v1.14.1"
+    pullPolicy: IfNotPresent
+
+integration:
+  spark: false
+  ray: false
+  databricks: false
+
+monitoring:
+  kubeStateMetrics:
+    enabled: false
+  dcgmExporter:
+    enabled: false
+  prometheus:
+    enabled: true
+
+objectStore:
+  service:
+    httpPort: 8080
+    grpcPort: 8089
+
+operator:
+  serviceAccount:
+    create: true
+    name: operator-system
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 80
+    # targetMemoryUtilizationPercentage: 80
+  replicas: 1
+  podAnnotations: { }
+  podLabels: { }
+  priorityClassName: ""
+  imagePullSecrets: { }
+  podEnv: { }
+  nodeSelector: { }
+  tolerations: [ ]
+  affinity: { }
+  podSecurityContext: { }
+  enableTunnelService: true
+  secretName: union-secret-auth
+  securityContext: { }
+  resources:
+    limits:
+      cpu: "1"
+      memory: "500Mi"
+    requests:
+      cpu: "500m"
+      memory: "100Mi"
+
+prometheus:
+  additionalPrometheusRulesMap: { }
+  #  rule-name:
+  #    groups:
+  #    - name: my_group
+  #      rules:
+  #      - record: my_record
+  #        expr: 100 * my_record
+
+  nameOverride: ""
+
+  fullnameOverride: "union"
+
+  namespaceOverride: "union"
+
+  nodeExporter:
+    enabled: false
+
+  defaultRules:
+    create: false
+    rules:
+      alertmanager: false
+      etcd: false
+      configReloaders: false
+      general: false
+      k8sContainerCpuUsageSecondsTotal: false
+      k8sContainerMemoryCache: false
+      k8sContainerMemoryRss: false
+      k8sContainerMemorySwap: false
+      k8sContainerResource: false
+      k8sContainerMemoryWorkingSetBytes: false
+      k8sPodOwner: false
+      kubeApiserverAvailability: false
+      kubeApiserverBurnrate: false
+      kubeApiserverHistogram: false
+      kubeApiserverSlos: false
+      kubeControllerManager: false
+      kubelet: false
+      kubeProxy: false
+      kubePrometheusGeneral: false
+      kubePrometheusNodeRecording: false
+      kubernetesApps: false
+      kubernetesResources: false
+      kubernetesStorage: false
+      kubernetesSystem: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeStateMetrics: false
+      network: false
+      node: false
+      nodeExporterAlerting: false
+      nodeExporterRecording: false
+      prometheus: false
+      prometheusOperator: false
+      windows: false
+
+  crds:
+    enabled: true
+  grafana:
+    enabled: false
+  prometheus:
+    enabled: true
+    prometheusSpec:
+      resources:
+        resources:
+          limits:
+            cpu: "1"
+            memory: "2Gi"
+          requests:
+            cpu: "1"
+            memory: "2Gi"
+
+  alertmanager:
+    enabled: false
+
+  prometheusOperator:
+    fullnameOverride: prometheus-operator
+
+  kube-state-metrics:
+    namespaceOverride: "kube-system"
+
+  prometheus-node-exporter:
+    namespaceOverride: "kube-system"
+
+  ingress:
+    enabled: false
+    annotations: { }
+    hosts: [ ]
+
+proxy:
+  serviceAccount:
+    create: true
+    name: proxy-system
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+#    targetMemoryUtilizationPercentage: 80
+  replicas: 1
+  podAnnotations: { }
+  podLabels: { }
+  priorityClassName: ""
+  imagePullSecrets: { }
+  podEnv: { }
+  nodeSelector: { }
+  tolerations: [ ]
+  affinity: { }
+  podSecurityContext: { }
+  enableTunnelService: true
+  secretName: union-secret-auth
+  securityContext: { }
+  resources:
+    limits:
+      cpu: "1"
+      memory: "500Mi"
+    requests:
+      cpu: "500m"
+      memory: "100Mi"
+
+resourcequota:
+  create: false
+
+secrets:
+  admin:
+    enabled: true
+    clientSecret: ""
+    clientId: "dataplane-operator"
+
+sparkoperator:
+  enabled: false
+  plugin_config: { }
+
+storage:
+  provider: "compat"
+  bucketName: ""
+  fastRegistrationBucketName: ""
+  region: us-east-1
+  disableSSL: false
+  authType: "accesskey"
+  accessKey: ""
+  secretKey: ""
+  endpoint: ""
+  enableMultiContainer: false
+  limits:
+    maxDownloadMBs: 10
+  cache:
+    maxSizeMBs: 0
+    targetGCPercent: 70
+  custom: { }
+  injectPodEnvVars: true
+  gcp:
+    projectId: ""
