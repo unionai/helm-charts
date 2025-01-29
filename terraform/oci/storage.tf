@@ -51,13 +51,3 @@ resource "oci_objectstorage_bucket" "union-dp-bucket" {
   access_type           = "NoPublicAccess"
   object_events_enabled = false
 }
-
-resource "oci_identity_policy" "union-storage-access" {
-  compartment_id = var.tenancy_ocid
-  description    = "Union storage access policy"
-  name           = "union-storage-access"
-  statements = [
-    "Allow group 'Default'/'union-storage' to manage buckets in compartment unionai",
-    "Allow group 'Default'/'union-storage' to manage objects in compartment unionai",
-  ]
-}
