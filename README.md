@@ -1,6 +1,6 @@
 # Union Helm Charts
 
-## Dataplane Installation
+## Dataplane
 
 ### Assumptions
 * You have a union organization that has already been created.

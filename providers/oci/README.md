@@ -43,7 +43,7 @@ This will create the supporting identity components, object storage, and a conta
 Using the compartment id output from the last step, get the cluster id:
 
 ```shell
-oci ce cluster list --compartment-id ocid1.compartment.oc1..aaaaaaaaui6wiv7u7j6ugc3qonmgpym7xfswpt6lf3pjzontkckhvcw53bmq --name union-dp | jq -r '[.data[] | select(."lifecycle-state" | contains("ACTIVE"))][0] | .id'
+oci ce cluster list --compartment-id <compartment_id> --name union-dp | jq -r '[.data[] | select(."lifecycle-state" | contains("ACTIVE"))][0] | .id'
 ```
 
 Then use the compartment id from the last step to update your kubernetes configuration file:
