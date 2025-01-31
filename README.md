@@ -15,11 +15,6 @@
 helm repo add unionai https://unionai.github.io/helm-charts/
 helm repo update
 ```
-* Install the dataplane CRDs.
-
-```shell
-helm install dataplane-crds unionai/dataplane-crds
-```
 
 * Generate a new client and client secret to communicate with your Union control plane by creating a new `AppSpec` configuration and using the `create app` command from `uctl`.
 
@@ -68,7 +63,8 @@ Initializing app config from file dataplane-operator.yaml
 
 ```shell
 helm dep update unionai/dataplane
-helm upgrade --install dataplane unionai/dataplane \
+helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds
+helm upgrade --install unionai-dataplane unionai/dataplane \
     --create-namespace \
     --namespace union \
     --set host="<control-plane.endpoint>" \
