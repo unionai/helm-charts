@@ -243,7 +243,7 @@ access the storage is injected.
 Health check URL helpers
 */}}
 {{- define "prometheus.health.url" -}}
-http://{{ template "kube-prometheus-stack.fullname" . }}-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
+http://union-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
@@ -251,7 +251,7 @@ http://flytepropeller.{{ .Release.Namespace }}.svc.cluster.local:10254
 {{- end -}}
 
 {{- define "proxy.health.url" -}}
-http://union-operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
+http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
 {{- end -}}
 
 {{/*
@@ -297,6 +297,13 @@ Global pod environment variables
   valueFrom:
     resourceFieldRef:
       resource: limits.cpu
+- name: CLUSTER_NAME
+  valueFrom:
+    secretKeyRef:
+      name: operator-cluster-name
+      key: cluster_name
+- name: DEPLOYMENT_NAME
+  value: operator
 {{- with .Values.additionalPodEnvVars }}
 {{- toYaml .}}
 {{- end }}

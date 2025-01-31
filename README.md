@@ -62,7 +62,6 @@ Initializing app config from file dataplane-operator.yaml
 * Install the dataplane.
 
 ```shell
-helm dep update unionai/dataplane
 helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds
 helm upgrade --install unionai-dataplane unionai/dataplane \
     --create-namespace \
@@ -74,7 +73,7 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
     --set secrets.admin.create=true \
     --set secrets.admin.clientId="<client.id>" \
     --set secrets.admin.clientSecret="<client.secret>" \
-    --values="<values.yaml>"
+    --values "<values.yaml>"
 ```
 
 Once deployed you can check to see if the cluster has been successfully registered to the control plane by running the `get cluster` command in `uctl`
