@@ -44,6 +44,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "flytepropeller.labels" -}}
 {{ include "flytepropeller.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -62,6 +63,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "flytepropellerwebhook.labels" -}}
 {{ include "flytepropellerwebhook.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -80,6 +82,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "clusterresourcesync.labels" -}}
 {{ include "clusterresourcesync.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -104,6 +107,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "operator.labels" -}}
 {{ include "operator.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -128,6 +132,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "proxy.labels" -}}
 {{ include "proxy.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -156,7 +161,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "kubeStateMetrics.podLabels" -}}
-{{ include "proxy.labels" . }}
+{{ include "kubeStateMetrics.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -181,7 +186,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "dcgmExporter.podLabels" -}}
-{{ include "proxy.labels" . }}
+{{ include "dcgmExporter.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
