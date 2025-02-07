@@ -263,11 +263,6 @@ http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
 Global pod annotations
 */}}
 {{- define "global.podAnnotations" -}}
-{{- if .Values.monitoring.prometheus }}
-prometheus.io/scrape: "true"
-{{- end }}
-prometheus.io/path: "/metrics"
-prometheus.io/port: "10254"
 {{- with .Values.additionalPodAnnotations }}
 {{- toYaml . }}
 {{- end }}
