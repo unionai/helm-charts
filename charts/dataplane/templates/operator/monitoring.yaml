@@ -1,111 +1,27 @@
 apiVersion: monitoring.coreos.com/v1
-kind: PrometheusRule
+kind: ServiceMonitor
 metadata:
-  name: union-default-rules
-  namespace: union
+  name: flytepropeller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
 spec:
-  groups:
-    - name: rollup
-      rules:
-        - record: instance_type:kube_node_labels:sum
-          expr: sum by (label_cloud_google_com_gke_accelerator, label_cloud_google_com_gke_preemptible, label_eks_amazonaws_com_capacity_type, label_flyte_org_node_role, label_node_group_name, label_node_kubernetes_io_instance_type, label_node_pool_name, label_topology_kubernetes_io_region) (kube_node_labels{job="kube-state-metrics"})
-        - record: deployment:kube_deployment_status_replicas_unavailable:sum
-          expr: sum by (deployment,namespace) (kube_deployment_status_replicas_unavailable{})
-        - record: daemonset:kube_daemonset_status_number_unavailable:sum
-          expr: sum by(daemonset,namespace)(kube_daemonset_status_number_unavailable{})
-        - record: phase:kube_pod_status_phase:sum
-          expr: sum by (label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
-        - record: namespace_phase:kube_pod_status_phase:sum
-          expr: sum by (namespace, label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
-        - record: union:kube_pod_container_status_restarts_total
-          expr: kube_pod_container_status_restarts_total * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
-        - record: union:kube_pod_container_status_last_terminated_reason
-          expr: kube_pod_container_status_last_terminated_reason{reason!="Completed"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
-        - record: namespace_type:pod:container_cpu_usage_seconds_total:count
-          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
-        - record: namespace:pod:container_cpu_usage_seconds_total:count
-          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
-        - record: container:container_cpu_usage_seconds_total:rate_sum
-          expr: sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) by (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
-        - record: container:container_memory_working_set_bytes:sum
-          expr: sum by (namespace, pod, container) (container_memory_working_set_bytes{image!="", job=~"kubernetes-cadvisor.*", name!=""}) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
-        - record: container:container_spec_memory_limit_bytes:sum
-          expr: sum by (namespace, pod, container) (container_spec_memory_limit_bytes{image!="", job=~"kubernetes-cadvisor.*", name!=""}) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
-        - record: container:cpu_utilization
-          expr: (sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) by (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum(container_spec_cpu_quota{container!=""}/container_spec_cpu_period{container!=""}) by (namespace, pod, container))
-        - record: container:memory_utilization
-          expr: (sum(container_memory_working_set_bytes{name!="", job=~"kubernetes-cadvisor.*"}) BY (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum(container_spec_memory_limit_bytes{name!=""} > 0) BY (namespace, pod, container))
-        - record: container:throttle_rate
-          expr: sum by (container, pod, namespace) (increase(container_cpu_cfs_throttled_periods_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum by (container, pod, namespace)(increase(container_cpu_cfs_periods_total[5m]))
-        - record: job:up:sum
-          expr: sum by (job) (up)
-        - record: job:up:count
-          expr: count by (job) (up)
-        - record: flyte_agent_request_latency_seconds:mean1m
-          expr: sum(rate(flyte_agent_request_latency_seconds_sum[1m])) / sum(rate(flyte_agent_request_latency_seconds_count[1m]))
-        - record: name:time_series_cardinality:count
-          expr: sum by (name)(label_replace(count by(__name__) ({__name__=~".+"}), "name", "$1", "__name__", "(.+)"))
-        - record: fluentbit_input_bytes_total:sum
-          expr: sum(fluentbit_input_bytes_total)
-        - record: fluentbit_output_dropped_records_total:sum
-          expr: sum(fluentbit_output_dropped_records_total)
-        - record: fluentbit_output_proc_bytes_total:sum
-          expr: sum(fluentbit_output_proc_bytes_total)
-        - record: instance:fluentbit_output_proc_records_total:rate_sum
-          expr: sum by(instance)(rate(fluentbit_output_proc_records_total[2m]))
-        - record: instance:node_vmstat_pgmajfault:rate5m
-          expr: rate(node_vmstat_pgmajfault{job="node-exporter"}[5m])
-        - record: k8s_client_request_total_unlabeled
-          expr: sum(k8s_client_request_total) without (code, method)
-        - record: k8s_client_request_latency_unlabeled_bucket
-          expr: sum(k8s_client_request_latency_bucket) without (verb)
-        - record: k8s_client_request_latency_unlabeled_count
-          expr: sum(k8s_client_request_latency_count) without (verb)
-        - record: k8s_client_request_latency_unlabeled_sum
-          expr: sum(k8s_client_request_latency_sum) without (verb)
-        - record: k8s_client_rate_limiter_latency_unlabeled_bucket
-          expr: sum(k8s_client_rate_limiter_latency_bucket) without (verb)
-        - record: k8s_client_rate_limiter_latency_unlabeled_count
-          expr: sum(k8s_client_rate_limiter_latency_count) without (verb)
-        - record: k8s_client_rate_limiter_latency_unlabeled_sum
-          expr: sum(k8s_client_rate_limiter_latency_sum) without (verb)
-        - record: node:common_labels
-          expr: node_uname_info{nodename=~".+"} * on(nodename) group_left(label_node_pool_name, label_node_kubernetes_io_instance_type, label_flyte_org_node_role, label_union_ai_node_role) count by (nodename, label_node_pool_name, label_node_kubernetes_io_instance_type, label_flyte_org_node_role, label_union_ai_node_role)(kube_node_labels{label_node_pool_name!~".*-secondary", job="kube-state-metrics"})
-        - record: node_nf_conntrack_entry_utilization
-          expr: node_nf_conntrack_entries / node_nf_conntrack_entries_limit
-        - record: instance:node_network_receive_bytes_total:sum
-          expr: sum by (instance) (node_network_receive_bytes_total)
-        - record: instance:node_network_transmit_bytes_total:sum
-          expr: sum by (instance) (node_network_transmit_bytes_total)
-        - record: instance:node_network_receive_errs_total:sum
-          expr: sum by (instance) (node_network_receive_errs_total)
-        - record: instance:node_network_transmit_errs_total:sum
-          expr: sum by (instance) (node_network_transmit_errs_total)
-        - record: instance:node_network_receive_packets_total:sum
-          expr: sum by (instance) (node_network_receive_packets_total)
-        - record: instance:node_network_transmit_packets_total:sum
-          expr: sum by (instance) (node_network_transmit_packets_total)
-        # Count active Flyte namespaces, useful for approximating active users in serverless environments
-        - record: namespace:flyte:total
-          expr: count(kube_namespace_labels{label_union_ai_namespace_type="flyte"})
-        # Count the number of reasons why Pods are terminating or waiting.
-        - record: node:namespace:kube_pod_container_status_last_terminated_reason:sum
-          expr: sum by (node, namespace, reason)(kube_pod_container_status_last_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
-        - record: node:namespace:kube_pod_container_status_terminated_reason:sum
-          expr: sum by (node, namespace, reason)(kube_pod_container_status_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
-        - record: node:namespace:kube_pod_container_status_waiting_reason:sum
-          expr: sum by (node, namespace, reason)(kube_pod_container_status_waiting_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
-        - record: node:kubelet_version:count
-          expr: count by (kubelet_version)(label_replace(kube_node_info, "kubelet_version", "$1", "kubelet_version", "v([0-9]+\\.[0-9]+).*"))
-        - record: node:kube_node_status_utilization
-          expr: 1 - (kube_node_status_allocatable{resource=~"cpu|memory|ephemeral_storage|nvidia_com_gpu"} / kube_node_status_capacity)
+  selector:
+    matchLabels:
+      platform.union.ai/service-group: {{ .Release.Name }}
+  namespaceSelector:
+    matchNames:
+      - "{{ .Release.Namespace }}"
+  endpoints:
+    - port: "debug"
+      path: "/metrics"
 ---
 {{- if .Values.integration.opencost -}}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: union-opencost-rules
-  namespace: union
+  namespace: {{ .Release.Namespace }}
 spec:
   groups:
     # Granular aggregations of cost
