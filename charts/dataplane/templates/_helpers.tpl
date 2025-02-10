@@ -220,7 +220,7 @@ plugins:
       {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
 {{- end -}}
 
-{{- define "additionalPodEnvVars" -}}
+{{- define "k8s.plugins.defaultEnvVariables" -}}
 plugins:
   k8s:
     default-env-vars:
@@ -233,7 +233,7 @@ key authentication is used, the appropriate environment variables to
 access the storage is injected.
 */}}
 {{- define "k8s.plugins" -}}
-{{- $extra := include "additionalPodEnvVars" . | fromYaml }}
+{{- $extra := include "k8s.plugins.defaultEnvVariables" . | fromYaml }}
 {{- $plugins := merge .Values.config.k8s $extra }}
 {{- if and (.Values.storage.injectPodEnvVars) (eq .Values.storage.authType "accesskey") }}
 {{- $injected := include "k8s.default-env-vars" . | fromYaml }}
@@ -304,7 +304,8 @@ Global pod environment variables
       key: cluster_name
 - name: DEPLOYMENT_NAME
   value: operator
-{{- with .Values.additionalPodEnvVars }}
-{{- toYaml .}}
+{{- range $k, $v := .Values.additionalPodEnvVars }}
+- name: {{ $k }}
+  value: {{ $v }}
 {{- end }}
 {{- end -}}
