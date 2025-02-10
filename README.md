@@ -76,6 +76,8 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
     --values "<values.yaml>"
 ```
 
+**Note: By default, Fluentbit and the [Grafana Loki](https://grafana.com/docs/loki/latest/setup/install/helm/) service backed by S3 (or compatible) storage is used to collect logs from containers running in the cluster.  To disable it set `loki.enable=false` on the command line or in the values file.**
+
 Once deployed you can check to see if the cluster has been successfully registered to the control plane by running the `get cluster` command in `uctl`
 
 ```shell
@@ -87,3 +89,4 @@ uctl get cluster
  ----------- ------- --------------- -----------
 1 rows
 ```
+
