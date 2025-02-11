@@ -37,6 +37,15 @@ Create chart name and version as used by the chart label.
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
+{{/*
+Adds custom PodSpec values.
+*/}}
+{{- define "additionalPodSpec" -}}
+{{- with .Values.additionalPodSpec }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
 {{- define "flytepropeller.selectorLabels" -}}
 app.kubernetes.io/name: flytepropeller
 app.kubernetes.io/instance: {{ .Release.Name }}
