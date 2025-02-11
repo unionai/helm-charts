@@ -4,10 +4,8 @@ Storage helpers.  This migrates all of the storage configurations to
 the stow based options to provide additional configuration flexibility.
 */}}
 {{- define "storage.base" -}}
-storage:
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
-  container: {{ .Values.storage.bucketName }}
   stow:
     kind: s3
     config:
@@ -27,6 +25,8 @@ storage:
 {{- end }}
 
 {{- define "storage" -}}
+storage:
+  container: {{ .Values.storage.bucketName }}
 {{- include "storage.base" .}}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
