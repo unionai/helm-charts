@@ -55,10 +55,6 @@ resource "oci_containerengine_node_pool" "union-dp-nodepool" {
       availability_domain = data.oci_identity_availability_domains.ads.availability_domains[0].name
       subnet_id           = oci_core_subnet.union-k8s-nodepool-subnet.id
     }
-
-    defined_tags = {
-      "unionai.access" : "storage"
-    }
   }
 
   node_shape_config {
