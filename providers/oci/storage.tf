@@ -2,20 +2,6 @@ data "oci_objectstorage_namespace" "union-namespace" {
   compartment_id = oci_identity_compartment.union-compartment.id
 }
 
-# We aren't actually using these tags, but I'm going to explore dynamic grouping
-# next.
-resource "oci_identity_tag_namespace" "unionai" {
-  compartment_id = oci_identity_compartment.union-compartment.id
-  description    = "Union namespace"
-  name           = "unionai"
-}
-
-resource "oci_identity_tag" "access" {
-  name             = "access"
-  description      = "Union access tagging"
-  tag_namespace_id = oci_identity_tag_namespace.unionai.id
-}
-
 resource "oci_identity_user" "union-storage-user" {
   compartment_id = var.tenancy_ocid
   description    = "Union object storage user"
@@ -57,7 +43,7 @@ resource "oci_identity_policy" "union-storage-access" {
   description    = "Union storage access policy"
   name           = "union-storage-access"
   statements = [
-    "Allow group 'Default'/'union-storage' to manage buckets in compartment unionai",
-    "Allow group 'Default'/'union-storage' to manage objects in compartment unionai",
+    "Allow group 'Default'/'union-storage' to manage buckets in compartment ${oci_identity_compartment.union-compartment.name}",
+    "Allow group 'Default'/'union-storage' to manage objects in compartment ${oci_identity_compartment.union-compartment.name}",
   ]
 }
