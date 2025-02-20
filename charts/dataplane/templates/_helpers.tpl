@@ -468,20 +468,24 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{- define "k8s.default-env-vars" -}}
-plugins:
-  k8s:
-    default-env-vars:
-      {{ include "var.FLYTE_AWS_ENDPOINT" . | indent 6 }}
-      {{ include "var.FLYTE_AWS_ACCESS_KEY_ID" . | indent 6 }}
-      {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
-{{- end -}}
-
 {{- define "k8s.plugins.defaultEnvVariables" -}}
 plugins:
   k8s:
     default-env-vars:
-      {{ .Values.additionalPodEnvVars | toYaml | indent 6 }}
+      {{- if and ($.Values.storage.injectPodEnvVars) (eq $.Values.storage.authType "accesskey") }}
+      {{ include "var.FLYTE_AWS_ENDPOINT" . | indent 6 }}
+      {{ include "var.FLYTE_AWS_ACCESS_KEY_ID" . | indent 6 }}
+      {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
+      {{- end }}
+      {{- range $k, $v := .Values.additionalPodEnvVars }}
+      - {{ $k }}: {{ $v }}
+      {{- end }}
+      {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
+      {{- range $kk, $vv := $configDevEnvVars }}
+      {{- range $k, $v := $vv }}
+      - {{ $k }}: {{ $v }}
+      {{- end }}
+      {{- end }}
 {{- end -}}
 
 {{/*
@@ -490,12 +494,8 @@ key authentication is used, the appropriate environment variables to
 access the storage is injected.
 */}}
 {{- define "k8s.plugins" -}}
-{{- $extra := include "k8s.plugins.defaultEnvVariables" . | fromYaml }}
-{{- $plugins := merge .Values.config.k8s $extra }}
-{{- if and (.Values.storage.injectPodEnvVars) (eq .Values.storage.authType "accesskey") }}
-{{- $injected := include "k8s.default-env-vars" . | fromYaml }}
-{{- $plugins := merge .Values.config.k8s $injected }}
-{{- end }}
+{{- $plugins := include "k8s.plugins.defaultEnvVariables" . | fromYaml }}
+{{- $_ := merge $plugins .Values.config.k8s }}
 {{- with $plugins }}
 {{- (toYaml .) }}
 {{- end }}
@@ -597,6 +597,16 @@ Global pod labels
 {{- end -}}
 
 {{/*
+Additional pod environment variables
+*/}}
+{{- define "global.podEnvVars.additionalPodEnvVars" -}}
+{{- range $k, $v := .Values.additionalPodEnvVars }}
+- name: {{ $k }}
+  value: {{ $v }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Global pod environment variables
 */}}
 {{- define "global.podEnvVars" -}}
@@ -623,10 +633,7 @@ Global pod environment variables
       key: cluster_name
 - name: DEPLOYMENT_NAME
   value: operator
-{{- range $k, $v := .Values.additionalPodEnvVars }}
-- name: {{ $k }}
-  value: {{ $v }}
-{{- end }}
+{{- include "global.podEnvVars.additionalPodEnvVars" . }}
 {{- end -}}
 
 {{- define "global.scheduling.topologySpreadConstraints" -}}
