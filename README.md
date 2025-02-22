@@ -59,24 +59,39 @@ Initializing app config from file dataplane-operator.yaml
     * `flytepropellerwebhook.resources`
     * `operator.resources`
     * `proxy.resources`
-* Install the dataplane.
+* Create a values file.
+```yaml
+# union-dataplane.yaml
+host: <host>
+clusterName: <cluster_name>
+orgName: <org>
+provider: <provider>
 
+secrets:
+  admin:
+    create: true
+    clientId: <client_id>
+    clientSecret: "<client_secret>"
+storage:
+  endpoint: <endpoint>
+  bucketName: union-dp-bucket
+  fastRegistrationBucketName: union-dp-bucket
+  accessKey: "<access_key>"
+  secretKey: "<secret_key>"
+  region: "<region>" 
+
+config:
+  logger:
+    level: 4
+```
+* Install the dataplane CRDS and dataplane.
 ```shell
 helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds
 helm upgrade --install unionai-dataplane unionai/dataplane \
     --create-namespace \
     --namespace union \
-    --set host="<control-plane.endpoint>" \
-    --set clusterName="<cluster.name>" \
-    --set orgName="<organization.name>" \
-    --set provider="<cloud.provider>" \
-    --set secrets.admin.create=true \
-    --set secrets.admin.clientId="<client.id>" \
-    --set secrets.admin.clientSecret="<client.secret>" \
-    --values "<values.yaml>"
+    --values union-dataplane.yaml
 ```
-
-**Note: By default, Fluentbit and the [Grafana Loki](https://grafana.com/docs/loki/latest/setup/install/helm/) service backed by S3 (or compatible) storage is used to collect logs from containers running in the cluster.  To disable it set `loki.enable=false` on the command line or in the values file.**
 
 Once deployed you can check to see if the cluster has been successfully registered to the control plane by running the `get cluster` command in `uctl`
 
