@@ -15,6 +15,11 @@ the stow based options to provide additional configuration flexibility.
       disable_ssl: {{ .Values.storage.disableSSL }}
       endpoint: {{ .Values.storage.endpoint }}
       region: {{ .Values.storage.region }}
+{{- with .Values.storage.fastRegistrationURL -}}
+  signedURL:
+    stowConfigOverride:
+      endpoint: {{- (toYaml .) }}
+{{- end }}
 {{- else if eq .Values.storage.provider "custom" }}
 {{- with .Values.storage.custom -}}
   {{ tpl (toYaml .) $ | nindent 2 }}
