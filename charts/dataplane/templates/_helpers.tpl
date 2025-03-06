@@ -523,6 +523,10 @@ http://flytepropeller.{{ .Release.Namespace }}.svc.cluster.local:10254
 http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
 {{- end -}}
 
+{{- define "proxy.service.url" -}}
+http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080
+{{- end -}}
+
 {{- define "proxy.scheduling.topologySpreadConstraints" -}}
 {{ with .Values.proxy.topologySpreadConstraints }}
 topologySpreadConstraints:
@@ -640,6 +644,8 @@ Global pod environment variables
       key: cluster_name
 - name: DEPLOYMENT_NAME
   value: operator
+- name: PROXY_SERVICE_URL
+  value: {{ include "proxy.service.url" . }}
 {{- include "global.podEnvVars.additionalPodEnvVars" . }}
 {{- end -}}
 
