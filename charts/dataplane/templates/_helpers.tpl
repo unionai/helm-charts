@@ -208,6 +208,13 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{/*
+Create the name of the clusterresources service account
+*/}}
+{{- define "clusterresourcesync.serviceAccountName" -}}
+{{- default "clustersync-system" .Values.clusterresourcesync.serviceAccount.name }}
+{{- end }}
+
 {{- define "clusterresourcesync.selectorLabels" -}}
 app.kubernetes.io/name: clusterresourcesync
 app.kubernetes.io/instance: {{ .Release.Name }}
