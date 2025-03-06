@@ -508,11 +508,12 @@ access the storage is injected.
 {{- end }}
 {{- end -}}
 
-{{/*
-Health check URL helpers
-*/}}
 {{- define "prometheus.health.url" -}}
 http://union-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
+{{- end -}}
+
+{{- define "prometheus.service.url" -}}
+http://union-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
@@ -589,6 +590,10 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "knative.proxy.service.url" -}}
+http://kourier-internal.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+
 {{/*
 Global pod annotations
 */}}
@@ -646,6 +651,10 @@ Global pod environment variables
   value: operator
 - name: PROXY_SERVICE_URL
   value: {{ include "proxy.service.url" . }}
+- name: PROMETHEUS_SERVICE_URL
+  value: {{ include "prometheus.service.url" . }}
+- name: KNATIVE_PROXY_SERVICE_URL
+  value: {{ include "knative.proxy.service.url" . }}
 {{- include "global.podEnvVars.additionalPodEnvVars" . }}
 {{- end -}}
 
