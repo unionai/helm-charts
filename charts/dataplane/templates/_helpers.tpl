@@ -711,3 +711,12 @@ tolerations:
 nodeName: {{- toYaml . }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Global service account annotations
+*/}}
+{{- define "global.serviceAccountAnnotations" -}}
+{{- with .Values.additionalServiceAccountAnnotations }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}

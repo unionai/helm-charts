@@ -1,0 +1,166 @@
+# Fields after completing control plane creation process with Union
+host: <UNION_HOST> # FQDN of the Union control plane
+clusterName: <UNION_CLUSTER_NAME> # Union cluster name
+orgName: <UNION_ORG> # Union organization name
+
+azure:
+  tenantId: "<AZURE_TENANT_ID>"
+  subscriptionId: "<AZURE_SUBSCRIPTION_ID>"
+  resourceGroupName: "<AZURE_RESOURCE_GROUP_NAME>"
+
+secrets:
+  admin:
+    create: true
+    # Client credentials used to communicate with the control plane
+    # As of Mar 2025, these are provided by Union.
+    clientId: "<UNION_CLIENT_ID>"
+    # Create and managed secret named union-secret-auth if secrets.admin.create is false.
+    clientSecret: "<UNION_CLIENT_SECRET>"
+
+storage:
+  provider: "custom"
+  custom:
+    container: "<AZURE_STORAGE_CONTAINER_NAME>" # storage_container_name
+    connection: {}
+    type: stow
+    stow:
+      kind: azure
+      config:
+        account: "<AZURE_STORAGE_ACCOUNT_NAME>" # storage_account_name
+
+# Configure Union workers with managed identity client ID
+userRoleAnnotationKey: "azure.workload.identity/client-id"
+userRoleAnnotationValue: "<WORKER_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID>"
+
+additionalServiceAccountAnnotations:
+  azure.workload.identity/client-id: "<SERVICES_AZURE_USER_MANAGED_IDENTITY_CLIENT_ID>"
+
+config:
+  k8s:
+    plugins:
+      k8s:
+        default-env-vars:
+          - AZURE_STORAGE_ACCOUNT_NAME: "<AZURE_STORAGE_ACCOUNT_NAME>" # storage_account_name
+        default-labels:
+          - azure.workload.identity/use: "true"
+
+        # Update if specific set of labels and taints are used for Worker nodes.
+        #
+        # default-affinity:
+        #   nodeAffinity:
+        #     requiredDuringSchedulingIgnoredDuringExecution:
+        #       nodeSelectorTerms:
+        #       - matchExpressions:
+        #         - key: node-role
+        #           operator: In
+        #           values:
+        #           - worker
+        # default-tolerations:
+        #   - effect: NoSchedule
+        #     key: node-role
+        #     operator: Equal
+        #     value: worker
+        interruptible-tolerations:
+        - key: kubernetes.azure.com/scalesetpriority
+          value: spot
+          operator: Equal
+          effect: NoSchedule
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+            - spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
+          values: null
+
+  # Azure relies on Workload Identity for authentication.
+  # We have to explicitly map domain to namespaces to have a discrete set of
+  # Union workspaces (E.g. development, staging, production) to support reliable
+  # federated token retrieval.
+  namespace_config:
+    namespace_mapping:
+      template: "{{ domain }}"
+
+  task_logs:
+    plugins:
+      logs:
+        kubernetes-enabled: false
+        cloudwatch-enabled: false
+        stackdriver-enabled: false
+        templates:
+          - displayName: Task Logs
+            scheme: TaskExecution
+            templateUris:
+              - "/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"
+        azure-log-templates:
+          - displayName: "Azure Logs"
+            templateUris:
+              - "https://portal.azure.com#@{{.Values.azure.tenantId}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.azure.subscriptionId}}%2FresourceGroups%2F{{.Values.azure.resourceGroupName}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      k8s-array:
+        logs:
+          config:
+            kubernetes-enabled: false
+            cloudwatch-enabled: false
+            stackdriver-enabled: false
+            templates:
+              - displayName: Task Logs
+                scheme: TaskExecution
+                templateUris:
+                  - "/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"
+            azure-log-templates:
+              - displayName: "Azure Logs"
+                templateUris:
+                  - "https://portal.azure.com#@{{.Values.azure.tenantId}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%%2Fsubscriptions%%2F{{.Values.azure.subscriptionId}}%%2FresourceGroups%%2F{{.Values.azure.resourceGroupName}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      fasttask:
+        logs:
+          kubernetes-enabled: false
+          cloudwatch-enabled: false
+          stackdriver-enabled: false
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/"
+          templates:
+            - displayName: Task Logs
+              scheme: TaskExecution
+              templateUris:
+                - "/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"
+          azure-log-templates:
+            - displayName: "Azure Logs"
+              templateUris:
+                - "https://portal.azure.com#@{{.Values.azure.tenantId}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.azure.subscriptionId}}%2FresourceGroups%2F{{.Values.azure.resourceGroupName}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+
+  operator:
+    clusterData:
+      metadataBucketPrefix: "abfs://{{.Values.storage.custom.container}}@{{.Values.storage.custom.stow.config.account}}.dfs.core.windows.net"
+
+  proxy:
+    smConfig:
+      enabled: true
+      type: Azure
+    persistedLogs:
+      sourceType: "AzureLogAnalytics"
+      azureLogAnalytics:
+        logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.azure.subscriptionId}}/resourceGroups/{{.Values.azure.resourceGroupName}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.orgName}}"
+
+flytepropeller:
+  podLabels:
+    azure.workload.identity/use: "true"
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: flytepropeller
+          topologyKey: kubernetes.io/hostname
+
+flytepropellerwebhook:
+  podLabels:
+    azure.workload.identity/use: "true"
+
+operator:
+  podLabels:
+    azure.workload.identity/use: "true"
