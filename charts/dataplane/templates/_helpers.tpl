@@ -456,27 +456,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{- define "datacatalog.serviceAccountName" -}}
-{{- default "datacatalog-system" .Values.datacatalog.serviceAccount.name }}
-{{- end }}
-
-{{- define "datacatalog.selectorLabels" -}}
-app.kubernetes.io/name: datacatalog
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-
-{{- define "datacatalog.labels" -}}
-{{ include "datacatalog.selectorLabels" . }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{- define "datacatalog.podLabels" -}}
-{{ include "datacatalog.labels" . }}
-{{- with .Values.operator.podLabels }}
-{{ toYaml . }}
-{{- end }}
-{{- end -}}
-
 {{- define "var.FLYTE_AWS_ENDPOINT" -}}
 {{- with .Values.storage.endpoint }}
 - FLYTE_AWS_ENDPOINT: {{ toYaml . }}
