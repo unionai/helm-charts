@@ -31,6 +31,9 @@ spec:
                 name: {{ include "union-operator.fullname" . }}
             - configMap:
                 name: flyte-clusterresourcesync-config
+        - name: secret-volume
+          secret:
+            secretName: {{ .Values.operator.secretName }}
       priorityClassName: {{ .Values.proxy.priorityClassName }}
       {{- with .Values.proxy.imagePullSecrets }}
       imagePullSecrets:
@@ -51,6 +54,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           args:
             - operator
             - proxy
@@ -60,8 +65,11 @@ spec:
             - name: http
               containerPort: 8089
               protocol: TCP
-            - name: grpc
+            - name: connect
               containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 8081
               protocol: TCP
             - name: debug
               containerPort: 10254
@@ -71,5 +79,26 @@ spec:
             {{- with .Values.proxy.podEnv }}
             {{- toYaml . | nindent 10 }}
             {{- end }}
+        {{- if .Values.operator.enableTunnelService }}
+        - name: "tunnel"
+          securityContext:
+              {{- toYaml .Values.operator.securityContext | nindent 12 }}
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          args:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.operator.secretName }}
+                  key: tunnel_token
+                  optional: true
+        {{- end }}
       {{- include "proxy.scheduling" . | nindent 6 }}
       {{- include "additionalPodSpec" . | nindent 6 }}
