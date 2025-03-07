@@ -24,9 +24,8 @@ module "storage_account" {
 
   # Allow all subnets from the virtual network to access the storage account
   network_rules = {
-    virtual_network_subnet_ids = [
-      for _, subnet in module.virtual_network.subnets : subnet.resource_id
-    ]
+    # Union registration requires writing through the internet.
+    default_action = "Allow"
   }
 
   # Allow workers and union services access to the storage account
