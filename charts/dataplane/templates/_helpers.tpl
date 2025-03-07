@@ -383,6 +383,19 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "operator.clusterData" -}}
+clusterData:
+  {{- with .Values.config.operator.clusterData }}
+  {{- tpl (toYaml .) $ | nindent 2 }}
+  {{- end }}
+  {{- with .Values.storage.custom }}
+  # -- storageType is only used when syncClusterConfig is enabled. It is intentionally disabled and it should not be used.
+  storageType: custom
+  customStorageConfig: |
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+{{- end -}}
+
 {{/*
 Create the name of the service account to use
 */}}
