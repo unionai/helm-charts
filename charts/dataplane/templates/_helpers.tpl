@@ -1,16 +1,24 @@
 {{/*
-Expand the name of the chart.
+Support our existing naming schema.
 */}}
 {{- define "union-operator.name" -}}
-{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+union-operator
+{{- end }}
+
+{{- define "union-operator.fullname" -}}
+union-operator
 {{- end }}
 
 {{/*
-Create a default fully qualified app name.
-We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
-If release name contains chart name it will be used as a full name.
+In the future we will most likely add in a true operator to manage
+deployments.  At that time the existing "operator" service will be
+migrated to the "dataplane" service and will use these.
 */}}
-{{- define "union-operator.fullname" -}}
+{{- define "unionai-dataplane.name" -}}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "unionai-dataplane.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -29,13 +37,6 @@ Output the cluster name
 {{- define "getClusterName" -}}
 {{- (tpl .Values.clusterName .) -}}
 {{- end -}}
-
-{{/*
-Create chart name and version as used by the chart label.
-*/}}
-{{- define "union-operator.chart" -}}
-{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
-{{- end }}
 
 {{/*
 Adds custom PodSpec values.
@@ -520,11 +521,11 @@ http://flytepropeller.{{ .Release.Namespace }}.svc.cluster.local:10254
 {{- end -}}
 
 {{- define "proxy.health.url" -}}
-http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
+http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
 {{- end -}}
 
 {{- define "proxy.service.url" -}}
-http://operator-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080
+http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080
 {{- end -}}
 
 {{- define "proxy.scheduling.topologySpreadConstraints" -}}
