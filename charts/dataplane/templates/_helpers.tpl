@@ -522,23 +522,23 @@ access the storage is injected.
 {{- end -}}
 
 {{- define "prometheus.health.url" -}}
-http://union-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090/-/healthy
+http://union-prometheus:9090/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
-http://union-prometheus.{{ .Release.Namespace }}.svc.cluster.local:9090
+http://union-prometheus:9090
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
-http://flytepropeller.{{ .Release.Namespace }}.svc.cluster.local:10254
+http://flytepropeller:10254
 {{- end -}}
 
 {{- define "proxy.health.url" -}}
-http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:10254
+http://{{ include "union-operator.fullname" . }}-proxy:10254
 {{- end -}}
 
 {{- define "proxy.service.url" -}}
-http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080
+http://{{ include "union-operator.fullname" . }}-proxy:8080
 {{- end -}}
 
 {{- define "proxy.scheduling.topologySpreadConstraints" -}}
@@ -604,7 +604,7 @@ tolerations:
 {{- end -}}
 
 {{- define "knative.proxy.service.url" -}}
-http://kourier-internal.{{ .Release.Namespace }}.svc.cluster.local
+http://kourier-internal
 {{- end -}}
 
 {{/*
