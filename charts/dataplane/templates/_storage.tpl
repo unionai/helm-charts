@@ -20,6 +20,15 @@ the stow based options to provide additional configuration flexibility.
     stowConfigOverride:
       endpoint: {{- (toYaml .) }}
 {{- end }}
+{{- else if eq .Values.storage.provider "aws" }}
+    type: s3
+  connection:
+    auth-type: {{ .Values.storage.authType }}
+    region: {{ .Values.storage.region }}
+    {{- if eq .Values.storage.authType "accesskey" }}
+    access-key: {{ .Values.storage.accessKey }}
+    secret-key: {{ .Values.storage.secretKey }}
+    {{- end }}
 {{- else if eq .Values.storage.provider "custom" }}
 {{- with .Values.storage.custom -}}
   {{ tpl (toYaml .) $ | nindent 2 }}
