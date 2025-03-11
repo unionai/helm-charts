@@ -21,7 +21,7 @@ the stow based options to provide additional configuration flexibility.
       endpoint: {{- (toYaml .) }}
 {{- end }}
 {{- else if eq .Values.storage.provider "aws" }}
-    type: s3
+  type: s3
   connection:
     auth-type: {{ .Values.storage.authType }}
     region: {{ .Values.storage.region }}
