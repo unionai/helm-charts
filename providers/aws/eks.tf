@@ -1,6 +1,33 @@
 data "aws_availability_zones" "available" { state = "available" }
 data "aws_region" "current" {}
 
+data "aws_iam_roles" "admin_regexes" {
+  for_each   = toset(var.admin_role_regexes)
+  name_regex = each.key
+}
+
+locals {
+  admin_regex_role_arns = [
+    for role in data.aws_iam_roles.admin_regexes : one(role.arns)
+  ]
+
+  admin_role_arns = concat(
+    local.admin_regex_role_arns,
+    var.admin_role_arns,
+  )
+
+  eks_access_entries = {
+    for role_arn in local.admin_role_arns : split("/", role_arn)[1] => {
+      principal_arn = role_arn
+      user_name     = "admin"
+      policy_associations = [{
+        policy_arn : "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy",
+        access_scope = { type : "cluster" }
+      }]
+    }
+  }
+}
+
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 20.31"
@@ -13,6 +40,9 @@ module "eks" {
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
+
+  authentication_mode = "API"
+  access_entries      = local.eks_access_entries
 
   eks_managed_node_groups = {
     for k, v in var.node_groups : k => {

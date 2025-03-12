@@ -36,11 +36,6 @@ variable "admin_role_arns" {
   default = []
 }
 
-variable "admin_user_arns" {
-  type    = list(string)
-  default = []
-}
-
 variable "node_role_arns" {
   type    = list(string)
   default = []
