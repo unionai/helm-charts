@@ -71,18 +71,18 @@ module "eks" {
         }
       )
 
-      subnet_ids              = module.vpc.private_subnets
+      subnet_ids = module.vpc.private_subnets
       tags = {
         "k8s.io/cluster-autoscaler/enabled"              = true
         "k8s.io/cluster-autoscaler/${local.name_prefix}" = true
       }
 
       taints = v.gpu_count == 0 ? [] : [
-          {
-            key    = "nvidia.com/gpu"
-            value  = "present"
-            effect = "NO_SCHEDULE"
-          }
+        {
+          key    = "nvidia.com/gpu"
+          value  = "present"
+          effect = "NO_SCHEDULE"
+        }
       ]
 
       iam_role_additional_policies = {
@@ -149,30 +149,30 @@ module "cluster_autoscaler_irsa_role" {
   }
 }
 
-resource "helm_release" "aws_cluster_autoscaler" {
-  namespace = "kube-system"
-  wait      = true
-  timeout   = 600
-
-  name = "aws-cluster-autoscaler"
-
-  repository = "https://kubernetes.github.io/autoscaler"
-  chart      = "cluster-autoscaler"
-  version    = "9.24.0"
-
-  set {
-    name  = "autoDiscovery.clusterName"
-    value = module.eks.cluster_name
-  }
-
-  set {
-    name  = "awsRegion"
-    value = data.aws_region.current.name
-  }
-
-  set {
-    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-    value = module.cluster_autoscaler_irsa_role.iam_role_arn
-  }
-  depends_on = [ module.eks ]
-}
+#resource "helm_release" "aws_cluster_autoscaler" {
+#  namespace = "kube-system"
+#  wait      = true
+#  timeout   = 600
+#
+#  name = "aws-cluster-autoscaler"
+#
+#  repository = "https://kubernetes.github.io/autoscaler"
+#  chart      = "cluster-autoscaler"
+#  version    = "9.24.0"
+#
+#  set {
+#    name  = "autoDiscovery.clusterName"
+#    value = module.eks.cluster_name
+#  }
+#
+#  set {
+#    name  = "awsRegion"
+#    value = data.aws_region.current.name
+#  }
+#
+#  set {
+#    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+#    value = module.cluster_autoscaler_irsa_role.iam_role_arn
+#  }
+#  depends_on = [module.eks]
+#}
