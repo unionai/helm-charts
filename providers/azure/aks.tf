@@ -60,7 +60,10 @@ module "kubernetes" {
     system_assigned = true
   }
 
-  role_based_access_control_enabled = false
+  azure_active_directory_role_based_access_control = {
+    admin_group_object_ids = var.admin_group_object_ids
+    azure_rbac_enabled     = false
+  }
 
   # Recommended, isolated node pool to run Union services
   default_node_pool = {

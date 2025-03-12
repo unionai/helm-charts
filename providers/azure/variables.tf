@@ -183,3 +183,8 @@ variable "worker_labels" {
   type        = map(string)
   default     = {}
 }
+
+variable "admin_group_object_ids" {
+  description = "The object IDs of the admin group"
+  type        = list(string)
+}
