@@ -1,6 +1,6 @@
 locals {
   union_backend_ksas = ["flytepropeller"]
-  union_ksas = ["default"] #The KSA that Task Pods will use
+  union_ksas         = ["default"] #The KSA that Task Pods will use
 
   union_worker_wi_members = toset([
     for tpl in setproduct(
@@ -40,17 +40,17 @@ resource "aws_iam_policy" "union_backend_iam_policy" {
 }
 
 module "union_backend_irsa_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.11.2"
+  source                     = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version                    = "5.11.2"
   assume_role_condition_test = "StringEquals"
-  role_name = "${local.name_prefix}-backend-role"
+  role_name                  = "${local.name_prefix}-backend-role"
   role_policy_arns = {
     default = aws_iam_policy.union_backend_iam_policy.arn
   }
   oidc_providers = {
     default = {
       provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["flyte:flytepropeller","flyte:flyteadmin","flyte:datacatalog"]
+      namespace_service_accounts = ["flyte:flytepropeller", "flyte:flyteadmin", "flyte:datacatalog"]
     }
   }
 }
@@ -67,8 +67,8 @@ resource "aws_iam_policy" "flyte_worker_iam_policy" {
 }
 
 module "flyte_worker_irsa_role" {
-  source  = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
-  version = "5.11.2"
+  source                     = "terraform-aws-modules/iam/aws//modules/iam-role-for-service-accounts-eks"
+  version                    = "5.11.2"
   assume_role_condition_test = "StringEquals"
   role_name                  = "${local.name_prefix}-flyte-worker"
   role_policy_arns = {
