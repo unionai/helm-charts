@@ -5,8 +5,8 @@ locals {
   name_prefix = "${local.project}-${local.environment}"
   account_id  = data.aws_caller_identity.current.account_id
 
-  union_projects         = ["flytesnacks"]
-  union_domains          = ["development", "staging", "production"]
+  union_projects = ["flytesnacks"]
+  union_domains  = ["development", "staging", "production"]
 
   # move to vars as well
   azs             = data.aws_availability_zones.available.zone_ids
