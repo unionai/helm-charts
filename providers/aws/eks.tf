@@ -149,30 +149,30 @@ module "cluster_autoscaler_irsa_role" {
   }
 }
 
-#resource "helm_release" "aws_cluster_autoscaler" {
-#  namespace = "kube-system"
-#  wait      = true
-#  timeout   = 600
-#
-#  name = "aws-cluster-autoscaler"
-#
-#  repository = "https://kubernetes.github.io/autoscaler"
-#  chart      = "cluster-autoscaler"
-#  version    = "9.24.0"
-#
-#  set {
-#    name  = "autoDiscovery.clusterName"
-#    value = module.eks.cluster_name
-#  }
-#
-#  set {
-#    name  = "awsRegion"
-#    value = data.aws_region.current.name
-#  }
-#
-#  set {
-#    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
-#    value = module.cluster_autoscaler_irsa_role.iam_role_arn
-#  }
-#  depends_on = [module.eks]
-#}
+resource "helm_release" "aws_cluster_autoscaler" {
+  namespace = "kube-system"
+  wait      = true
+  timeout   = 600
+
+  name = "aws-cluster-autoscaler"
+
+  repository = "https://kubernetes.github.io/autoscaler"
+  chart      = "cluster-autoscaler"
+  version    = "9.24.0"
+
+  set {
+    name  = "autoDiscovery.clusterName"
+    value = module.eks.cluster_name
+  }
+
+  set {
+    name  = "awsRegion"
+    value = data.aws_region.current.name
+  }
+
+  set {
+    name  = "rbac.serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn"
+    value = module.cluster_autoscaler_irsa_role.iam_role_arn
+  }
+  depends_on = [module.eks]
+}
