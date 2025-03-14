@@ -522,11 +522,11 @@ access the storage is injected.
 {{- end -}}
 
 {{- define "prometheus.health.url" -}}
-http://union-prometheus:9090/-/healthy
+http://{{ include "union-operator.fullname" . }}-prometheus:80/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
-http://union-prometheus:9090
+http://{{ include "union-operator.fullname" . }}-prometheus:80
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
