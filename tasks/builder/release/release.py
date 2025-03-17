@@ -37,6 +37,10 @@ class Release:
         bumper = VersionBumper()
         bumper.run(file=str(chart_path), key="version", version=version)
 
+        diffs = repo.index.diff(None, create_patch=True)
+        for diff in diffs:
+            print(diff)
+
         print(repo.index.diff(None, create_patch=True))
         if dryRun:
             print('Dry run detected, stopping before release')
