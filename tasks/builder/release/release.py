@@ -31,7 +31,7 @@ class Release:
         fetcher = VersionFetcher()
         version = fetcher.run(file=str(chart_path), key="version", next=True)
 
-        release_branch = f'release/{chart}: {version}'
+        release_branch = f'release/{chart}_{version}'
         release = repo.create_head(release_branch)
 
         bumper = VersionBumper()
@@ -41,7 +41,6 @@ class Release:
         for diff in diffs:
             print(diff)
 
-        print(repo.index.diff(None, create_patch=True))
         if dryRun:
             print('Dry run detected, stopping before release')
             sys.exit(0)
