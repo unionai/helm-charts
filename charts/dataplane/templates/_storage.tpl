@@ -6,6 +6,7 @@ the stow based options to provide additional configuration flexibility.
 {{- define "storage.base" -}}
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
+  container: {{ .Values.storage.bucketName }}
   stow:
     kind: s3
     config:
@@ -40,8 +41,7 @@ the stow based options to provide additional configuration flexibility.
 
 {{- define "storage" -}}
 storage:
-  container: {{ .Values.storage.bucketName }}
-{{- include "storage.base" .}}
+{{- include "storage.base" . }}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
     maxDownloadMBs: {{ .Values.storage.limits.maxDownloadMBs }}
