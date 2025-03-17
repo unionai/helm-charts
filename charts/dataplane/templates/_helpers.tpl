@@ -650,12 +650,12 @@ Global pod environment variables
 - name: GOMEMLIMIT
   valueFrom:
     resourceFieldRef:
-      divisor: '0'
+      divisor: 1
       resource: limits.memory
 - name: GOMAXPROCS
   valueFrom:
     resourceFieldRef:
-      divisor: '0'
+      divisor: 1
       resource: limits.cpu
 - name: CLUSTER_NAME
   valueFrom:
