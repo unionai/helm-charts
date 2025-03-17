@@ -51,7 +51,7 @@ class Release:
         repo.index.commit(release_title)
 
         origin = repo.remote(name='origin')
-        origin.push(refspec=release_branch)
+        origin.push(release_branch)
 
         # Clean up the local branch
         repo.delete_head(release_branch)
