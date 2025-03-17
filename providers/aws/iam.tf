@@ -50,7 +50,7 @@ module "union_backend_irsa_role" {
   oidc_providers = {
     default = {
       provider_arn               = module.eks.oidc_provider_arn
-      namespace_service_accounts = ["flyte:flytepropeller", "flyte:flyteadmin", "flyte:datacatalog"]
+      namespace_service_accounts = ["union:flytepropeller-system", "union:operator-system"]
     }
   }
 }
