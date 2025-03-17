@@ -27,4 +27,4 @@ class VersionBumper():
 
     def write_chart(self, file: str = "Chart.yaml", chart: dict = None):
         with open(file, "w") as f:
-            yaml.dump(chart, f, Dumper=yaml.SafeDumper, sort_keys=False)
+            yaml.dump(chart, f, Dumper=yaml.SafeDumper, sort_keys=False, width=450)

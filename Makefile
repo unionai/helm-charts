@@ -43,13 +43,13 @@ gen_sandbox_crds_version_bump: requirements
 	invoke builder.version-bumper --file charts/sandbox/Chart.yaml
 
 .PHONY: gen_dataplane_release
-gen_dataplane_release:
-	echo "gen_dataplane_release"
+gen_dataplane_release: requirements
+	invoke builder.release --chart dataplane
 
 .PHONY: gen_dataplane_crds_release
-gen_dataplane_crds_release:
-	echo "gen_dataplane_crds_release"
+gen_dataplane_crds_release: requirements
+	invoke builder.release --chart dataplane-crds
 
 .PHONY: gen_sandbox_release
-gen_sandbox_release:
-	echo "gen_sandbox_release"
+gen_sandbox_release: requirements
+	invoke builder.release --chart sandbox
