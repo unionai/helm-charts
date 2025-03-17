@@ -19,7 +19,7 @@ variable "node_groups" {
   }))
   default = {
     worker-on-demand = {
-      instance_type       = "m7i.xlarge"
+      instance_type       = "m7i.2xlarge"
       dedicated_node_role = "worker"
       min_size            = 2
       max_size            = 5
