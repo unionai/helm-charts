@@ -1,4 +1,5 @@
 from invoke import Collection
+
 import tasks.builder.base as base
 
 ns = Collection()

@@ -1,14 +1,16 @@
 import re
-import yaml
-
 from datetime import datetime
+
+import yaml
 
 
 class VersionFetcher(object):
     def __init__(self):
         pass
 
-    def run(self, file: str = "Chart.yaml", key: str = "version", next: bool = True) -> str:
+    def run(
+        self, file: str = "Chart.yaml", key: str = "version", next: bool = True
+    ) -> str:
         curr_version = self.get_chart_version(file, key)
         return self.get_calver(curr_version, next)
 

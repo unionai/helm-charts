@@ -4,9 +4,9 @@ from pathlib import Path
 
 from invoke import task
 
-from tasks.builder.version.fetcher import VersionFetcher
-from tasks.builder.version.bumper import VersionBumper
 from tasks.builder.release.release import Release
+from tasks.builder.version.bumper import VersionBumper
+from tasks.builder.version.fetcher import VersionFetcher
 
 
 @task(
@@ -15,10 +15,12 @@ from tasks.builder.release.release import Release
         "file": "The chart file to use in determining the version",
         "key": "The key in the chart file used in determining the version",
         "next": "Return the next version",
-        "metadata_key": "The buildkite metadata key used to store the version"
+        "metadata_key": "The buildkite metadata key used to store the version",
     },
 )
-def version_fetcher(ctx, file: str, key: str = "version", next: bool = False, metadata_key: str = ""):
+def version_fetcher(
+    ctx, file: str, key: str = "version", next: bool = False, metadata_key: str = ""
+):
     fetcher = VersionFetcher()
     version = fetcher.run(file=file, key=key, next=next)
     print(version)
@@ -44,7 +46,7 @@ def version_bumper(ctx, file: str, key: str = "version"):
     help={
         "chart": "The chart to release",
         "dryrun": "Don't actually release, just show the diff between the repos.",
-    }
+    },
 )
 def release(ctx, chart: str, dryrun: bool = False):
     if chart == "":

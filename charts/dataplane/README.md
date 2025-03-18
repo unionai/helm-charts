@@ -347,4 +347,3 @@ Kubernetes: `>= 1.28.0`
 | storage.secretKey | string | `""` |  |
 | userRoleAnnotationKey | string | `"eks.amazonaws.com/role-arn"` |  |
 | userRoleAnnotationValue | string | `"arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"` |  |
-

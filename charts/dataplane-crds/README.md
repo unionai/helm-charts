@@ -7,4 +7,3 @@ Deploys the Union dataplane CRDs.
 ## Requirements
 
 Kubernetes: `>= 1.28.0`
-
