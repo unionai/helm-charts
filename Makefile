@@ -20,7 +20,7 @@ helm-gen-tests: $(TARGET_DIR)
 		--set storage.endpoint="http://s3.default.svc:9000" \
 		--set storage.accessKey="xxxxxxx" \
 		--set storage.secretKey="xxxxxxx" \
-		--set secrets.admin.enabled=true \
+		--set secrets.admin.create=true \
 		--set secrets.admin.clientSecret="supersecret" \
 		> $(TARGET_DIR)/union_dataplane_helm_test_generated.yaml
 	# helm lint charts/union-dataplane -f $(TARGET_DIR)/union_dataplane_helm_test_generated.yaml
