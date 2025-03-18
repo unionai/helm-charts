@@ -53,4 +53,3 @@ oci ce cluster create-kubeconfig --cluster-id <compartment_id> --region <region>
 ```
 
 You can optionally specify `--file` to change the location from the default `~/.kube/config`.
-

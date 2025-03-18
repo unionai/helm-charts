@@ -1,12 +1,19 @@
 import yaml
+
 from tasks.builder.version.fetcher import VersionFetcher
 
 
-class VersionBumper():
+class VersionBumper:
     def __init__(self):
         pass
 
-    def run(self, file: str = "Chart.yaml", key: str = "version", version: str = None, next: bool = True) -> None:
+    def run(
+        self,
+        file: str = "Chart.yaml",
+        key: str = "version",
+        version: str = None,
+        next: bool = True,
+    ) -> None:
         if version is None:
             fetcher = VersionFetcher()
             version = fetcher.run(file=file, key=key, next=next)

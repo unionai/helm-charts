@@ -5,7 +5,7 @@
 ### Assumptions
 * You have a Union organization that has already been created and you know the URL of your control plane host.
 * You have a Kubernetes cluster, running one of the most recent three minor K8s versions. [Learn more](https://kubernetes.io/releases/version-skew-policy/)
-* Object storage provided by a vendor or an S3 compatible platform (such as [Minio](https://min.io).  
+* Object storage provided by a vendor or an S3 compatible platform (such as [Minio](https://min.io).
 
 > Some sample Terraform configurations are available in the [providers](providers) directory.
 
@@ -108,4 +108,3 @@ uctl get cluster
  ----------- ------- --------------- -----------
 1 rows
 ```
-
