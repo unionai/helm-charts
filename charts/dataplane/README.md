@@ -326,7 +326,7 @@ Kubernetes: `>= 1.28.0`
 | resourcequota.create | bool | `false` |  |
 | secrets.admin.clientId | string | `"dataplane-operator"` |  |
 | secrets.admin.clientSecret | string | `""` |  |
-| secrets.admin.enabled | bool | `true` |  |
+| secrets.admin.create | bool | `true` |  |
 | sparkoperator.enabled | bool | `false` |  |
 | sparkoperator.plugin_config | object | `{}` |  |
 | storage.accessKey | string | `""` |  |

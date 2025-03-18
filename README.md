@@ -76,7 +76,7 @@ storage:
   region: <CLOUD_REGION> #not needed for on-prem deployments
 secrets:
   admin:
-    enabled: true
+    create: true
     # Insert values from step 4
     clientSecret: <MY_CLIENT_SECRET> #you can also provide this as a command-line argument
     clientId: "dataplane-operator"
