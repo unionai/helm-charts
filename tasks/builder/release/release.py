@@ -91,9 +91,4 @@ class Release:
             base="main",
         )
 
-        pr.merge(
-            commit_message=notes,
-            commit_title=title,
-            delete_branch=True,
-            merge_method="squash",
-        )
+        pr.add_to_labels("release")
