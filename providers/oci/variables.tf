@@ -71,12 +71,10 @@ variable "node_boot_volume_size_gb" {
   default = 50
 }
 
-variable "image_id" {
+variable "image_name" {
   type = string
-  # Oracle-Linux-8.10-2024.09.30-0-OKE-1.31.1-748
-  default = "ocid1.image.oc1.us-sanjose-1.aaaaaaaac4onum4ux63szstw3ykptcyayamk6473zex6lba7kv63astrd6vq"
+  default = "Oracle-Linux-8.10-2024.09.30-0-OKE-1.31.1-748"
   # Oracle-Linux-8.10-Gen2-GPU-2024.09.30-0-OKE-1.31.1-747
-  # default = "ocid1.image.oc1.us-sanjose-1.aaaaaaaahq4jtk5oteo5zwumf235rtlx6fcsgs4cftrvrwcayq5vmcr4uhxa"
 }
 
 variable "node_count" {

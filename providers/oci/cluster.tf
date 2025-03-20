@@ -1,4 +1,14 @@
+locals {
+  images = {
+    for source in data.oci_containerengine_node_pool_option.all.sources :
+      source.source_name => source.image_id
+  }
+}
 
+data "oci_containerengine_node_pool_option" "all" {
+  compartment_id = oci_identity_compartment.union-compartment.id
+  node_pool_option_id = "all"
+}
 
 resource "oci_containerengine_cluster" "union-dp" {
   compartment_id     = oci_identity_compartment.union-compartment.id
@@ -44,7 +54,7 @@ resource "oci_containerengine_node_pool" "union-dp-nodepool" {
   }
 
   node_source_details {
-    image_id                = var.image_id
+    image_id                = lookup(local.images, var.image_name, "unknown")
     source_type             = "IMAGE"
     boot_volume_size_in_gbs = var.node_boot_volume_size_gb
   }
