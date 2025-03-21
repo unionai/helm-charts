@@ -1,30 +1,32 @@
 KUBECONFIG ?= $(HOME)/.kube/config
 CHART_DIR := charts/dataplane
 
-BUILD_DIR := build
-$(BUILD_DIR):
-	mkdir build
+TESTS_DIR := tests
+$(TESTS_DIR):
+	mkdir tests
 
-TARGET_DIR := $(BUILD_DIR)/helm
-$(TARGET_DIR): $(BUILD_DIR)
-	mkdir $(BUILD_DIR)/helm
+GEN_DIR := $(TESTS_DIR)/generated
+$(GEN_DIR): $(TESTS_DIR)
+	mkdir -p $(TESTS_DIR)/generated
 
-helm-gen-tests: $(TARGET_DIR)
-	helm dep update $(CHART_DIR)
-	helm template dataplane $(CHART_DIR) \
-		--namespace union \
-		--values $(CHART_DIR)/values.yaml \
-		--set clusterName="byok-1" \
-		--set orgName="byok" \
-		--set storage.bucketName="union-metadata" \
-		--set storage.endpoint="http://s3.default.svc:9000" \
-		--set storage.accessKey="xxxxxxx" \
-		--set storage.secretKey="xxxxxxx" \
-		--set secrets.admin.create=true \
-		--set secrets.admin.clientSecret="supersecret" \
-		> $(TARGET_DIR)/union_dataplane_helm_test_generated.yaml
-	# helm lint charts/union-dataplane -f $(TARGET_DIR)/union_dataplane_helm_test_generated.yaml
-	kubeconform -ignore-missing-schemas -skip CustomResourceDefinition $(TARGET_DIR)/union_dataplane_helm_test_generated.yaml
+TMP_DIR := $(TESTS_DIR)/tmp
+$(TMP_DIR): $(TESTS_DIR)
+	mkdir -p $(TESTS_DIR)/tmp
+
+.PHONY: generate-test-files
+generate-test-files: $(GEN_DIR)
+	./tests/run.sh generate
+
+.PHONY: test
+test: helm-test kubeconform-test
+
+.PHONY: helm-test
+helm-test: $(TMP_DIR)
+	./tests/run.sh helm
+
+.PHONY: kubeconform-test
+kubeconform-test:
+	./tests/run.sh kubeconform
 
 .PHONY: requirements
 requirements:
