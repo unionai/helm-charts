@@ -41,8 +41,7 @@ function helm-tests {
 
 function kubeconform-tests {
   echo "Running kubeconform tests..."
-  generate ${TMP_DIR}
-  for file in ${TMP_DIR}/*.yaml; do
+  for file in ${GEN_DIR}/*.yaml; do
     OUTPUT=$(basename ${file})
     kubeconform -ignore-missing-schemas -skip CustomResourceDefinition ${file}
     if [ $? -ne 0 ]; then
