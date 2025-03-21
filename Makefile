@@ -53,3 +53,18 @@ gen_dataplane_crds_release: requirements
 .PHONY: gen_sandbox_release
 gen_sandbox_release: requirements
 	invoke builder.release --chart sandbox
+
+.PHONY: lint
+lint: lint-dataplane lint-dataplane-crds lint-sandbox
+
+.PHONY: lint-dataplane
+lint-dataplane:
+	helm lint charts/dataplane
+
+.PHONY: lint-dataplane-crds
+lint-dataplane-crds:
+	helm lint charts/dataplane-crds
+
+.PHONY: lint-sandbox
+lint-sandbox:
+	helm lint charts/sandbox
