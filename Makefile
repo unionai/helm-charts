@@ -13,8 +13,8 @@ TMP_DIR := $(TESTS_DIR)/tmp
 $(TMP_DIR): $(TESTS_DIR)
 	mkdir -p $(TESTS_DIR)/tmp
 
-.PHONY: generate-test-files
-generate-test-files: $(GEN_DIR)
+.PHONY: generate-expected
+generate-expected: $(GEN_DIR)
 	./tests/run.sh generate
 
 .PHONY: test
