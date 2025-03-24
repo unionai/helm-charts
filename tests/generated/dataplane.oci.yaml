@@ -35,6 +35,12 @@ kind: Namespace
 metadata:
   name: union-health-monitoring-production
 ---
+# Source: dataplane/templates/operator/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secret
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -361,6 +367,12 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+    proxy: 
+      smConfig:
+        enabled: true
+        k8sConfig:
+          namespace: secret
+        type: K8s
   logger.yaml: |
     logger: 
       level: 6
@@ -470,6 +482,12 @@ data:
       workflow-reeval-duration: 30s
     webhook:
       certDir: /etc/webhook/certs
+      embeddedSecretManagerConfig:
+        k8sConfig:
+          namespace: secret
+        type: K8s
+      secretManagerTypes:
+      - Embedded
       serviceName: flyte-pod-webhook
   enabled_plugins.yaml: | 
     tasks:
@@ -1187,6 +1205,30 @@ subjects:
     name: flytepropeller-system
     namespace: union
 ---
+# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: proxy-system-secret
+  namespace: secret
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - '*'
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -1209,6 +1251,26 @@ rules:
       - watch
       - create
       - update
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: proxy-system-secret
+  namespace: secret
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: proxy-system-secret
+subjects:
+  - kind: ServiceAccount
+    name: proxy-system
+    namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1827,7 +1889,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -1886,7 +1948,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4d2784ba377d2c9f5294b1d9399c7366fd0d0187010c7727395b734bfc4892b"
+        configChecksum: "afd28c4586c9d74821c7db5c2324331d6be15bedfe957270bb56dc78cc9e8de"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -1913,7 +1975,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -1983,7 +2045,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2026,7 +2088,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4d2784ba377d2c9f5294b1d9399c7366fd0d0187010c7727395b734bfc4892b"
+        configChecksum: "afd28c4586c9d74821c7db5c2324331d6be15bedfe957270bb56dc78cc9e8de"
         
       labels:
         
@@ -2050,7 +2112,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2154,7 +2216,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "ddaf7845765855670bf69519e9ef1904943fa485b448011bb6eb9ecc6794005"
+        configChecksum: "1d76b29bffbce71fd6454a2e0b0c8406d7896d2a69cfac33ff8b1eddc393f00"
         
     spec:
       securityContext: 
@@ -2167,7 +2229,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2219,7 +2281,7 @@ spec:
               mountPath: /etc/flyte/config
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2316,7 +2378,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ddaf7845765855670bf69519e9ef1904943fa485b448011bb6eb9ecc6794005"
+        configChecksum: "1d76b29bffbce71fd6454a2e0b0c8406d7896d2a69cfac33ff8b1eddc393f00"
         
       labels:
         
@@ -2368,7 +2430,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
