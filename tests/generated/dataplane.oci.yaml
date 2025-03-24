@@ -1,0 +1,3233 @@
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flytesnacks-development
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flytesnacks-staging
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flytesnacks-production
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: union-health-monitoring-development
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: union-health-monitoring-staging
+---
+# Source: dataplane/templates/common/namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: union-health-monitoring-production
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: true
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+  name: release-name-kube-state-metrics
+  namespace: kube-system
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-operator
+  namespace: union
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+automountServiceAccountToken: true
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    app: prometheus-prometheus
+    app.kubernetes.io/name: prometheus-prometheus
+    app.kubernetes.io/component: prometheus
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+automountServiceAccountToken: true
+---
+# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: clustersync-system
+  namespace: union
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flytepropeller-webhook-system
+  namespace: union
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flytepropeller-system
+  namespace: union
+---
+# Source: dataplane/templates/common/auth-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: union-secret-auth
+  namespace: union
+type: Opaque
+data:
+  # TODO(rob): update or configure operator to use client_secret like all the other components.
+  app_secret: Y2xpZW50U2VjcmV0
+  client_secret: Y2xpZW50U2VjcmV0
+---
+# Source: dataplane/templates/common/cluster-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: operator-cluster-name
+type: Opaque
+data:
+  cluster_name: dW5pb24tb2Np
+---
+# Source: dataplane/templates/propeller/deployment-webhook.yaml
+# Create an empty secret that the first propeller pod will populate
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flyte-pod-webhook
+  namespace: union
+type: Opaque
+---
+# Source: dataplane/templates/clusterresourcesync/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-clusterresourcesync-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: clusterresourcesync
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  cluster_resources.yaml: | 
+    cluster_resources:
+      clusterName: 'union-oci'
+      customData:
+      - production:
+        - projectQuotaCpu:
+            value: "4096"
+        - projectQuotaMemory:
+            value: 2Ti
+        - projectQuotaNvidiaGpu:
+            value: "256"
+        - defaultUserRoleKey:
+            value: 'eks.amazonaws.com/role-arn'
+        - defaultUserRoleValue:
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+      - staging:
+        - projectQuotaCpu:
+            value: "4096"
+        - projectQuotaMemory:
+            value: 2Ti
+        - projectQuotaNvidiaGpu:
+            value: "256"
+        - defaultUserRoleKey:
+            value: 'eks.amazonaws.com/role-arn'
+        - defaultUserRoleValue:
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+      - development:
+        - projectQuotaCpu:
+            value: "4096"
+        - projectQuotaMemory:
+            value: 2Ti
+        - projectQuotaNvidiaGpu:
+            value: "256"
+        - defaultUserRoleKey:
+            value: 'eks.amazonaws.com/role-arn'
+        - defaultUserRoleValue:
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+      refreshInterval: 5m
+      standaloneDeployment: true
+      templatePath: /etc/flyte/clusterresource/templates
+    clusterResourcesPrivate:
+      app:
+        isSelfServe: false
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'clientId'
+        clientSecretLocation: /etc/union/secret/client_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+      connection:
+        host: dns:///union.us-west-2.union.ai
+  admin.yaml: | 
+    admin:
+      clientId: 'clientId'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+    event:
+      capacity: 1000
+      rate: 500
+      type: admin
+  domain.yaml: | 
+    domains:
+    - id: development
+      name: development
+    - id: staging
+      name: staging
+    - id: production
+      name: production
+  clusters.yaml: |
+    clusters:
+      clusterConfigs: []
+      labelClusterMap: {}
+---
+# Source: dataplane/templates/clusterresourcesync/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: clusterresource-template
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: clusterresourcesync
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  a_namespace.yaml: | 
+    apiVersion: v1
+    kind: Namespace
+    metadata:
+      name: {{ namespace }}
+      labels:
+        union.ai/namespace-type: flyte
+    spec:
+      finalizers:
+      - kubernetes
+    
+  b_default_service_account.yaml: | 
+    apiVersion: v1
+    kind: ServiceAccount
+    metadata:
+      name: default
+      namespace: {{ namespace }}
+      annotations:
+        {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}
+    
+  c_project_resource_quota.yaml: | 
+    apiVersion: v1
+    kind: ResourceQuota
+    metadata:
+      name: project-quota
+      namespace: {{ namespace }}
+    spec:
+      hard:
+        limits.cpu: {{ projectQuotaCpu }}
+        limits.memory: {{ projectQuotaMemory }}
+        requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+---
+# Source: dataplane/templates/operator/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-operator
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  k8s.yaml: | 
+    plugins:
+      k8s:
+        default-cpus: 200m
+        default-env-vars:
+        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
+        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
+        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - MORE: foo
+        default-memory: 100Mi
+  config.yaml: |
+    union:
+      connection: 
+        host: dns:///union.us-west-2.union.ai
+      auth: 
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'clientId'
+        clientSecretLocation: /etc/union/secret/client_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+    sharedService: 
+      features:
+        gatewayV2: true
+      port: 8081
+    authorizer: 
+      type: noop
+    operator:
+      enabled: true
+      enableTunnelService: true
+      apps: 
+        enabled: false
+      syncClusterConfig: 
+        enabled: false
+      clusterId: 
+        organization: 'union'
+      clusterData:
+        appId: 'clientId'
+        bucketName: 'bucket'
+        bucketRegion: 'us-ashburn-1'
+        cloudHostName: 'union.us-west-2.union.ai'
+        gcpProjectId: ''
+        metadataBucketPrefix: s3://
+        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+        userRoleKey: 'eks.amazonaws.com/role-arn'
+      collectUsages: 
+        enabled: true
+      dependenciesHeartbeat: 
+        prometheus:
+          endpoint: 'http://union-operator-prometheus:80/-/healthy'
+        propeller:
+          endpoint: 'http://flytepropeller:10254'
+        proxy:
+          endpoint: 'http://union-operator-proxy:10254'
+  logger.yaml: |
+    logger: 
+      level: 6
+      show-source: true
+  # TODO: We used to have configmap-overrides here.  Do we even use those?
+  # config-overrides.yaml | ...
+  storage.yaml: | 
+    storage:
+      type: stow
+      container: bucket
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: accessKey
+          secret_key: secretKey
+          disable_ssl: false
+          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+          region: us-ashburn-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+  fast_registration_storage.yaml: | 
+    fastRegistrationStorage:
+      container: "bucket"
+      type: stow
+      container: bucket
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: accessKey
+          secret_key: secretKey
+          disable_ssl: false
+          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+          region: us-ashburn-1
+---
+# Source: dataplane/templates/propeller/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-propeller-config
+  namespace: union
+data:
+  admin.yaml: | 
+    admin:
+      clientId: 'clientId'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+    event:
+      capacity: 1000
+      rate: 500
+      type: admin
+  catalog.yaml: | 
+    catalog-cache:
+      cache-endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+      type: fallback
+      use-admin-auth: true
+  copilot.yaml: | 
+    plugins:
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+  core.yaml: | 
+    propeller:
+      downstream-eval-duration: 30s
+      enable-admin-launcher: true
+      leader-election:
+        enabled: true
+        lease-duration: 15s
+        lock-config-map:
+          name: propeller-leader
+          namespace: union
+        renew-deadline: 10s
+        retry-period: 2s
+      limit-namespace: all
+      literal-offloading-config:
+        enabled: true
+      max-workflow-retries: 30
+      metadata-prefix: metadata/propeller
+      metrics-prefix: flyte
+      prof-port: 10254
+      queue:
+        batch-size: -1
+        batching-interval: 2s
+        queue:
+          base-delay: 5s
+          capacity: 1000
+          max-delay: 120s
+          rate: 100
+          type: maxof
+        sub-queue:
+          capacity: 100
+          rate: 10
+          type: bucket
+        type: batch
+      rawoutput-prefix: s3://bucket
+      workers: 4
+      workflow-reeval-duration: 30s
+    webhook:
+      certDir: /etc/webhook/certs
+      serviceName: flyte-pod-webhook
+  enabled_plugins.yaml: | 
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - agent-service
+        - echo
+  k8s.yaml: | 
+    plugins:
+      k8s:
+        default-cpus: 200m
+        default-env-vars:
+        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
+        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
+        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - MORE: foo
+        default-memory: 100Mi
+  logger.yaml: |
+    logger: 
+      level: 6
+      show-source: true
+  resource_manager.yaml: | 
+    propeller:
+      resourcemanager:
+        type: noop
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            templateUris:
+            - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
+        kubernetes-enabled: false
+  storage.yaml: | 
+    storage:
+      type: stow
+      container: bucket
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: accessKey
+          secret_key: secretKey
+          disable_ssl: false
+          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+          region: us-ashburn-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+  name: release-name-kube-state-metrics
+rules:
+
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["list", "watch"]
+
+- apiGroups: ["batch"]
+  resources:
+  - cronjobs
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - daemonsets
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - deployments
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - endpoints
+  verbs: ["list", "watch"]
+
+- apiGroups: ["autoscaling"]
+  resources:
+  - horizontalpodautoscalers
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources:
+  - ingresses
+  verbs: ["list", "watch"]
+
+- apiGroups: ["batch"]
+  resources:
+  - jobs
+  verbs: ["list", "watch"]
+
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+  - leases
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - limitranges
+  verbs: ["list", "watch"]
+
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources:
+    - mutatingwebhookconfigurations
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - namespaces
+  verbs: ["list", "watch"]
+
+- apiGroups: ["networking.k8s.io"]
+  resources:
+  - networkpolicies
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - nodes
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - persistentvolumeclaims
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - persistentvolumes
+  verbs: ["list", "watch"]
+
+- apiGroups: ["policy"]
+  resources:
+    - poddisruptionbudgets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - pods
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - replicasets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - replicationcontrollers
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - resourcequotas
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - services
+  verbs: ["list", "watch"]
+
+- apiGroups: ["apps"]
+  resources:
+  - statefulsets
+  verbs: ["list", "watch"]
+
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - storageclasses
+  verbs: ["list", "watch"]
+
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources:
+    - validatingwebhookconfigurations
+  verbs: ["list", "watch"]
+
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - volumeattachments
+  verbs: ["list", "watch"]
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-operator
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+rules:
+- apiGroups:
+  - monitoring.coreos.com
+  resources:
+  - alertmanagers
+  - alertmanagers/finalizers
+  - alertmanagers/status
+  - alertmanagerconfigs
+  - prometheuses
+  - prometheuses/finalizers
+  - prometheuses/status
+  - prometheusagents
+  - prometheusagents/finalizers
+  - prometheusagents/status
+  - thanosrulers
+  - thanosrulers/finalizers
+  - thanosrulers/status
+  - scrapeconfigs
+  - servicemonitors
+  - podmonitors
+  - probes
+  - prometheusrules
+  verbs:
+  - '*'
+- apiGroups:
+  - apps
+  resources:
+  - statefulsets
+  verbs:
+  - '*'
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  verbs:
+  - '*'
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - list
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - services
+  - services/finalizers
+  - endpoints
+  verbs:
+  - get
+  - create
+  - update
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - patch
+  - create
+- apiGroups:
+  - networking.k8s.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - storage.k8s.io
+  resources:
+  - storageclasses
+  verbs:
+  - get
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-prometheus
+  labels:
+    app: prometheus-prometheus
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+rules:
+# This permission are not in the kube-prometheus repo
+# they're grabbed from https://github.com/prometheus/prometheus/blob/master/documentation/examples/rbac-setup.yml
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/metrics
+  - services
+  - endpoints
+  - pods
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["discovery.k8s.io"]
+  resources:
+  - endpointslices
+  verbs: ["get", "list", "watch"]
+- apiGroups:
+  - "networking.k8s.io"
+  resources:
+  - ingresses
+  verbs: ["get", "list", "watch"]
+- nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  verbs: ["get"]
+---
+# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: clustersync-resource
+rules:
+  - apiGroups:
+      - ""
+      - rbac.authorization.k8s.io
+    resources:
+      - configmaps
+      - namespaces
+      - pods
+      - resourcequotas
+      - roles
+      - rolebindings
+      - secrets
+      - services
+      - serviceaccounts
+      - clusterrolebindings
+    verbs:
+      - '*'
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - '*'
+    resources:
+      - events
+      - flyteworkflows
+      - pods/log
+      - pods
+      - rayjobs
+      - resourcequotas
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Allow Access to all resources under flyte.lyft.com
+  - apiGroups:
+      - flyte.lyft.com
+    resources:
+      - flyteworkflows
+      - flyteworkflows/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+      - post
+      - deletecollection
+  - apiGroups:
+      - '*'
+    resources:
+      - resourcequotas
+      - pods
+      - configmaps
+      - podtemplates
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+---
+# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: flytepropeller-webhook-role
+  namespace: union
+rules:
+  - apiGroups:
+      - "*"
+    resources:
+      - mutatingwebhookconfigurations
+      - secrets
+      - pods
+      - replicasets/finalizers
+    verbs:
+      - get
+      - create
+      - update
+      - patch
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flytepropeller-role
+rules:
+  # Allow RO access to PODS
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  # Allow Event recording access
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - update
+      - delete
+      - patch
+  # Allow Access All plugin objects
+  - apiGroups:
+      - '*'
+    resources:
+      - '*'
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+  # Allow Access to CRD
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - update
+  # Allow Access to all resources under flyte.lyft.com
+  - apiGroups:
+      - flyte.lyft.com
+    resources:
+      - flyteworkflows
+      - flyteworkflows/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+      - post
+      - deletecollection
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+  name: release-name-kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-kube-state-metrics
+subjects:
+- kind: ServiceAccount
+  name: release-name-kube-state-metrics
+  namespace: kube-system
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-operator
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus-operator
+subjects:
+- kind: ServiceAccount
+  name: prometheus-operator
+  namespace: union
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-prometheus
+  labels:
+    app: prometheus-prometheus
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+---
+# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clustersync-resource
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: clustersync-resource
+subjects:
+  - kind: ServiceAccount
+    name: clustersync-system
+    namespace: union
+---
+# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: clustersync-auth-delegator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:auth-delegator
+subjects:
+  - kind: ServiceAccount
+    name: clustersync-system
+    namespace: union
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: proxy-system
+subjects:
+  - kind: ServiceAccount
+    name: proxy-system
+    namespace: union
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: operator-system
+subjects:
+  - kind: ServiceAccount
+    name: operator-system
+    namespace: union
+---
+# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
+# Create a binding from Role -> ServiceAccount
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: flytepropeller-webhook-binding
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flytepropeller-webhook-role
+subjects:
+  - kind: ServiceAccount
+    name: flytepropeller-webhook-system
+    namespace: union
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flytepropeller-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flytepropeller-role
+subjects:
+  - kind: ServiceAccount
+    name: flytepropeller-system
+    namespace: union
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - '*'
+    resources:
+      - secrets
+      - deployments
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: operator-system
+subjects:
+  - kind: ServiceAccount
+    name: operator-system
+    namespace: union
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: kube-system
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+  annotations:
+    prometheus.io/scrape: 'true'
+spec:
+  type: "ClusterIP"
+  ports:
+  - name: "http"
+    protocol: TCP
+    port: 8080
+    targetPort: 8080
+  
+  selector:    
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/charts/prometheus/templates/exporters/core-dns/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-coredns
+  labels:
+    app: prometheus-coredns
+    jobLabel: coredns
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 9153
+      protocol: TCP
+      targetPort: 9153
+  selector:
+    k8s-app: kube-dns
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-controller-manager/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-kube-controller-manager
+  labels:
+    app: prometheus-kube-controller-manager
+    jobLabel: kube-controller-manager
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 10257
+      protocol: TCP
+      targetPort: 10257
+  selector:
+    component: kube-controller-manager
+  type: ClusterIP
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-etcd/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-kube-etcd
+  labels:
+    app: prometheus-kube-etcd
+    jobLabel: kube-etcd
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 2381
+      protocol: TCP
+      targetPort: 2381
+  selector:
+    component: etcd
+  type: ClusterIP
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-proxy/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-kube-proxy
+  labels:
+    app: prometheus-kube-proxy
+    jobLabel: kube-proxy
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 10249
+      protocol: TCP
+      targetPort: 10249
+  selector:
+    k8s-app: kube-proxy
+  type: ClusterIP
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-scheduler/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-kube-scheduler
+  labels:
+    app: prometheus-kube-scheduler
+    jobLabel: kube-scheduler
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+  namespace: kube-system
+spec:
+  clusterIP: None
+  ports:
+    - name: http-metrics
+      port: 10259
+      protocol: TCP
+      targetPort: 10259
+  selector:
+    component: kube-scheduler
+  type: ClusterIP
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-operator
+  namespace: union
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+spec:
+  ports:
+  - name: https
+    port: 443
+    targetPort: https
+  selector:
+    app: prometheus-operator
+    release: "release-name"
+  type: "ClusterIP"
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    app: prometheus-prometheus
+    self-monitor: "true"
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  ports:
+  - name: http-web
+    port: 80
+    targetPort: 9090
+  - name: reloader-web
+    appProtocol: http
+    port: 8080
+    targetPort: reloader-web
+  publishNotReadyAddresses: false
+  selector:
+    app.kubernetes.io/name: prometheus
+    operator.prometheus.io/name: union-operator-prometheus
+  sessionAffinity: None
+  type: "ClusterIP"
+---
+# Source: dataplane/templates/operator/service-proxy.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-proxy
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 10254
+      targetPort: debug
+      protocol: TCP
+      name: debug
+  selector:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/operator/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: debug
+      protocol: TCP
+      name: debug
+  selector:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/propeller/service-webhook.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flyte-pod-webhook
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+  annotations: 
+    projectcontour.io/upstream-protocol.h2c: grpc
+spec:
+  selector: 
+    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/instance: release-name
+  ports:
+    - name: https
+      protocol: TCP
+      port: 443
+      targetPort: 9443
+    - name: debug
+      protocol: TCP
+      port: 10254
+      targetPort: 10254
+---
+# Source: dataplane/templates/propeller/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: debug
+      protocol: TCP
+      port: 10254
+    - name: fasttask
+      port: 15605
+      protocol: TCP
+      targetPort: 15605
+  selector: 
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: kube-system
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+spec:
+  selector:
+    matchLabels:      
+      app.kubernetes.io/name: kube-state-metrics
+      app.kubernetes.io/instance: release-name
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  template:
+    metadata:
+      labels:        
+        helm.sh/chart: kube-state-metrics-5.28.0
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: metrics
+        app.kubernetes.io/part-of: kube-state-metrics
+        app.kubernetes.io/name: kube-state-metrics
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "2.14.0"
+        release: release-name
+    spec:
+      automountServiceAccountToken: true
+      hostNetwork: false
+      serviceAccountName: release-name-kube-state-metrics
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: kube-state-metrics
+        args:
+        - --port=8080
+        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+        imagePullPolicy: IfNotPresent
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
+        ports:
+        - containerPort: 8080
+          name: "http"
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            httpHeaders:
+            path: /livez
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            httpHeaders:
+            path: /readyz
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-operator
+  namespace: union
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: prometheus-operator
+      release: "release-name"
+  template:
+    metadata:
+      labels:
+        
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/part-of: prometheus
+        chart: prometheus-68.2.2
+        release: "release-name"
+        heritage: "Helm"
+        app: prometheus-operator
+        app.kubernetes.io/name: prometheus-prometheus-operator
+        app.kubernetes.io/component: prometheus-operator
+    spec:
+      containers:
+        - name: prometheus
+          image: "quay.io/prometheus-operator/prometheus-operator:v0.79.2"
+          imagePullPolicy: "IfNotPresent"
+          args:
+            - --kubelet-service=kube-system/union-operator-kubelet
+            - --kubelet-endpoints=true
+            - --kubelet-endpointslice=false
+            - --localhost=127.0.0.1
+            - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.79.2
+            - --config-reloader-cpu-request=0
+            - --config-reloader-cpu-limit=0
+            - --config-reloader-memory-request=0
+            - --config-reloader-memory-limit=0
+            - --thanos-default-base-image=quay.io/thanos/thanos:v0.37.2
+            - --secret-field-selector=type!=kubernetes.io/dockercfg,type!=kubernetes.io/service-account-token,type!=helm.sh/release.v1
+            - --web.enable-tls=true
+            - --web.cert-file=/cert/cert
+            - --web.key-file=/cert/key
+            - --web.listen-address=:10250
+            - --web.tls-min-version=VersionTLS13
+          ports:
+            - containerPort: 10250
+              name: https
+          env:
+          - name: GOGC
+            value: "30"
+          resources:
+            {}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: tls-secret
+              mountPath: /cert
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: https
+              scheme: HTTPS
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            timeoutSeconds: 1
+            successThreshold: 1
+            failureThreshold: 3
+      volumes:
+        - name: tls-secret
+          secret:
+            defaultMode: 420
+            secretName: union-operator-admission
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      serviceAccountName: prometheus-operator
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+---
+# Source: dataplane/templates/clusterresourcesync/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: syncresources
+  namespace: union
+  labels:
+    app.kubernetes.io/name: clusterresourcesync
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: clusterresourcesync
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "183468157ea2b5adf4c79ad53ac67c810bcfe2e70aa2d6312f82458e71c1e9e"
+        
+      labels:
+        app.kubernetes.io/name: clusterresourcesync
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      containers:
+        - command:
+            - clusterresource
+            - --config
+            - /etc/flyte/config/*.yaml
+            - clusterresource
+            - run
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: "IfNotPresent"
+          name: sync-cluster-resources
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 500m
+              memory: 100Mi
+          volumeMounts:
+            - name: auth
+              mountPath: /etc/union/secret
+            - name: resource-templates
+              mountPath: /etc/flyte/clusterresource/templates
+            - name: config-volume
+              mountPath: /etc/flyte/config
+          ports:
+            - containerPort: 10254
+      serviceAccountName: clustersync-system
+      volumes:
+        - configMap:
+            name: clusterresource-template
+          name: resource-templates
+        - configMap:
+            name: flyte-clusterresourcesync-config
+          name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
+# Source: dataplane/templates/operator/deployment-proxy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-proxy
+  namespace: union
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: operator-proxy
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "4d2784ba377d2c9f5294b1d9399c7366fd0d0187010c7727395b734bfc4892b"
+        
+      labels:
+        app.kubernetes.io/name: operator-proxy
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      volumes:
+        - name: config-volume
+          projected:
+            sources:
+            - configMap:
+                name: union-operator
+            - configMap:
+                name: flyte-clusterresourcesync-config
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+      priorityClassName: 
+      serviceAccountName: proxy-system
+      securityContext:
+        {}
+      containers:
+        - name: operator-proxy
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: "4"
+              memory: 8Gi
+            requests:
+              cpu: "4"
+              memory: 8Gi
+          volumeMounts:
+            - mountPath: /etc/union/config
+              name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
+          args:
+            - operator
+            - proxy
+            - --config
+            - /etc/union/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: connect
+              containerPort: 8080
+              protocol: TCP
+            - name: grpc
+              containerPort: 8081
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+        - name: "tunnel"
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: union-secret-auth
+                  key: tunnel_token
+                  optional: true
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
+# Source: dataplane/templates/operator/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator
+  labels:
+    app.kubernetes.io/name: operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: operator
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "4d2784ba377d2c9f5294b1d9399c7366fd0d0187010c7727395b734bfc4892b"
+        
+      labels:
+        
+        app.kubernetes.io/name: operator
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: 
+      serviceAccountName: operator-system
+      securityContext:
+        {}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: operator
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - mountPath: /etc/union/config
+              name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+          args:
+            - operator
+            - serve
+            - --config
+            - /etc/union/config/*.yaml
+            - --operator.clusterId.name
+            - "$(CLUSTER_NAME)"
+            - --operator.tunnel.k8sSecretName
+            - union-secret-auth
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
+# Source: dataplane/templates/propeller/deployment-webhook.yaml
+# Create the actual deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flytepropeller-webhook
+  namespace: union
+  labels:
+    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flytepropellerwebhook
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        
+        app.kubernetes.io/name: flytepropellerwebhook
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        configChecksum: "ddaf7845765855670bf69519e9ef1904943fa485b448011bb6eb9ecc6794005"
+        
+    spec:
+      securityContext: 
+        fsGroup: 65534
+        fsGroupChangePolicy: Always
+        runAsNonRoot: true
+        runAsUser: 1001
+        seLinuxOptions:
+          type: spc_t
+      serviceAccountName: flytepropeller-webhook-system
+      initContainers:
+        - name: generate-secrets
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: "IfNotPresent"
+          command:
+            - flytepropeller
+          args:
+            - webhook
+            - init-certs
+            - --config
+            - /etc/flyte/config/*.yaml
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+      containers:
+        - name: webhook
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: "IfNotPresent"
+          command:
+            - flytepropeller
+          args:
+            - webhook
+            - --config
+            - /etc/flyte/config/*.yaml
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+          ports:
+            - containerPort: 9443
+            - containerPort: 10254
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+              readOnly: true
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
+              readOnly: true
+      volumes:
+        - name: config-volume
+          configMap:
+            name: flyte-propeller-config
+        - name: webhook-certs
+          secret:
+            secretName: flyte-pod-webhook
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
+# Source: dataplane/templates/propeller/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flytepropeller
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "ddaf7845765855670bf69519e9ef1904943fa485b448011bb6eb9ecc6794005"
+        
+      labels:
+        
+        
+        app.kubernetes.io/name: flytepropeller
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: system-cluster-critical
+      containers:
+        - command:
+            - flytepropeller
+            - --config
+            - /etc/flyte/config/*.yaml
+            - --propeller.cluster-id
+            - union-oci
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: AWS_REQUEST_CHECKSUM_CALCULATION
+            value: when_required
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.0"
+          imagePullPolicy: "IfNotPresent"
+          name: flytepropeller
+          ports:
+            - containerPort: 10254
+          resources:
+            limits:
+              cpu: "2"
+              memory: 4Gi
+            requests:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+            - name: auth
+              mountPath: /etc/union/secret
+      serviceAccountName: flytepropeller-system
+      volumes:
+        - configMap:
+            name: flyte-propeller-config
+          name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name:  union-operator-admission
+  annotations:
+    
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+webhooks:
+  - name: prometheusrulemutate.monitoring.coreos.com
+    failurePolicy: Ignore
+    rules:
+      - apiGroups:
+          - monitoring.coreos.com
+        apiVersions:
+          - "*"
+        resources:
+          - prometheusrules
+        operations:
+          - CREATE
+          - UPDATE
+    clientConfig:
+      service:
+        namespace: union
+        name: prometheus-operator
+        path: /admission-prometheusrules/mutate
+    timeoutSeconds: 10
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/prometheus.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: Prometheus
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    app: prometheus-prometheus
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  automountServiceAccountToken: true
+  image: "quay.io/prometheus/prometheus:v3.1.0"
+  version: v3.1.0
+  externalUrl: http://union-operator-prometheus.union:80
+  paused: false
+  replicas: 1
+  shards: 1
+  logLevel:  info
+  logFormat:  logfmt
+  listenLocal: false
+  enableAdminAPI: false
+  resources:
+    limits:
+      cpu: "4"
+      memory: 8Gi
+    requests:
+      cpu: "4"
+      memory: 8Gi
+  retention: "10d"
+  tsdb:
+    outOfOrderTimeWindow: 0s
+  walCompression: true
+  routePrefix: "/prometheus/"
+  serviceAccountName: union-operator-prometheus
+  serviceMonitorSelector:
+    matchLabels:
+      release: "release-name"
+
+  serviceMonitorNamespaceSelector: {}
+  podMonitorSelector:
+    matchLabels:
+      release: "release-name"
+
+  podMonitorNamespaceSelector: {}
+  probeSelector:
+    matchLabels:
+      release: "release-name"
+
+  probeNamespaceSelector: {}
+  securityContext:
+    fsGroup: 2000
+    runAsGroup: 2000
+    runAsNonRoot: true
+    runAsUser: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  ruleNamespaceSelector: {}
+  ruleSelector:
+    matchLabels:
+      release: "release-name"
+
+  scrapeConfigSelector:
+    matchLabels:
+      release: "release-name"
+
+  scrapeConfigNamespaceSelector: {}
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          topologyKey: kubernetes.io/hostname
+          labelSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [prometheus]}
+              - {key: prometheus, operator: In, values: [union-operator-prometheus]}
+  portName: http-web
+  hostNetwork: false
+---
+# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: kube-system
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.28.0
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.14.0"
+    release: release-name
+spec:
+  jobLabel: app.kubernetes.io/name  
+  selector:
+    matchLabels:      
+      app.kubernetes.io/name: kube-state-metrics
+      app.kubernetes.io/instance: release-name
+  endpoints:
+    - port: http
+      honorLabels: true
+---
+# Source: dataplane/charts/prometheus/templates/exporters/core-dns/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-coredns
+  namespace: union
+  labels:
+    app: prometheus-coredns
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  jobLabel: jobLabel
+  
+  selector:
+    matchLabels:
+      app: prometheus-coredns
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-controller-manager/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-kube-controller-manager
+  namespace: union
+  labels:
+    app: prometheus-kube-controller-manager
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  jobLabel: jobLabel
+  
+  selector:
+    matchLabels:
+      app: prometheus-kube-controller-manager
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    scheme: https
+    tlsConfig:
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecureSkipVerify: true
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-etcd/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-kube-etcd
+  namespace: union
+  labels:
+    app: prometheus-kube-etcd
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  jobLabel: jobLabel
+    
+  selector:
+    matchLabels:
+      app: prometheus-kube-etcd
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-proxy/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-kube-proxy
+  namespace: union
+  labels:
+    app: prometheus-kube-proxy
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  jobLabel: jobLabel
+  
+  selector:
+    matchLabels:
+      app: prometheus-kube-proxy
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kube-scheduler/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-kube-scheduler
+  namespace: union
+  labels:
+    app: prometheus-kube-scheduler
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  jobLabel: jobLabel
+  
+  selector:
+    matchLabels:
+      app: prometheus-kube-scheduler
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "kube-system"
+  endpoints:
+  - port: http-metrics
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    scheme: https
+    tlsConfig:
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecureSkipVerify: true
+---
+# Source: dataplane/charts/prometheus/templates/exporters/kubelet/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-kubelet
+  namespace: union
+  labels:
+    app: prometheus-kubelet    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  
+  attachMetadata:
+    node: false
+  jobLabel: k8s-app
+  namespaceSelector:
+    matchNames:
+    - kube-system
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kubelet
+      k8s-app: kubelet
+  endpoints:
+  - port: https-metrics
+    scheme: https    
+    tlsConfig:
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecureSkipVerify: true
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    honorLabels: true
+    honorTimestamps: true
+    metricRelabelings:
+    - action: drop
+      regex: (csi_operations|storage_operation_duration)_seconds_bucket;(0.25|2.5|15|25|120|600)(\.0)?
+      sourceLabels:
+      - __name__
+      - le
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+  - port: https-metrics
+    scheme: https
+    path: /metrics/cadvisor
+    interval: 10s
+    honorLabels: true
+    honorTimestamps: true
+    trackTimestampsStaleness: true    
+    tlsConfig:
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecureSkipVerify: true
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    metricRelabelings:
+    - action: drop
+      regex: container_cpu_(cfs_throttled_seconds_total|load_average_10s|system_seconds_total|user_seconds_total)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_fs_(io_current|io_time_seconds_total|io_time_weighted_seconds_total|reads_merged_total|sector_reads_total|sector_writes_total|writes_merged_total)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_memory_(mapped_file|swap)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_(file_descriptors|tasks_state|threads_max)
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: container_memory_failures_total;hierarchy
+      sourceLabels:
+      - __name__
+      - scope
+    - action: drop
+      regex: container_network_.*;(cali|cilium|cni|lxc|nodelocaldns|tunl).*
+      sourceLabels:
+      - __name__
+      - interface
+    - action: drop
+      regex: container_spec.*
+      sourceLabels:
+      - __name__
+    - action: drop
+      regex: .+;
+      sourceLabels:
+      - id
+      - pod
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+  - port: https-metrics
+    scheme: https
+    path: /metrics/probes
+    honorLabels: true
+    honorTimestamps: true    
+    tlsConfig:
+      caFile: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      insecureSkipVerify: true
+    bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    relabelings:
+    - action: replace
+      sourceLabels:
+      - __metrics_path__
+      targetLabel: metrics_path
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: prometheus-operator
+  namespace: union
+  labels:
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app: prometheus-operator
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator
+spec:
+  
+  endpoints:
+  - port: https
+    scheme: https
+    tlsConfig:
+      serverName: prometheus-operator
+      ca:
+        secret:
+          name: union-operator-admission
+          key: ca
+          optional: false
+    honorLabels: true
+  selector:
+    matchLabels:
+      app: prometheus-operator
+      release: "release-name"
+  namespaceSelector:
+    matchNames:
+      - "union"
+---
+# Source: dataplane/charts/prometheus/templates/prometheus/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    app: prometheus-prometheus
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+spec:
+  
+  selector:
+    matchLabels:
+      app: prometheus-prometheus
+      release: "release-name"
+      self-monitor: "true"
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+  - port: http-web
+    path: "/prometheus/metrics"
+  - port: reloader-web
+    path: "/metrics"
+---
+# Source: dataplane/templates/operator/monitoring.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flytepropeller
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      platform.union.ai/service-group: release-name
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: "debug"
+      path: "/metrics"
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/validatingWebhookConfiguration.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name:  union-operator-admission
+  annotations:
+    
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+webhooks:
+  - name: prometheusrulemutate.monitoring.coreos.com
+    failurePolicy: Ignore
+    rules:
+      - apiGroups:
+          - monitoring.coreos.com
+        apiVersions:
+          - "*"
+        resources:
+          - prometheusrules
+        operations:
+          - CREATE
+          - UPDATE
+    clientConfig:
+      service:
+        namespace: union
+        name: prometheus-operator
+        path: /admission-prometheusrules/validate
+    timeoutSeconds: 10
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name:  union-operator-admission
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+automountServiceAccountToken: true
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name:  union-operator-admission
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+rules:
+  - apiGroups:
+      - admissionregistration.k8s.io
+    resources:
+      - validatingwebhookconfigurations
+      - mutatingwebhookconfigurations
+    verbs:
+      - get
+      - update
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name:  union-operator-admission
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-admission
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-admission
+    namespace: union
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name:  union-operator-admission
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - secrets
+    verbs:
+      - get
+      - create
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name:  union-operator-admission
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade,post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-admission
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-admission
+    namespace: union
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/job-createSecret.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name:  union-operator-admission-create
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission-create
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+spec:
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      name:  union-operator-admission-create
+      labels:
+        app: prometheus-admission-create
+        
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/part-of: prometheus
+        chart: prometheus-68.2.2
+        release: "release-name"
+        heritage: "Helm"
+        app.kubernetes.io/name: prometheus-prometheus-operator
+        app.kubernetes.io/component: prometheus-operator-webhook
+    spec:
+      containers:
+        - name: create
+          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - create
+            - --host=prometheus-operator,prometheus-operator.union.svc
+            - --namespace=union
+            - --secret-name=union-operator-admission
+          securityContext:
+          
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          resources:
+            {}
+      restartPolicy: OnFailure
+      serviceAccountName: union-operator-admission
+      securityContext:
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 2000
+        seccompProfile:
+          type: RuntimeDefault
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/job-patchWebhook.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name:  union-operator-admission-patch
+  namespace: union
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    app: prometheus-admission-patch
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-68.2.2
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+spec:
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      name:  union-operator-admission-patch
+      labels:
+        app: prometheus-admission-patch
+        
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/part-of: prometheus
+        chart: prometheus-68.2.2
+        release: "release-name"
+        heritage: "Helm"
+        app.kubernetes.io/name: prometheus-prometheus-operator
+        app.kubernetes.io/component: prometheus-operator-webhook
+    spec:
+      containers:
+        - name: patch
+          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - patch
+            - --webhook-name=union-operator-admission
+            - --namespace=union
+            - --secret-name=union-operator-admission
+            - --patch-failure-policy=
+          securityContext:
+          
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          resources:
+            {}
+      restartPolicy: OnFailure
+      serviceAccountName: union-operator-admission
+      securityContext:
+        runAsGroup: 2000
+        runAsNonRoot: true
+        runAsUser: 2000
+        seccompProfile:
+          type: RuntimeDefault
