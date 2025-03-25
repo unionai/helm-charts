@@ -6,7 +6,6 @@ the stow based options to provide additional configuration flexibility.
 {{- define "storage.base" -}}
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
-  container: {{ .Values.storage.bucketName }}
   stow:
     kind: s3
     config:
@@ -23,7 +22,6 @@ the stow based options to provide additional configuration flexibility.
 {{- end }}
 {{- else if eq .Values.storage.provider "aws" }}
   type: s3
-  container: {{ .Values.storage.bucketName }}
   connection:
     auth-type: {{ .Values.storage.authType }}
     region: {{ .Values.storage.region }}
@@ -42,6 +40,7 @@ the stow based options to provide additional configuration flexibility.
 
 {{- define "storage" -}}
 storage:
+  container: {{ .Values.storage.bucketName }}
 {{- include "storage.base" . }}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
