@@ -403,6 +403,10 @@ Create the name of the service account to use
 {{- default "proxy-system" .Values.proxy.serviceAccount.name }}
 {{- end }}
 
+{{- define "proxy.secretsNamespace" -}}
+{{- default .Release.Namespace .Values.proxy.secretManager.namespace }}
+{{- end }}
+
 {{- define "proxy.selectorLabels" -}}
 app.kubernetes.io/name: operator-proxy
 app.kubernetes.io/instance: {{ .Release.Name }}
