@@ -18,7 +18,7 @@ the stow based options to provide additional configuration flexibility.
 {{- with .Values.storage.fastRegistrationURL }}
   signedURL:
     stowConfigOverride:
-      endpoint: {{- (toYaml .) }}
+      endpoint: {{ (toYaml .) }}
 {{- end }}
 {{- else if eq .Values.storage.provider "aws" }}
   type: s3
