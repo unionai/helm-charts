@@ -721,7 +721,7 @@ Global service account annotations
 {{- end -}}
 
 {{- define "fluentbit.serviceAccountName" -}}
-{{- default "fluentbit-system" .Values.fluentbit.serviceAccount.name }}
+{{- default "fluentbit-system" }}
 {{- end }}
 
 
