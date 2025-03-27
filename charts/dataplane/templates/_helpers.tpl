@@ -719,3 +719,13 @@ Global service account annotations
 {{- toYaml . }}
 {{- end }}
 {{- end -}}
+
+{{- define "fluentbit.serviceAccountName" -}}
+{{- default "fluentbit-system" .Values.fluentbit.serviceAccount.name }}
+{{- end }}
+
+
+{{- define "fluentbit.labels" -}}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
