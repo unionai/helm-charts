@@ -719,3 +719,18 @@ Global service account annotations
 {{- toYaml . }}
 {{- end }}
 {{- end -}}
+
+{{/*
+Create a full name prefix for serving resources
+*/}}
+{{- define "serving.fullname" -}}
+{{- $name := include "union-operator.fullname" . }}
+{{- printf "%s-serving" $name }}
+{{- end }}
+
+{{/*
+Name of the serving-envoy-bootstrap ConfigMap
+*/}}
+{{- define "serving.envoyBootstrapConfigMapName" -}}
+{{- include "serving.fullname" . }}-envoy-bootstrap
+{{- end }}
