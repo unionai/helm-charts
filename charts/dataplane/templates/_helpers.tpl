@@ -730,6 +730,14 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "fluentbit.s3BucketName" -}}
+{{- .Values.storage.bucketName }}
+{{- end }}
+
+{{- define "fluentbit.s3Region" -}}
+{{- .Values.storage.region }}
+{{- end }}
+
 {{/*
 Create a full name prefix for serving resources
 */}}
