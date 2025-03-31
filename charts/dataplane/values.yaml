@@ -338,14 +338,13 @@ config:
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
     persistedLogs:
-      sourceType: "ObjectStore"
+      sourceType: "{{ .Values.proxy.persistedLogs.sourceType }}"
       objectStore:
-        bucketName: '{{ include "fluentbit.s3BucketName" . }}'
-        region: '{{ include "fluentbit.s3Region" . }}'
-        prefix: "fluent-bit-logs"
-        endpoint: ""
+        bucketName: '{{ include "proxy.persistedLogs.bucketName" . }}'
+        region: '{{ include "proxy.persistedLogs.region" . }}'
+        prefix: "persisted-logs"
+        endpoint: '{{ include "proxy.persistedLogs.endpoint" . }}'
         pathTemplate: "namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}"
-    
 
   qubole: { }
   remoteData:
@@ -455,7 +454,7 @@ fluentbit:
   iamRole: "arn:aws:iam::879381277806:role/troy-fluentbit"
   serviceAccount:
     create: false
-    name: fluentbit-system
+    name: '{{ include "fluentbit.serviceAccountName" . }}'
   prometheusRule:
     enabled: false
   dashboards:
@@ -496,10 +495,10 @@ fluentbit:
       [OUTPUT]
           Name s3
           Match *
-          region us-west-2
-          bucket union-terraform-data-7d537b3b
+          region {{ include "proxy.persistedLogs.region" . }}
+          bucket {{ include "proxy.persistedLogs.bucketName" . }}
           upload_timeout 1m
-          s3_key_format /fluent-bit-logs/$TAG
+          s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
           static_file_path true
           json_date_key false
 
@@ -910,6 +909,13 @@ proxy:
     # -- Set the namespace for union managed secrets created through the native Kubernetes secret manager. If the namespace is not set,
     # the release namespace will be used.
     namespace: ""
+  persistedLogs:
+    sourceType: "ObjectStore"
+    objectStore:
+      bucketName: "" # Use storage.bucketName if not set
+      region: "" # Use storage.region if not set
+      endpoint: "" # Use storage.endpoint if not set
+
   replicas: 1
   podAnnotations: { }
   podLabels: { }

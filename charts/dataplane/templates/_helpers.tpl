@@ -425,6 +425,18 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
+{{- define "proxy.persistedLogs.bucketName" -}}
+{{- default .Values.storage.bucketName .Values.proxy.persistedLogs.objectStore.bucketName }}
+{{- end }}
+
+{{- define "proxy.persistedLogs.region" -}}
+{{- default .Values.storage.region .Values.proxy.persistedLogs.objectStore.region }}
+{{- end }}
+
+{{- define "proxy.persistedLogs.endpoint" -}}
+{{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
+{{- end }}
+
 {{/*
 Create the name of the service account to use
 */}}
@@ -720,23 +732,21 @@ Global service account annotations
 {{- end }}
 {{- end -}}
 
+{{/*
+Name of the fluentbit service account
+*/}}
 {{- define "fluentbit.serviceAccountName" -}}
 {{- default "fluentbit-system" .Values.fluentbit.serviceAccount.name }}
 {{- end }}
 
-
-{{- define "fluentbit.labels" -}}
+{{/*
+Labels for fluentbit service account
+*/}}
+{{- define "fluentbit.ServiceAccountLabels" -}}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "fluentbit.s3BucketName" -}}
-{{- .Values.storage.bucketName }}
-{{- end }}
-
-{{- define "fluentbit.s3Region" -}}
-{{- .Values.storage.region }}
-{{- end }}
 
 {{/*
 Create a full name prefix for serving resources
