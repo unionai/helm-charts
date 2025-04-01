@@ -437,6 +437,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
 {{- end }}
 
+{{- define "proxy.persistedLogs.prefix" -}}
+persisted-logs
+{{- end }}
+
 {{/*
 Create the name of the service account to use
 */}}
@@ -736,7 +740,7 @@ Global service account annotations
 Name of the fluentbit service account
 */}}
 {{- define "fluentbit.serviceAccountName" -}}
-fluentbit-system
+{{- .Values.fluentbit.serviceAccount.name }}
 {{- end }}
 
 {{/*
