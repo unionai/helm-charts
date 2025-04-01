@@ -425,6 +425,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
+{{- define "proxy.persistedLogs.bucketName" -}}
+{{- default .Values.storage.bucketName .Values.proxy.persistedLogs.objectStore.bucketName }}
+{{- end }}
+
+{{- define "proxy.persistedLogs.region" -}}
+{{- default .Values.storage.region .Values.proxy.persistedLogs.objectStore.region }}
+{{- end }}
+
+{{- define "proxy.persistedLogs.endpoint" -}}
+{{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
+{{- end }}
 
 {{/*
 Create the name of the service account to use
