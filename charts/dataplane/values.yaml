@@ -452,7 +452,7 @@ dcgmExporter:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
-  iamRole: "arn:aws:iam::879381277806:role/troy-fluentbit"
+  iamRole: "{{ .Values.proxy.persistedLogs.objectStore.iamRole }}"
   serviceAccount:
     create: false
     name: fluentbit-system
@@ -465,30 +465,6 @@ fluentbit:
     annotations: { }
     namespace: union
     deterministicUid: false
-  config:
-    service: |
-      [SERVICE]
-          Daemon Off
-          Flush {{ .Values.flush }}
-          Log_Level {{ .Values.logLevel }}
-          Parsers_File /fluent-bit/etc/parsers.conf
-          Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
-          HTTP_Server On
-          HTTP_Listen 0.0.0.0
-          HTTP_Port {{ .Values.metricsPort }}
-          Health_Check On
-    inputs: |
-      [INPUT]
-          Name                tail
-          Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
-          Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
-          Path                /var/log/containers/*.log
-          DB                  /var/log/flb_kube.db
-          multiline.parser    docker, cri
-          Mem_Buf_Limit       5MB
-          Skip_Long_Lines     On
-          Refresh_Interval    10
-          
 
 flyteagent:
   enabled: false
@@ -900,6 +876,7 @@ proxy:
   persistedLogs:
     sourceType: ObjectStore
     objectStore:
+      iamRole: "arn:aws:iam::879381277806:role/troy-fluentbit" # IAM role for persisted logs.
       bucketName: "" # bucket name for persisted logs. If not set, the bucket name will be the same as the bucket name for the metadata store.
       region: "" # region for persisted logs. If not set, the region will be the same as the region for the metadata store.
       endpoint: "" # endpoint for persisted logs. If not set, the endpoint will be the same as the endpoint for the metadata store.

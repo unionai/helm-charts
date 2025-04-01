@@ -739,6 +739,17 @@ Name of the fluentbit service account
 {{- .Values.fluentbit.serviceAccount.name }}
 {{- end }}
 
+{{/*
+Labels for fluentbit service account
+*/}}
+{{- define "fluentbit.serviceAccountLabels" -}}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Name of the fluentbit configMap
+*/}}
 {{- define "fluentbit.configMapName" -}}
 {{- .Values.fluentbit.existingConfigMap }}
 {{- end }}
@@ -783,15 +794,6 @@ Name of the fluentbit service account
     endpoint {{ $endpoint }}
 {{- end }}
 {{- end }}
-
-{{/*
-Labels for fluentbit service account
-*/}}
-{{- define "fluentbit.serviceAccountLabels" -}}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
 
 {{/*
 Create a full name prefix for serving resources
