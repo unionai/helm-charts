@@ -736,13 +736,13 @@ Global service account annotations
 Name of the fluentbit service account
 */}}
 {{- define "fluentbit.serviceAccountName" -}}
-{{- default "fluentbit-system" .Values.fluentbit.serviceAccount.name }}
+fluentbit-system
 {{- end }}
 
 {{/*
 Labels for fluentbit service account
 */}}
-{{- define "fluentbit.ServiceAccountLabels" -}}
+{{- define "fluentbit.serviceAccountLabels" -}}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
