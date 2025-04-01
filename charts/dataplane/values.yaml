@@ -338,12 +338,12 @@ config:
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
     persistedLogs:
-      sourceType: "{{ .Values.proxy.persistedLogs.sourceType }}"
+      sourceType: ObjectStore
       objectStore:
-        bucketName: '{{ include "proxy.persistedLogs.bucketName" . }}'
-        region: '{{ include "proxy.persistedLogs.region" . }}'
-        prefix: '{{ include "proxy.persistedLogs.prefix" . }}'
-        endpoint: '{{ include "proxy.persistedLogs.endpoint" . }}'
+        bucketName: "{{ .Values.storage.bucketName }}"
+        region: "{{ .Values.storage.region }}"
+        prefix: persisted-logs
+        endpoint: "{{ .Values.storage.endpoint }}"
         pathTemplate: "namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}"
 
   qubole: { }
@@ -477,30 +477,26 @@ fluentbit:
           HTTP_Port {{ .Values.metricsPort }}
           Health_Check On
 
-    ## https://docs.fluentbit.io/manual/pipeline/inputs
-    inputs: |
-      [INPUT]
-          Name                tail
-          Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
-          Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
-          Path                /var/log/containers/*.log
-          DB                  /var/log/flb_kube.db
-          multiline.parser    docker, cri
-          Mem_Buf_Limit       5MB
-          Skip_Long_Lines     On
-          Refresh_Interval    10
-
-    ## https://docs.fluentbit.io/manual/pipeline/outputs
-    outputs: |
-      [OUTPUT]
-          Name s3
-          Match *
-          region {{ include "proxy.persistedLogs.region" . }}
-          bucket {{ include "proxy.persistedLogs.bucketName" . }}
-          upload_timeout 1m
-          s3_key_format /{{ include "proxy.persistedLogs.prefix" . }}/$TAG
-          static_file_path true
-          json_date_key false
+    pipeline:
+      inputs:
+        - Name: tail
+          Tag: "namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>"
+          Tag_Regex: "(?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-"
+          Path: "/var/log/containers/*.log"
+          DB: "/var/log/flb_kube.db"
+          multiline.parser: docker, cri
+          Mem_Buf_Limit: 5MB
+          Skip_Long_Lines: On
+          Refresh_Interval: 10
+      outputs:
+        - Name: s3
+          Match: "*"
+          region: "{{ .Values.config.proxy.persistedLogs.objectStore.region }}"
+          bucket: "{{ .Values.config.proxy.persistedLogs.objectStore.bucketName }}"
+          upload_timeout: 1m
+          s3_key_format: "/{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG"
+          static_file_path: true
+          json_date_key: false
 
 flyteagent:
   enabled: false
@@ -909,12 +905,6 @@ proxy:
     # -- Set the namespace for union managed secrets created through the native Kubernetes secret manager. If the namespace is not set,
     # the release namespace will be used.
     namespace: ""
-  persistedLogs:
-    sourceType: "ObjectStore"
-    objectStore:
-      bucketName: "" # Use storage.bucketName if not set
-      region: "" # Use storage.region if not set
-      endpoint: "" # Use storage.endpoint if not set
 
   replicas: 1
   podAnnotations: { }
