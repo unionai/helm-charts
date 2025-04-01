@@ -744,15 +744,15 @@ Name of the fluentbit service account
 {{- end }}
 
 {{- define "fluentbit.outputs" -}} |
-[OUTPUT]
-    Name s3
-    Match *
-    region {{ include "proxy.persistedLogs.region" . }}
-    bucket {{ include "proxy.persistedLogs.bucketName" . }}
-    upload_timeout 1m
-    s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
-    static_file_path true
-    json_date_key false
+  [OUTPUT]
+      Name s3
+      Match *
+      region {{ include "proxy.persistedLogs.region" . }}
+      bucket {{ include "proxy.persistedLogs.bucketName" . }}
+      upload_timeout 1m
+      s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
+      static_file_path true
+      json_date_key false
 {{- end }}
 
 {{/*
