@@ -743,16 +743,45 @@ Name of the fluentbit service account
 {{- .Values.fluentbit.existingConfigMap }}
 {{- end }}
 
-{{- define "fluentbit.outputs" -}} |
-  [OUTPUT]
-      Name s3
-      Match *
-      region {{ include "proxy.persistedLogs.region" . }}
-      bucket {{ include "proxy.persistedLogs.bucketName" . }}
-      upload_timeout 1m
-      s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
-      static_file_path true
-      json_date_key false
+{{- define "fluentbit.service" -}}
+[SERVICE]
+    Parsers_File /fluent-bit/etc/parsers.conf
+    Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+    HTTP_Server On
+    HTTP_Listen 0.0.0.0
+    Health_Check On
+{{- end }}
+
+{{- define "fluentbit.inputs" -}}
+[INPUT]
+    Name                tail
+    Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
+    Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+    Path                /var/log/containers/*.log
+    DB                  /var/log/flb_kube.db
+    multiline.parser    docker, cri
+    Mem_Buf_Limit       5MB
+    Skip_Long_Lines     On
+    Refresh_Interval    10
+{{- end }}
+
+{{- define "fluentbit.filters" -}}
+{{- end }}
+
+{{- define "fluentbit.outputs" -}}
+[OUTPUT]
+    Name s3
+    Match *
+    region {{ include "proxy.persistedLogs.region" . }}
+    bucket {{ include "proxy.persistedLogs.bucketName" . }}
+    upload_timeout 1m
+    s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
+    static_file_path true
+    json_date_key false
+{{- $endpoint := include "proxy.persistedLogs.endpoint" . }}
+{{- if $endpoint }}
+    endpoint {{ $endpoint }}
+{{- end }}
 {{- end }}
 
 {{/*
