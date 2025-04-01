@@ -743,7 +743,7 @@ Name of the fluentbit service account
 {{- .Values.fluentbit.existingConfigMap }}
 {{- end }}
 
-{{- define "fluentbit.outputs" -}}
+{{- define "fluentbit.outputs" -}} |
 [OUTPUT]
     Name s3
     Match *
