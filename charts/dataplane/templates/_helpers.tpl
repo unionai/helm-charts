@@ -437,6 +437,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
 {{- end }}
 
+{{- define "proxy.persistedLogs.accessKey" -}}
+{{- default .Values.storage.accessKey .Values.proxy.persistedLogs.objectStore.accessKey }}
+{{- end }}
+
+{{- define "proxy.persistedLogs.secretKey" -}}
+{{- default .Values.storage.secretKey .Values.proxy.persistedLogs.objectStore.secretKey }}
+{{- end }}
+
 {{/*
 Create the name of the service account to use
 */}}
@@ -792,6 +800,18 @@ Name of the fluentbit configMap
 {{- $endpoint := include "proxy.persistedLogs.endpoint" . }}
 {{- if $endpoint }}
     endpoint {{ $endpoint }}
+{{- end }}
+{{- $accessKey := include "proxy.persistedLogs.accessKey" . }}
+{{- if $accessKey }}
+    accessKey {{ $accessKey }}
+{{- end }}
+{{- $secretKey := include "proxy.persistedLogs.secretKey" . }}
+{{- if $secretKey }}
+    secretKey {{ $secretKey }}
+{{- end }}
+{{- $iamRole := .Values.proxy.persistedLogs.objectStore.iamRole . }}
+{{- if $iamRole }}
+    role_arn {{ $iamRole }}
 {{- end }}
 {{- end }}
 
