@@ -809,7 +809,7 @@ Name of the fluentbit configMap
 {{- if $secretKey }}
     secretKey {{ $secretKey }}
 {{- end }}
-{{- $iamRole := .Values.proxy.persistedLogs.objectStore.iamRole . }}
+{{- $iamRole := .Values.proxy.persistedLogs.objectStore.iamRole }}
 {{- if $iamRole }}
     role_arn {{ $iamRole }}
 {{- end }}
