@@ -425,26 +425,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{- define "proxy.persistedLogs.bucketName" -}}
-{{- default .Values.storage.bucketName .Values.proxy.persistedLogs.objectStore.bucketName }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.region" -}}
-{{- default .Values.storage.region .Values.proxy.persistedLogs.objectStore.region }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.endpoint" -}}
-{{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.accessKey" -}}
-{{- default .Values.storage.accessKey .Values.proxy.persistedLogs.objectStore.accessKey }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.secretKey" -}}
-{{- default .Values.storage.secretKey .Values.proxy.persistedLogs.objectStore.secretKey }}
-{{- end }}
-
 {{/*
 Create the name of the service account to use
 */}}
@@ -741,21 +721,6 @@ Global service account annotations
 {{- end -}}
 
 {{/*
-Name of the fluentbit service account
-*/}}
-{{- define "fluentbit.serviceAccountName" -}}
-{{- .Values.fluentbit.serviceAccount.name }}
-{{- end }}
-
-{{/*
-Labels for fluentbit service account
-*/}}
-{{- define "fluentbit.serviceAccountLabels" -}}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{/*
 Name of the fluentbit configMap
 */}}
 {{- define "fluentbit.configMapName" -}}
@@ -791,15 +756,18 @@ Name of the fluentbit configMap
 [OUTPUT]
     Name s3
     Match *
-    region {{ .Values.storage.region }}
-    bucket {{ .Values.storage.bucketName }}
     upload_timeout 1m
     s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
     static_file_path true
     json_date_key false
-{{- $endpoint := .Values.storage.endpoint }}
-{{- if $endpoint }}
-    endpoint {{ $endpoint }}
+{{- with .Values.storage.region }}
+    region {{ . }}
+{{- end }}
+{{- with .Values.storage.bucketName }}
+    bucket {{ . }}
+{{- end }}
+{{- with .Values.storage.endpoint }}
+    endpoint {{ . }}
 {{- end }}
 {{- end }}
 
