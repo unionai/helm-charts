@@ -791,23 +791,15 @@ Name of the fluentbit configMap
 [OUTPUT]
     Name s3
     Match *
-    region {{ include "proxy.persistedLogs.region" . }}
-    bucket {{ include "proxy.persistedLogs.bucketName" . }}
+    region {{ .Values.storage.region }}
+    bucket {{ .Values.storage.bucketName }}
     upload_timeout 1m
     s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
     static_file_path true
     json_date_key false
-{{- $endpoint := include "proxy.persistedLogs.endpoint" . }}
+{{- $endpoint := .Values.storage.endpoint }}
 {{- if $endpoint }}
     endpoint {{ $endpoint }}
-{{- end }}
-{{- $accessKey := include "proxy.persistedLogs.accessKey" . }}
-{{- if $accessKey }}
-    accessKey {{ $accessKey }}
-{{- end }}
-{{- $secretKey := include "proxy.persistedLogs.secretKey" . }}
-{{- if $secretKey }}
-    secretKey {{ $secretKey }}
 {{- end }}
 {{- end }}
 
