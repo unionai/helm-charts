@@ -425,26 +425,6 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{- define "proxy.persistedLogs.bucketName" -}}
-{{- default .Values.storage.bucketName .Values.proxy.persistedLogs.objectStore.bucketName }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.region" -}}
-{{- default .Values.storage.region .Values.proxy.persistedLogs.objectStore.region }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.endpoint" -}}
-{{- default .Values.storage.endpoint .Values.proxy.persistedLogs.objectStore.endpoint }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.accessKey" -}}
-{{- default .Values.storage.accessKey .Values.proxy.persistedLogs.objectStore.accessKey }}
-{{- end }}
-
-{{- define "proxy.persistedLogs.secretKey" -}}
-{{- default .Values.storage.secretKey .Values.proxy.persistedLogs.objectStore.secretKey }}
-{{- end }}
-
 {{/*
 Create the name of the service account to use
 */}}
@@ -738,21 +718,6 @@ Global service account annotations
 {{- with .Values.additionalServiceAccountAnnotations }}
 {{- toYaml . }}
 {{- end }}
-{{- end -}}
-
-{{/*
-Name of the fluentbit service account
-*/}}
-{{- define "fluentbit.serviceAccountName" -}}
-{{- .Values.fluentbit.serviceAccount.name }}
-{{- end }}
-
-{{/*
-Labels for fluentbit service account
-*/}}
-{{- define "fluentbit.serviceAccountLabels" -}}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
