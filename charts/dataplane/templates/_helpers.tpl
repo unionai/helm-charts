@@ -732,6 +732,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "fluentbit.customParsers" -}}
+[SERVICE]
+    Parsers_File /fluent-bit/etc/parsers.conf
+    Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+    HTTP_Server On
+    HTTP_Listen 0.0.0.0
+    Health_Check On
+{{- end }}
+
 {{- define "fluentbit.service" -}}
 [SERVICE]
     Parsers_File /fluent-bit/etc/parsers.conf
