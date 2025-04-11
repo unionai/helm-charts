@@ -727,6 +727,11 @@ Name of the fluentbit configMap
 {{- .Values.fluentbit.existingConfigMap }}
 {{- end }}
 
+{{- define "fluentbit.labels" -}}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
 {{- define "fluentbit.service" -}}
 [SERVICE]
     Parsers_File /fluent-bit/etc/parsers.conf
