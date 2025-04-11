@@ -733,12 +733,12 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "fluentbit.customParsers" -}}
-[SERVICE]
-    Parsers_File /fluent-bit/etc/parsers.conf
-    Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
-    HTTP_Server On
-    HTTP_Listen 0.0.0.0
-    Health_Check On
+[PARSER]
+    Name docker_no_time
+    Format json
+    Time_Keep Off
+    Time_Key time
+    Time_Format %Y-%m-%dT%H:%M:%S.%L
 {{- end }}
 
 {{- define "fluentbit.service" -}}
