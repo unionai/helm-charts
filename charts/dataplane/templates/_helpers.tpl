@@ -753,6 +753,18 @@ Name of the fluentbit configMap
 {{- end }}
 
 {{- define "fluentbit.outputs" -}}
+{{/* azure uses a different output plugin*/}}
+{{- if and .Values.storage.custom.stow.kind (eq .Values.storage.custom.stow.kind "azure") }}
+[OUTPUT]
+    name                  azure_blob
+    match                 *
+    account_name          {{ .Values.storage.custom.stow.config.account }}
+    auth_type             key
+    shared_key            {{ .Values.storage.custom.stow.config.key }}
+    path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
+    container_name        {{ .Values.storage.custom.container }}
+    tls                   on
+{{- else }}
 [OUTPUT]
     Name s3
     Match *
@@ -768,6 +780,7 @@ Name of the fluentbit configMap
 {{- end }}
 {{- with .Values.storage.endpoint }}
     endpoint {{ . }}
+{{- end }}
 {{- end }}
 {{- end }}
 
