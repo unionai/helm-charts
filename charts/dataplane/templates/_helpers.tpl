@@ -721,6 +721,88 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Name of the fluentbit configMap
+*/}}
+{{- define "fluentbit.configMapName" -}}
+{{- .Values.fluentbit.existingConfigMap }}
+{{- end }}
+
+{{- define "fluentbit.labels" -}}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "fluentbit.customParsers" -}}
+[PARSER]
+    Name docker_no_time
+    Format json
+    Time_Keep Off
+    Time_Key time
+    Time_Format %Y-%m-%dT%H:%M:%S.%L
+{{- end }}
+
+{{- define "fluentbit.service" -}}
+[SERVICE]
+    Parsers_File /fluent-bit/etc/parsers.conf
+    Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+    HTTP_Server On
+    HTTP_Listen 0.0.0.0
+    Health_Check On
+{{- end }}
+
+{{- define "fluentbit.inputs" -}}
+[INPUT]
+    Name                tail
+    Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
+    Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+    Path                /var/log/containers/*.log
+    DB                  /var/log/flb_kube.db
+    multiline.parser    docker, cri
+    Mem_Buf_Limit       5MB
+    Skip_Long_Lines     On
+    Refresh_Interval    10
+{{- end }}
+
+{{- define "fluentbit.filters" -}}
+{{- end }}
+
+{{- define "fluentbit.outputs" -}}
+{{/* azure uses a different output plugin*/}}
+{{- if and (hasKey .Values.storage "custom") (hasKey .Values.storage.custom "stow") (eq .Values.storage.custom.stow.kind "azure") }}
+[OUTPUT]
+    name                  azure_blob
+    match                 *
+{{- with .Values.storage.custom.stow.config.account }}
+    account_name {{ . }}
+{{- end }}
+    auth_type             key
+{{- with .Values.storage.custom.stow.config.key }}
+    shared_key {{ . }}
+{{- end }}
+    path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
+    container_name        {{ .Values.storage.custom.container }}
+    tls                   on
+{{- else }}
+[OUTPUT]
+    Name s3
+    Match *
+    upload_timeout 1m
+    s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
+    static_file_path true
+    json_date_key false
+{{- with .Values.storage.region }}
+    region {{ . }}
+{{- end }}
+{{- with .Values.storage.bucketName }}
+    bucket {{ . }}
+{{- end }}
+{{- with .Values.storage.endpoint }}
+    endpoint {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Create a full name prefix for serving resources
 */}}
 {{- define "serving.fullname" -}}
