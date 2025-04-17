@@ -821,7 +821,7 @@ Name of the serving-envoy-bootstrap ConfigMap
 Prometheus  Server labels
 */}}
 {{- define "unionoperatorMonitoring.prometheus.labels" -}}
-helm.sh/chart: {{ include "union-operator.chart" . }}
+{{/*helm.sh/chart: {{ include "union-operator.chart" . }}*/}}
 {{ include "unionoperatorMonitoring.prometheus.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
@@ -852,7 +852,7 @@ Create the name of the service account to use for the prometheus server
 Kube State metrics  Server labels
 */}}
 {{- define "unionoperatorMonitoring.kubeStateMetrics.labels" -}}
-helm.sh/chart: {{ include "union-operator.chart" . }}
+{{/*helm.sh/chart: {{ include "union-operator.chart" . }}*/}}
 {{ include "unionoperatorMonitoring.kubeStateMetrics.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
@@ -883,7 +883,7 @@ Create the name of the service account to use for the Kube State metrics server
 DCGM exporter labels
 */}}
 {{- define "unionoperatorMonitoring.dcgmExporter.labels" -}}
-helm.sh/chart: {{ include "union-operator.chart" . }}
+{{/*helm.sh/chart: {{ include "union-operator.chart" . }}*/}}
 {{ include "unionoperatorMonitoring.dcgmExporter.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
