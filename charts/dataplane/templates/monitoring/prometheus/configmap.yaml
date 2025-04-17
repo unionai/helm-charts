@@ -1,0 +1,1510 @@
+{{- if .Values.unionoperatorMonitoring.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "union-operator.fullname" . }}-prometheus
+  labels:
+    {{- include "unionoperatorMonitoring.prometheus.labels" . | nindent 4 }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval:     15s
+      evaluation_interval: 15s
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+    rule_files:
+      - rules.yml
+    scrape_configs:
+      - job_name: 'prometheus'
+        metrics_path: /prometheus/metrics
+        static_configs:
+        - targets: ['localhost:9090']
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_(.*)|.+_(limit|failed|missed|failures)_total
+          action: keep
+      - job_name: 'karpenter'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+              - karpenter
+              - kube-system
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_service_name
+          - __meta_kubernetes_endpoint_port_name
+          action: keep
+          regex: karpenter;(http-metrics|webhook-metrics)
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_service_name]
+          target_label: kubernetes_service_name
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          target_label: endpoint_port
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'karpenter_cloudprovider_errors_total'
+          action: keep
+      - job_name: 'kube-state-metrics'
+        static_configs:
+        - targets: ['kube-state-metrics.kube-system.svc.cluster.local:{{ .Values.unionoperatorMonitoring.kubeStateMetrics.service.port }}']
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
+          action: keep
+        - separator: ;
+          source_labels: [__name__, phase]
+          regex: kube_pod_status_phase;(Succeeded|Failed)
+          action: drop
+        # Replace insert nodename to assist Grafana joins
+        - source_labels: [node]
+          target_label: nodename
+          regex: '(.*)'  # copy the value as is
+          action: replace
+        # Ensure all cloud provider group names populate label_node_pool_name
+        - source_labels: [label_node_group_name]
+          action: replace
+          # Assume GCP environments don't have label_node_group_name
+          regex: (.+)
+          target_label: label_node_pool_name
+        {{- with .Values.unionoperatorMonitoring.scrapeConfigs.kubeStateMetrics.extraMetricRelabelConfigs }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      - job_name: 'gpu-metrics'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "app.kubernetes.io/name=dcgm-exporter"
+      - job_name: union-mountpoint
+        metrics_path: /metrics
+        scheme: http
+        kubernetes_sd_configs:
+          - role: node
+            namespaces:
+             names: []
+        relabel_configs:
+          - source_labels: [__address__]
+            action: replace
+            regex: ([^:]+):.*
+            replacement: $1:9000
+            target_label: __address__
+      # cAdvisor metrics shared between Task resource monitoring and operational monitoring
+      - job_name: kubernetes-cadvisor
+        metrics_path: /metrics
+        scheme: https
+        kubernetes_sd_configs:
+        - api_server: null
+          role: node
+          namespaces:
+            names: []
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: {{ .Values.unionoperatorMonitoring.prometheus.cadvisor.metricsNameRegex.default }}
+          action: keep
+        {{- with .Values.unionoperatorMonitoring.prometheus.cadvisor.additional_metric_relabel_configs }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        relabel_configs:
+        - separator: ;
+          regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - separator: ;
+          regex: (.*)
+          target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace
+      # cAdvisor metrics for operational monitoring but not intended to be used with Task resource monitoring
+      - job_name: kubernetes-cadvisor-extended
+        metrics_path: /metrics
+        scheme: https
+        kubernetes_sd_configs:
+        - api_server: null
+          role: node
+          namespaces:
+            names: []
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        metric_relabel_configs:
+        # Need to figure out alternative to namespace filtering to pull operational metrics while
+        # limiting cardinality.
+        #
+        # Alternatives that require continued exploration
+        # * Filter pod names that "appear" as execution pods. This gets a little muddled with serving agents and actors.
+        # * Filter away "flyte_org_node_role" node labels. This undesirably omits Union daemonset pods on worker nodes
+        - separator: ;
+          source_labels: [namespace, __name__]
+          regex: ({{ .Release.Namespace }}|kube-system|karpenter|kubeflow|kuberay-operator);{{ .Values.unionoperatorMonitoring.prometheus.cadvisor.metricsNameRegex.extended }}
+          action: keep
+        {{- with .Values.unionoperatorMonitoring.prometheus.cadvisor.additional_metric_relabel_configs }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        relabel_configs:
+        - separator: ;
+          regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - separator: ;
+          regex: (.*)
+          target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace
+      {{- if .Values.unionoperatorMonitoring.flytePropeller.enabled }}
+      # Some customers rely on propeller metrics for monitoring. Be mindful of non-additive changes.
+      - job_name: 'flyte-propeller'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "{{ .Release.Namespace }}"
+          selectors:
+          - role: "pod"
+            label: "app.kubernetes.io/name=flytepropeller"
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "\
+            flyte:propeller:all:(main|sub)_(adds|depth)|\
+            flyte:propeller:all:(workflow|node|task):event_recording.*|\
+            flyte:propeller:all:admin_launcher:cache_item_syncs|\
+            flyte:propeller:all:admin_launcher:watch_api_.*|\
+            flyte:propeller:all:discovery_.*|\
+            flyte:propeller:all:execstats:active_.*|\
+            flyte:propeller:all:free_workers_count|\
+            flyte:propeller:all:gc_.*|\
+            flyte:propeller:all:metastore:cache_hit|\
+            flyte:propeller:all:metastore:cache_miss|\
+            flyte:propeller:all:metastore:write.*|\
+            flyte:propeller:all:metastore:read.*|\
+            flyte:propeller:all:metastore:list.*|\
+            flyte:propeller:all:metastore:delete.*|\
+            flyte:propeller:all:metastore:head*|\
+            flyte:propeller:all:node:accelerated_input_count|\
+            flyte:propeller:all:node:container:container:task_pod_errors|\
+            flyte:propeller:all:node:fast_task:.*|\
+            flyte:propeller:all:node:node_exec_latency_us|\
+            flyte:propeller:all:node:perma_system_error_duration_ms_count|\
+            flyte:propeller:all:node:perma_user_error_duration_ms_count|\
+            flyte:propeller:all:node:queueing_latency_ms|\
+            flyte:propeller:all:node:system_error_duration_ms_count|\
+            flyte:propeller:all:node:transition_latency_ms|\
+            flyte:propeller:all:node:user_error_duration_ms_count|\
+            flyte:propeller:all:plugin.*|\
+            flyte:propeller:all:reservation_.*|\
+            flyte:propeller:all:round:.*_error|\
+            flyte:propeller:all:round:round_time_ms|\
+            flyte:propeller:all:round:execution_info|\
+            flyte:propeller:all:wf_.*|\
+            grpc_client_.*|\
+            k8s_client_.*|\
+            go_.*|\
+            process_.*"
+          action: keep
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: kubernetes_pod_name
+        # Add namespace as a label
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        # Add pod name as a label
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        # Add container name as a label
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          action: replace
+          target_label: container
+      {{- end }}
+      {{- if .Values.unionoperatorMonitoring.clickhouse.enabled }}
+      - job_name: 'clickhouse'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - "{{ .Release.Namespace }}"
+            selectors:
+              - role: "pod"
+                label: "app.kubernetes.io/name=clickhouse"
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: "\
+              ClickHouseProfileEvents_SelectQuery|\
+              ClickHouseProfileEvents_InsertQuery|\
+              ClickHouseProfileEvents_FailedSelectQuery|\
+              ClickHouseProfileEvents_FailedInsertQuery|\
+              ClickHouseProfileEvents_FileSync|\
+              ClickHouseProfileEvents_FileSyncElapsedMicroseconds|\
+              ClickHouseProfileEvents_DiskReadElapsedMicroseconds|\
+              ClickHouseProfileEvents_DiskWriteElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkReceiveElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkSendElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkReceiveBytes|\
+              ClickHouseProfileEvents_NetworkSendBytes|\
+              ClickHouseProfileEvents_InsertedRows|\
+              ClickHouseProfileEvents_InsertedBytes|\
+              ClickHouseProfileEvents_ZooKeeperTransactions|\
+              ClickHouseProfileEvents_SelectedRows|\
+              ClickHouseProfileEvents_SelectedBytes|\
+              ClickHouseProfileEvents_KeeperPacketsSent|\
+              ClickHouseProfileEvents_KeeperPacketsReceived|\
+              ClickHouseProfileEvents_KeeperRequestTotal|\
+              ClickHouseProfileEvents_KeeperLatency|\
+              ClickHouseProfileEvents_KeeperTotalElapsedMicroseconds|\
+              ClickHouseProfileEvents_LogWarning|\
+              ClickHouseProfileEvents_LogError|\
+              ClickHouseProfileEvents_LogFatal|\
+              ClickHouseMetrics_Query|\
+              ClickHouseMetrics_Read|\
+              ClickHouseMetrics_Write|\
+              ClickHouseAsyncMetrics_DiskAvailable_default|\
+              ClickHouseErrorMetric_ALL"
+            action: keep
+        relabel_configs: []
+      - job_name: 'clickhouse-keeper'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - "{{ .Release.Namespace }}"
+            selectors:
+              - role: "pod"
+                label: "app.kubernetes.io/name=clickhouse-keeper"
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: "\
+              ClickHouseProfileEvents_LogWarning|\
+              ClickHouseProfileEvents_LogError|\
+              ClickHouseProfileEvents_LogFatal|\
+              ClickHouseProfileEvents_FileSync|\
+              ClickHouseProfileEvents_DiskReadElapsedMicroseconds|\
+              ClickHouseProfileEvents_DiskWriteElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkReceiveElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkSendElapsedMicroseconds|\
+              ClickHouseProfileEvents_NetworkReceiveBytes|\
+              ClickHouseProfileEvents_NetworkSendBytes|\
+              ClickHouseProfileEvents_KeeperLatency|\
+              ClickHouseMetrics_Read|\
+              ClickHouseMetrics_Write|\
+              ClickHouseMetrics_NetworkReceive|\
+              ClickHouseMetrics_NetworkSend"
+            action: keep
+        relabel_configs: []
+      {{- end }}
+      {{- if and (.Values.unionoperatorMonitoring.opencost.enabled) (.Values.unionoperatorMonitoring.opencost.scrape) }}
+      - job_name: 'opencost'
+        honor_labels: true
+        scrape_interval: 1m
+        static_configs:
+          - targets: ['opencost.{{ .Release.Namespace }}.svc.cluster.local:9003']
+        metric_relabel_configs:
+          - separator: ;
+            source_labels: [__name__]
+            regex: kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost
+            action: keep
+      {{- end }}
+      {{- if .Values.flyteagent.enabled }}
+      - job_name: 'flyteagent'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - "{{ .Release.Namespace }}"
+          selectors:
+            - role: "pod"
+              label: "app.kubernetes.io/name=flyteagent"
+      {{- end}}
+      {{- with .Values.unionoperatorMonitoring.extraScrapeConfigs }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+      - job_name: 'fluentbit'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "{{ .Values.unionoperatorMonitoring.fluentbit.namespace }}"
+          selectors:
+          - role: "pod"
+            label: "{{ .Values.unionoperatorMonitoring.fluentbit.kubernetesLabel }}"
+        relabel_configs:
+        - source_labels: [__metrics_path__]
+          target_label: __metrics_path__
+          replacement: /api/v1/metrics/prometheus
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:2020
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        - regex: pod
+          action: labeldrop
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "fluentbit_input_bytes_total|\
+            fluentbit_output_proc_records_total|\
+            fluentbit_output_dropped_records_total|\
+            fluentbit_output_proc_bytes_total"
+          action: keep
+      - job_name: 'node-exporter'
+        scrape_interval: 60s
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "union.ai/role=prometheus-node-exporter"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9100
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: nodename
+          action: replace
+        - regex: pod
+          action: labeldrop
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: 'node_cpu_guest_seconds_total|node_filesystem_files|node_filesystem_files_free|node_filesystem_readonly|node_filesystem_free_bytes'
+          action: drop
+        - source_labels: [__name__]
+          regex: 'node_network_(a|c|d|f|i|m|n|p|s|u).*|node_network_receive_(c|d|f|m|n|q).*|node_network_transmit_(c|d|f|m|n|q).*'
+          action: drop
+        - source_labels: [__name__]
+          regex: 'node_nf_conntrack_stat.*'
+          action: drop
+        - source_labels: [__name__, mountpoint]
+          separator: ;
+          regex: 'node_filesystem_[^;]+;(?:(/data/union-persistent)|.*)'
+          action: replace
+          replacement: '$1'
+          target_label: mountpoint
+      - job_name: 'coredns'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "eks.amazonaws.com/component=coredns"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9153
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "coredns_panics_total|\
+            coredns_dns_requests_total|\
+            coredns_dns_request_duration_seconds.*|\
+            coredns_dns_responses_total|\
+            coredns_forward_.*"
+          action: keep
+      # CoreDNS forward proxy specific metrics
+      #   Filters for "forward" in the proxy_name label
+      - job_name: 'coredns-forward-proxy'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "kube-system"
+          selectors:
+          - role: "pod"
+            label: "eks.amazonaws.com/component=coredns"
+        relabel_configs:
+        - source_labels: [__address__]
+          target_label: __address__
+          action: replace
+          regex: ([^:]+)(?::\d+)?
+          replacement: $1:9153
+        - source_labels: [__address__]
+          regex: '(.*):\d+'
+          target_label: instance
+          replacement: '$1'
+        metric_relabel_configs:
+        - source_labels: [__name__, proxy_name]
+          separator: ;
+          regex: 'coredns_proxy_(.*)|forward'
+          action: keep
+      - job_name: 'kubernetes-apiservers'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+        - role: endpoints
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        relabel_configs:
+        - source_labels:
+          - __meta_kubernetes_namespace
+          - __meta_kubernetes_service_name
+          - __meta_kubernetes_endpoint_port_name
+          action: keep
+          regex: default;kubernetes;https
+        metric_relabel_configs:
+        - action: replace
+          source_labels: [resource]
+          target_label: 'resource'
+          replacement: 'union_cloud_replacement'
+          regex: 'workqueue_.*'
+        - action: keep
+          regex: (apiserver_request_.*|apiserver_response_.*|apiserver_storage_objects|workqueue_.*);(flyteworkflows\.flyte\.lyft\.com|nodes|pods|union_cloud_replacement)
+          source_labels:
+          - __name__
+          - resource
+      - job_name: 'union-pods'
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - "{{ .Release.Namespace }}"
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          action: keep
+          regex: flyteclusterresourcesync|union-operator|union-operator-proxy
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          action: keep
+          regex: debug
+        # Add namespace as a label
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        # Add pod name as a label
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        # Add container name as a label
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          action: replace
+          target_label: container
+      {{- if index .Values "kueue-resources" "enabled" }}
+      - job_name: 'kueue'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - "kueue-system"
+            selectors:
+              - role: "pod"
+                label: "control-plane=controller-manager"
+        relabel_configs:
+          - source_labels: [ __address__ ]
+            regex: (.+):(\d+)
+            target_label: __address__
+            replacement: ${1}:8080
+        metric_relabel_configs:
+          - source_labels: [ __name__ ]
+            regex: "\
+              kueue_admission_attempt_duration_seconds_bucket|\
+              kueue_admission_attempts_total|\
+              kueue_admission_checks_wait_time_seconds|\
+              kueue_admission_wait_time_seconds_bucket|\
+              kueue_admitted_active_workloads|\
+              kueue_admitted_workloads_total|\
+              kueue_cluster_queue_status|\
+              kueue_evicted_workloads_total|\
+              kueue_pending_workloads|\
+              kueue_quota_reserved_wait_time_seconds_bucket|\
+              kueue_quota_reserved_workloads_total"
+            action: keep
+      {{- end }}
+      {{- if and .Values.serving.enabled .Values.serving.metrics }}
+      - job_name: 'serving-envoy'
+        scrape_interval: 30s
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+              - "{{ .Release.Namespace }}"
+            selectors:
+            - role: "pod"
+              label: "app=3scale-kourier-gateway"
+        relabel_configs:
+          - source_labels: [ __address__ ]
+            regex: (.+):(\d+)
+            target_label: __address__
+            replacement: ${1}:9000
+        metrics_path: /stats/prometheus
+        metric_relabel_configs:
+          - source_labels: [ __name__ ]
+            regex: "^envoy_cluster_upstream_rq.*"
+            action: keep
+      {{- end }}
+  rules.yml: |
+    groups:
+      {{- if .Values.unionoperatorMonitoring.opencost.enabled }}
+      - name: cost_calculations_15s
+        interval: 15s
+        rules:
+          - record: pod_gpu_allocation
+            expr: |
+              sum by (namespace, pod) (DCGM_FI_DEV_GPU_UTIL >= bool 0) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+          - record: execution_info # A join metric to look up execution-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_entity_name, label_execution_id, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          flyte:propeller:all:round:execution_info{domain!="", project!="", workflow_name!="", execution_id!=""}, # filter for workflow/task executions
+                          "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                        ), "label_entity_name", "$1", "workflow_name", "(.*)" # set label_entity_name to the workflow/task name from the workflow_execution_id
+                      ),
+                      "label_execution_id", "$1", "execution_id", "(.*)"
+                    ),
+                    "label_project", "$1", "project", "(.*)" # project
+                  ),
+                  "label_domain", "$1", "domain", "(.*)" # domain
+                )
+              )
+          - record: app_info # A join metric to look up app-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_app_name, label_app_version, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                      }, # this filters for apps
+                      "label_app_name", "$1", "label_serving_unionai_dev_app_name", "(.*)" # rename to cleanup
+                    ),
+                    "label_app_version", "$1", "label_serving_knative_dev_revision", "(.*)" # the app_version is equivalent to an execution_id for workflows (lowest level of granularity)
+                  ),
+                  "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # join key
+                )
+              )
+          - record: workspace_info # A join metric to look up workspace info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_workspace_name, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # filter for workspaces
+                    "label_entity_id", "$1", "label_node_id", "(.*)" # join key
+                  ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
+                )
+              )
+          - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
+                # First, calculate the allocated memory for each pod
+                max by (namespace, pod) ( # this is the case where consumed (the memory working set) exceeds requested memory
+                  (
+                    sum by (namespace, pod) (
+                      container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                    )
+                    > sum by (namespace, pod) (
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"}
+                    )
+                  )
+                  or sum by (namespace, pod) ( # this is the case where memory requests are <= consumed memory
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"} # needed to add node!="" to dedupe
+                  )
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:cpu_usage_per_node:sum # Allocated cpu (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, calculate the allocated cpu for each pod
+                max by (namespace, pod) ( # this is the case where consumed (the cpu usage seconds total) exceeds requested cpu
+                  (
+                    sum by (namespace, pod) (
+                      irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                    )
+                    > sum by (namespace, pod) (
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                    )
+                  )
+                  or sum by (namespace, pod) ( # this is the case where cpu requests are <= consumed cpu
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                  )
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:gpu_usage_per_node:sum # Allocated gpu aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+                max by (namespace, pod) (
+                  pod_gpu_allocation
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:used_mem_bytes:sum # the sum of used memory across all containers in an entity (numerator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity
+                # First, calculate the used memory for each pod
+                sum by (namespace, pod) (
+                  container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:allocated_mem_bytes:sum # the sum of allocated memory across all containers in an entity (denominator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+                entity_id:mem_usage_bytes_total_per_node:sum
+              )
+          - record: entity_id:used_cpu:sum # the sum of used cpu across all containers in an entity (numerator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) (
+                sum by (namespace, pod) (
+                  irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:allocated_cpu:sum # the sum of allocated cpu across all containers in an entity (denominator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+                entity_id:cpu_usage_per_node:sum
+              )
+          - record: entity_id:sm_occupancy:avg # the simple average of SM occupancy (a good generic measure of GPU utilization) per entity
+            expr: |
+              avg by (label_entity_type, label_domain, label_project, label_entity_id) (
+                # First, grab the SM occupancy for each pod
+                max by (namespace, pod) (
+                  DCGM_FI_PROF_SM_OCCUPANCY # SM occupancy is a good proxy for actual GPU usage
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:gpu_count:sum # the count of running gpu pods per entity (need this to weight the gpu utilization when aggregating upwards - i.e. project-level)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+                max by (namespace, pod) (
+                  pod_gpu_allocation
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:weighted_sm_occupancy:sum # product of SM occupancy and allocated GPU count (something like "used memory", numerator of weighted calcs)
+            expr: |
+              entity_id:sm_occupancy:avg
+              * on (label_domain, label_project, label_entity_type, label_entity_id) entity_id:gpu_count:sum
+          - record: entity_id:allocated_mem_cost:sum # Allocated cost of memory for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type) (
+                entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_cpu_cost:sum # Allocated cost of cpu for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+                entity_id:cpu_usage_per_node:sum
+                * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_gpu_cost:sum # Allocated cost of gpu for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+                entity_id:gpu_usage_per_node:sum
+                * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_cost:sum # Allocated cost of memory, cpu, and gpu for each workflow/task execution and app.
+            expr: |
+              label_replace(
+                sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                  entity_id:allocated_mem_cost:sum
+                  or
+                  entity_id:allocated_cpu_cost:sum
+                  or
+                  entity_id:allocated_gpu_cost:sum
+                ),
+                "type", "allocated", "", "" # add type info
+              )
+          - record: entity_id:overhead_cost:sum # The amount of overhead costs (node costs that we can't allocate with container resources) to allocate to each entity (workflow/task execution or app)
+            expr: |
+              label_replace(
+                sum by (label_entity_type, label_entity_id, label_domain, label_project)( # Aggregate the per-node metrics up to workflow/task execution or app (label_entity_id)
+                  # Start with each execution's and app's allocated cost per node
+                  sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                    entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                    * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:cpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:gpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  )
+                  # Then divide out the total allocated cost per node to get the proportion of allocated cost associated with each entity
+                  / on (node) group_left()(
+                    sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                      entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                      * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:cpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:gpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    )
+                    > 0 # need to avoid dividing by zero, or gaps in the data can cause NaNs to proliferate, borking all charts
+                  )
+                  # Then multiply by the overhead cost per node
+                  * on (node) group_left() (
+                    # To calculate overhead, start with the true cost of running each node
+                    avg by (node)(kube_node_labels{label_flyte_org_node_role="worker"}) # only look at worker nodes
+                    * on (node) max by (node) (
+                      node_total_hourly_cost{instance_type!=""} # sometimes, the instance_type can be null, causing an unlabeled label to show up in the Compute Costs dashboard charts
+                    ) * (15 / 3600) # convert hourly cost to 15-secondly cost
+                    # Then subtract out the total allocated cost on each node
+                    - on (node) group_left()(
+                      sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                        entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                        * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                        or
+                        entity_id:cpu_usage_per_node:sum
+                        * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                        or
+                        entity_id:gpu_usage_per_node:sum
+                        * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      )
+                    )
+                  )
+                ),
+                "type", "overhead", "", "" # add type info
+              )
+          - record: entity_id:total_cost:sum # Total cost of each entity (workflow/task execution or app), including allocated (from container resources) and overhead (proportion of unallocated node costs)
+            expr: |
+              label_replace(
+                sum by (label_domain, label_project, label_entity_id, label_entity_type) (
+                  entity_id:allocated_cost:sum
+                  or
+                  entity_id:overhead_cost:sum
+                ),
+                "type", "total", "", "" # add type info
+              )
+          - record: node:total_cost:sum # Total cost of all nodes
+            expr: |
+              sum (
+                avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+                * on (node) group_left() node_total_hourly_cost{instance_type!=""} * (15 / 3600) # convert hourly cost to 15-secondly cost
+              )
+          - record: node_type:total_cost:sum # Total cost of nodes grouped by node type
+            expr: |
+              sum by (node_type)(
+                avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+                * on (node) group_left(node_type) label_replace(node_total_hourly_cost{instance_type!=""}, "node_type", "$1", "instance_type", "(.*)") * (15 / 3600) # convert hourly cost to 15-secondly cost and rename label
+              )
+          - record: node_type:uptime_hours:sum # Total uptime of nodes grouped by node type
+            expr: |
+              sum by (node_type)(
+                avg by (node, node_type)( # dedupe
+                  label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)") # relabel
+                )
+              ) * (15 / 3600) # convert to number of hours per 15-second observation      # Aggregate the above into visible metrics
+      - name: cost_rollup_15m
+        interval: 15m
+        rules:
+          - record: execution_info15m
+            expr: |
+              max_over_time(execution_info[15m:15s])
+          - record: app_info15m
+            expr: |
+              max_over_time(app_info[15m:15s])
+          - record: workspace_info15m
+            expr: |
+              max_over_time(workspace_info[15m:15s])
+          - record: entity_id:allocated_mem_bytes:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+          - record: entity_id:used_mem_bytes:sum15m
+            expr: |
+              sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+          - record: entity_id:allocated_cpu:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+          - record: entity_id:used_cpu:sum15m
+            expr: |
+              sum_over_time(entity_id:used_cpu:sum[15m:15s])
+          - record: entity_id:weighted_sm_occupancy:sum15m
+            expr: |
+              sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+          - record: entity_id:gpu_count:sum15m
+            expr: |
+              sum_over_time(entity_id:gpu_count:sum[15m:15s])
+          - record: entity_id:allocated_mem_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+          - record: entity_id:allocated_cpu_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_gpu_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+          - record: entity_id:overhead_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+          - record: entity_id:total_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:total_cost:sum[15m:15s])
+          - record: node:total_cost:sum15m
+            expr: |
+              sum_over_time(node:total_cost:sum[15m:15s])
+          - record: node_type:total_cost:sum15m
+            expr: |
+              sum_over_time(node_type:total_cost:sum[15m:15s])
+          - record: node_type:uptime_hours:sum15m
+            expr: |
+              sum_over_time(node_type:uptime_hours:sum[15m:15s])
+{{- if .Values.unionoperatorMonitoring.otelCollector.enabled }}
+      # This repeats recording rules from above with a scraping interval of 3 minutes
+      # so that we don't have gaps in Prometheus data when ingesting data into ClickHouse
+      # When we fully migrate Grafana dashboards to ClickHouse as source-of-truth,
+      # we can remove rules above and leave only 3-minute rules from below.
+      - name: cost_rollup_rolling_15m
+        interval: 3m
+        rules:
+          - record: execution_info_rolling_15m
+            expr: |
+              max_over_time(execution_info[15m:15s])
+          - record: app_info_rolling_15m
+            expr: |
+              max_over_time(app_info[15m:15s])
+          - record: workspace_info_rolling_15m
+            expr: |
+              max_over_time(workspace_info[15m:15s])
+          - record: entity_id:allocated_mem_bytes:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+          - record: entity_id:used_mem_bytes:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+          - record: entity_id:allocated_cpu:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+          - record: entity_id:used_cpu:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:used_cpu:sum[15m:15s])
+          - record: entity_id:weighted_sm_occupancy:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+          - record: entity_id:gpu_count:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:gpu_count:sum[15m:15s])
+          - record: entity_id:allocated_mem_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+          - record: entity_id:allocated_cpu_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_gpu_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+          - record: entity_id:overhead_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+          - record: entity_id:total_cost:rolling_sum15m
+            expr: |
+              sum_over_time(entity_id:total_cost:sum[15m:15s])
+          - record: node:total_cost:rolling_sum15m
+            expr: |
+              sum_over_time(node:total_cost:sum[15m:15s])
+          - record: node_type:total_cost:rolling_sum15m
+            expr: |
+              sum_over_time(node_type:total_cost:sum[15m:15s])
+          - record: node_type:uptime_hours:rolling_sum15m
+            expr: |
+              sum_over_time(node_type:uptime_hours:sum[15m:15s])
+      - name: node_type_rollup_1m
+        interval: 1m
+        rules:
+          - record: node_type:uptime_count:max1m
+            expr: |
+              max_over_time(
+                sum by (node_type)(
+                  avg by (node, node_type)(
+                    label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)")
+                  )
+                )[1m:15s]
+              )
+{{- end }}
+      {{- end }}
+      - name: rollup
+        rules:
+        - record: instance_type:kube_node_labels:sum
+          expr: sum by (label_cloud_google_com_gke_accelerator, label_cloud_google_com_gke_preemptible, label_eks_amazonaws_com_capacity_type, label_flyte_org_node_role, label_node_group_name, label_node_kubernetes_io_instance_type, label_node_pool_name, label_topology_kubernetes_io_region) (kube_node_labels{job="kube-state-metrics"})
+        - record: deployment:kube_deployment_status_replicas_unavailable:sum
+          expr: sum by (deployment,namespace) (kube_deployment_status_replicas_unavailable{})
+        - record: daemonset:kube_daemonset_status_number_unavailable:sum
+          expr: sum by(daemonset,namespace)(kube_daemonset_status_number_unavailable{})
+        - record: phase:kube_pod_status_phase:sum
+          expr: sum by (label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
+        - record: namespace_phase:kube_pod_status_phase:sum
+          expr: sum by (namespace, label_union_ai_namespace_type, phase) (kube_pod_status_phase{job="kube-state-metrics"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels)
+        - record: union:kube_pod_container_status_restarts_total
+          expr: kube_pod_container_status_restarts_total * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
+        - record: union:kube_pod_container_status_last_terminated_reason
+          expr: kube_pod_container_status_last_terminated_reason{reason!="Completed"} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
+        - record: namespace_type:pod:container_cpu_usage_seconds_total:count
+          expr: count by (label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+        - record: namespace:pod:container_cpu_usage_seconds_total:count
+          expr: count by (namespace, label_union_ai_namespace_type) (count  by (namespace, label_union_ai_namespace_type, pod) (container_cpu_usage_seconds_total{pod!="", job=~"kubernetes-cadvisor.*", name!=""} * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels))
+        - record: container:container_cpu_usage_seconds_total:rate_sum
+          expr: sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) by (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
+        - record: container:container_memory_working_set_bytes:sum
+          expr: sum by (namespace, pod, container) (container_memory_working_set_bytes{image!="", job=~"kubernetes-cadvisor.*", name!=""}) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
+        - record: container:container_spec_memory_limit_bytes:sum
+          expr: sum by (namespace, pod, container) (container_spec_memory_limit_bytes{image!="", job=~"kubernetes-cadvisor.*", name!=""}) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"}
+        - record: container:cpu_utilization
+          expr: (sum(rate(container_cpu_usage_seconds_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) by (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum(container_spec_cpu_quota{container!=""}/container_spec_cpu_period{container!=""}) by (namespace, pod, container))
+        - record: container:memory_utilization
+          expr: (sum(container_memory_working_set_bytes{name!="", job=~"kubernetes-cadvisor.*"}) BY (namespace, pod, container) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum(container_spec_memory_limit_bytes{name!=""} > 0) BY (namespace, pod, container))
+        - record: container:throttle_rate
+          expr: sum by (container, pod, namespace) (increase(container_cpu_cfs_throttled_periods_total{container!="", job=~"kubernetes-cadvisor.*"}[5m])) * on (namespace) group_left(label_union_ai_namespace_type) kube_namespace_labels{label_union_ai_namespace_type!="flyte"} / sum by (container, pod, namespace)(increase(container_cpu_cfs_periods_total[5m]))
+        - record: job:up:sum
+          expr: sum by (job) (up)
+        - record: job:up:count
+          expr: count by (job) (up)
+        - record: flyte_agent_request_latency_seconds:mean1m
+          expr: sum(rate(flyte_agent_request_latency_seconds_sum[1m])) / sum(rate(flyte_agent_request_latency_seconds_count[1m]))
+        - record: name:time_series_cardinality:count
+          expr: sum by (name)(label_replace(count by(__name__) ({__name__=~".+"}), "name", "$1", "__name__", "(.+)"))
+        # Fluentbit Rules
+        - record: fluentbit_input_bytes_total:sum
+          expr: sum(fluentbit_input_bytes_total)
+        - record: fluentbit_output_dropped_records_total:sum
+          expr: sum(fluentbit_output_dropped_records_total)
+        - record: fluentbit_output_proc_bytes_total:sum
+          expr: sum(fluentbit_output_proc_bytes_total)
+        - record: instance:fluentbit_output_proc_records_total:rate_sum
+          expr: sum by(instance)(rate(fluentbit_output_proc_records_total[2m]))
+        # Node-exporter rules
+        # Copied from kube-prometheus-stack rules, can be remove and switch the Prometheus Operator CRD managed rules
+        # Reference: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/templates/prometheus/rules-1.14/node-exporter.rules.yaml#L67
+        - record: instance:node_num_cpu:sum
+          expr: |-
+            count without (cpu, mode) (
+              node_cpu_seconds_total{job="node-exporter",mode="idle"}
+            )
+        - record: instance:node_cpu_utilisation:rate5m
+          expr: |-
+            1 - avg without (cpu) (
+              sum without (mode) (rate(node_cpu_seconds_total{job="node-exporter", mode=~"idle|iowait|steal"}[5m]))
+            )
+        - record: instance:node_load1_per_cpu:ratio
+          expr: |-
+            (
+              node_load1{job="node-exporter"}
+            /
+              instance:node_num_cpu:sum{job="node-exporter"}
+            )
+        - record: instance:node_memory_utilisation:ratio
+          expr: |-
+            1 - (
+              node_memory_MemAvailable_bytes{job="node-exporter"}
+            /
+              node_memory_MemTotal_bytes{job="node-exporter"}
+            )
+        - record: instance:node_vmstat_pgmajfault:rate5m
+          expr: rate(node_vmstat_pgmajfault{job="node-exporter"}[5m])
+        - record: k8s_client_request_total_unlabeled
+          expr: sum(k8s_client_request_total) without (code, method)
+        - record: k8s_client_request_latency_unlabeled_bucket
+          expr: sum(k8s_client_request_latency_bucket) without (verb)
+        - record: k8s_client_request_latency_unlabeled_count
+          expr: sum(k8s_client_request_latency_count) without (verb)
+        - record: k8s_client_request_latency_unlabeled_sum
+          expr: sum(k8s_client_request_latency_sum) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_bucket
+          expr: sum(k8s_client_rate_limiter_latency_bucket) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_count
+          expr: sum(k8s_client_rate_limiter_latency_count) without (verb)
+        - record: k8s_client_rate_limiter_latency_unlabeled_sum
+          expr: sum(k8s_client_rate_limiter_latency_sum) without (verb)
+
+        # Approximation of AWS ENI conntrack allowance
+        - record: node_nf_conntrack_entry_utilization
+          expr: node_nf_conntrack_entries / node_nf_conntrack_entries_limit
+
+        # Node network
+        # Cloud Providers like AWS create time series per ENI, this can
+        # dramatically increase cardinality. AWS Network throughput is primarily
+        # bottlenecked by instance tier limits.
+        - record: instance:node_network_receive_bytes_total:sum
+          expr: sum by (instance, nodename) (node_network_receive_bytes_total)
+        - record: instance:node_network_transmit_bytes_total:sum
+          expr: sum by (instance, nodename) (node_network_transmit_bytes_total)
+        - record: instance:node_network_receive_errs_total:sum
+          expr: sum by (instance, nodename) (node_network_receive_errs_total)
+        - record: instance:node_network_transmit_errs_total:sum
+          expr: sum by (instance, nodename) (node_network_transmit_errs_total)
+        - record: instance:node_network_receive_packets_total:sum
+          expr: sum by (instance, nodename) (node_network_receive_packets_total)
+        - record: instance:node_network_transmit_packets_total:sum
+          expr: sum by (instance, nodename) (node_network_transmit_packets_total)
+
+        # Count active Flyte namespaces, useful for approximating active users in serverless environments
+        - record: namespace:flyte:total
+          expr: count(kube_namespace_labels{label_union_ai_namespace_type="flyte"})
+
+        # Count the number of reasons why Pods are terminating or waiting.
+        - record: node:namespace:kube_pod_container_status_last_terminated_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_last_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+        - record: node:namespace:kube_pod_container_status_terminated_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_terminated_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+        - record: node:namespace:kube_pod_container_status_waiting_reason:sum
+          expr: sum by (node, namespace, reason)(kube_pod_container_status_waiting_reason * on(pod) group_left(node) (sum by (node, namespace, pod)(kube_pod_info{nodename!=""})))
+
+        # Count the number of observed kubelet versions
+        - record: node:kubelet_version:count
+          expr: count by (kubelet_version)(label_replace(kube_node_info, "kubelet_version", "$1", "kubelet_version", "v([0-9]+\\.[0-9]+).*"))
+
+        # Kube State Metrics Node metrics
+        #
+        # Track unhealthy node status conditions
+        # * Track when a noe is not reporting ready as true
+        # * Track when a node is reporting a non-ready condition is true or unknown.
+        - record: node:kube_node_status_condition
+          expr: kube_node_status_condition{condition="Ready", status!="true"} == 1 or kube_node_status_condition{condition!="Ready", status!="false"} == 1
+        # Track Kubernetes node level utilization
+        - record: node:kube_node_status_utilization
+          expr: 1 - (kube_node_status_allocatable{resource=~"cpu|memory|ephemeral_storage|nvidia_com_gpu"} / kube_node_status_capacity)
+{{- end }}

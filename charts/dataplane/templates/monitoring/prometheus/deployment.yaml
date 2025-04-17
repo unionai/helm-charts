@@ -1,0 +1,140 @@
+{{- if .Values.unionoperatorMonitoring.enabled }}
+apiVersion: apps/v1
+{{- if .Values.unionoperatorMonitoring.prometheus.storage.persistent }}
+kind: StatefulSet
+{{- else }}
+kind: Deployment
+{{- end }}
+metadata:
+  name: {{ include "union-operator.fullname" . }}-prometheus
+  labels:
+    {{- include "unionoperatorMonitoring.prometheus.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.unionoperatorMonitoring.prometheus.autoscaling.enabled }}
+  replicas: {{ index .Values.unionoperatorMonitoring.prometheus.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "unionoperatorMonitoring.prometheus.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/monitoring/prometheus/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+      {{- with  .Values.unionoperatorMonitoring.prometheus.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "unionoperatorMonitoring.prometheus.selectorLabels" . | nindent 8 }}
+    spec:
+      priorityClassName: {{ .Values.unionoperatorMonitoring.prometheus.priorityClassName | default "system-cluster-critical" }}
+      {{- with .Values.unionoperatorMonitoring.prometheus.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "unionoperatorMonitoring.prometheus.serviceAccountName" . }}
+      {{- $psc := .Values.unionoperatorMonitoring.prometheus.podSecurityContext }}
+      {{- if ge (int (mustRegexFind "[0-9]+" .Capabilities.KubeVersion.Minor)) 23 }}
+      securityContext:
+        {{- toYaml (merge $psc (dict "fsGroupChangePolicy" "OnRootMismatch")) | nindent 12 }}
+      {{- else }}
+      securityContext: {}
+      {{- end }}
+      {{- if .Values.unionoperatorMonitoring.prometheus.storage.persistent }}
+      topologySpreadConstraints:
+        - labelSelector:
+            matchLabels:
+              {{- include "unionoperatorMonitoring.prometheus.selectorLabels" . | nindent 14 }}
+          maxSkew: 1
+          topologyKey: {{ .Values.unionoperatorMonitoring.prometheus.topologyKey }}
+          whenUnsatisfiable: DoNotSchedule
+      {{- end }}
+      volumes:
+        - name: prometheus-config-volume
+          configMap:
+            name: '{{ include "union-operator.fullname" . }}-prometheus'
+        {{- if .Values.unionoperatorMonitoring.prometheus.storage.persistent }}
+        - name: prometheus-pvc
+          persistentVolumeClaim:
+            claimName: prometheus-pvc
+        {{- end }}
+      containers:
+        - args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --web.external-url={{ .Values.unionoperatorMonitoring.prometheus.externalUrl }}
+            - --web.route-prefix=/prometheus/
+            - --storage.tsdb.retention.size={{ .Values.unionoperatorMonitoring.prometheus.storage.retention.size }}
+          {{- if .Values.unionoperatorMonitoring.prometheus.storage.persistent }}
+            - --storage.tsdb.path=/prometheus
+          {{- end }}
+          image: "{{ .Values.unionoperatorMonitoring.prometheus.image.repository }}:{{ .Values.unionoperatorMonitoring.prometheus.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.unionoperatorMonitoring.prometheus.image.pullPolicy }}
+          name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.unionoperatorMonitoring.prometheus.securityContext | nindent 12 }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            {{- toYaml .Values.unionoperatorMonitoring.prometheus.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /etc/prometheus
+              name: prometheus-config-volume
+          {{- if (.Values.unionoperatorMonitoring.prometheus.storage.persistent) }}
+            - mountPath: /prometheus
+              name: prometheus-pvc
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+      {{- if and (.Values.unionoperatorMonitoring.prometheus.storage.persistent) (lt (int (mustRegexFind "[0-9]+" .Capabilities.KubeVersion.Minor)) 23)}}
+      initContainers:
+        - command:
+            - chown
+            - -R
+            - 65534:65534
+            - /data
+          image: prom/prometheus:latest
+          imagePullPolicy: IfNotPresent
+          name: init-chown-data
+          resources: { }
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - mountPath: /data
+              name: prometheus-pvc
+      {{- end }}
+      {{- with .Values.unionoperatorMonitoring.prometheus.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  {{- include "unionoperatorMonitoring.prometheus.selectorLabels" . | nindent 18 }}
+              topologyKey: "kubernetes.io/hostname"
+      {{- with .Values.unionoperatorMonitoring.prometheus.affinity.nodeAffinity }}
+        nodeAffinity:
+          {{- toYaml . | nindent 10 }}
+      {{- end }}
+      {{- with .Values.unionoperatorMonitoring.prometheus.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+  {{- if .Values.unionoperatorMonitoring.prometheus.storage.persistent }}
+  serviceName: {{ include "union-operator.fullname" . }}-prometheus
+  volumeClaimTemplates:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: prometheus-pvc
+      spec:
+        accessModes:
+          - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ .Values.unionoperatorMonitoring.prometheus.storage.sizePerReplica }}
+        storageClassName: {{ .Values.unionoperatorMonitoring.prometheus.storage.className }}
+        volumeMode: Filesystem
+  {{- end }}
+{{- end }}

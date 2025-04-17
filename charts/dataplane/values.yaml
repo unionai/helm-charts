@@ -972,3 +972,206 @@ serving:
 
 knative-operator:
   enabled: false
+
+unionoperatorMonitoring:
+  enabled: true
+  prometheus:
+    additionalServiceSelectors: { }
+
+    affinity:
+      nodeAffinity: { }
+
+    autoscaling:
+      enabled: false
+
+    replicaCount: 1
+
+    externalUrl: /prometheus/
+
+    storage:
+      persistent: false
+      className: gp2
+      sizePerReplica: 1Gi
+      retention:
+        # size should strictly be less than the sizePerReplica in case of persistent, else less than ephemeral-storage
+        size: 400MB
+
+    resources:
+      requests:
+        cpu: "1"
+        ephemeral-storage: 500Mi
+        memory: "500Mi"
+
+    image:
+      repository: prom/prometheus
+      tag: v2.43.0
+      pullPolicy: IfNotPresent
+
+    serviceAccount:
+      # Specifies whether a service account should be created
+      create: true
+      # Annotations to add to the service account
+      annotations: { }
+      # The name of the service account to use.
+      # If not set and create is true, a name is generated using the fullname template
+      name: ""
+
+    podSecurityContext:
+      fsGroup: 65534
+      runAsNonRoot: true
+      runAsUser: 65534
+
+    securityContext:
+      allowPrivilegeEscalation: false
+
+    service:
+      type: ClusterIP
+      port: 80
+
+    topologyKey: topology.kubernetes.io/zone
+
+    cadvisor:
+      metricsNameRegex:
+        # cadvisor metrics for flyte executions
+        default: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+        # cadvisor metrics for flyte executions and kube-system and union services
+        extended: (container_spec_cpu_quota|container_spec_cpu_period|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total|container_spec_memory_limit_bytes|container_fs_inodes_free|container_fs_inodes_total)
+
+      # Additional metric_relabel_configs for cadvisor Prometheus jobs
+      additional_metric_relabel_configs: [ ]
+
+  kubeStateMetrics:
+    replicaCount: 1
+    image:
+      repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+      # Ref: https://github.com/kubernetes/kube-state-metrics?tab=readme-ov-file#compatibility-matrix
+      # Most Dataplanes are running 1.28, therefore pin to 2.11.0 kube-state-metrics
+      tag: v2.11.0
+      pullPolicy: IfNotPresent
+
+    serviceAccount:
+      # Specifies whether a service account should be created
+      create: true
+      # Annotations to add to the service account
+      annotations: { }
+      # The name of the service account to use.
+      # If not set and create is true, a name is generated using the fullname template
+      name: ""
+
+    podSecurityContext: { }
+
+    securityContext:
+      allowPrivilegeEscalation: false
+
+    service:
+      type: ClusterIP
+      port: 8080
+
+    resources:
+      limits:
+        cpu: "4"
+        ephemeral-storage: 500Mi
+        memory: "8Gi"
+      requests:
+        cpu: "1"
+        ephemeral-storage: 100Mi
+        memory: "500Mi"
+
+    autoscaling:
+      enabled: false
+
+  dcgmExporter:
+    enabled: true
+    image:
+      repository: nvcr.io/nvidia/k8s/dcgm-exporter
+      tag: 3.1.7-3.1.4-ubuntu20.04
+      pullPolicy: IfNotPresent
+
+    arguments: [ "-f", "/etc/dcgm-exporter/metrics.csv" ]
+    serviceAccount:
+      # Specifies whether a service account should be created
+      create: true
+      # Annotations to add to the service account
+      annotations: { }
+      # The name of the service account to use.
+      # If not set and create is true, a name is generated using the fullname template
+      name: ""
+
+    podSecurityContext: { }
+
+    securityContext:
+      runAsNonRoot: false
+      runAsUser: 0
+      privileged: true
+      capabilities:
+        add: [ "SYS_ADMIN" ]
+
+    service:
+      type: ClusterIP
+      port: 9400
+      address: ":9400"
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: ami_type
+                  operator: In
+                  values:
+                    - AL2_x86_64_GPU
+            - matchExpressions:
+                - key: cloud.google.com/gke-accelerator
+                  operator: Exists
+    tolerations:
+      - effect: NoSchedule
+        operator: Exists
+    resources:
+      limits:
+        ephemeral-storage: 500Mi
+        memory: 400Mi
+      requests:
+        cpu: 10m
+        ephemeral-storage: 500Mi
+        memory: 128Mi
+    kubeletPath: "/var/lib/kubelet/pod-resources"
+    extraHostVolumes:
+      - name: nvidia-install-dir-host
+        hostPath: /home/kubernetes/bin/nvidia
+    extraConfigMapVolumes:
+      - name: metrics-csv
+        configMap:
+          name: dcgm-exporter-metrics
+    extraVolumeMounts:
+      - name: nvidia-install-dir-host
+        mountPath: /usr/local/nvidia
+        readOnly: true
+      - name: metrics-csv
+        mountPath: /etc/dcgm-exporter/metrics.csv
+        subPath: metrics.csv
+        readOnly: true
+  flytePropeller:
+    enabled: false
+  opencost:
+    enabled: false
+    scrape: false
+    alpha: false
+  clickhouse:
+    enabled: false
+    backups:
+      enabled: false
+      bucket_name: ""
+      access_key_id: ""
+      secret_access_key: ""
+  otelCollector:
+    enabled: false
+
+  fluentbit:
+    # Namespace to scrape for fluent-bit metrics
+    namespace: kube-system
+    # Label name=value to select the pod within the specified namespace
+    kubernetesLabel: app.kubernetes.io/name=aws-for-fluent-bit
+
+  scrapeConfigs:
+    kubeStateMetrics:
+      extraMetricRelabelConfigs: [ ]
+  extraScrapeConfigs: [ ]

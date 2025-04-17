@@ -816,3 +816,96 @@ Name of the serving-envoy-bootstrap ConfigMap
 {{- define "serving.envoyBootstrapConfigMapName" -}}
 {{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}
+
+{{/*
+Prometheus  Server labels
+*/}}
+{{- define "unionoperatorMonitoring.prometheus.labels" -}}
+helm.sh/chart: {{ include "union-operator.chart" . }}
+{{ include "unionoperatorMonitoring.prometheus.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Prometheus Server selector labels
+*/}}
+{{- define "unionoperatorMonitoring.prometheus.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "union-operator.name" . }}-prometheus
+app.kubernetes.io/instance: {{ .Release.Name }}-prometheus
+{{- end }}
+
+{{/*
+Create the name of the service account to use for the prometheus server
+*/}}
+{{- define "unionoperatorMonitoring.prometheus.serviceAccountName" -}}
+{{- if  .Values.unionoperatorMonitoring.prometheus.serviceAccount.create }}
+{{- default "union-operator-prometheus"  .Values.unionoperatorMonitoring.prometheus.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.unionoperatorMonitoring.prometheus.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Kube State metrics  Server labels
+*/}}
+{{- define "unionoperatorMonitoring.kubeStateMetrics.labels" -}}
+helm.sh/chart: {{ include "union-operator.chart" . }}
+{{ include "unionoperatorMonitoring.kubeStateMetrics.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+Kube State metrics  Server selector labels
+*/}}
+{{- define "unionoperatorMonitoring.kubeStateMetrics.selectorLabels" -}}
+app.kubernetes.io/name: kube-state-metrics
+app.kubernetes.io/instance: {{ .Release.Name }}-kube-state-metrics
+{{- end }}
+
+{{/*
+Create the name of the service account to use for the Kube State metrics server
+*/}}
+{{- define "unionoperatorMonitoring.kubeStateMetrics.serviceAccountName" -}}
+{{- if  .Values.unionoperatorMonitoring.kubeStateMetrics.serviceAccount.create }}
+{{- default "kube-state-metrics"  .Values.unionoperatorMonitoring.kubeStateMetrics.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.unionoperatorMonitoring.kubeStateMetrics.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+DCGM exporter labels
+*/}}
+{{- define "unionoperatorMonitoring.dcgmExporter.labels" -}}
+helm.sh/chart: {{ include "union-operator.chart" . }}
+{{ include "unionoperatorMonitoring.dcgmExporter.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
+DCGM exporter selector labels
+*/}}
+{{- define "unionoperatorMonitoring.dcgmExporter.selectorLabels" -}}
+app.kubernetes.io/name: dcgm-exporter
+app.kubernetes.io/instance: {{ .Release.Name }}-dcgm-exporter
+{{- end }}
+
+{{/*
+Create the name of the service account to use for the DCGM exporter
+*/}}
+{{- define "unionoperatorMonitoring.dcgmExporter.serviceAccountName" -}}
+{{- if  .Values.unionoperatorMonitoring.dcgmExporter.serviceAccount.create }}
+{{- default "dcgm-exporter"  .Values.unionoperatorMonitoring.dcgmExporter.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.unionoperatorMonitoring.dcgmExporter.serviceAccount.name }}
+{{- end }}
+{{- end }}
