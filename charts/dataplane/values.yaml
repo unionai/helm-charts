@@ -1,12 +1,14 @@
+# -- Override the chart name.
 nameOverride: ""
+# -- Override the chart fullname.
 fullnameOverride: ""
+# -- Set the control plane host for your Union dataplane installation.  This will be provided by Union.
 host: "foo.unionai.cloud"
 
 # -- Cluster name should be shared with Union for proper functionality.
 clusterName: ""
 # -- Organization name should be provided by Union.
 orgName: ""
-provider: "metal"
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -26,6 +28,7 @@ additionalPodSpec: { }
 # -- Global kubernetes scheduling constraints that will be applied to the
 # pods.  Application specific constraints will always take precedence.
 scheduling:
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints
   topologySpreadConstraints: { }
   #  - maxSkew: 1
   #    topologyKey: zone
@@ -33,6 +36,7 @@ scheduling:
   #    labelSelector:
   #      matchLabels:
   #        foo: bar
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
   affinity: { }
   #  nodeAffinity:
   #    requiredDuringSchedulingIgnoredDuringExecution:
@@ -42,8 +46,10 @@ scheduling:
   #              operator: NotIn
   #              values:
   #                - zoneC
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
   nodeSelector: { }
   #  key: "value"
+    # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration
   tolerations: [ ]
   #  - key: "key1"
   #    operator: "Equal"
@@ -51,15 +57,22 @@ scheduling:
   #    effect: "NoSchedule"
   nodeName: ""
 
+# -- For AWS only, this is the annotation key that is added to service accounts.
 userRoleAnnotationKey: "eks.amazonaws.com/role-arn"
+# -- For AWS only, this is the value of the annotation key that is added to service accounts.
 userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
+# -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
+  # -- Enable or disable the syncresources service
   enabled: true
-  unionCallbackEnabled: true
+  # -- Override service account values for the syncresources service
   serviceAccount:
+    # -- Override the service account name for the syncresources service
     name: ""
+  # -- Additional pod annotations for the syncresources service
   podAnnotations: { }
+  # -- Additional pod environment variables for the syncresources service
   podEnv: { }
   # -- nodeSelector constraints for the syncresources pods
   nodeSelector: { }
@@ -71,10 +84,14 @@ clusterresourcesync:
   affinity: { }
   # -- nodeName constraints for the syncresources pods
   nodeName: ""
+  # -- Syncresources service configuration
   config:
     cluster_resources:
+      # -- How frequently to sync the cluster resources
       refreshInterval: 5m
+      # -- Start the cluster resource manager in standalone mode.
       standaloneDeployment: true
+      # -- The path to the project the templates used to configure project resource quotas.
       templatePath: /etc/flyte/clusterresource/templates
       customData:
         - production:
@@ -110,10 +127,14 @@ clusterresourcesync:
                 value: '{{ tpl .Values.userRoleAnnotationKey . }}'
             - defaultUserRoleValue:
                 value: '{{ tpl .Values.userRoleAnnotationValue . }}'
+      # -- The name of the cluster.  This should always be the same as the cluster name in the config.
       clusterName: '{{ include "getClusterName" . }}'
+    # -- Additional configuration for the cluster resources service
     clusterResourcesPrivate:
+      # -- Configuration of app serving services.
       app:
         isSelfServe: false
+    # -- Connection information for the sync resources service to connect to the Union control plane.  This should not need to be changed.
     union:
       connection:
         host: 'dns:///{{ tpl .Values.host . }}'
@@ -123,7 +144,7 @@ clusterresourcesync:
         clientSecretLocation: /etc/union/secret/client_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
-  secretName: union-base
+  # -- The templates that are used to create and/or update kubernetes resources for Union projects.
   templates:
     # -- Template for namespaces resources
     - key: a_namespace
@@ -161,6 +182,7 @@ clusterresourcesync:
             limits.cpu: {{ projectQuotaCpu }}
             limits.memory: {{ projectQuotaMemory }}
             requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+  # -- Kubernetes resource configuration for the syncresources service
   resources:
     limits:
       cpu: "1"
@@ -169,6 +191,7 @@ clusterresourcesync:
       cpu: "500m"
       memory: "100Mi"
 
+# -- Global configuration settings for all Union services.
 config:
   # -- Admin Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/subworkflow/launchplan#AdminConfig)
   admin:
@@ -195,7 +218,7 @@ config:
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
-  # -- Override configuration settings.
+  # -- Override any configuration settings.
   configOverrides:
     cache:
       # Overrides identity caching which is not available in the dataplane.
@@ -256,21 +279,7 @@ config:
         type: "{{ .Values.proxy.secretManager.type }}"
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
-    # -- For Workflow store use configuration [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/workflowstore#Config)
-    #
-  # -- Datacatalog server config
-  datacatalogServer:
-    datacatalog:
-      storage-prefix: metadata/datacatalog
-      metrics-scope: datacatalog
-      profiler-port: 10254
-      heartbeat-grace-period-multiplier: 3
-      max-reservation-heartbeat: 30s
-    application:
-      grpcPort: 8089
-      httpPort: 8080
-      grpcServerReflection: true
-  # -- Domains configuration for Flyte projects. This enables the specified number of domains across all projects in Flyte.
+  # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
       - id: development
@@ -306,56 +315,69 @@ config:
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
+  # -- Logging configuration
   logger:
     show-source: true
     level: 4
+  # -- Configuration for the Union operator service
   operator:
+    # -- Enables the operator service
     enabled: true
+    # -- Enable app serving
     apps:
       enabled: "{{ .Values.serving.enabled }}"
+    # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
+    # -- Enable the cloudflare tunnel service for secure communication with the control plane.
     enableTunnelService: true
+    # -- Set the cluster information for the operator service
     clusterId:
+      # -- The organization name for the cluster.  This should match your organization name that you were provided.
       organization: "{{ .Values.orgName }}"
+    # -- Dataplane cluster configuration.
     clusterData:
+      # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ .Values.secrets.admin.clientId }}"
+      # -- The hose name for control plane access. This will be provided by Union.
       cloudHostName: "{{ .Values.host }}"
-      # TODO: make me configurable.  This is not just the prefix in our current helm charts.
+      # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: "s3://"
+      # -- The bucket name for object storage.
       bucketName: "{{ .Values.storage.bucketName }}"
+      # -- The bucket region for object storage.
       bucketRegion: "{{ .Values.storage.region }}"
       userRoleKey: "{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"
       userRole: "{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"
+      # -- For GCP only, the project id for object storage.
       gcpProjectId: "{{ .Values.storage.gcp.projectId }}"
+    # -- Configuration for the usage reporting service.
     collectUsages:
+      # -- Enable usage collection in the operator service.
       enabled: true
+    # -- Heartbeat check configuration.
     dependenciesHeartbeat:
+      # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
+      # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
+      # -- Define the prometheus health check endpoint.
       prometheus:
         endpoint: '{{ include "prometheus.health.url" . }}'
+  # -- Configuration for the operator proxy service.
   proxy:
+    # -- Secret manager configuration
     smConfig:
+      # -- Enable or disable secret manager support for the Union dataplane.
       enabled: "{{ .Values.proxy.secretManager.enabled }}"
+      # -- The type of secret manager to use.
       type: "{{ .Values.proxy.secretManager.type }}"
+      # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
-    persistedLogs:
-      sourceType: ObjectStore
-      objectStore:
-        prefix: persisted-logs
-        pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
 
-  qubole: { }
-  remoteData:
-    remoteData:
-      region: "us-east-1"
-      scheme: "local"
-      signedUrls:
-        durationMinutes: 3
   # -- Resource manager configuration
   resource_manager:
     # -- resource manager configuration
@@ -381,11 +403,6 @@ config:
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
-        templates:
-          - displayName: Task Logs
-            scheme: TaskExecution
-            templateUris:
-              - "/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"
         dynamic-log-links:
           - vscode:
               displayName: VS Code Debugger
@@ -404,6 +421,7 @@ config:
         memory: 1Gi
         # Maybe `0`?
         gpu: 1
+  # -- Connection information to the union control plane.
   union:
     connection:
       host: "dns:///{{ .Values.host }}"
@@ -419,13 +437,18 @@ databricks:
   plugin_config: { }
 
 dcgmExporter:
+  # -- Enable or disable the dcgm exporter
   enabled: false
+  # -- Additional arguments to pass to the dcgm exporter.
   arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
+  # -- Service account configuration for the dcgm exporter
   serviceAccount:
     create: true
     annotations: { }
     name: "dcgm-exporter-system"
+  # -- Additional kubernetes security context information to be added to the dcgm exporter pods.
   podSecurityContext: { }
+
   securityContext:
     runAsNonRoot: false
     runAsUser: 0
@@ -452,23 +475,66 @@ dcgmExporter:
       mountPath: /usr/local/nvidia
       readOnly: true
 
+# -- Configuration for fluentbit used for the persistent logging feature.
 fluentbit:
-  enabled: true
-  existingConfigMap: fluentbit-system
-  # Allow fluentbit to run on all nodes to be able to push all logs.
-  tolerations:
-    - operator: Exists
-  serviceAccount:
-    name: fluentbit-system
-  # If you are using EKS and would like to use the IAM role for service account (IRSA) feature,
-  # uncomment the following line and set the role ARN
-    annotations: {}  # eks.amazonaws.com/role-arn: <role>
-  # If you would like to use access keys, uncomment the following lines and set the access key and secret key
-  env: [ ]
-  #  - name: AWS_ACCESS_KEY_ID
-  #    value:
-  #  - name: AWS_SECRET_ACCESS_KEY
-  #    value:
+  # -- Enable or disable the fluentbit service
+  enabled: false
+  # -- Create a prometheus rule for monitoring fluentbit.
+  prometheusRule:
+    enabled: false
+
+  # -- Configuration for fluentbit.  Union features rely on this configuration. Modify at your own risk.
+  config:
+    service: |
+      [SERVICE]
+          Daemon Off
+          Flush {{ .Values.flush }}
+          Log_Level {{ .Values.logLevel }}
+          Parsers_File /fluent-bit/etc/parsers.conf
+          Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+          HTTP_Server On
+          HTTP_Listen 0.0.0.0
+          HTTP_Port {{ .Values.metricsPort }}
+          Health_Check On
+
+    ## https://docs.fluentbit.io/manual/pipeline/inputs
+    inputs: |
+      [INPUT]
+          Name tail
+          Path /var/log/containers/*.log
+          multiline.parser docker, cri
+          Tag kube.*
+          Mem_Buf_Limit 5MB
+          Skip_Long_Lines On
+
+      [INPUT]
+          Name systemd
+          Tag host.*
+          Systemd_Filter _SYSTEMD_UNIT=kubelet.service
+          Read_From_Tail On
+
+    ## https://docs.fluentbit.io/manual/pipeline/filters
+    filters: |
+      [FILTER]
+          Name kubernetes
+          Match kube.*
+          Merge_Log On
+          Keep_Log Off
+          K8S-Logging.Parser On
+          K8S-Logging.Exclude On
+
+    ## https://docs.fluentbit.io/manual/pipeline/outputs
+    outputs: |
+      [OUTPUT]
+          Name loki
+          Match kube.*
+          Host unionai-dataplane-loki.union.svc.cluster.local
+          Labels service_name=$kubernetes['container_name'], namespace=$kubernetes['namespace_name']
+
+      [OUTPUT]
+          Name loki
+          Match host.*
+          Host unionai-dataplane-loki.union.svc.cluster.local
 
 flyteagent:
   enabled: false
@@ -933,7 +999,7 @@ storage:
   s3ForcePathStyle: true
   enableMultiContainer: false
   limits:
-    maxDownloadMBs: 1024
+    maxDownloadMBs: 10
   cache:
     maxSizeMBs: 0
     targetGCPercent: 70
