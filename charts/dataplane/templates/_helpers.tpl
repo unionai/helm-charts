@@ -209,6 +209,91 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "acceleratedDatasets.serviceAccountName" -}}
+{{- default "nodeobserver-system" .Values.acceleratedDatasets.serviceAccount.name }}
+{{- end }}
+
+{{- define "acceleratedDatasets.selectorLabels" -}}
+app.kubernetes.io/name: acceleratedDatasets
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "acceleratedDatasets.labels" -}}
+{{ include "acceleratedDatasets.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "acceleratedDatasets.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "acceleratedDatasets.labels" . }}
+{{- with .Values.acceleratedDatasets.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "acceleratedDatasets.scheduling.topologySpreadConstraints" -}}
+{{ with .Values.acceleratedDatasets.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "acceleratedDatasets.scheduling.affinity" -}}
+{{ with .Values.acceleratedDatasets.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "acceleratedDatasets.scheduling.nodeSelector" -}}
+{{ with .Values.acceleratedDatasets.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "acceleratedDatasets.scheduling.nodeName" -}}
+{{ with .Values.acceleratedDatasets.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "acceleratedDatasets.scheduling.tolerations" -}}
+{{ with .Values.acceleratedDatasets.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "acceleratedDatasets.scheduling" -}}
+{{- if .Values.acceleratedDatasets.topologySpreadConstraints }}
+{{- include "acceleratedDatasets.scheduling.topologySpreadConstraints"}}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.acceleratedDatasets.affinity }}
+{{- include "acceleratedDatasets.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.acceleratedDatasets.nodeSelector }}
+{{- include "acceleratedDatasets.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.acceleratedDatasets.nodeName }}
+{{- include "acceleratedDatasets.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.acceleratedDatasets.tolerations }}
+{{- include "acceleratedDatasets.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
 {{/*
 Create the name of the clusterresources service account
 */}}

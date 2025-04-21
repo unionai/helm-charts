@@ -1,0 +1,59 @@
+{{- if .Values.acceleratedDatasets.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-nodeobserver
+  labels:
+    {{- include "acceleratedDatasets.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "acceleratedDatasets.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/accelerated-datasets/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.acceleratedDatasets.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        {{ include "acceleratedDatasets.podLabels" . | nindent 8 }}
+    spec:
+      priorityClassName: {{ .Values.operator.priorityClassName }}
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "acceleratedDatasets.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.acceleratedDatasets.podSecurityContext | nindent 8 }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-nodeobserver
+      containers:
+        - name: node-observer
+          securityContext:
+            {{- toYaml .Values.acceleratedDatasets.securityContext | nindent 12 }}
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            {{- toYaml .Values.acceleratedDatasets.resources | nindent 12 }}
+          volumeMounts:
+            - mountPath: /etc/union
+              name: config-volume
+          env:
+            {{- include "global.podEnvVars" . | nindent 10 }}
+            {{- with .Values.acceleratedDatasets.podEnv }}
+            {{- toYaml . | nindent 10 }}
+            {{- end }}
+          args:
+            - nodeobserver
+            - --config
+            - /etc/union/config.yaml
+      {{- include "operator.scheduling" . | nindent 6 }}
+      {{- include "additionalPodSpec" . | nindent 6 }}
+{{- end }}
