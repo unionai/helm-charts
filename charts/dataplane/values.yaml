@@ -821,6 +821,27 @@ prometheus:
     fullnameOverride: prometheus-operator
   kube-state-metrics:
     namespaceOverride: "kube-system"
+    metricRelabelings:
+      - sourceLabels: [ "__name__" ]
+        separator: ";"
+        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+        action: keep
+      - sourceLabels: [ "__name__", "phase" ]
+        separator: ";"
+        regex: "kube_pod_status_phase;(Succeeded|Failed)"
+        action: drop
+      # Replace insert nodename to assist Grafana joins
+      - sourceLabels: [ "node" ]
+        targetLabel: "nodename"
+        regex: "(.*)" # copy the value as is
+        action: replace
+      # Ensure all cloud provider group names populate label_node_pool_name
+      - sourceLabels: [ "label_node_group_name" ]
+        action: replace
+        # Assume GCP environments don't have label_node_group_name
+        regex: "(.+)"
+        targetLabel: "label_node_pool_name"
+
   prometheus-node-exporter:
     namespaceOverride: "kube-system"
   ingress:
