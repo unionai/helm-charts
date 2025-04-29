@@ -767,6 +767,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- define "fluentbit.outputs" -}}
+{{- if eq .Values.config.proxy.persistedLogs.sourceType "ObjectStore" }}
 {{/* azure uses a different output plugin*/}}
 {{- if and (hasKey .Values.storage "custom") (hasKey .Values.storage.custom "stow") (eq .Values.storage.custom.stow.kind "azure") }}
 [OUTPUT]
@@ -798,6 +799,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- with .Values.storage.endpoint }}
     endpoint {{ . }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
