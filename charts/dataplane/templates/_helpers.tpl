@@ -608,6 +608,31 @@ http://kourier-internal
 {{- end -}}
 
 {{/*
+Determines if DCGM exporter resources should be created
+*/}}
+{{- define "dcgmExporter.enabled" -}}
+{{- $key := "gpu-device-node-label" -}}
+{{- $keyExists := hasKey .Values.config.k8s.plugins.k8s $key -}}
+{{- $keyHasValue := false -}}
+{{- if $keyExists -}}
+  {{- $value := index .Values.config.k8s.plugins.k8s $key -}}
+  {{- $keyHasValue = ne ($value | toString | trim) "" -}}
+{{- end -}}
+{{- and .Values.dcgmExporter.enabled $keyExists $keyHasValue -}}
+{{- end -}}
+
+{{- define "dcgmExporter.affinity" -}}
+{{- $defaultAffinity := dict }}
+{{- $nodeAffinity := dict "requiredDuringSchedulingIgnoredDuringExecution" (dict "nodeSelectorTerms" (list (dict "matchExpressions" (list (dict "key" (index $.Values.config.k8s.plugins.k8s "gpu-device-node-label") "operator" "Exists"))))) }}
+{{- $_ := set $defaultAffinity "nodeAffinity" $nodeAffinity }}
+{{- if .Values.dcgmExporter.affinity }}
+{{- toYaml (merge .Values.dcgmExporter.affinity $defaultAffinity) }}
+{{- else }}
+{{- toYaml $defaultAffinity }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Global pod annotations
 */}}
 {{- define "global.podAnnotations" -}}

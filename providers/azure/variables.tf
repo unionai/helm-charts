@@ -153,6 +153,17 @@ variable "additional_worker_node_pools" {
       max_count = 10
       priority  = "Spot"
     }
+    nc4ast4 = {
+      name = "nc4ast4"
+      vm_size = "Standard_NC4as_T4_v3"
+      max_count = 2
+      node_labels = {
+        "platform.union.ai/accelerator" = "true"
+      }
+      node_taints = [
+        "platform.union.ai/accelerator=true:NoSchedule"
+      ]
+    }
   }
   description = "Optional. The additional node pools for the Kubernetes cluster."
 }

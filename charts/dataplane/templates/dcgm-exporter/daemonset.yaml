@@ -1,4 +1,4 @@
-{{- if .Values.dcgmExporter.enabled -}}
+{{- if eq (include "dcgmExporter.enabled" .) "true" }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -16,8 +16,8 @@ spec:
       app.kubernetes.io/component: "dcgm-exporter"
   template:
     metadata:
-      annotations:
       {{- with  .Values.dcgmExporter.podAnnotations }}
+      annotations:
       {{- toYaml . | nindent 8 }}
       {{- end }}
       labels:
@@ -34,8 +34,10 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "dcgmExporter.serviceAccountName" . }}
+      {{- with .Values.dcgmExporter.podSecurityContext }}
       securityContext:
-        {{- toYaml .Values.dcgmExporter.podSecurityContext | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       volumes:
         - name: "pod-gpu-resources"
           hostPath:
@@ -52,8 +54,10 @@ spec:
         - name: exporter
           image: "{{ .Values.image.dcgmExporter.repository }}:{{ .Values.image.dcgmExporter.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.dcgmExporter.pullPolicy }}
+          {{- with .Values.dcgmExporter.securityContext }}
           securityContext:
-            {{- toYaml .Values.dcgmExporter.securityContext | nindent 12 }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           args:
             - "-f"
             - "/etc/dcgm-exporter/metrics.csv"
@@ -61,13 +65,13 @@ spec:
             - name: "DCGM_EXPORTER_KUBERNETES"
               value: "true"
             - name: "DCGM_EXPORTER_LISTEN"
-              value: ":9400"
+              value: ":{{ .Values.dcgmExporter.service.port }}"
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
                   fieldPath: spec.nodeName
-          {{- if .Values.dcgmExporter.extraEnv }}
-          {{- toYaml .Values.dcgmExporter.extraEnv | nindent 12 }}
+          {{- with .Values.dcgmExporter.extraEnv }}
+          {{- toYaml . | nindent 12 }}
           {{- end }}
           ports:
             - name: "metrics"
@@ -78,8 +82,8 @@ spec:
               mountPath: "/var/lib/kubelet/pod-resources"
             - name: "dcgm-exporter"
               mountPath: "/etc/dcgm-exporter"
-          {{- if .Values.dcgmExporter.extraVolumeMounts }}
-          {{- toYaml .Values.dcgmExporter.extraVolumeMounts | nindent 12 }}
+          {{- with .Values.dcgmExporter.extraVolumeMounts }}
+          {{- toYaml . | nindent 12 }}
           {{- end }}
           livenessProbe:
             httpGet:
@@ -98,12 +102,10 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.dcgmExporter.affinity }}
       affinity:
-        {{- toYaml . | nindent 8 }}
-      {{- end }}
+        {{- include "dcgmExporter.affinity" . | nindent 8 }}
       {{- with .Values.dcgmExporter.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-  {{- end }}
+{{- end }}
