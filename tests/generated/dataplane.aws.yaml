@@ -2880,44 +2880,6 @@ webhooks:
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
 ---
-# Source: dataplane/templates/monitoring/podmonitor.yaml
-apiVersion: monitoring.coreos.com/v1
-kind: PodMonitor
-metadata:
-  name: flytepropeller
-  namespace: union
-  labels:
-    release: release-name
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: flytepropeller
-  namespaceSelector:
-    matchNames:
-      - "union"
-  podMetricsEndpoints:
-    - interval: 30s  # Using default scrape interval, adjust as needed
-      metricRelabelings:
-        - sourceLabels: [ "__name__" ]
-          regex: "flyte:propeller:all:(main|sub)_(adds|depth)|flyte:propeller:all:(workflow|node|task):event_recording.*|flyte:propeller:all:admin_launcher:cache_item_syncs|flyte:propeller:all:admin_launcher:watch_api_.*|flyte:propeller:all:discovery_.*|flyte:propeller:all:execstats:active_.*|flyte:propeller:all:free_workers_count|flyte:propeller:all:gc_.*|flyte:propeller:all:metastore:cache_hit|flyte:propeller:all:metastore:cache_miss|flyte:propeller:all:metastore:write.*|flyte:propeller:all:metastore:read.*|flyte:propeller:all:metastore:list.*|flyte:propeller:all:metastore:delete.*|flyte:propeller:all:metastore:head*|flyte:propeller:all:node:accelerated_input_count|flyte:propeller:all:node:container:container:task_pod_errors|flyte:propeller:all:node:fast_task:.*|flyte:propeller:all:node:node_exec_latency_us|flyte:propeller:all:node:perma_system_error_duration_ms_count|flyte:propeller:all:node:perma_user_error_duration_ms_count|flyte:propeller:all:node:queueing_latency_ms|flyte:propeller:all:node:system_error_duration_ms_count|flyte:propeller:all:node:transition_latency_ms|flyte:propeller:all:node:user_error_duration_ms_count|flyte:propeller:all:plugin.*|flyte:propeller:all:reservation_.*|flyte:propeller:all:round:.*_error|flyte:propeller:all:round:round_time_ms|flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration|flyte:propeller:all:wf_.*|grpc_client_.*|k8s_client_.*|go_.*|process_.*"
-          action: keep
-      relabelings:
-        - sourceLabels: [ "__meta_kubernetes_pod_container_name" ]
-          regex: "flytepropeller"
-          action: keep
-        - sourceLabels: [ "__meta_kubernetes_pod_name" ]
-          targetLabel: kubernetes_pod_name
-          action: replace
-        - sourceLabels: [ "__meta_kubernetes_namespace" ]
-          targetLabel: namespace
-          action: replace
-        - sourceLabels: [ "__meta_kubernetes_pod_name" ]
-          targetLabel: pod
-          action: replace
-        - sourceLabels: [ "__meta_kubernetes_pod_container_name" ]
-          targetLabel: container
-          action: replace
----
 # Source: dataplane/charts/prometheus/templates/prometheus/prometheus.yaml
 apiVersion: monitoring.coreos.com/v1
 kind: Prometheus
@@ -4105,6 +4067,27 @@ spec:
           separator: ";"
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-service-monitor
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      platform.union.ai/service-group: release-name
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: debug
+      interval: 1m
+      path: /metrics
+      honorLabels: true
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/validatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
