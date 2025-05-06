@@ -209,86 +209,86 @@ tolerations:
 {{- end }}
 {{- end -}}
 
-{{- define "nodeObserver.serviceAccountName" -}}
-{{- default "nodeobserver-system" .Values.nodeObserver.serviceAccount.name }}
+{{- define "nodeobserver.serviceAccountName" -}}
+{{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
 {{- end }}
 
-{{- define "nodeObserver.selectorLabels" -}}
+{{- define "nodeobserver.selectorLabels" -}}
 app.kubernetes.io/name: nodeobserver
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "nodeObserver.labels" -}}
-{{ include "nodeObserver.selectorLabels" . }}
+{{- define "nodeobserver.labels" -}}
+{{ include "nodeobserver.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "nodeObserver.podLabels" -}}
+{{- define "nodeobserver.podLabels" -}}
 {{ include "global.podLabels" . }}
-{{ include "nodeObserver.labels" . }}
-{{- with .Values.nodeObserver.podLabels }}
+{{ include "nodeobserver.labels" . }}
+{{- with .Values.nodeobserver.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
-{{- define "nodeObserver.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.nodeObserver.topologySpreadConstraints }}
+{{- define "nodeobserver.scheduling.topologySpreadConstraints" -}}
+{{ with .Values.nodeobserver.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
-{{- define "nodeObserver.scheduling.affinity" -}}
-{{ with .Values.nodeObserver.affinity }}
+{{- define "nodeobserver.scheduling.affinity" -}}
+{{ with .Values.nodeobserver.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
-{{- define "nodeObserver.scheduling.nodeSelector" -}}
-{{ with .Values.nodeObserver.nodeSelector }}
+{{- define "nodeobserver.scheduling.nodeSelector" -}}
+{{ with .Values.nodeobserver.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
-{{- define "nodeObserver.scheduling.nodeName" -}}
-{{ with .Values.nodeObserver.nodeName }}
+{{- define "nodeobserver.scheduling.nodeName" -}}
+{{ with .Values.nodeobserver.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
-{{- define "nodeObserver.scheduling.tolerations" -}}
-{{ with .Values.nodeObserver.tolerations }}
+{{- define "nodeobserver.scheduling.tolerations" -}}
+{{ with .Values.nodeobserver.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
-{{- define "nodeObserver.scheduling" -}}
-{{- if .Values.nodeObserver.topologySpreadConstraints }}
-{{- include "nodeObserver.scheduling.topologySpreadConstraints"}}
+{{- define "nodeobserver.scheduling" -}}
+{{- if .Values.nodeobserver.topologySpreadConstraints }}
+{{- include "nodeobserver.scheduling.topologySpreadConstraints"}}
 {{- else }}
 {{- include "global.scheduling.topologySpreadConstraints" . }}
 {{- end }}
-{{- if .Values.nodeObserver.affinity }}
-{{- include "nodeObserver.scheduling.affinity" . }}
+{{- if .Values.nodeobserver.affinity }}
+{{- include "nodeobserver.scheduling.affinity" . }}
 {{- else }}
 {{- include "global.scheduling.affinity" . }}
 {{- end }}
-{{- if .Values.nodeObserver.nodeSelector }}
-{{- include "nodeObserver.scheduling.nodeSelector" . }}
+{{- if .Values.nodeobserver.nodeSelector }}
+{{- include "nodeobserver.scheduling.nodeSelector" . }}
 {{- else }}
 {{- include "global.scheduling.nodeSelector" . }}
 {{- end }}
-{{- if .Values.nodeObserver.nodeName }}
-{{- include "nodeObserver.scheduling.nodeName" . }}
+{{- if .Values.nodeobserver.nodeName }}
+{{- include "nodeobserver.scheduling.nodeName" . }}
 {{- else }}
 {{- include "global.scheduling.nodeName" . }}
 {{- end }}
-{{- if .Values.nodeObserver.tolerations }}
-{{- include "nodeObserver.scheduling.tolerations" . }}
+{{- if .Values.nodeobserver.tolerations }}
+{{- include "nodeobserver.scheduling.tolerations" . }}
 {{- else }}
 {{- include "global.scheduling.tolerations" . }}
 {{- end }}
