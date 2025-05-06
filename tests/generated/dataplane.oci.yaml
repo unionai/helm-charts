@@ -371,6 +371,46 @@ data:
         bucket bucket
         endpoint https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
 ---
+# Source: dataplane/templates/imagebuilder/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : union-operator-buildkit
+data:
+  buildkitd.toml: |
+    debug = false
+
+    [log]
+      format = "text"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = 0
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -439,6 +479,9 @@ data:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
     proxy: 
+      imageBuilderConfig:
+        authenticationType: 'noop'
+        defaultRepository: ''
       persistedLogs:
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
@@ -560,6 +603,8 @@ data:
     webhook:
       certDir: /etc/webhook/certs
       embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
@@ -1127,6 +1172,8 @@ rules:
       - pods
       - configmaps
       - podtemplates
+      - secrets
+      - namespaces
       - nodes
     verbs:
       - get
@@ -1797,6 +1844,27 @@ spec:
   sessionAffinity: None
   type: "ClusterIP"
 ---
+# Source: dataplane/templates/imagebuilder/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1234
+      targetPort: tcp
+      protocol: TCP
+      name: tcp
+  selector:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+---
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
 kind: Service
@@ -2376,6 +2444,93 @@ spec:
           operator: Equal
           value: worker
 ---
+# Source: dataplane/templates/imagebuilder/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: imagebuilder-buildkit
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
+      labels:
+        app.kubernetes.io/name: imagebuilder-buildkit
+        app.kubernetes.io/instance: release-name
+    spec:
+      containers:
+        - name: "buildkit"
+          image: "moby/buildkit:buildx-stable-1-rootless"
+          imagePullPolicy: IfNotPresent
+          volumeMounts:
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
+            - mountPath: /etc/buildkit
+              name: buildkit-config
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
+          ports:
+            - name: tcp
+              containerPort: 1234
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          securityContext:
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests:
+              cpu: 2
+              memory: 4Gi
+      volumes:
+      - name: buildkitd
+        emptyDir: {}
+      - configMap:
+          name: union-operator-buildkit
+        name: buildkit-config
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: imagebuilder-buildkit
+                app.kubernetes.io/instance: release-name
+            topologyKey: "kubernetes.io/hostname"
+---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -2396,7 +2551,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "aac7aa4b442526e8e3bfe049393daaa569e07737d180345c775db58ae135126"
+        configChecksum: "a849c598014eab30871b2cbadf4763068c5eb6cbdedf1388532920a6f4de37f"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -2536,7 +2691,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "aac7aa4b442526e8e3bfe049393daaa569e07737d180345c775db58ae135126"
+        configChecksum: "a849c598014eab30871b2cbadf4763068c5eb6cbdedf1388532920a6f4de37f"
         
       labels:
         
@@ -2664,7 +2819,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "7f9b28f1c9c0db7c1c1e3354d9a15d8d18f9590f7603caa6f72db090bc178af"
+        configChecksum: "10a8fcbf8e40b216e72f5b5502c5a9d8a611610647f29b8aa99fdd0c810422f"
         
     spec:
       securityContext: 
@@ -2826,7 +2981,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7f9b28f1c9c0db7c1c1e3354d9a15d8d18f9590f7603caa6f72db090bc178af"
+        configChecksum: "10a8fcbf8e40b216e72f5b5502c5a9d8a611610647f29b8aa99fdd0c810422f"
         
       labels:
         

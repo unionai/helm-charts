@@ -1,0 +1,40 @@
+{{- if (include "imagebuilder.buildkit.enabled" .) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : {{ include "imagebuilder.buildkit.fullname" . }}
+data:
+  buildkitd.toml: |
+    debug = {{ .Values.imageBuilder.buildkit.log.debug }}
+
+    [log]
+      format = "{{ .Values.imageBuilder.buildkit.log.format }}"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = {{ .Values.imageBuilder.buildkit.oci.maxParallelism }}
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
+{{- end }}
