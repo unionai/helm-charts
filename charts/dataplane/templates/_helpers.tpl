@@ -209,6 +209,91 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "nodeobserver.serviceAccountName" -}}
+{{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
+{{- end }}
+
+{{- define "nodeobserver.selectorLabels" -}}
+app.kubernetes.io/name: nodeobserver
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeobserver.labels" -}}
+{{ include "nodeobserver.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "nodeobserver.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "nodeobserver.labels" . }}
+{{- with .Values.nodeobserver.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "nodeobserver.scheduling.topologySpreadConstraints" -}}
+{{ with .Values.nodeobserver.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.affinity" -}}
+{{ with .Values.nodeobserver.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.nodeSelector" -}}
+{{ with .Values.nodeobserver.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.nodeName" -}}
+{{ with .Values.nodeobserver.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.tolerations" -}}
+{{ with .Values.nodeobserver.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling" -}}
+{{- if .Values.nodeobserver.topologySpreadConstraints }}
+{{- include "nodeobserver.scheduling.topologySpreadConstraints"}}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.nodeobserver.affinity }}
+{{- include "nodeobserver.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.nodeobserver.nodeSelector }}
+{{- include "nodeobserver.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.nodeobserver.nodeName }}
+{{- include "nodeobserver.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.nodeobserver.tolerations }}
+{{- include "nodeobserver.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
 {{/*
 Create the name of the clusterresources service account
 */}}
