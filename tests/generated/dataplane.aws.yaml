@@ -120,13 +120,6 @@ metadata:
     heritage: "Helm"
 automountServiceAccountToken: true
 ---
-# Source: dataplane/templates/accelerated-datasets/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: nodeobserver-system
-  namespace: union
----
 # Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -207,18 +200,6 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
 type: Opaque
----
-# Source: dataplane/templates/accelerated-datasets/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-nodeobserver
-  namespace: union
-data:
-  config.yaml: | 
-    criticalDaemonSets:
-    - name: union-mountpoint
-      namespace: 'union'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -1043,19 +1024,6 @@ rules:
 - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
   verbs: ["get"]
 ---
-# Source: dataplane/templates/accelerated-datasets/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-nodeobserver
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["list"]
-- apiGroups: [""]
-  resources: ["nodes"]
-  verbs: ["get", "update"]
----
 # Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -1351,20 +1319,6 @@ subjects:
   - kind: ServiceAccount
     name: union-operator-prometheus
     namespace: union
----
-# Source: dataplane/templates/accelerated-datasets/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-nodeobserver
-subjects:
-- kind: ServiceAccount
-  name: nodeobserver-system
-  namespace: union
-roleRef:
-  kind: ClusterRole
-  apiGroup: rbac.authorization.k8s.io
-  name: union-nodeobserver
 ---
 # Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1996,107 +1950,6 @@ spec:
           name: etcmachineid
       tolerations:
         - operator: Exists
----
-# Source: dataplane/templates/accelerated-datasets/daemonset.yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: union-nodeobserver
-  labels:
-    app.kubernetes.io/name: acceleratedDatasets
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: acceleratedDatasets
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "d115b96401c5395d565b56e956a4a7aa5c226107af82ed34d93a296947a8d16"
-        
-      labels:
-        
-        
-        app.kubernetes.io/name: acceleratedDatasets
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      priorityClassName: 
-      serviceAccountName: nodeobserver-system
-      securityContext:
-        {}
-      volumes:
-        - name: config-volume
-          configMap:
-            name: union-nodeobserver
-      containers:
-        - name: node-observer
-          securityContext:
-            capabilities:
-              add:
-              - SYS_ADMIN
-            privileged: true
-            runAsNonRoot: false
-            runAsUser: 0
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.4.0"
-          imagePullPolicy: IfNotPresent
-          terminationMessagePolicy: FallbackToLogsOnError
-          resources:
-            limits:
-              cpu: "1"
-              memory: 500Mi
-            requests:
-              cpu: 500m
-              memory: 100Mi
-          volumeMounts:
-            - mountPath: /etc/union
-              name: config-volume
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          - name: KUBE_NODE_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: spec.nodeName
-          - name: LOG_LEVEL
-            value: "4"
-          args:
-            - nodeobserver
-            - --config
-            - /etc/union/config.yaml
 ---
 # Source: dataplane/charts/opencost/templates/deployment.yaml
 apiVersion: apps/v1
