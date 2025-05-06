@@ -495,42 +495,33 @@ databricks:
   plugin_config: { }
 
 # -- Dcgm exporter configuration
-dcgmExporter:
+dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
-  # -- Additional arguments to pass to the dcgm exporter.
-  arguments: ["-f", "/etc/dcgm-exporter/dcp-metrics-included.csv"]
-  # -- Service account configuration for the dcgm exporter
-  serviceAccount:
-    create: true
-    annotations: { }
-    name: "dcgm-exporter-system"
-  podSecurityContext: { }
-  securityContext:
-    runAsNonRoot: false
-    runAsUser: 0
-    privileged: true
-    capabilities:
-      add: [ "SYS_ADMIN" ]
-  affinity: { }
-  tolerations: { }
-  resources:
-    limits:
-      cpu: 100m
-      ephemeral-storage: 500Mi
-      memory: 400Mi
-    requests:
-      cpu: 100m
-      ephemeral-storage: 500Mi
-      memory: 128Mi
-  kubeletPath: "/var/lib/kubelet/pod-resources"
-  extraHostVolumes:
-    - name: nvidia-install-dir-host
-      hostPath: /home/kubernetes/bin/nvidia
-  extraVolumeMounts:
-    - name: nvidia-install-dir-host
-      mountPath: /usr/local/nvidia
-      readOnly: true
+
+opencost:
+  enabled: true
+  fullnameOverride: opencost
+  opencost:
+    # By default, disable prometheus. This runs opencost in exporter mode: https://www.opencost.io/docs/opencost-exporter
+    # Set internal or external values to populate the PROMETHEUS_SERVER_ENDPOINT env var
+    prometheus:
+      external:
+        enabled: true
+        url: "http://union-operator-prometheus.{{.Release.Namespace}}.svc:80/prometheus"
+      internal:
+        enabled: false
+
+    ui:
+      enabled: false
+    exporter:
+      resources:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 1000m
+          memory: 4Gi
 
 # -- Configuration for fluentbit used for the persistent logging feature.
 fluentbit:
@@ -699,19 +690,11 @@ image:
     repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
     tag: v2.11.0
     pullPolicy: IfNotPresent
-  # -- dcgm-exporter repository and tag.
-  dcgmExporter:
-    repository: nvcr.io/nvidia/k8s/dcgm-exporter
-    tag: 3.1.7-3.1.4-ubuntu20.04
-    pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
     pullPolicy: IfNotPresent
-
-integration:
-  opencost: false
 
 metrics-server:
   enabled: false
@@ -834,6 +817,19 @@ prometheus:
     service:
       port: 80
     prometheusSpec:
+      retention: 3d
+      # Disable the nil uses helm values for the selectors.  This is disabled to make sure that
+      # prometheus can scrape other externally managed services beyond the scope of the helm release.
+      # If you want to limit the scope of the prometheus service to only the helm release, set this to true
+      # and/or set the selectors to the appropriate values.
+      ruleSelectorNilUsesHelmValues: false
+      ruleSelector: {}
+      scrapeConfigSelectorNilUsesHelmValues: false
+      scrapeConfigSelector: {}
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorSelector: {}
+      podMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelector: {}
       resources:
         limits:
           cpu: "4"
@@ -848,6 +844,27 @@ prometheus:
     fullnameOverride: prometheus-operator
   kube-state-metrics:
     namespaceOverride: "kube-system"
+    metricRelabelings:
+      - sourceLabels: [ "__name__" ]
+        separator: ";"
+        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+        action: keep
+      - sourceLabels: [ "__name__", "phase" ]
+        separator: ";"
+        regex: "kube_pod_status_phase;(Succeeded|Failed)"
+        action: drop
+      # Replace insert nodename to assist Grafana joins
+      - sourceLabels: [ "node" ]
+        targetLabel: "nodename"
+        regex: "(.*)" # copy the value as is
+        action: replace
+      # Ensure all cloud provider group names populate label_node_pool_name
+      - sourceLabels: [ "label_node_group_name" ]
+        action: replace
+        # Assume GCP environments don't have label_node_group_name
+        regex: "(.+)"
+        targetLabel: "label_node_pool_name"
+
   prometheus-node-exporter:
     namespaceOverride: "kube-system"
   ingress:
