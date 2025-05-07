@@ -279,6 +279,8 @@ config:
         type: "{{ .Values.proxy.secretManager.type }}"
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
+        imagePullSecrets:
+          enabled: true
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -382,6 +384,9 @@ config:
       objectStore:
         prefix: persisted-logs
         pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
+    imageBuilderConfig:
+      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
+      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
   # -- Resource manager configuration
   resource_manager:
     # -- resource manager configuration
@@ -1009,5 +1014,114 @@ serving:
 # Enable the knative operator.  Required for app serving.
 knative-operator:
   enabled: false
+
   crds:
     install: true
+
+imageBuilder:
+  enabled: false
+
+  # -- The config map build-image container task attempts to reference.
+  # -- Should not change unless coordinated with Union technical support.
+  targetConfigMapName: "build-image-config"
+
+  # -- The URI of the buildkitd service. Used for externally managed buildkitd services.
+  # -- Leaving empty and setting imageBuilder.buildkit.enabled to true will create a buildkitd service.
+  # -- E.g. "tcp://buildkitd.buildkit.svc.cluster.local:1234"
+  buildkitUri: ""
+
+  # -- The default repository to publish images to "registry" is not specified with imagespec.
+  # -- Note, the build-image task will fail unless "registry" is specified or a default repository is provided.
+  defaultRepository: ""
+
+  # -- How build-image task and operator proxy will attempt to authenticate
+  # -- Supported values are "noop", "google", "aws", "azure"
+  # -- "noop" no authentication is attempted
+  # -- "google" uses docker-credential-gcr to authenticate to the default registry
+  # -- "aws" uses docker-credential-ecr-login to authenticate to the default registry
+  # -- "azure" uses az acr login to authenticate to the default registry. Requires Azure Workload Identity to be enabled.
+  authenticationType: "noop"
+
+  buildkit:
+
+    # -- Enable buildkit service within this release.
+    enabled: true
+
+    # -- The name to use for the buildkit deployment, service, configmap, etc.
+    fullnameOverride: ""
+
+    # -- deployment strategy for buildkit deployment
+    deploymentStrategy: Recreate
+
+    # -- Replicas count for Buildkit deployment
+    replicaCount: 1
+
+    # -- buildkit HPA configuration
+    autoscaling:
+      enabled: false
+      minReplicas: 1
+      maxReplicas: 2
+
+      # -- Buildkit aggressively accepts build requests (maybe missing config somewhere)
+      # -- Meaning it will create runc containers correspondingly.
+      # -- max-parallelism limits the number of exec operations (E.G. RUN pip install)
+      # -- However, large burst of requests can leave to significant builds waiting in queue
+      # -- Put CPU utilization a little lower to promote faster scale out and reduce queue times for future requests
+      # -- We can adjust this as needed.
+      targetCPUUtilizationPercentage: 60
+
+    image:
+      # -- Image name
+      repository: moby/buildkit
+      # -- Pull policy
+      pullPolicy: IfNotPresent
+      # -- Image tag
+      tag: "buildx-stable-1-rootless"
+
+    # -- Run rootless mode, https://github.com/moby/buildkit/blob/master/docs/rootless.md
+    rootless: true
+
+    # -- Enable debug logging
+    log:
+      debug: false
+      format: text
+
+    # -- Buildkitd service configuration
+    oci:
+      # -- maxParalelism limits the number of concurrent builds, default is 0 (unbounded)
+      maxParallelism: 0
+
+    pdb:
+      # -- Minimum available pods
+      minAvailable: 1
+
+    # -- Pod annotations
+    podAnnotations: {}
+
+    service:
+      # -- Service type
+      type: ClusterIP
+      # -- Service port
+      port: 1234
+      # -- Static ip address for load balancer
+      loadbalancerIp: ""
+      # -- Service annotations
+      annotations: {}
+
+    # -- Resource definitions
+    resources:
+      requests:
+        cpu: 2
+        memory: 4Gi
+
+    # -- Node selector
+    nodeSelector: {}
+
+    # -- Tolerations
+    tolerations: []
+
+    # -- Additional volumes to add to the pod
+    additionalVolumes: []
+
+    # -- Additional volume mounts to add to the buildkit container
+    additionalVolumeMounts: []

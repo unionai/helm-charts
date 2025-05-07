@@ -903,3 +903,49 @@ Name of the serving-envoy-bootstrap ConfigMap
 {{- define "serving.envoyBootstrapConfigMapName" -}}
 {{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}
+
+# Image Builder helpers
+
+{{/*
+The name of the buildkit deployment, service, etc
+*/}}
+{{- define "imagebuilder.buildkit.fullname" -}}
+{{- if .Values.imageBuilder.buildkit.fullnameOverride }}
+{{- .Values.imageBuilder.buildkit.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" (include "union-operator.fullname" .) "buildkit" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.selectorLabels" -}}
+app.kubernetes.io/name: imagebuilder-buildkit
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.labels" -}}
+{{ include "imagebuilder.buildkit.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Check if both imageBuilder and imageBuilder.buildkit are enabled
+*/}}
+{{- define "imagebuilder.buildkit.enabled" -}}
+{{- if and .Values.imageBuilder.enabled .Values.imageBuilder.buildkit.enabled }}
+{{- true }}
+{{- else }}
+{{- false }}
+{{- end }}
+{{- end }}
+
+{{/*
+The URI to connect to buildkit
+*/}}
+{{- define "imagebuilder.buildkit.uri" -}}
+{{- if .Values.imageBuilder.buildkitUri -}}
+{{- .Values.imageBuilder.buildkitUri | quote -}}
+{{- else -}}
+tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
+{{- end -}}
+{{- end -}}
