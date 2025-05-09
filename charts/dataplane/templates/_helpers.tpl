@@ -935,7 +935,6 @@ Check if both imageBuilder and imageBuilder.buildkit are enabled
 {{- if and .Values.imageBuilder.enabled .Values.imageBuilder.buildkit.enabled }}
 {{- true }}
 {{- else }}
-{{- false }}
 {{- end }}
 {{- end }}
 
