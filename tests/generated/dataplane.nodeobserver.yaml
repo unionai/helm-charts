@@ -364,46 +364,6 @@ data:
         json_date_key false
         region us-east-1
 ---
-# Source: dataplane/templates/imagebuilder/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name : union-operator-buildkit
-data:
-  buildkitd.toml: |
-    debug = false
-
-    [log]
-      format = "text"
-
-    [worker.oci]
-      enabled = true
-      snapshotter = "auto"
-      gc = true
-      max-parallelism = 0
-
-      # Should not be used if Policies are defined
-      gckeepstorage = "10%"
-      [[worker.oci.gcpolicy]]
-        # Remove COPY/ADD and git checkout files
-        keepBytes = "10%"
-        keepDuration = "24h"
-        filters = [ "type==source.local", "type==source.git.checkout" ]
-      [[worker.oci.gcpolicy]]
-        # Remove locally cached image layers after it's unused for 24 hours
-        keepBytes = "10%"
-        keepDuration = "24h"
-        filters = [ "regular" ]
-      [[worker.oci.gcpolicy]]
-        # Remove shared cache mounts. E.G. Pip cache
-        keepBytes = "10%"
-        keepDuration = "72h"
-        filters = [ "type==exec.cachemount" ]
-      [[worker.oci.gcpolicy]]
-        # Remove everything else to keep the cache size under total file system limit
-        all = true
-        keepBytes = "80%"
----
 # Source: dataplane/templates/nodeobserver/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -1851,27 +1811,6 @@ spec:
   sessionAffinity: None
   type: "ClusterIP"
 ---
-# Source: dataplane/templates/imagebuilder/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-buildkit
-  labels:
-    app.kubernetes.io/name: imagebuilder-buildkit
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - port: 1234
-      targetPort: tcp
-      protocol: TCP
-      name: tcp
-  selector:
-    app.kubernetes.io/name: imagebuilder-buildkit
-    app.kubernetes.io/instance: release-name
----
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
 kind: Service
@@ -2541,93 +2480,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
----
-# Source: dataplane/templates/imagebuilder/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: union-operator-buildkit
-  labels:
-    app.kubernetes.io/name: imagebuilder-buildkit
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  strategy:
-    type: Recreate
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: imagebuilder-buildkit
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
-      labels:
-        app.kubernetes.io/name: imagebuilder-buildkit
-        app.kubernetes.io/instance: release-name
-    spec:
-      containers:
-        - name: "buildkit"
-          image: "moby/buildkit:buildx-stable-1-rootless"
-          imagePullPolicy: IfNotPresent
-          volumeMounts:
-            - mountPath: /home/user/.local/share/buildkit
-              name: buildkitd
-            - mountPath: /etc/buildkit
-              name: buildkit-config
-          args:
-            - --config
-            - /etc/buildkit/buildkitd.toml
-            - --addr
-            - unix:///run/user/1000/buildkit/buildkitd.sock
-            - --addr
-            - tcp://0.0.0.0:1234
-            - --oci-worker-no-process-sandbox
-          ports:
-            - name: tcp
-              containerPort: 1234
-              protocol: TCP
-          readinessProbe:
-            exec:
-              command:
-              - buildctl
-              - debug
-              - workers
-            initialDelaySeconds: 5
-            periodSeconds: 30
-          livenessProbe:
-            exec:
-              command:
-              - buildctl
-              - debug
-              - workers
-            initialDelaySeconds: 5
-            periodSeconds: 30
-          securityContext:
-            seccompProfile: # Needs Kubernetes >= 1.19
-              type: Unconfined
-            runAsUser: 1000
-            runAsGroup: 1000
-          resources:
-            requests:
-              cpu: 2
-              memory: 4Gi
-      volumes:
-      - name: buildkitd
-        emptyDir: {}
-      - configMap:
-          name: union-operator-buildkit
-        name: buildkit-config
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: imagebuilder-buildkit
-                app.kubernetes.io/instance: release-name
-            topologyKey: "kubernetes.io/hostname"
 ---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
