@@ -228,40 +228,6 @@ app.kubernetes.io/name: {{ include "unionai.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
-{{- define "sync.fullname" -}}
-{{- default (printf "%s-sync" (include "unionai.name" .)) .Values.sync.fullnameOverride }}
-{{- end }}
-{{- define "sync.labels" -}}
-helm.sh/chart: {{ include "unionai.chart" . }}
-linkerd.io/inject: enabled
-{{ include "sync.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-{{- define "sync.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "unionai.name" . }}-sync
-app.kubernetes.io/instance: {{ .Release.Name }}-sync
-{{- end }}
-
-{{- define "executions.clean.fullname" -}}
-{{- default (printf "%s-clean" (include "unionai.name" .)) .Values.executions.clean.fullnameOverride }}
-{{- end }}
-{{- define "executions.clean.labels" -}}
-helm.sh/chart: {{ include "unionai.chart" . }}
-linkerd.io/inject: enabled
-{{ include "executions.clean.selectorLabels" . }}
-{{- if .Chart.AppVersion }}
-app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-{{- end }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end }}
-{{- define "executions.clean.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "unionai.name" . }}-clean
-app.kubernetes.io/instance: {{ .Release.Name }}-clean
-{{- end }}
-
 {{- define "unionai.image" -}}
 {{- $repo := "" }}
 {{- $tag := "" }}
