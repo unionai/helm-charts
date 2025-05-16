@@ -1,0 +1,172 @@
+{{- if (index .Values "controlplane" | default dict).enabled }}
+{{- range $serviceKey, $serviceConfig := .Values.services }}
+---
+{{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+{{- if not $service.config.disabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "unionai.fullname" $service }}
+  labels:
+    {{- include "unionai.labels" $service | nindent 4 }}
+spec:
+  {{- $autoscaling := (include "unionai.autoscaling" $service | fromYaml) }}
+  {{- $replicaCount := include "unionai.replicaCount" $service | trim }}
+  {{- if and $autoscaling (not $autoscaling.enabled) (ne $replicaCount "") }}
+  replicas: {{ $replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "unionai.selectorLabels" $service | nindent 6 }}
+  {{- $strategy := include "unionai.strategy" $service }}
+  {{- if $strategy }}
+  strategy:
+  {{- $strategy | fromYaml | toYaml | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: {{ include "unionai.name" $service }}
+        {{- $podAnnotations := include "unionai.podAnnotations" $service | fromYaml }}
+        {{- with $podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "unionai.selectorLabels" $service | nindent 8 }}
+    spec:
+      {{- $spreadConstraints := include "unionai.spreadConstraints" $service | fromYaml }}
+      {{- if $spreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "unionai.fullname" $service }}
+      {{- end }}
+      {{- with (include "unionai.imagePullSecrets" $service | fromYaml) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "unionai.serviceAccountName" $service }}
+      {{- $podSecurityContext := include "unionai.podSecurityContext" $service }}
+      {{- if $podSecurityContext }}
+      securityContext:
+        {{- $podSecurityContext | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+      volumes:
+      - name: secrets
+        secret:
+          secretName: {{ include "unionai.fullname" $service }}
+      - name: config
+        configMap:
+          name: {{ include "unionai.fullname" $service }}
+      {{- with $service.config.initContainers }}
+      initContainers:
+        {{- range . }}
+        - name: {{ include "unionai.name" $service }}-{{ .name }}
+          {{- $sec := include "unionai.securityContext" $service }}
+          {{- if $sec }}
+          securityContext:
+            {{- $sec | fromYaml | toYaml | nindent 12 }}
+          {{- end }}
+          image: {{ include "unionai.image" $service | trim }}
+          imagePullPolicy: {{ include "unionai.imagePullPolicy" $service | trim }}
+          args:
+            {{- toYaml .args | nindent 10 }}
+          volumeMounts:
+          - name: secrets
+            mountPath: /etc/secrets/
+          - name: config
+            mountPath: /etc/config/
+          {{- with .resources }}
+          resources:
+            {{- toYaml . | nindent 10 }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ include "unionai.name" $service }}
+          {{- $sec := include "unionai.securityContext" $service }}
+          {{- if $sec }}
+          securityContext:
+            {{- $sec | fromYaml | toYaml | nindent 12 }}
+          {{- end }}
+          image: {{ include "unionai.image" $service | trim }}
+          imagePullPolicy: {{ include "unionai.imagePullPolicy" $service | trim }}
+          {{- with $service.config.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          {{- with (include "unionai.sharedService" $service | fromYaml) }}
+          {{- if .connectPort }}
+            - name: connect
+              containerPort: {{ .connectPort }}
+              protocol: TCP
+          {{- end }}
+          {{- end }}
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/
+            - name: config
+              mountPath: /etc/config/
+          {{- $env := include "unionai.env" $service }}
+          {{- if $env }}
+          env:
+            {{- $env | nindent 12 }}
+          {{- end }}
+          {{- $res := include "unionai.resources" $service }}
+          {{- if $res }}
+          resources:
+            {{- $res | fromYaml | toYaml | nindent 14 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      {{- $node := include "unionai.nodeSelector" $service }}
+      {{- if $node }}
+      nodeSelector:
+        {{- $node | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+      {{- $aff := include "unionai.affinity" $service }}
+      {{- if $aff }}
+      affinity:
+        {{- $aff | fromYaml | toYaml | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "unionai.selectorLabels" $service | nindent 20 }}
+                topologyKey: "kubernetes.io/hostname"
+      {{- end }}
+      {{- $tolerations := include "unionai.tolerations" $service }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- $tolerations | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,20 @@
+{{- if (index .Values "controlplane" | default dict).enabled }}
+{{- range $serviceKey, $serviceConfig := .Values.services }}
+{{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+---
+{{- if not $service.config.disabled }}
+{{- $replicaCount := include "unionai.replicaCount" $service | trim | int}}
+{{- if ge $replicaCount 1 }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "unionai.fullname" $service }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "unionai.selectorLabels" $service | nindent 6 }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

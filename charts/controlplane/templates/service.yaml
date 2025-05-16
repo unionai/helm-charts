@@ -1,0 +1,39 @@
+{{- if (index .Values "controlplane" | default dict).enabled }}
+{{- range $serviceKey, $serviceConfig := .Values.services }}
+---
+{{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart}}
+{{- if not $service.config.disabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "unionai.fullname" $service }}
+  labels:
+    {{- include "unionai.labels" $service | nindent 4 }}
+spec:
+  {{- $svc := include "unionai.service" $service | fromYaml }}
+  type: {{ $svc.type | default "ClusterIP" }}
+  ports:
+    - name: grpc
+      port: {{ $svc.grpcport | default 8080 }}
+      protocol: TCP
+      targetPort: 8080
+    {{- if $svc.connectport }}
+    - name: connect
+      port:  {{ $svc.connectport }}
+      protocol: TCP
+      targetPort: 8081
+    {{- end }}
+    - name: http
+      port: {{ $svc.httpport | default 8089 }}
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: {{ $svc.debugport | default 10254 }}
+      protocol: TCP
+      targetPort: 10254
+  selector:
+    {{- include "unionai.selectorLabels" $service | nindent 4 }}
+
+{{- end }}
+{{- end }}
+{{- end }}
