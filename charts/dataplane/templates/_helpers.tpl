@@ -389,7 +389,7 @@ Create the name of the service account to use
 {{- end }}
 
 {{- define "operator.selectorLabels" -}}
-app.kubernetes.io/name: operator
+app.kubernetes.io/name: union-operator
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
