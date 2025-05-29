@@ -1,0 +1,60 @@
+{{- define "control-plane-library.dataproxy-ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-dataproxy
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- if .Values.flyte.common.ingress.enableProtectedConsoleIngress }}
+  {{- with .Values.flyte.common.ingress.protectedIngressAnnotationsWithoutSignin }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- else }}
+  {{- with .Values.flyte.common.ingress.protectedIngressAnnotations }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- end}}
+spec:
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          - path: /data/*
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /data
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          - path: /data/*
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy-service
+                port:
+                  number: 80
+          - path: /data
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+    {{- end }}
+{{- end }}
