@@ -1,0 +1,287 @@
+# WARNING any service ingress you add here is accessible without authentication.
+# Flyteadmin acts an auth server and is therefore publicly accessible.
+{{- define "flyte.name" }}
+{{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "grpcStreamingRoutes" -}}
+- path: /flyteidl.service.WatchService/WatchExecutionStatusUpdates
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 81
+{{- end }}
+
+{{- define "grpcRoutes" -}}
+# NOTE: Port 81 in flyteadmin is the GRPC server port for FlyteAdmin.
+- path: /grpc.health.v1.Health
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 81
+- path: /grpc.health.v1.Health/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 81
+- path: /flyteidl.service.AuthMetadataService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 81
+- path: /flyteidl.service.AuthMetadataService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 81
+{{- end }}
+
+{{- define "httpRoutes" }}
+# Port 87 in FlyteAdmin maps to the redoc container.
+- path: /openapi
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 87
+- path: /healthcheck
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /me
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+# Port 87 in FlyteAdmin maps to the redoc container.
+- path: /openapi/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 87
+- path: /.well-known
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /.well-known/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /login
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /login/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /logout
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /logout/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /callback
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /callback/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /config
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /config/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /oauth2
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /oauth2/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /auth
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /auth/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteadmin
+      port:
+        number: 80
+- path: /enqueue_metronome_request/v1
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+- path: /enqueue_metronome_request/v1/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+- path: /enqueue_stripe_request/v1
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+- path: /enqueue_stripe_request/v1/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+{{- end }}
+
+{{- define "control-plane-library.unprotected-ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+spec:
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          {{- include "httpRoutes" $ | nindent 10 }}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          {{- include "httpRoutes" . | nindent 10 }}
+    {{- end }}
+---
+# Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
+# enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-grpc
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations:
+  {{- tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- with .Values.flyte.common.ingress.separateGrpcIngressAnnotations }}
+  {{- toYaml . | nindent 4}}
+  {{- end }}
+spec:
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          {{- include "grpcRoutes" $ | nindent 10 -}}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          {{- include "grpcRoutes" . | nindent 10 -}}
+    {{- end}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-streaming
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations:
+  {{- tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsStreaming }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- with .Values.flyte.common.ingress.separateGrpcIngressAnnotations }}
+  {{- toYaml . | nindent 4}}
+  {{- end }}
+spec:
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          {{- include "grpcStreamingRoutes" $ | nindent 10 -}}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          {{- include "grpcStreamingRoutes" . | nindent 10 -}}
+    {{- end}}
+{{- end }}

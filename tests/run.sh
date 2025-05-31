@@ -18,6 +18,7 @@ function generate {
     CHART=$(basename ${file} | cut -d. -f1)
     TEST=$(basename ${file} | cut -d. -f2)
     echo "* Generating test output for ${CHART} (${TEST})"
+    helm dependency build ${CHARTS_DIR}/${CHART}
     helm dep update ${CHARTS_DIR}/${CHART}
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
