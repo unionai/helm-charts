@@ -1,0 +1,31 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ include "unionai-dataplane.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.class | quote }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{ toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+  - host: "*.apps.{{ .Values.host }}"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kourier-internal
+            port:
+              number: 80
+{{- end }}
