@@ -1,5 +1,5 @@
 ---
-# Source: controlplane/charts/tenant/templates/pdb.yaml
+# Source: controlplane/templates/flyte-core-pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -11,7 +11,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: flyteadmin
 ---
-# Source: controlplane/charts/tenant/templates/pdb.yaml
+# Source: controlplane/templates/flyte-core-pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -23,7 +23,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: datacatalog
 ---
-# Source: controlplane/charts/tenant/templates/pdb.yaml
+# Source: controlplane/templates/flyte-core-pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -119,7 +119,7 @@ spec:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/rbac.yaml
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -128,7 +128,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/serviceaccount.yaml
@@ -219,7 +219,7 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: usage-role
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/secret.yaml
+# Source: controlplane/charts/flyte/templates/admin/secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -228,7 +228,7 @@ metadata:
 type: Opaque
 stringData:
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/common/secret-auth.yaml
+# Source: controlplane/charts/flyte/templates/common/secret-auth.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -238,7 +238,7 @@ type: Opaque
 stringData:
   client_secret: foobar
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/common/secret.yaml
+# Source: controlplane/charts/flyte/templates/common/secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -345,7 +345,7 @@ metadata:
 type: Opaque
 stringData:
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/configmap.yaml
+# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -354,7 +354,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 data:
   clusters.yaml: |
@@ -362,7 +362,7 @@ data:
       clusterConfigs: []
       labelClusterMap: {}
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/configmap.yaml
+# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -371,7 +371,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 data:
   db.yaml: | 
@@ -403,6 +403,7 @@ data:
               - all
         grpcAuthorizationHeader: flyte-authorization
         httpAuthorizationHeader: flyte-authorization
+        tokenEndpointProxyPath: null
         userAuth:
           cookieSetting:
             domain: default
@@ -580,122 +581,6 @@ data:
         cpu: 2
         gpu: 1
         memory: 1Gi
----
-# Source: controlplane/charts/tenant/charts/flyte/templates/clusterresourcesync/cluster_resource_configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: clusterresource-template
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
-    #app.kubernetes.io/managed-by: Helm
-data:
-  aa_namespace.yaml: | 
-    apiVersion: v1
-    kind: Namespace
-    metadata:
-      name: {{ namespace }}
-    spec:
-      finalizers:
-      - kubernetes
-    
-  ab_project_resource_quota.yaml: | 
-    apiVersion: v1
-    kind: ResourceQuota
-    metadata:
-      name: project-quota
-      namespace: {{ namespace }}
-    spec:
-      hard:
-        limits.cpu: {{ projectQuotaCpu }}
-        limits.memory: {{ projectQuotaMemory }}
----
-# Source: controlplane/charts/tenant/charts/flyte/templates/clusterresourcesync/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-clusterresourcesync-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
-    #app.kubernetes.io/managed-by: Helm
-data:
-  storage.yaml: | 
-    storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 10
-      cache:
-        max_size_mbs: 1024
-        target_gc_percent: 70
-  cluster_resources.yaml: | 
-    cluster_resources:
-      customData:
-      - production:
-        - projectQuotaCpu:
-            value: "5"
-        - projectQuotaMemory:
-            value: 4000Mi
-      - staging:
-        - projectQuotaCpu:
-            value: "2"
-        - projectQuotaMemory:
-            value: 3000Mi
-      - development:
-        - projectQuotaCpu:
-            value: "4"
-        - projectQuotaMemory:
-            value: 3000Mi
-      refreshInterval: 5m
-      standaloneDeployment: false
-      templatePath: /etc/flyte/clusterresource/templates
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: postgres
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 80
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  domain.yaml: | 
-    domains:
-    - id: development
-      name: development
-    - id: staging
-      name: staging
-    - id: production
-      name: production
-  clusters.yaml: |
-    clusters:
-      clusterConfigs: []
-      labelClusterMap: {}
----
-# Source: controlplane/charts/tenant/charts/flyte/templates/propeller/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: connector-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
-    #app.kubernetes.io/managed-by: Helm
-data:
-  connector.yaml: | 
-    plugins: {}
 ---
 # Source: controlplane/templates/configmap.yaml
 apiVersion: v1
@@ -1151,7 +1036,7 @@ data:
         enabled: true
         urlPattern: '{{ service }}.union.svc.cluster.local:80'
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/rbac.yaml
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -1159,7 +1044,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 rules:
 - apiGroups: 
@@ -1182,7 +1067,7 @@ rules:
   verbs: 
   - '*'
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/rbac.yaml
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -1190,7 +1075,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -1201,7 +1086,7 @@ subjects:
   name: flyteadmin
   namespace: union
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1210,7 +1095,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: tenant-v0.1.10
+    helm.sh/chart: controlplane-2025.5.6
     #app.kubernetes.io/managed-by: Helm
 rules:
   - apiGroups:
@@ -1232,7 +1117,7 @@ rules:
     verbs:
       - '*'
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
@@ -1241,7 +1126,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: tenant-v0.1.10
+    helm.sh/chart: controlplane-2025.5.6
     #app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -1252,7 +1137,7 @@ subjects:
     name: flyteadmin
     namespace: union
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/service.yaml
+# Source: controlplane/charts/flyte/templates/admin/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -1261,7 +1146,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
   annotations: 
     projectcontour.io/upstream-protocol.h2c: grpc
@@ -1271,22 +1156,18 @@ spec:
     - name: http
       port: 80
       protocol: TCP
-      appProtocol: TCP
       targetPort: 8088
     - name: grpc
       port: 81
       protocol: TCP
       # intentionally set to TCP instead of grpc
-      appProtocol: TCP
       targetPort: 8089
     - name: redoc
       protocol: TCP
-      appProtocol: TCP
       port: 87
       targetPort: 8087
     - name: http-metrics
       protocol: TCP
-      appProtocol: TCP
       port: 10254
   selector: 
     app.kubernetes.io/name: flyteadmin
@@ -1530,7 +1411,7 @@ spec:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/admin/deployment.yaml
+# Source: controlplane/charts/flyte/templates/admin/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -1539,7 +1420,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v0.1.10
+    helm.sh/chart: flyte-v1.15.3
     #app.kubernetes.io/managed-by: Helm
 spec:
   replicas: 1
@@ -1550,12 +1431,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3465a34552fc7a3e660b7406230b59224b2fcb68b192fcb9a6f83dee4dfd520"
+        configChecksum: "63f2423761fa1bd439708fb94ee1b5d4880917f9a5bfc44be77958dde33836d"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
         app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v0.1.10
+        helm.sh/chart: flyte-v1.15.3
         #app.kubernetes.io/managed-by: Helm
     spec:
       securityContext: 
@@ -1640,14 +1521,12 @@ spec:
         - containerPort: 8089
         - containerPort: 10254
         readinessProbe:
-          httpGet:
-            path: /healthcheck
-            port: 8088
+          exec:
+            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
           initialDelaySeconds: 15
         livenessProbe:
-          httpGet:
-            path: /healthcheck
-            port: 8088
+          exec:
+            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
           initialDelaySeconds: 20
           periodSeconds: 5
         resources:
@@ -1690,8 +1569,6 @@ spec:
                 name: flyte-admin-base-config
             - configMap:
                 name: flyte-admin-clusters-config
-            - configMap:
-                name: flyte-clusterresourcesync-config
         name: clusters-config-volume
       - name: admin-secrets
         secret:
@@ -2614,7 +2491,7 @@ spec:
           type: Utilization
           averageUtilization: 80
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/common/ingress.yaml
+# Source: controlplane/charts/flyte/templates/common/ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -2789,7 +2666,7 @@ spec:
 # Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
 # enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
 ---
-# Source: controlplane/charts/tenant/charts/flyte/templates/common/ingress.yaml
+# Source: controlplane/charts/flyte/templates/common/ingress.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -2858,11 +2735,11 @@ spec:
                 port:
                   number: 81
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-dataproxy
+  name: controlplane-dataproxy
   namespace: union
   annotations: 
     kubernetes.io/ingress.class: nginx
@@ -2928,11 +2805,11 @@ spec:
                 port:
                   number: 80
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-protected
+  name: controlplane-protected
   namespace: union
   annotations: 
     kubernetes.io/ingress.class: nginx
@@ -3342,11 +3219,11 @@ spec:
                 port:
                   number: 81
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-protected-grpc
+  name: controlplane-protected-grpc
   namespace: union
   annotations: 
     kubernetes.io/ingress.class: nginx
@@ -3783,11 +3660,11 @@ spec:
                 port:
                   number: 80
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-protected-grpc-streaming
+  name: controlplane-protected-grpc-streaming
   namespace: union
   annotations: 
     kubernetes.io/ingress.class: nginx
@@ -3994,11 +3871,11 @@ spec:
                 port:
                   number: 80
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant
+  name: controlplane
   namespace: union
   annotations: 
     kubernetes.io/ingress.class: nginx
@@ -4188,13 +4065,13 @@ spec:
                 port:
                   number: 81
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 # Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
 # enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-grpc
+  name: controlplane-grpc
   namespace: union
   annotations:
     kubernetes.io/ingress.class: nginx
@@ -4275,11 +4152,11 @@ spec:
                 port:
                   number: 81
 ---
-# Source: controlplane/charts/tenant/templates/app.yaml
+# Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: tenant-grpc-streaming
+  name: controlplane-grpc-streaming
   namespace: union
   annotations:
     kubernetes.io/ingress.class: nginx
