@@ -948,3 +948,11 @@ The URI to connect to buildkit
 tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
 {{- end -}}
 {{- end -}}
+
+{{- define "ingress.serving.host" -}}
+{{- if .Values.ingress.serving.hostOverride }}
+{{- .Values.ingress.serving.hostOverride | quote }}
+{{- else }}
+{{- printf "*.apps.%s" .Values.host | quote }}
+{{- end }}
+{{- end -}}
