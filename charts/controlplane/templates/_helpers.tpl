@@ -219,6 +219,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default .Release.Namespace .Values.forceNamespace | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "unionai.secretName" -}}
+{{- if .config.secretNameOverride }}
+{{- .config.secretNameOverride | trunc 63 | trimSuffix "-" }}
+{{- else if and (hasKey .Values.global "service") (hasKey .Values.global.service "secretName") }}
+{{- .Values.global.service.secretName }}
+{{- else }}
+{{- include "unionai.fullname" . | trim -}}
+{{- end }}
+{{- end }}
 
 {{/*
 Selector labels
