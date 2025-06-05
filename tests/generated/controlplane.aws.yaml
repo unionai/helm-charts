@@ -128,7 +128,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/serviceaccount.yaml
@@ -354,7 +354,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 data:
   clusters.yaml: |
@@ -371,7 +371,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 data:
   db.yaml: | 
@@ -1044,7 +1044,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 rules:
 - apiGroups: 
@@ -1075,7 +1075,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -1146,7 +1146,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
   annotations: 
     projectcontour.io/upstream-protocol.h2c: grpc
@@ -1420,7 +1420,7 @@ metadata:
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.15.3
+    helm.sh/chart: flyte-v1.16.0-b2
     #app.kubernetes.io/managed-by: Helm
 spec:
   replicas: 1
@@ -1431,12 +1431,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "63f2423761fa1bd439708fb94ee1b5d4880917f9a5bfc44be77958dde33836d"
+        configChecksum: "3ea95f68defd70c438116abe0d5c82d99cf11fafdf66e264a490971fc4b292b"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
         app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.15.3
+        helm.sh/chart: flyte-v1.16.0-b2
         #app.kubernetes.io/managed-by: Helm
     spec:
       securityContext: 
@@ -1521,14 +1521,13 @@ spec:
         - containerPort: 8089
         - containerPort: 10254
         readinessProbe:
-          exec:
-            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
-          initialDelaySeconds: 15
+          httpGet:
+            path: /healthcheck
+            port: 8088
         livenessProbe:
-          exec:
-            command: [ "sh", "-c", "reply=$(curl -s -o /dev/null -w %{http_code} http://127.0.0.1:8088/healthcheck); if [ \"$reply\" -lt 200 -o \"$reply\" -ge 400 ]; then exit 1; fi;","grpc_health_probe", "-addr=:8089"]
-          initialDelaySeconds: 20
-          periodSeconds: 5
+          httpGet:
+            path: /healthcheck
+            port: 8088
         resources:
           limits:
             cpu: 250m
@@ -1560,8 +1559,10 @@ spec:
         name: shared-data
       - emptyDir: {}
         name: scratch
-      - configMap:
-          name: flyte-admin-base-config
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
         name: base-config-volume
       - projected:
           sources:
@@ -2766,24 +2767,41 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: "# Copy the user id and identity
-      type from the auth response header into the upstream request header\nauth_request_set
-      $user_id $upstream_http_x_user_subject;\nproxy_set_header X-User-Subject $user_id;\ngrpc_set_header
-      X-User-Subject $user_id;\n\nauth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;\nproxy_set_header
-      X-User-Claim-Identitytype $user_identitytype;\ngrpc_set_header X-User-Claim-Identitytype
-      $user_identitytype;      \n\nauth_request_set $user_apporg $upstream_http_x_user_claim_apporg;\nproxy_set_header
-      X-User-Claim-Apporg $user_apporg;\ngrpc_set_header X-User-Claim-Apporg $user_apporg;\n\nauth_request_set
-      $user_handle $upstream_http_x_user_claim_userhandle;\nproxy_set_header X-User-Claim-userhandle
-      $user_handle;\ngrpc_set_header X-User-Claim-userhandle $user_handle;\n\nauth_request_set
-      $groups $upstream_http_x_user_claim_groups;\nproxy_set_header X-User-Claim-groups
-      $groups;\ngrpc_set_header X-User-Claim-groups $groups;\n\nmore_set_headers \"x-request-id:
-      $request_id\";\nproxy_set_header x-request-id $request_id;\ngrpc_set_header x-request-id
-      $request_id;\n\nmore_set_headers \"X-Orig-Host: $host\";\nproxy_set_header X-Orig-Host
-      $host;\ngrpc_set_header X-Orig-Host $host;\n\n# We disallow external services which
-      go through ingress to set this header so that no one can spoof this\n# as we rely
-      on making authorization decisions based on this\nmore_set_headers \"l5d-client-id\";\n#
-      Donot allow to set this internal header which is used for escalated privilges access
-      in serverless\nmore_set_headers \"x-overriden-org\";\n"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
     nginx.org/websocket-services: dataproxy-service
 spec:
   rules:
@@ -2836,24 +2854,41 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: "# Copy the user id and identity
-      type from the auth response header into the upstream request header\nauth_request_set
-      $user_id $upstream_http_x_user_subject;\nproxy_set_header X-User-Subject $user_id;\ngrpc_set_header
-      X-User-Subject $user_id;\n\nauth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;\nproxy_set_header
-      X-User-Claim-Identitytype $user_identitytype;\ngrpc_set_header X-User-Claim-Identitytype
-      $user_identitytype;      \n\nauth_request_set $user_apporg $upstream_http_x_user_claim_apporg;\nproxy_set_header
-      X-User-Claim-Apporg $user_apporg;\ngrpc_set_header X-User-Claim-Apporg $user_apporg;\n\nauth_request_set
-      $user_handle $upstream_http_x_user_claim_userhandle;\nproxy_set_header X-User-Claim-userhandle
-      $user_handle;\ngrpc_set_header X-User-Claim-userhandle $user_handle;\n\nauth_request_set
-      $groups $upstream_http_x_user_claim_groups;\nproxy_set_header X-User-Claim-groups
-      $groups;\ngrpc_set_header X-User-Claim-groups $groups;\n\nmore_set_headers \"x-request-id:
-      $request_id\";\nproxy_set_header x-request-id $request_id;\ngrpc_set_header x-request-id
-      $request_id;\n\nmore_set_headers \"X-Orig-Host: $host\";\nproxy_set_header X-Orig-Host
-      $host;\ngrpc_set_header X-Orig-Host $host;\n\n# We disallow external services which
-      go through ingress to set this header so that no one can spoof this\n# as we rely
-      on making authorization decisions based on this\nmore_set_headers \"l5d-client-id\";\n#
-      Donot allow to set this internal header which is used for escalated privilges access
-      in serverless\nmore_set_headers \"x-overriden-org\";\n"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
     nginx.org/websocket-services: dataproxy-service
 spec:
   rules:
@@ -3250,24 +3285,41 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: "# Copy the user id and identity
-      type from the auth response header into the upstream request header\nauth_request_set
-      $user_id $upstream_http_x_user_subject;\nproxy_set_header X-User-Subject $user_id;\ngrpc_set_header
-      X-User-Subject $user_id;\n\nauth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;\nproxy_set_header
-      X-User-Claim-Identitytype $user_identitytype;\ngrpc_set_header X-User-Claim-Identitytype
-      $user_identitytype;      \n\nauth_request_set $user_apporg $upstream_http_x_user_claim_apporg;\nproxy_set_header
-      X-User-Claim-Apporg $user_apporg;\ngrpc_set_header X-User-Claim-Apporg $user_apporg;\n\nauth_request_set
-      $user_handle $upstream_http_x_user_claim_userhandle;\nproxy_set_header X-User-Claim-userhandle
-      $user_handle;\ngrpc_set_header X-User-Claim-userhandle $user_handle;\n\nauth_request_set
-      $groups $upstream_http_x_user_claim_groups;\nproxy_set_header X-User-Claim-groups
-      $groups;\ngrpc_set_header X-User-Claim-groups $groups;\n\nmore_set_headers \"x-request-id:
-      $request_id\";\nproxy_set_header x-request-id $request_id;\ngrpc_set_header x-request-id
-      $request_id;\n\nmore_set_headers \"X-Orig-Host: $host\";\nproxy_set_header X-Orig-Host
-      $host;\ngrpc_set_header X-Orig-Host $host;\n\n# We disallow external services which
-      go through ingress to set this header so that no one can spoof this\n# as we rely
-      on making authorization decisions based on this\nmore_set_headers \"l5d-client-id\";\n#
-      Donot allow to set this internal header which is used for escalated privilges access
-      in serverless\nmore_set_headers \"x-overriden-org\";\n"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   rules:
@@ -4098,24 +4150,41 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: "# Copy the user id and identity
-      type from the auth response header into the upstream request header\nauth_request_set
-      $user_id $upstream_http_x_user_subject;\nproxy_set_header X-User-Subject $user_id;\ngrpc_set_header
-      X-User-Subject $user_id;\n\nauth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;\nproxy_set_header
-      X-User-Claim-Identitytype $user_identitytype;\ngrpc_set_header X-User-Claim-Identitytype
-      $user_identitytype;      \n\nauth_request_set $user_apporg $upstream_http_x_user_claim_apporg;\nproxy_set_header
-      X-User-Claim-Apporg $user_apporg;\ngrpc_set_header X-User-Claim-Apporg $user_apporg;\n\nauth_request_set
-      $user_handle $upstream_http_x_user_claim_userhandle;\nproxy_set_header X-User-Claim-userhandle
-      $user_handle;\ngrpc_set_header X-User-Claim-userhandle $user_handle;\n\nauth_request_set
-      $groups $upstream_http_x_user_claim_groups;\nproxy_set_header X-User-Claim-groups
-      $groups;\ngrpc_set_header X-User-Claim-groups $groups;\n\nmore_set_headers \"x-request-id:
-      $request_id\";\nproxy_set_header x-request-id $request_id;\ngrpc_set_header x-request-id
-      $request_id;\n\nmore_set_headers \"X-Orig-Host: $host\";\nproxy_set_header X-Orig-Host
-      $host;\ngrpc_set_header X-Orig-Host $host;\n\n# We disallow external services which
-      go through ingress to set this header so that no one can spoof this\n# as we rely
-      on making authorization decisions based on this\nmore_set_headers \"l5d-client-id\";\n#
-      Donot allow to set this internal header which is used for escalated privilges access
-      in serverless\nmore_set_headers \"x-overriden-org\";\n"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   rules:
