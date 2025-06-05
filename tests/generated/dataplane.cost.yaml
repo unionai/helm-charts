@@ -48,21 +48,6 @@ metadata:
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: dataplane/charts/opencost/templates/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: opencost
-  namespace: union
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-automountServiceAccountToken: true
----
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -125,13 +110,6 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: clustersync-system
-  namespace: union
----
-# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: nodeobserver-system
   namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
@@ -363,16 +341,6 @@ data:
         static_file_path true
         json_date_key false
         region us-east-1
----
-# Source: dataplane/templates/nodeobserver/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-nodeobserver
-  namespace: union
-data:
-  config.yaml: | 
-    criticalDaemonSets: []
 ---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
@@ -635,93 +603,6 @@ rules:
     resources:
       - namespaces
       - pods
-    verbs:
-      - get
-      - list
-      - watch
----
-# Source: dataplane/charts/opencost/templates/clusterrole.yaml
-# Cluster role giving opencost to get, list, watch required resources
-# No write permissions are required
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: opencost
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups: [""]
-    resources:
-      - configmaps
-      - deployments
-      - nodes
-      - pods
-      - services
-      - resourcequotas
-      - replicationcontrollers
-      - limitranges
-      - persistentvolumeclaims
-      - persistentvolumes
-      - namespaces
-      - endpoints
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - extensions
-    resources:
-      - daemonsets
-      - deployments
-      - replicasets
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - apps
-    resources:
-      - statefulsets
-      - deployments
-      - daemonsets
-      - replicasets
-    verbs:
-      - list
-      - watch
-  - apiGroups:
-      - batch
-    resources:
-      - cronjobs
-      - jobs
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - autoscaling
-    resources:
-      - horizontalpodautoscalers
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - policy
-    resources:
-      - poddisruptionbudgets
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - storage.k8s.io
-    resources:
-      - storageclasses
     verbs:
       - get
       - list
@@ -1053,19 +934,6 @@ rules:
     verbs:
       - '*'
 ---
-# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-nodeobserver
-rules:
-- apiGroups: [""]
-  resources: ["pods"]
-  verbs: ["list"]
-- apiGroups: [""]
-  resources: ["nodes"]
-  verbs: ["get", "update"]
----
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -1247,27 +1115,6 @@ subjects:
     name: fluentbit-system
     namespace: union
 ---
-# Source: dataplane/charts/opencost/templates/clusterrolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: opencost
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: opencost
-subjects:
-  - kind: ServiceAccount
-    name: opencost
-    namespace: union
----
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1368,20 +1215,6 @@ subjects:
   - kind: ServiceAccount
     name: clustersync-system
     namespace: union
----
-# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-nodeobserver
-subjects:
-- kind: ServiceAccount
-  name: nodeobserver-system
-  namespace: union
-roleRef:
-  kind: ClusterRole
-  apiGroup: rbac.authorization.k8s.io
-  name: union-nodeobserver
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1558,29 +1391,6 @@ spec:
   selector:
     app.kubernetes.io/name: fluentbit
     app.kubernetes.io/instance: release-name
----
-# Source: dataplane/charts/opencost/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: opencost
-  namespace: union
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-  type: "ClusterIP"
-  ports:
-    - name: http
-      port: 9003
-      targetPort: 9003
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/service.yaml
 apiVersion: v1
@@ -1985,201 +1795,6 @@ spec:
           name: etcmachineid
       tolerations:
         - operator: Exists
----
-# Source: dataplane/templates/nodeobserver/daemonset.yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: union-nodeobserver
-  labels:
-    app.kubernetes.io/name: nodeobserver
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: nodeobserver
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "53588c33a77619d28361e2b7ac9d8d903680ecb12be9214e4adb74210f52d03"
-        
-      labels:
-        
-        
-        app.kubernetes.io/name: nodeobserver
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      priorityClassName: 
-      serviceAccountName: nodeobserver-system
-      securityContext:
-        {}
-      volumes:
-        - name: config-volume
-          configMap:
-            name: union-nodeobserver
-      containers:
-        - name: node-observer
-          securityContext:
-            capabilities:
-              add:
-              - SYS_ADMIN
-            privileged: true
-            runAsNonRoot: false
-            runAsUser: 0
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.5.0"
-          imagePullPolicy: IfNotPresent
-          terminationMessagePolicy: FallbackToLogsOnError
-          resources:
-            limits:
-              cpu: "1"
-              memory: 500Mi
-            requests:
-              cpu: 500m
-              memory: 100Mi
-          volumeMounts:
-            - mountPath: /etc/union
-              name: config-volume
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          - name: KUBE_NODE_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: spec.nodeName
-          - name: LOG_LEVEL
-            value: "4"
-          args:
-            - nodeobserver
-            - --config
-            - /etc/union/config.yaml
----
-# Source: dataplane/charts/opencost/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: opencost
-  namespace: union
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: opencost
-      app.kubernetes.io/instance: release-name
-  strategy: 
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: opencost
-        app.kubernetes.io/instance: release-name
-    spec:
-      serviceAccountName: opencost
-      containers:
-        - name: opencost
-          image: ghcr.io/opencost/opencost:1.111.0@sha256:6aa68e52a24b14ba41f23db08d1b9db1429a1c0300f4c0381ecc2c61fc311a97
-          imagePullPolicy: IfNotPresent
-          args:
-          ports:
-            - containerPort: 9003
-              name: http
-          resources:
-            limits:
-              cpu: 1000m
-              memory: 4Gi
-            requests:
-              cpu: 500m
-              memory: 1Gi
-          startupProbe:
-            httpGet:
-              path: /healthz
-              port: 9003
-            initialDelaySeconds: 10
-            periodSeconds: 5
-            failureThreshold: 30
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 9003
-            initialDelaySeconds: 10
-            periodSeconds: 20
-            failureThreshold: 3
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 9003
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            failureThreshold: 3
-          env:
-            - name: LOG_LEVEL
-              value: info
-            - name: CUSTOM_COST_ENABLED
-              value: "false"
-            - name: KUBECOST_NAMESPACE
-              value: union
-            - name: API_PORT
-              value: "9003"
-            - name: PROMETHEUS_SERVER_ENDPOINT
-              value: "http://union-operator-prometheus.union.svc:80/prometheus"
-            - name: CLUSTER_ID
-              value: "default-cluster"
-            - name: DATA_RETENTION_DAILY_RESOLUTION_DAYS
-              value: "15"
-            - name: CLOUD_COST_ENABLED
-              value: "false"
-            - name: CLOUD_COST_MONTH_TO_DATE_INTERVAL
-              value: "6"
-            - name: CLOUD_COST_REFRESH_RATE_HOURS
-              value: "6"
-            - name: CLOUD_COST_QUERY_WINDOW_DAYS
-              value: "7"
-            - name: CLOUD_COST_RUN_WINDOW_DAYS
-              value: "3"
-            # Add any additional provided variables
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
 apiVersion: apps/v1
@@ -4236,7 +3851,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: opencost
+      app.kubernetes.io/name: kubecost
   namespaceSelector:
     matchNames:
       - "union"

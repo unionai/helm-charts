@@ -32,6 +32,17 @@ migrated to the "dataplane" service and will use these.
 {{- end }}
 
 {{/*
+Renders a complete tree, even values that contains template.
+*/}}
+{{- define "unionai-dataplane.render" -}}
+  {{- if typeIs "string" .value }}
+    {{- tpl .value .context }}
+  {{ else }}
+    {{- tpl (.value | toYaml) .context }}
+  {{- end }}
+{{- end -}}
+
+{{/*
 Output the cluster name
 */}}
 {{- define "getClusterName" -}}
@@ -947,4 +958,12 @@ The URI to connect to buildkit
 {{- else -}}
 tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
 {{- end -}}
+{{- end -}}
+
+{{- define "ingress.serving.host" -}}
+{{- if .Values.ingress.serving.hostOverride }}
+{{- .Values.ingress.serving.hostOverride | quote }}
+{{- else }}
+{{- printf "*.apps.%s" .Values.host | quote }}
+{{- end }}
 {{- end -}}
