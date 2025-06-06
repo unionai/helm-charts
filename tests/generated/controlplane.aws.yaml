@@ -1,4 +1,40 @@
 ---
+# Source: controlplane/templates/flyte-core-pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flyteadmin
+  namespace: union
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flyteadmin
+---
+# Source: controlplane/templates/flyte-core-pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: datacatalog
+  namespace: union
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: datacatalog
+---
+# Source: controlplane/templates/flyte-core-pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cacheservice
+  namespace: union
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cacheservice
+---
 # Source: controlplane/templates/pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -82,6 +118,18 @@ spec:
     matchLabels:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
@@ -171,6 +219,34 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: usage-role
 ---
+# Source: controlplane/charts/flyte/templates/admin/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flyte-admin-secrets
+  namespace: union
+type: Opaque
+stringData:
+---
+# Source: controlplane/charts/flyte/templates/common/secret-auth.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flyte-secret-auth
+  namespace: union
+type: Opaque
+stringData:
+  client_secret: foobar
+---
+# Source: controlplane/charts/flyte/templates/common/secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-pass
+stringData:
+  pass.txt: ''
+type: Opaque
+---
 # Source: controlplane/templates/secret.yaml
 apiVersion: v1
 kind: Secret
@@ -268,6 +344,243 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 type: Opaque
 stringData:
+---
+# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-clusters-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+data:
+  clusters.yaml: |
+    clusters:
+      clusterConfigs: []
+      labelClusterMap: {}
+---
+# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-base-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+data:
+  db.yaml: | 
+    database:
+      connMaxLifeTime: 120s
+      dbname: postgres
+      host: ''
+      maxIdleConnections: 10
+      maxOpenConnections: 80
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: ''
+  domain.yaml: | 
+    domains:
+    - id: development
+      name: development
+    - id: staging
+      name: staging
+    - id: production
+      name: production
+  server.yaml: | 
+    admin:
+      auth:
+        appAuth:
+          authServerType: External
+          thirdPartyConfig:
+            flyteClient:
+              scopes:
+              - all
+        grpcAuthorizationHeader: flyte-authorization
+        httpAuthorizationHeader: flyte-authorization
+        tokenEndpointProxyPath: null
+        userAuth:
+          cookieSetting:
+            domain: default
+            sameSitePolicy: LaxMode
+          idpQueryParameter: idp
+          openId:
+            scopes:
+            - profile
+            - openid
+            - offline_access
+      authType: ClientSecret
+      authorizationHeader: flyte-authorization
+      authorizer:
+        internalCommunicationConfig:
+          enabled: false
+      cacheserviceServer:
+        authorizer:
+          internalCommunicationConfig:
+            enabled: false
+        otel:
+          otlpgrpc:
+            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+          sampler:
+            parentSampler: traceid
+            traceIdRatio: 0.001
+          type: otlpgrpc
+        private:
+          app:
+            cacheProviderConfig:
+              kind: redis
+        redisCache:
+          passwordSecretName: redis-cache-password
+        union:
+          auth:
+            authorizationHeader: flyte-authorization
+            clientSecretLocation: /etc/secrets/oidc_client_secret
+            scopes:
+            - all
+            type: ClientSecret
+      clientSecretLocation: /etc/secrets/oidc_client_secret
+      cloudEvents:
+        enable: true
+        eventsPublisher:
+          eventTypes:
+          - workflow
+          - node
+        type: aws
+      domain: {}
+      flyteadmin:
+        metricsKeys:
+        - phase
+        useOffloadedInputs: true
+        useOffloadedWorkflowClosure: true
+      otel:
+        otlpgrpc:
+          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+        sampler:
+          parentSampler: traceid
+          traceIdRatio: 0.001
+        type: otlpgrpc
+      private:
+        app:
+          cacheProviderConfig:
+            kind: redis
+        metrics:
+          disable: true
+      redisCache:
+        passwordSecretName: redis-cache-password
+      scopes:
+      - all
+      server:
+        grpc:
+          enableGrpcLatencyMetrics: true
+          maxMessageSizeBytes: 16777216
+      union:
+        auth:
+          authorizationMetadataKey: flyte-authorization
+          clientSecretLocation: /etc/secrets/oidc_client_secret
+          scopes:
+          - all
+          type: ClientSecret
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ service }}.{{ service }}.svc.cluster.local:80'
+    auth:
+      appAuth:
+        thirdPartyConfig:
+          flyteClient:
+            clientId: flytectl
+            redirectUri: http://localhost:53593/callback
+            scopes:
+            - offline
+            - all
+      authorizedUris:
+      - https://localhost:30081
+      - http://flyteadmin:80
+      - http://flyteadmin.flyte.svc.cluster.local:80
+      userAuth:
+        openId:
+          baseUrl: https://accounts.google.com
+          clientId: 657465813211-6eog7ek7li5k7i7fvgv2921075063hpe.apps.googleusercontent.com
+          scopes:
+          - profile
+          - openid
+    authorizer:
+      internalCommunicationConfig:
+        enabled: false
+      type: Noop
+    cloudEvents:
+      enable: false
+    flyteadmin:
+      eventVersion: 2
+      metadataStoragePrefix:
+      - metadata
+      - admin
+      metricsScope: 'flyte:'
+      profilerPort: 10254
+      roleNameKey: iam.amazonaws.com/role
+      testing:
+        host: http://flyteadmin
+    private:
+      app:
+        cacheProviderConfig:
+          kind: bypass
+    server:
+      grpc:
+        port: 8089
+      httpPort: 8088
+      security:
+        allowCors: true
+        allowedHeaders:
+        - Content-Type
+        - flyte-authorization
+        allowedOrigins:
+        - '*'
+        secure: false
+        useAuth: false
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 0oa2n55xystvEjmOD5d7
+        scopes:
+        - all
+      connection:
+        trustedIdentityClaims:
+          externalIdentityClaim: 0oa2n55xystvEjmOD5d7
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: '{{ service }}.selfhosted.svc.cluster.local:80'
+  remoteData.yaml: | 
+    remoteData:
+      region: us-east-1
+      scheme: local
+      signedUrls:
+        durationMinutes: 3
+  storage.yaml: | 
+    storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 1024
+        target_gc_percent: 70
+  task_resource_defaults.yaml: | 
+    task_resources:
+      defaults:
+        cpu: 100m
+        memory: 500Mi
+      limits:
+        cpu: 2
+        gpu: 1
+        memory: 1Gi
 ---
 # Source: controlplane/templates/configmap.yaml
 apiVersion: v1
@@ -723,6 +1036,143 @@ data:
         enabled: true
         urlPattern: '{{ service }}.union.svc.cluster.local:80'
 ---
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-flyteadmin
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: 
+  - ""
+  - flyte.lyft.com
+  - rbac.authorization.k8s.io
+  resources: 
+  - configmaps
+  - flyteworkflows
+  - namespaces
+  - pods
+  - resourcequotas
+  - roles
+  - rolebindings
+  - secrets
+  - services
+  - serviceaccounts
+  - spark-role
+  - limitranges
+  verbs: 
+  - '*'
+---
+# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-flyteadmin-binding
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-flyteadmin
+subjects:
+- kind: ServiceAccount
+  name: flyteadmin
+  namespace: union
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    #app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - ""
+      - flyte.lyft.com
+      - rbac.authorization.k8s.io
+    resources:
+      - configmaps
+      - flyteworkflows
+      - namespaces
+      - pods
+      - resourcequotas
+      - roles
+      - rolebindings
+      - secrets
+      - services
+      - serviceaccounts
+      - spark-role
+    verbs:
+      - '*'
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyteadmin-binding
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    #app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyteadmin
+subjects:
+  - kind: ServiceAccount
+    name: flyteadmin
+    namespace: union
+---
+# Source: controlplane/charts/flyte/templates/admin/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+  annotations: 
+    projectcontour.io/upstream-protocol.h2c: grpc
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8088
+    - name: grpc
+      port: 81
+      protocol: TCP
+      # intentionally set to TCP instead of grpc
+      targetPort: 8089
+    - name: redoc
+      protocol: TCP
+      port: 87
+      targetPort: 8087
+    - name: http-metrics
+      protocol: TCP
+      port: 10254
+  selector: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+---
 # Source: controlplane/templates/service.yaml
 apiVersion: v1
 kind: Service
@@ -960,6 +1410,170 @@ spec:
   selector:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/charts/flyte/templates/admin/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: flyte-v1.16.0-b2
+    #app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels: 
+      app.kubernetes.io/name: flyteadmin
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "3ea95f68defd70c438116abe0d5c82d99cf11fafdf66e264a490971fc4b292b"
+        kubectl.kubernetes.io/default-container: flyteadmin
+      labels: 
+        app.kubernetes.io/name: flyteadmin
+        app.kubernetes.io/instance: release-name
+        helm.sh/chart: flyte-v1.16.0-b2
+        #app.kubernetes.io/managed-by: Helm
+    spec:
+      securityContext: 
+        fsGroup: 65534
+        fsGroupChangePolicy: Always
+        runAsNonRoot: true
+        runAsUser: 1001
+        seLinuxOptions:
+          type: spc_t
+      initContainers:
+        - command:
+          - flyteadmin
+          - --config
+          - /etc/flyte/config/*.yaml
+          - migrate
+          - run
+          image: ":"
+          imagePullPolicy: ""
+          name: run-migrations
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+          - mountPath: /etc/db
+            name: db-pass
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+        - command:
+          - flyteadmin
+          - --config
+          - /etc/flyte/config/*.yaml
+          - migrate
+          - seed-projects
+          - union-health-monitoring
+          - flytesnacks
+          image: ":"
+          imagePullPolicy: ""
+          name: seed-projects
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+          - mountPath: /etc/db
+            name: db-pass
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+        - name: generate-secrets
+          image: ":"
+          imagePullPolicy: ""
+          command: ["/bin/sh", "-c"]
+          args:
+            [
+                "flyteadmin --config=/etc/flyte/config/*.yaml secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
+            ]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - mountPath: /etc/flyte/config
+              name: base-config-volume
+            - mountPath: /etc/scratch
+              name: scratch
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+      containers:
+      - command:
+        - flyteadmin
+        - --config
+        - /etc/flyte/config/*.yaml
+        - serve
+        image: ":"
+        imagePullPolicy: ""
+        name: flyteadmin
+        ports:
+        - containerPort: 8088
+        - containerPort: 8089
+        - containerPort: 10254
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8088
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8088
+        resources:
+          limits:
+            cpu: 250m
+            ephemeral-storage: 100Mi
+            memory: 500Mi
+          requests:
+            cpu: 10m
+            ephemeral-storage: 50Mi
+            memory: 50Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - mountPath: /etc/db
+          name: db-pass
+        - mountPath: /srv/flyte
+          name: shared-data
+        - mountPath: /etc/flyte/config
+          name: clusters-config-volume
+        - mountPath: /etc/secrets/
+          name: admin-secrets
+      serviceAccountName: flyteadmin
+      volumes:
+      - name: db-pass
+        secret:
+          secretName: db-pass
+      - emptyDir: {}
+        name: shared-data
+      - emptyDir: {}
+        name: scratch
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+        name: base-config-volume
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+            - configMap:
+                name: flyte-admin-clusters-config
+        name: clusters-config-volume
+      - name: admin-secrets
+        secret:
+          secretName: flyte-admin-secrets
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -1877,3 +2491,1808 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+---
+# Source: controlplane/charts/flyte/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flyte
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: 
+  rules:
+    - http:
+        paths:
+          # This is useful only for frontend development
+          # NOTE: If you change this, you must update the BASE_URL value in flyteconsole.yaml
+          - path: /console
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteconsole
+                port:
+                  number: 80
+          - path: /console/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteconsole
+                port:
+                  number: 80
+          - path: /api
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /api/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /healthcheck
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /v1/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /.well-known
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /.well-known/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /login
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /login/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /logout
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /logout/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /callback
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /callback/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /me
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /config
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /config/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /oauth2
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /oauth2/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+      host: selfhosted.cloud-staging.union.ai
+# Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
+# enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
+---
+# Source: controlplane/charts/flyte/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flyte-grpc
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: 
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          #
+          # NOTE: Port 81 in flyteadmin is the GRPC server port for FlyteAdmin.
+          - path: /grpc.health.v1.Health
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /grpc.health.v1.Health/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.AuthMetadataService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.AuthMetadataService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-dataproxy
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.org/websocket-services: dataproxy-service
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          - path: /data/*
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /data
+            pathType: Prefix
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-protected
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.org/websocket-services: dataproxy-service
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          
+          - path: /api
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /api/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /v1/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /cloudadmin
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /cloudadmin/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /actor
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /actor/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /agent
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /agent/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /dataplane
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /dataplane/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /spark-history-server
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /spark-history-server/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /api/v1/dataproxy
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /api/v1/dataproxy/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 81
+          - path: /app
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 81
+          - path: /app/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 81
+          - path: /apps
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 81
+          - path: /apps/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 81
+          - path: /cluster
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /cluster/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /clusterpool
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /clusterpool/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /clusterconfig
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /clusterconfig/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /org
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  number: 81
+          - path: /org/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  number: 81
+          - path: /managed_cluster
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /managed_cluster/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 81
+          - path: /authorizer
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: authorizer
+                port:
+                  number: 81
+          - path: /authorizer/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: authorizer
+                port:
+                  number: 81
+          - path: /oauth_app
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /oauth_app/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /users
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /users/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /roles
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /roles/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /policies
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /policies/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /identities
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /identities/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 81
+          - path: /echo
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /echo/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /execution
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /execution/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /workspace_registry
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /workspace_registry/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /workspace_instance
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /workspace_instance/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: execution
+                port:
+                  number: 81
+          - path: /usage
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /usage/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-protected-grpc
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          - path: /cloudidl.execution.ExecutionService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.execution.ExecutionService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.cluster.ClusterService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.cluster.ClusterService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.apikey.APIKeyService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 83
+          - path: /cloudidl.apikey.APIKeyService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 83
+          - path: /cloudidl.identity.AppsService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.AppsService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.org.OrgService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  number: 80
+          - path: /cloudidl.org.OrgService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  number: 80
+          - path: /cloudidl.cloudaccounts.CloudAccountsService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.cloudaccounts.CloudAccountsService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.cluster.ManagedClusterService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.cluster.ManagedClusterService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.identity.UserService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.UserService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.RoleService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.RoleService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.PolicyService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.PolicyService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.SelfServe/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.SelfServe
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.IdentityService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.identity.IdentityService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: identity
+                port:
+                  number: 80
+          - path: /cloudidl.clusterpool.ClusterPoolService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.clusterpool.ClusterPoolService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.clusterconfig.ClusterConfigService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.clusterconfig.ClusterConfigService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  number: 80
+          - path: /cloudidl.usage.UsageService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+          - path: /cloudidl.usage.UsageService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+          - path: /cloudidl.authorizer.AuthorizerService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: authorizer
+                port:
+                  number: 80
+          - path: /cloudidl.authorizer.AuthorizerService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: authorizer
+                port:
+                  number: 80
+          - path: /datacatalog.DataCatalog/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: datacatalog
+                port:
+                  number: 89
+          - path: /datacatalog.DataCatalog
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: datacatalog
+                port:
+                  number: 89
+          - path: /flyteidl.cacheservice.CacheService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  number: 89
+          - path: /flyteidl.cacheservice.CacheService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  number: 89
+          - path: /cloudidl.actor.ActorEnvironmentService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.actor.ActorEnvironmentService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.agent.AgentService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.agent.AgentService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.clouddataproxy.CloudDataProxyService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.clouddataproxy.CloudDataProxyService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /flyteidl.service.DataProxyService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /flyteidl.service.DataProxyService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.logs.LogsService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.logs.LogsService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.workspace.WorkspaceRegistryService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.workspace.WorkspaceRegistryService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.workspace.WorkspaceInstanceService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.workspace.WorkspaceInstanceService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.imagebuilder.ImageService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.imagebuilder.ImageService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.app.AppService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.app.AppLogsService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.app.ReplicaService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-protected-grpc-streaming
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          - path: /flyteidl.service.AdminService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.AdminService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          
+          - path: /flyteidl.service.WatchService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          
+          - path: /flyteidl.service.WatchService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /cloudidl.cloudadmin.CloudAdminService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /cloudidl.cloudadmin.CloudAdminService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.IdentityService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.IdentityService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /cloudidl.echo.EchoService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.echo.EchoService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /flyteidl.service.SignalService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.SignalService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /cloudidl.actor.ActorEnvironmentService/Stream*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.execution.ExecutionService/GetExecutionOperation
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.logs.LogsService/TailTaskExecutionLogs
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.workspace.WorkspaceInstanceService/WatchWorkspaceInstances
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.app.AppService/Watch
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.app.AppService/Lease
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  number: 80
+          - path: /cloudidl.app.AppLogsService/TailLogs
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.app.ReplicaService/WatchReplicas
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          
+          # Port 87 in FlyteAdmin maps to the redoc container.
+          - path: /openapi
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 87
+          - path: /healthcheck
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /me
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          # Port 87 in FlyteAdmin maps to the redoc container.
+          - path: /openapi/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 87
+          - path: /.well-known
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /.well-known/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /login
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /login/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /logout
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /logout/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /callback
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /callback/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /config
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /config/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /oauth2
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /oauth2/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /auth
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /auth/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 80
+          - path: /enqueue_metronome_request/v1
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /enqueue_metronome_request/v1/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /enqueue_stripe_request/v1
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /enqueue_stripe_request/v1/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
+# enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-grpc
+  namespace: union
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
+      proxy_set_header X-User-Claim-Apporg $user_apporg;
+      grpc_set_header X-User-Claim-Apporg $user_apporg;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          # NOTE: Port 81 in flyteadmin is the GRPC server port for FlyteAdmin.
+          - path: /grpc.health.v1.Health
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /grpc.health.v1.Health/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.AuthMetadataService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+          - path: /flyteidl.service.AuthMetadataService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-grpc-streaming
+  namespace: union
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      # Copy the user id and identity type from the auth response header into the upstream request header
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+    
+      more_set_headers "X-Orig-Host: $host";
+      proxy_set_header X-Orig-Host $host;
+      grpc_set_header X-Orig-Host $host;
+    
+      # We disallow external services which go through ingress to set this header so that no one can spoof this
+      # as we rely on making authorization decisions based on this
+      more_set_headers "l5d-client-id";
+      # Donot allow to set this internal header which is used for escalated privilges access in serverless
+      more_set_headers "x-overriden-org";
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+spec:
+  rules:
+    - host: selfhosted.cloud-staging.union.ai
+      http:
+        paths:
+          - path: /flyteidl.service.WatchService/WatchExecutionStatusUpdates
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  number: 81

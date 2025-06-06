@@ -18,6 +18,13 @@ function generate {
     CHART=$(basename ${file} | cut -d. -f1)
     TEST=$(basename ${file} | cut -d. -f2)
     echo "* Generating test output for ${CHART} (${TEST})"
+    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+    helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+    helm repo add unionai https://unionai.github.io/helm-charts
+    helm repo add fluent https://fluent.github.io/helm-charts
+    helm repo add opencost https://opencost.github.io/opencost-helm-chart
+    helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
+    helm dependency build ${CHARTS_DIR}/${CHART}
     helm dep update ${CHARTS_DIR}/${CHART}
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
