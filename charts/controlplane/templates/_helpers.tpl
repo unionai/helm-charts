@@ -219,6 +219,15 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- default .Release.Namespace .Values.forceNamespace | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{- define "unionai.secretName" -}}
+{{- if .config.secretNameOverride }}
+{{- .config.secretNameOverride | trunc 63 | trimSuffix "-" }}
+{{- else if and (hasKey .Values.global "service") (hasKey .Values.global.service "secretName") }}
+{{- .Values.global.service.secretName }}
+{{- else }}
+{{- include "unionai.fullname" . | trim -}}
+{{- end }}
+{{- end }}
 
 {{/*
 Selector labels
@@ -344,4 +353,13 @@ IfNotPresent
 {{- include "unionai.deepMerge" (dict "dest" $global "source" $svc) }}
 {{- end }}
 
-
+{{/*
+Renders a complete tree, even values that contains template.
+*/}}
+{{- define "unionai.render" -}}
+  {{- if typeIs "string" .value }}
+    {{- tpl .value .context }}
+  {{ else }}
+    {{- tpl (.value | toYaml) .context }}
+  {{- end }}
+{{- end -}}
