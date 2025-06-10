@@ -24,6 +24,7 @@ function generate {
     helm repo add fluent https://fluent.github.io/helm-charts
     helm repo add opencost https://opencost.github.io/opencost-helm-chart
     helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
+    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
     helm dependency build ${CHARTS_DIR}/${CHART}
     helm dep update ${CHARTS_DIR}/${CHART}
     helm template ${CHARTS_DIR}/${CHART} \
