@@ -48,6 +48,21 @@ metadata:
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: dataplane/charts/opencost/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -122,6 +137,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -133,6 +150,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 apiVersion: v1
@@ -140,6 +159,8 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-webhook-system
   namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
@@ -147,6 +168,20 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-system
   namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
+---
+# Source: dataplane/templates/common/auth-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: union-secret-auth
+  namespace: union
+type: Opaque
+data:
+  # TODO(rob): update or configure operator to use client_secret like all the other components.
+  app_secret: Y2xpZW50U2VjcmV0
+  client_secret: Y2xpZW50U2VjcmV0
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -155,7 +190,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name:
+  cluster_name: dW5pb24tYXdz
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -180,7 +215,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: ''
+      clusterName: 'union-aws'
       customData:
       - production:
         - projectQuotaCpu:
@@ -192,7 +227,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
       - staging:
         - projectQuotaCpu:
             value: "4096"
@@ -203,7 +238,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
       - development:
         - projectQuotaCpu:
             value: "4096"
@@ -214,7 +249,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
@@ -224,17 +259,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'clientId'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///foo.unionai.cloud
+        host: dns:///union.us-west-2.union.ai
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'clientId'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///foo.unionai.cloud
+      endpoint: dns:///union.us-west-2.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -340,7 +375,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-east-1
+        region us-east-2
+        bucket bucket
 ---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
@@ -362,10 +398,10 @@ data:
   config.yaml: |
     union:
       connection: 
-        host: dns:///foo.unionai.cloud
+        host: dns:///union.us-west-2.union.ai
       auth: 
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'clientId'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -385,15 +421,15 @@ data:
       syncClusterConfig: 
         enabled: false
       clusterId: 
-        organization: ''
+        organization: 'union'
       clusterData:
-        appId: 'dataplane-operator'
-        bucketName: ''
-        bucketRegion: 'us-east-1'
-        cloudHostName: 'foo.unionai.cloud'
+        appId: 'clientId'
+        bucketName: 'bucket'
+        bucketRegion: 'us-east-2'
+        cloudHostName: 'union.us-west-2.union.ai'
         gcpProjectId: ''
         metadataBucketPrefix: s3://
-        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+        userRole: 'arn:aws:iam::000000000000:role/union-flyte-role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages: 
         enabled: true
@@ -420,7 +456,7 @@ data:
         type: 'K8s'
   logger.yaml: |
     logger: 
-      level: 4
+      level: 6
       show-source: true
   config-overrides.yaml: | 
     cache:
@@ -428,23 +464,24 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: 
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+      container: bucket
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-2
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
+  fast_registration_storage.yaml: | 
+    fastRegistrationStorage:
+      container: "bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-2
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -455,9 +492,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'clientId'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///foo.unionai.cloud
+      endpoint: dns:///union.us-west-2.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -465,8 +502,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///foo.unionai.cloud
-      endpoint: dns:///foo.unionai.cloud
+      cache-endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///union.us-west-2.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -510,7 +547,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: s3://
+      rawoutput-prefix: s3://bucket
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -545,7 +582,7 @@ data:
         default-memory: 100Mi
   logger.yaml: |
     logger: 
-      level: 4
+      level: 6
       show-source: true
   resource_manager.yaml: | 
     propeller:
@@ -568,18 +605,12 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: 
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+      container: bucket
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-2
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -603,6 +634,93 @@ rules:
     resources:
       - namespaces
       - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Source: dataplane/charts/opencost/templates/clusterrole.yaml
+# Cluster role giving opencost to get, list, watch required resources
+# No write permissions are required
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - deployments
+      - nodes
+      - pods
+      - services
+      - resourcequotas
+      - replicationcontrollers
+      - limitranges
+      - persistentvolumeclaims
+      - persistentvolumes
+      - namespaces
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - statefulsets
+      - deployments
+      - daemonsets
+      - replicasets
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - autoscaling
+    resources:
+      - horizontalpodautoscalers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
     verbs:
       - get
       - list
@@ -1115,6 +1233,27 @@ subjects:
     name: fluentbit-system
     namespace: union
 ---
+# Source: dataplane/charts/opencost/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opencost
+subjects:
+  - kind: ServiceAccount
+    name: opencost
+    namespace: union
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -1391,6 +1530,29 @@ spec:
   selector:
     app.kubernetes.io/name: fluentbit
     app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/charts/opencost/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+  type: "ClusterIP"
+  ports:
+    - name: http
+      port: 9003
+      targetPort: 9003
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/service.yaml
 apiVersion: v1
@@ -1795,6 +1957,100 @@ spec:
       tolerations:
         - operator: Exists
 ---
+# Source: dataplane/charts/opencost/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+      app.kubernetes.io/instance: release-name
+  strategy: 
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencost
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: opencost
+      containers:
+        - name: opencost
+          image: ghcr.io/opencost/opencost:1.111.0@sha256:6aa68e52a24b14ba41f23db08d1b9db1429a1c0300f4c0381ecc2c61fc311a97
+          imagePullPolicy: IfNotPresent
+          args:
+          ports:
+            - containerPort: 9003
+              name: http
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: CUSTOM_COST_ENABLED
+              value: "false"
+            - name: KUBECOST_NAMESPACE
+              value: union
+            - name: API_PORT
+              value: "9003"
+            - name: PROMETHEUS_SERVER_ENDPOINT
+              value: "http://union-operator-prometheus.union.svc:80/prometheus"
+            - name: CLUSTER_ID
+              value: "default-cluster"
+            - name: DATA_RETENTION_DAILY_RESOLUTION_DAYS
+              value: "15"
+            - name: CLOUD_COST_ENABLED
+              value: "false"
+            - name: CLOUD_COST_MONTH_TO_DATE_INTERVAL
+              value: "6"
+            - name: CLOUD_COST_REFRESH_RATE_HOURS
+              value: "6"
+            - name: CLOUD_COST_QUERY_WINDOW_DAYS
+              value: "7"
+            - name: CLOUD_COST_RUN_WINDOW_DAYS
+              value: "3"
+            # Add any additional provided variables
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -2018,7 +2274,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1a5ef2620c988dc440f15d650e1c5c42c6569c3e8f5a5189212e8bf1b28c099"
+        configChecksum: "b74394d66e7df4ac564521b5ec151b1516b3095fba2b8f51fbb393044c23a0d"
         
       labels:
         app.kubernetes.io/name: clusterresourcesync
@@ -2116,7 +2372,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "abf334179b6c60c8b0872461d2f8f2cb600b9ec9eba38461a396287dde27d83"
+        configChecksum: "3e2cf7c3bd1435b166aec84fc36c00897355b85bbb5b12da2a5c26bdf339e6d"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -2246,7 +2502,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "abf334179b6c60c8b0872461d2f8f2cb600b9ec9eba38461a396287dde27d83"
+        configChecksum: "3e2cf7c3bd1435b166aec84fc36c00897355b85bbb5b12da2a5c26bdf339e6d"
         
       labels:
         
@@ -2364,7 +2620,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "1329c46097add5bb5d6c83519fb82841ccfa453ee322ac8f787208058f1b0e9"
+        configChecksum: "903e065d47546547aa284e4c3bee31566735ee2c27c418b3a48dacc92434b34"
         
     spec:
       securityContext: 
@@ -2514,7 +2770,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1329c46097add5bb5d6c83519fb82841ccfa453ee322ac8f787208058f1b0e9"
+        configChecksum: "903e065d47546547aa284e4c3bee31566735ee2c27c418b3a48dacc92434b34"
         
       labels:
         
@@ -2530,6 +2786,8 @@ spec:
             - flytepropeller
             - --config
             - /etc/flyte/config/*.yaml
+            - --propeller.cluster-id
+            - union-aws
           env:
           - name: POD_NAME
             valueFrom:
@@ -2587,6 +2845,133 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
+---
+# Source: dataplane/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-dataplane-serving
+  namespace: union
+  labels:
+    app.kubernetes.io/name: dataplane
+    app.kubernetes.io/instance: release-name
+spec:
+  ingressClassName: ""
+  rules:
+  - host: "*.apps.union.us-west-2.union.ai"
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kourier-internal
+            port:
+              number: 80
+---
+# Source: dataplane/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-dataplane
+  namespace: union
+  labels:
+    app.kubernetes.io/name: dataplane
+    app.kubernetes.io/instance: release-name
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: 
+      http:
+        paths:
+          - path: /api/v1/dataproxy/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /prometheus/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-prometheus
+                port:
+                  number: 80
+          - path: /clickhouse/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /dataplane/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /resourcequota/v1/project_quota
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /spark-history-server/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /secrets/api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /data_plane_object_store/api/v1/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.actor.ActorEnvironmentService/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.logs.dataplane.LogsService/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.objectstore.v1.ObjectStoreService/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.imagebuilder.dataplane.ImageService/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -3802,7 +4187,7 @@ metadata:
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: kubecost
+      app.kubernetes.io/name: opencost
   namespaceSelector:
     matchNames:
       - "union"
