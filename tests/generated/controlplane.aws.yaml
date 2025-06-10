@@ -99,18 +99,6 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: identity
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: identity
-      app.kubernetes.io/instance: release-name
----
-# Source: controlplane/templates/pdb.yaml
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
   name: usage
 spec:
   minAvailable: 1
@@ -190,20 +178,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2025.5.6"
     app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: executions-role
----
-# Source: controlplane/templates/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: identity
-  labels:
-    helm.sh/chart: controlplane-2025.5.6
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
@@ -216,8 +190,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2025.5.6"
     app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: usage-role
 ---
 # Source: controlplane/charts/flyte/templates/admin/secret.yaml
 apiVersion: v1
@@ -321,20 +293,6 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: identity
-  labels:
-    helm.sh/chart: controlplane-2025.5.6
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-type: Opaque
-stringData:
----
-# Source: controlplane/templates/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
   name: usage
   labels:
     helm.sh/chart: controlplane-2025.5.6
@@ -394,28 +352,6 @@ data:
       name: production
   server.yaml: | 
     admin:
-      auth:
-        appAuth:
-          authServerType: External
-          thirdPartyConfig:
-            flyteClient:
-              scopes:
-              - all
-        grpcAuthorizationHeader: flyte-authorization
-        httpAuthorizationHeader: flyte-authorization
-        tokenEndpointProxyPath: null
-        userAuth:
-          cookieSetting:
-            domain: default
-            sameSitePolicy: LaxMode
-          idpQueryParameter: idp
-          openId:
-            scopes:
-            - profile
-            - openid
-            - offline_access
-      authType: ClientSecret
-      authorizationHeader: flyte-authorization
       authorizer:
         internalCommunicationConfig:
           enabled: false
@@ -433,17 +369,7 @@ data:
         private:
           app:
             cacheProviderConfig:
-              kind: redis
-        redisCache:
-          passwordSecretName: redis-cache-password
-        union:
-          auth:
-            authorizationHeader: flyte-authorization
-            clientSecretLocation: /etc/secrets/oidc_client_secret
-            scopes:
-            - all
-            type: ClientSecret
-      clientSecretLocation: /etc/secrets/oidc_client_secret
+              kind: bypass
       cloudEvents:
         enable: true
         eventsPublisher:
@@ -467,27 +393,17 @@ data:
       private:
         app:
           cacheProviderConfig:
-            kind: redis
+            kind: bypass
         metrics:
           disable: true
-      redisCache:
-        passwordSecretName: redis-cache-password
-      scopes:
-      - all
       server:
         grpc:
           enableGrpcLatencyMetrics: true
           maxMessageSizeBytes: 16777216
       union:
-        auth:
-          authorizationMetadataKey: flyte-authorization
-          clientSecretLocation: /etc/secrets/oidc_client_secret
-          scopes:
-          - all
-          type: ClientSecret
         internalConnectionConfig:
           enabled: true
-          urlPattern: '{{ service }}.{{ service }}.svc.cluster.local:80'
+          urlPattern: '_SERVICE_.%!s(<nil>).svc.cluster.local:80'
     auth:
       appAuth:
         thirdPartyConfig:
@@ -542,17 +458,9 @@ data:
         secure: false
         useAuth: false
     union:
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 0oa2n55xystvEjmOD5d7
-        scopes:
-        - all
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: 0oa2n55xystvEjmOD5d7
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.selfhosted.svc.cluster.local:80'
+        urlPattern: '_SERVICE_.%!s(<nil>).svc.cluster.local:80'
   remoteData.yaml: | 
     remoteData:
       region: us-east-1
@@ -600,7 +508,7 @@ data:
         adminClient:
           hackFlagUntilCellIsolation: true
         artifactBlobStoreConfig:
-          container: artifacts-bucket
+          container: 'artifactsBucketName'
           stow:
             config:
               auth_type: iam
@@ -612,13 +520,13 @@ data:
           maxIdleConnections: 20
           maxOpenConnections: 30
           postgres:
-            dbname: postgres
-            host: dbhost
+            dbname: 'dbName'
+            host: 'db-instance-url'
             options: sslmode=disable
-            passwordPath: /etc/secrets/db-pass.txt
+            passwordPath: /etc/db/pass.txt
             port: 5432
-            readReplicaHost: dbhost
-            username: postgres
+            readReplicaHost: 'db-instance-url'
+            username: 'dbUser'
         artifactServerConfig:
           httpPort: 8089
           port: 8080
@@ -641,15 +549,15 @@ data:
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     db:
       connectionPool:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      host: dbhost
-      passwordPath: /etc/secrets/db-pass.txt
-      username: postgres
+      host: 'db-instance-url'
+      passwordPath: /etc/db/pass.txt
+      username: 'dbUser'
     logger:
       level: 6
     otel:
@@ -665,12 +573,9 @@ data:
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -696,7 +601,7 @@ data:
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     logger:
       level: 6
     otel:
@@ -712,12 +617,9 @@ data:
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -740,21 +642,23 @@ data:
     cache:
       identity:
         enabled: false
+    cloudProvider:
+      provider: Mock
     cluster:
       cloudflare:
         active: false
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     db:
       connectionPool:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      host: dbhost
-      passwordPath: /etc/secrets/db-pass.txt
-      username: postgres
+      host: 'db-instance-url'
+      passwordPath: /etc/db/pass.txt
+      username: 'dbUser'
     logger:
       level: 6
     otel:
@@ -767,23 +671,12 @@ data:
     sharedService:
       metrics:
         scope: 'cluster:'
-    timeseries:
-      timestream:
-        databaseName: dbName
-        derivedTableName: cloudMetricsDerived
-        region: us-east-2
-        tableName: cloudMetricsRaw
-        tags:
-        - environment: staging
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -809,11 +702,11 @@ data:
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     dataproxy:
       clusterSelector:
         type: local
-      secureTunnelTenantURLPattern: ""
+      secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80
     logger:
       level: 6
     otel:
@@ -829,12 +722,9 @@ data:
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -858,37 +748,22 @@ data:
       identity:
         enabled: false
     cloudEventsProcessor:
-      cloudProvider: AWS
-      region: us-east-2
-      subscriber:
-        accountId: accountId
-        queueName: cloudEventQueue
+      cloudProvider: Local
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     db:
       connectionPool:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      host: dbhost
-      passwordPath: /etc/secrets/db-pass.txt
-      username: postgres
+      host: 'db-instance-url'
+      passwordPath: /etc/db/pass.txt
+      username: 'dbUser'
     executions:
-      app:
-        adminClient:
-          connection:
-            authorizationHeader: flyte-authorization
-            clientId: clientID
-            scopes:
-            - all
-        taskValidation:
-          serverlessTaskPodSpecValidation:
-            enabled: "true"
-          skipOrgs: []
       apps:
-        enrichIdentities: true
+        enrichIdentities: false
         publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
     logger:
       level: 6
@@ -905,74 +780,11 @@ data:
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
     workspace:
       enable: false
----
-# Source: controlplane/templates/configmap.yaml
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: identity
-  labels:
-    helm.sh/chart: controlplane-2025.5.6
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-data:
-  config.yaml: |
-    authorizer:
-      internalCommunicationConfig:
-        enabled: false
-      type: Noop
-    cache:
-      identity:
-        enabled: false
-    connection:
-      environment: staging
-      region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
-    identity:
-      app:
-        adminClient:
-          connection:
-            authorizationHeader: flyte-authorization
-            clientId: clientID
-            scopes:
-            - all
-        env: staging
-        identityProviderConfig:
-          okta:
-            clientRegistrationEndpointUrl: idpurl
-        rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
-    logger:
-      level: 6
-    otel:
-      otlpgrpc:
-        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-      sampler:
-        parentSampler: traceid
-        traceIdRatio: 0.001
-      type: otlpgrpc
-    sharedService:
-      metrics:
-        scope: 'identity:'
-    union:
-      auth:
-        enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
-      internalConnectionConfig:
-        enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -996,13 +808,11 @@ data:
       identity:
         enabled: false
     cloudProvider:
-      awsConfig:
-        region: us-east-2
-      provider: aws
+      provider: Mock
     connection:
       environment: staging
       region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
+      rootTenantURLPattern: dns:///fake-host.domain
     logger:
       level: 6
     otel:
@@ -1015,25 +825,12 @@ data:
     sharedService:
       metrics:
         scope: 'usage:'
-    timeseries:
-      timestream:
-        databaseName: staging-timestream
-        derivedTableName: cloudMetricsDerived
-        query:
-          enabled: true
-          includeQuotaBasedResourceMetrics: true
-        tableName: cloudMetricsRaw
-        tags:
-        - environment: staging
     union:
       auth:
         enable: false
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
       internalConnectionConfig:
         enabled: true
-        urlPattern: '{{ service }}.union.svc.cluster.local:80'
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1346,40 +1143,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: identity
-  labels:
-    helm.sh/chart: controlplane-2025.5.6
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: grpc
-      port: 80
-      protocol: TCP
-      targetPort: 8080
-    - name: connect
-      port:  83
-      protocol: TCP
-      targetPort: 8081
-    - name: http
-      port: 81
-      protocol: TCP
-      targetPort: 8089
-    - name: debug
-      port: 82
-      protocol: TCP
-      targetPort: 10254
-  selector:
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
----
-# Source: controlplane/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
   name: usage
   labels:
     helm.sh/chart: controlplane-2025.5.6
@@ -1430,7 +1193,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3ea95f68defd70c438116abe0d5c82d99cf11fafdf66e264a490971fc4b292b"
+        configChecksum: "2227144f82d0cffda02ff75da26fcac9a032b704e9e92a29839afc0ca701371"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -1453,7 +1216,7 @@ spec:
           - migrate
           - run
           image: ":"
-          imagePullPolicy: ""
+          imagePullPolicy: "IfNotPresent"
           name: run-migrations
           securityContext:
             allowPrivilegeEscalation: false
@@ -1473,7 +1236,7 @@ spec:
           - union-health-monitoring
           - flytesnacks
           image: ":"
-          imagePullPolicy: ""
+          imagePullPolicy: "IfNotPresent"
           name: seed-projects
           securityContext:
             allowPrivilegeEscalation: false
@@ -1486,7 +1249,7 @@ spec:
             name: base-config-volume
         - name: generate-secrets
           image: ":"
-          imagePullPolicy: ""
+          imagePullPolicy: "IfNotPresent"
           command: ["/bin/sh", "-c"]
           args:
             [
@@ -1513,7 +1276,7 @@ spec:
         - /etc/flyte/config/*.yaml
         - serve
         image: ":"
-        imagePullPolicy: ""
+        imagePullPolicy: "IfNotPresent"
         name: flyteadmin
         ports:
         - containerPort: 8088
@@ -1523,10 +1286,20 @@ spec:
           httpGet:
             path: /healthcheck
             port: 8088
+          initialDelaySeconds: 15
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
         livenessProbe:
           httpGet:
             path: /healthcheck
             port: 8088
+          initialDelaySeconds: 20
+          timeoutSeconds: 1
+          periodSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
         resources:
           limits:
             cpu: 250m
@@ -1611,6 +1384,9 @@ spec:
       - name: secrets
         secret:
           secretName: artifacts
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: artifacts
@@ -1624,6 +1400,8 @@ spec:
           - --config
           - /etc/config/*.yaml
           volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
           - name: secrets
             mountPath: /etc/secrets/
           - name: config
@@ -1648,6 +1426,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -1728,6 +1508,9 @@ spec:
       - name: secrets
         secret:
           secretName: authorizer
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: authorizer
@@ -1751,6 +1534,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -1831,6 +1616,9 @@ spec:
       - name: secrets
         secret:
           secretName: cluster
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: cluster
@@ -1854,6 +1642,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -1934,6 +1724,9 @@ spec:
       - name: secrets
         secret:
           secretName: dataproxy
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: dataproxy
@@ -1957,6 +1750,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -2037,6 +1832,9 @@ spec:
       - name: secrets
         secret:
           secretName: executions
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: executions
@@ -2060,6 +1858,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -2107,109 +1907,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: identity
-  labels:
-    helm.sh/chart: controlplane-2025.5.6
-    app.kubernetes.io/name: identity
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: identity
-      app.kubernetes.io/instance: release-name
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
-  template:
-    metadata:
-      annotations:
-        kubectl.kubernetes.io/default-container: identity
-        linkerd.io/inject: disabled
-        prometheus.io/path: /metrics
-        prometheus.io/port: "10254"
-      labels:
-        app.kubernetes.io/name: identity
-        app.kubernetes.io/instance: release-name
-    spec:
-      serviceAccountName: identity
-      volumes:
-      - name: secrets
-        secret:
-          secretName: identity
-      - name: config
-        configMap:
-          name: identity
-      containers:
-        - name: identity
-          image: ""  # empty string to avoid template error
-          imagePullPolicy: IfNotPresent
-          args:
-            - cloudidentity
-            - serve
-            - --config
-            - /etc/config/*.yaml
-          ports:
-            - name: grpc
-              containerPort: 8080
-              protocol: TCP
-            - name: http
-              containerPort: 8089
-              protocol: TCP
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-          volumeMounts:
-            - name: secrets
-              mountPath: /etc/secrets/
-            - name: config
-              mountPath: /etc/config/
-          env:
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
-          resources:
-              limits:
-                cpu: 500m
-                memory: 512Mi
-              requests:
-                cpu: 250m
-                memory: 250Mi
-          livenessProbe:
-            httpGet:
-              path: /healthcheck
-              port: debug
-            initialDelaySeconds: 3
-            periodSeconds: 3
-          readinessProbe:
-            httpGet:
-              path: /healthcheck
-              port: debug
-            initialDelaySeconds: 3
-            periodSeconds: 3
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: identity
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
----
-# Source: controlplane/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: usage
   labels:
     helm.sh/chart: controlplane-2025.5.6
@@ -2243,6 +1940,9 @@ spec:
       - name: secrets
         secret:
           secretName: usage
+      - name: db-pass
+        secret:
+          secretName: db-pass
       - name: config
         configMap:
           name: usage
@@ -2266,6 +1966,8 @@ spec:
               containerPort: 10254
               protocol: TCP
           volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/
             - name: config
@@ -2423,32 +2125,6 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: executions
-  minReplicas: 1
-  maxReplicas: 1
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 80
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 80
----
-# Source: controlplane/templates/hpa.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: identity
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: identity
   minReplicas: 1
   maxReplicas: 1
   metrics:
@@ -2662,7 +2338,12 @@ spec:
                 name: flyteadmin
                 port:
                   number: 80
-      host: selfhosted.cloud-staging.union.ai
+      host: fake-host.domain
+  tls:
+    - secretName: fake-host-tls-secret
+      hosts:
+        - fake-host.domain
+  
 # Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
 # enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
 ---
@@ -2701,7 +2382,7 @@ metadata:
 spec:
   ingressClassName: 
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           #
@@ -2734,6 +2415,10 @@ spec:
                 name: flyteadmin
                 port:
                   number: 81
+  tls:
+    - secretName: fake-host-tls-secret
+      hosts:
+        - fake-host.domain
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
@@ -2766,45 +2451,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
-      proxy_set_header X-User-Claim-Apporg $user_apporg;
-      grpc_set_header X-User-Claim-Apporg $user_apporg;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.org/websocket-services: dataproxy-service
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           - path: /data/*
@@ -2853,45 +2507,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
-      proxy_set_header X-User-Claim-Apporg $user_apporg;
-      grpc_set_header X-User-Claim-Apporg $user_apporg;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.org/websocket-services: dataproxy-service
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           
@@ -3284,45 +2907,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
-      proxy_set_header X-User-Claim-Apporg $user_apporg;
-      grpc_set_header X-User-Claim-Apporg $user_apporg;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           - path: /cloudidl.execution.ExecutionService/*
@@ -3605,6 +3197,20 @@ spec:
                 name: dataproxy
                 port:
                   number: 80
+          - path: /cloudidl.secret.SecretService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
+          - path: /cloudidl.secret.SecretService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: dataproxy
+                port:
+                  number: 80
           - path: /cloudidl.clouddataproxy.CloudDataProxyService
             pathType: ImplementationSpecific
             backend:
@@ -3742,41 +3348,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           - path: /flyteidl.service.AdminService
@@ -3954,8 +3533,12 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           
@@ -4149,45 +3732,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
-      proxy_set_header X-User-Claim-Apporg $user_apporg;
-      grpc_set_header X-User-Claim-Apporg $user_apporg;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           # NOTE: Port 81 in flyteadmin is the GRPC server port for FlyteAdmin.
@@ -4251,41 +3803,14 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      # Copy the user id and identity type from the auth response header into the upstream request header
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
-    
-      more_set_headers "X-Orig-Host: $host";
-      proxy_set_header X-Orig-Host $host;
-      grpc_set_header X-Orig-Host $host;
-    
-      # We disallow external services which go through ingress to set this header so that no one can spoof this
-      # as we rely on making authorization decisions based on this
-      more_set_headers "l5d-client-id";
-      # Donot allow to set this internal header which is used for escalated privilges access in serverless
-      more_set_headers "x-overriden-org";
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
   rules:
-    - host: selfhosted.cloud-staging.union.ai
+    - host: fake-host.domain
       http:
         paths:
           - path: /flyteidl.service.WatchService/WatchExecutionStatusUpdates

@@ -1,105 +1,121 @@
-global:
-  replicaCount: 1
-  image:
-    repository: "" # Placeholder for the actual image repository
-    pullPolicy: IfNotPresent
-    tag: latest # Placeholder for the actual image tag
-  imagePullSecrets:
-  nameOverride: ""
-  fullnameOverride: ""
-  serviceAccount:
-    create: true
-    annotations: {}
-  podAnnotations:
-    linkerd.io/inject: disabled
-    prometheus.io/path: /metrics
-    prometheus.io/port: "10254"
-  service:
-    type: ClusterIP
-    grpcport: 80
-    httpport: 81
-    debugport: 82
-    connectport: 83
-  resources:
-    limits:
-      cpu: 500m
-      memory: 512Mi
-    requests:
-      cpu: 250m
-      memory: 250Mi
-  env:
-  - name: GOMEMLIMIT
-    valueFrom:
-      resourceFieldRef:
-        resource: limits.memory
-  - name: GOMAXPROCS
-    valueFrom:
-      resourceFieldRef:
-        resource: limits.cpu
-  autoscaling:
-    enabled: true
-    minReplicas: 1
-    maxReplicas: 1
-    targetCPUUtilizationPercentage: 80
-    targetMemoryUtilizationPercentage: 80
-  secrets: {}
-  podMonitor:
-    custom:
+# -- Set the DB host used for union control plane services
+dbHost: ""
+# -- Set the DB Name used for the control plane services
+dbName: ""
+# -- Set the DB user used for the control plane services
+dbUser: ""
+# -- Set the DB password used for the controlplane services
+dbPass: ""
+# -- Set the S3 bucket name used for flyte storage
+bucketName: ""
+# -- Set the S3 bucket name used for artifacts storage
+artifactsBucketName: ""
+
+# -- Set the bucket region
+region: us-east-2
+# -- Set the image used for control plane services
+image:
+  repository: ""
+  pullPolicy: IfNotPresent
+  tag: ""
+
+controlplane:
+  enabled: true
+
+replicaCount: 1
+imagePullSecrets:
+nameOverride: ""
+fullnameOverride: ""
+serviceAccount:
+  create: true
+  annotations: {}
+podAnnotations:
+  linkerd.io/inject: disabled
+  prometheus.io/path: /metrics
+  prometheus.io/port: "10254"
+service:
+  type: ClusterIP
+  grpcport: 80
+  httpport: 81
+  debugport: 82
+  connectport: 83
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 250Mi
+env:
+- name: GOMEMLIMIT
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.memory
+- name: GOMAXPROCS
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.cpu
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+secrets: {}
+podMonitor:
+  custom:
+    enabled: false
+    metricRelabelings: []
+probe:
+  enabled: false
+serviceProfile:
+  enabled: false
+spreadConstraints:
+  enabled: false
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 1
+argo:
+  enabled: false
+externalSecrets:
+  refreshInterval: 1h
+  refs: {}
+postgres-exporter:
+  enabled: false
+  fullnameOverride: postgres-exporter
+  serviceMonitor:
+    enabled: false
+    labels:
+      instance: union
+configMap:
+  cache:
+    identity:
       enabled: false
-      metricRelabelings: []
-  probe:
-    enabled: false
-  serviceProfile:
-    enabled: false
-  spreadConstraints:
-    enabled: false
-  strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 1
-  argo:
-    enabled: false
-  externalSecrets:
-    refreshInterval: 1h
-    refs: {}
-  postgres-exporter:
-    enabled: false
-    fullnameOverride: postgres-exporter
-    serviceMonitor:
+  authorizer:
+    type: "Noop"
+    internalCommunicationConfig:
       enabled: false
-      labels:
-        instance: union
-  configMap:
-    cache:
-      identity:
-        enabled: false
-    authorizer:
-      type: "Noop"
-      internalCommunicationConfig:
-        enabled: false
-    connection:
-      environment: staging
-      region: us-east-2
-      rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
-    otel:
-      type: otlpgrpc
-      otlpgrpc:
-        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-      sampler:
-        parentSampler: traceid
-        traceIdRatio: 0.001
-    union:
-      internalConnectionConfig:
-        enabled: true
-        urlPattern: "{{ service }}.union.svc.cluster.local:80"
-      connection:
-        trustedIdentityClaims:
-          externalIdentityClaim: ""
-      auth:
-        enable: false
-    logger:
-      level: 6
+  connection:
+    environment: ""
+    region: ""
+    rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+  otel:
+    type: otlpgrpc
+    otlpgrpc:
+      endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+    sampler:
+      parentSampler: traceid
+      traceIdRatio: 0.001
+  union:
+    internalConnectionConfig:
+      enabled: true
+      urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
+    auth:
+      enable: false
+  logger:
+    level: 6
 
 services:
   artifacts:
@@ -121,9 +137,9 @@ services:
         metrics:
           scope: "artifacts:"
       db:
-        host: dbhost # Placeholder for the actual DB host
-        username: "postgres" # Placeholder for the actual DB username
-        passwordPath: /etc/secrets/db-pass.txt
+        host: '{{ .Values.dbHost }}'
+        username: '{{.Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -133,7 +149,7 @@ services:
           adminClient:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
-            container: artifacts-bucket # Placeholder for the actual bucket name used by artifacts
+            container: '{{ .Values.artifactsBucketName }}'
             stow:
               config:
                 auth_type: iam
@@ -145,13 +161,13 @@ services:
             maxIdleConnections: 20
             maxOpenConnections: 30
             postgres:
-              dbname: postgres
-              host: dbhost # Placeholder for the actual DB host
+              dbname: '{{ .Values.dbName }}'
+              host: '{{ .Values.dbHost }}'
               options: sslmode=disable
-              passwordPath: /etc/secrets/db-pass.txt
+              passwordPath: /etc/db/pass.txt
               port: 5432
-              readReplicaHost: dbhost # Placeholder for the actual read replica host
-              username: postgres
+              readReplicaHost: '{{ .Values.dbHost }}'
+              username:  '{{ .Values.dbUser }}'
           artifactServerConfig:
             httpPort: 8089
             port: 8080
@@ -186,18 +202,12 @@ services:
       sharedService:
         metrics:
           scope: "cluster:"
-      timeseries:
-        timestream:
-          databaseName: dbName # Placeholder for the actual DB name
-          tableName: "cloudMetricsRaw"
-          derivedTableName: "cloudMetricsDerived"
-          region: "us-east-2"
-          tags:
-            - environment: "staging"
+      cloudProvider:
+        provider: Mock
       db:
-        host: dbhost # Placeholder for the actual DB host
-        username: "postgres" # Placeholder for the actual DB username
-        passwordPath: /etc/secrets/db-pass.txt
+        host: '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -217,7 +227,7 @@ services:
         metrics:
           scope: "usage:"
       dataproxy:
-        secureTunnelTenantURLPattern: "" # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
+        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
         clusterSelector:
           type: local
   executions:
@@ -227,9 +237,6 @@ services:
       - serve
       - --config
       - /etc/config/*.yaml
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: executions-role # Placeholder for the actual role ARN
     configMap:
       workspace:
         enable: false
@@ -237,58 +244,19 @@ services:
         metrics:
           scope: "executions:"
       db:
-        host: dbhost # Placeholder for the actual DB host
-        username: "postgres" # Placeholder for the actual DB username
-        passwordPath: /etc/secrets/db-pass.txt
+        host:  '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
           maxConnectionLifetime: 1m
       cloudEventsProcessor:
-        cloudProvider: AWS
-        region: us-east-2
-        subscriber:
-          accountId: accountId # Placeholder for the actual account ID
-          queueName: cloudEventQueue # Placeholder for the actual queue name
+        cloudProvider: Local
       executions:
-        app:
-          adminClient:
-            connection:
-              authorizationHeader: flyte-authorization
-              clientId: clientID # Placeholder for the actual client ID
-              scopes:
-                - all
-          taskValidation:
-            serverlessTaskPodSpecValidation:
-              enabled: "true"
-            skipOrgs: []
         apps:
-          enrichIdentities: true
+          enrichIdentities: false
           publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
-  identity:
-    fullnameOverride: "identity"
-    args:
-      - cloudidentity
-      - serve
-      - --config
-      - /etc/config/*.yaml
-    configMap:
-      sharedService:
-        metrics:
-          scope: "identity:"
-      identity:
-        app:
-          rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
-          env: staging
-          identityProviderConfig:
-            okta:
-              clientRegistrationEndpointUrl: idpurl # Placeholder for the actual IDP URL
-          adminClient:
-            connection:
-              clientId: clientID # Placeholder for the actual client ID
-              authorizationHeader: "flyte-authorization"
-              scopes:
-                - all
   usage:
     fullnameOverride: "usage"
     args:
@@ -296,46 +264,61 @@ services:
       - serve
       - --config
       - /etc/config/*.yaml
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: usage-role # Placeholder for the actual role ARN
     configMap:
       sharedService:
         metrics:
           scope: "usage:"
       cloudProvider:
-        awsConfig:
-          region: us-east-2
-        provider: aws
-      timeseries:
-        timestream:
-          databaseName: staging-timestream
-          derivedTableName: cloudMetricsDerived
-          query:
-            enabled: true
-            includeQuotaBasedResourceMetrics: true
-          tableName: cloudMetricsRaw
-          tags:
-            - environment: staging
+        provider: Mock
 flyte:
-  userSettings:
-    rdsHost: "" # -- Set the RDS host for the flyteadmin database
-    dbUser: "" # -- Set the RDS user for the flyteadmin database
-    bucketName: "" # -- Set the S3 bucket name for Flyte storage
+  # All the value below need to be duplicated due to flyte-core being a subchart.
+  # -- Set the DB host used for tenant services.
+  dbHost: ""
+  # -- Set the DB Name used for the control plane services
+  dbName: ""
+  # -- Set the DB user used for the control plane services
+  dbUser: ""
+  # -- Set the DB password used for the controlplane services
+  dbPass: ""
+  # -- Set the S3 bucket name used for flyte storage
+  bucketName: ""
+  # -- Set the bucket region
+  region: ""
+
   flyteadmin:
     replicaCount: 1
+    # -- Set the image used for flyteadmin
     image:
-      repository: "" # -- Set the repository for the flyteadmin image"
-      tag: "" # -- Set the tag for the flyteadmin image
-      pullPolicy: "" # -- Set the pull policy for the flyteadmin image
+      repository: ""
+      pullPolicy: IfNotPresent
+      tag:  ""
     serviceAccount:
       annotations:
-      # -- Placeholder for the actual role ARN
+        # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
     podAnnotations:
       kubectl.kubernetes.io/default-container: flyteadmin
     initialProjects:
       - union-health-monitoring
       - flytesnacks
+    readinessProbe: |-
+      httpGet:
+        path: /healthcheck
+        port: 8088
+      initialDelaySeconds: 15
+      timeoutSeconds: 1
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 3
+
+    livenessProbe: |-
+      httpGet:
+        path: /healthcheck
+        port: 8088
+      initialDelaySeconds: 20
+      timeoutSeconds: 1
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
 
   workflow_scheduler:
     enabled: false
@@ -380,9 +363,13 @@ flyte:
         type: Opaque
         stringData:
           # -- If using plain text you can provide the password here
-          pass.txt: "{{ .Values.userSettings.dbPassword }}"
+          pass.txt: '{{ .Values.dbPass }}'
     ingress:
-      host: selfhosted.cloud-staging.union.ai
+      secretService: true
+      tls:
+        enabled: true
+        secretName: "" # Set the name of the secret used for TLS termination"
+      host:  "" # Set the DNS name of the ingress host used by you control plane
       albSSLRedirect: false
       separateGrpcIngress: true
       annotations:
@@ -412,74 +399,6 @@ flyte:
           client_header_buffer_size 16k;
           large_client_header_buffers 64 32k;
         nginx.ingress.kubernetes.io/service-upstream: "true"
-      annotationsUnary:
-        nginx.ingress.kubernetes.io/configuration-snippet: |
-          # Copy the user id and identity type from the auth response header into the upstream request header
-          auth_request_set $user_id $upstream_http_x_user_subject;
-          proxy_set_header X-User-Subject $user_id;
-          grpc_set_header X-User-Subject $user_id;
-
-          auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-          proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-          grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-
-          auth_request_set $user_apporg $upstream_http_x_user_claim_apporg;
-          proxy_set_header X-User-Claim-Apporg $user_apporg;
-          grpc_set_header X-User-Claim-Apporg $user_apporg;
-
-          auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-          proxy_set_header X-User-Claim-userhandle $user_handle;
-          grpc_set_header X-User-Claim-userhandle $user_handle;
-
-          auth_request_set $groups $upstream_http_x_user_claim_groups;
-          proxy_set_header X-User-Claim-groups $groups;
-          grpc_set_header X-User-Claim-groups $groups;
-
-          more_set_headers "x-request-id: $request_id";
-          proxy_set_header x-request-id $request_id;
-          grpc_set_header x-request-id $request_id;
-
-          more_set_headers "X-Orig-Host: $host";
-          proxy_set_header X-Orig-Host $host;
-          grpc_set_header X-Orig-Host $host;
-
-          # We disallow external services which go through ingress to set this header so that no one can spoof this
-          # as we rely on making authorization decisions based on this
-          more_set_headers "l5d-client-id";
-          # Donot allow to set this internal header which is used for escalated privilges access in serverless
-          more_set_headers "x-overriden-org";
-      annotationsStreaming:
-        nginx.ingress.kubernetes.io/configuration-snippet: |
-          # Copy the user id and identity type from the auth response header into the upstream request header
-          auth_request_set $user_id $upstream_http_x_user_subject;
-          proxy_set_header X-User-Subject $user_id;
-          grpc_set_header X-User-Subject $user_id;
-
-          auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-          proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-          grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-
-          auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-          proxy_set_header X-User-Claim-userhandle $user_handle;
-          grpc_set_header X-User-Claim-userhandle $user_handle;
-
-          auth_request_set $groups $upstream_http_x_user_claim_groups;
-          proxy_set_header X-User-Claim-groups $groups;
-          grpc_set_header X-User-Claim-groups $groups;
-
-          more_set_headers "x-request-id: $request_id";
-          proxy_set_header x-request-id $request_id;
-          grpc_set_header x-request-id $request_id;
-
-          more_set_headers "X-Orig-Host: $host";
-          proxy_set_header X-Orig-Host $host;
-          grpc_set_header X-Orig-Host $host;
-
-          # We disallow external services which go through ingress to set this header so that no one can spoof this
-          # as we rely on making authorization decisions based on this
-          more_set_headers "l5d-client-id";
-          # Donot allow to set this internal header which is used for escalated privilges access in serverless
-          more_set_headers "x-overriden-org";
       protectedIngressAnnotations:
         nginx.org/websocket-services: dataproxy-service
       enableProtectedConsoleIngress: false
@@ -497,9 +416,9 @@ flyte:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
     type: s3
     # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
-    bucketName: "{{ .Values.userSettings.bucketName }}"
+    bucketName: '{{ .Values.bucketName }}'
     s3:
-      region: "{{ .Values.userSettings.accountRegion }}"
+      region: "{{ .Values.region }}"
     cache:
       maxSizeMBs: 1024
   db:
@@ -508,8 +427,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.userSettings.dbUser }}"
-        host: "{{ .Values.userSettings.rdsHost }}"
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
         # -- Create a DB called datacatalog (OR change the name here)
         dbname: datacatalog
         passwordPath: /etc/db/pass.txt
@@ -520,8 +439,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.userSettings.dbUser }}"
-        host: "{{ .Values.userSettings.rdsHost }}"
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
         # -- Create a DB called postgres (OR change the name here)
         dbname: postgres
         passwordPath: /etc/db/pass.txt
@@ -532,8 +451,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.userSettings.dbUser }}"
-        host: "{{ .Values.userSettings.rdsHost }}"
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
         # -- Create a DB called cacheservice (OR change the name here)
         dbname: cacheservice
         passwordPath: /etc/db/pass.txt
@@ -545,15 +464,7 @@ flyte:
       union:
         internalConnectionConfig:
           enabled: true
-          urlPattern: '{{ printf "{{ service }}.union.svc.cluster.local:80" }}'
-        connection:
-          trustedIdentityClaims:
-            externalIdentityClaim: 0oa2n55xystvEjmOD5d7
-        auth:
-          clientId: 0oa2n55xystvEjmOD5d7
-          authorizationMetadataKey: "flyte-authorization"
-          scopes:
-            - all
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Values.namespace }}'
       authorizer:
         type: "Noop"
         internalCommunicationConfig:
@@ -561,11 +472,6 @@ flyte:
 
     adminServer:
       admin:
-        authType: ClientSecret
-        clientSecretLocation: /etc/secrets/oidc_client_secret
-        scopes:
-          - all
-        authorizationHeader: "flyte-authorization"
         flyteadmin:
           metricsKeys:
             - phase
@@ -582,26 +488,6 @@ flyte:
             eventTypes:
               - workflow
               - node
-        auth:
-          httpAuthorizationHeader: "flyte-authorization"
-          grpcAuthorizationHeader: "flyte-authorization"
-          userAuth:
-            cookieSetting:
-              sameSitePolicy: LaxMode
-              domain: default
-            idpQueryParameter: "idp"
-            openId:
-              scopes:
-                - profile
-                - openid
-                - offline_access
-          appAuth:
-            authServerType: External
-            thirdPartyConfig:
-              flyteClient:
-                scopes:
-                  - all
-          tokenEndpointProxyPath:
         otel:
           type: otlpgrpc
           otlpgrpc:
@@ -613,23 +499,15 @@ flyte:
           internalCommunicationConfig:
             enabled: false
         union:
-          auth:
-            type: ClientSecret
-            clientSecretLocation: /etc/secrets/oidc_client_secret
-            scopes:
-              - all
-            authorizationMetadataKey: "flyte-authorization"
           internalConnectionConfig:
             enabled: true
-            urlPattern: '{{ printf "{{ service }}.{{ service }}.svc.cluster.local:80" }}'
+            urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Values.namespace }}'
         private:
           app:
             cacheProviderConfig:
-              kind: redis
+              kind: bypass
           metrics:
             disable: true
-        redisCache:
-          passwordSecretName: "redis-cache-password"
         cacheserviceServer:
           otel:
             type: otlpgrpc
@@ -641,19 +519,10 @@ flyte:
           authorizer:
             internalCommunicationConfig:
               enabled: false
-          union:
-            auth:
-              type: ClientSecret
-              clientSecretLocation: /etc/secrets/oidc_client_secret
-              scopes:
-                - all
-              authorizationHeader: "flyte-authorization"
           private:
             app:
               cacheProviderConfig:
-                kind: redis
-          redisCache:
-            passwordSecretName: "redis-cache-password"
+                kind: bypass
         domain: { }
       server:
         security:
@@ -671,49 +540,11 @@ flyte:
       union:
         internalConnectionConfig:
           enabled: true
-          urlPattern: '{{ printf "{{ service }}.selfhosted.svc.cluster.local:80" }}'
-        connection:
-          trustedIdentityClaims:
-            externalIdentityClaim: 0oa2n55xystvEjmOD5d7
-        auth:
-          clientId: 0oa2n55xystvEjmOD5d7
-          authorizationMetadataKey: "flyte-authorization"
-          scopes:
-            - all
-    sharedService:
-      metrics:
-        scope: "identity:"
-    identity:
-      app:
-        rootTenantURLPattern: dns:///{{ organization }}.cloud-staging.union.ai
-        env: staging
-        identityProviderConfig:
-          okta:
-            clientRegistrationEndpointUrl: https://unionai.oktapreview.com
-        adminClient:
-          connection:
-            clientId: 0oa2n55xystvEjmOD5d7
-            authorizationHeader: "flyte-authorization"
-            scopes:
-              - all
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Values.namespace }}'
   cloudEvents:
     enable: false
   workflow_notifications:
     enabled: false
-
-podMonitor:
-  custom:
-    enabled: false
-  linkerd:
-    enabled: false
-probe:
-  enabled: false
-
-serviceProfile:
-  enabled: false
-
-spreadConstraints:
-  enabled: false
 
 unionv2:
   enabled: false
@@ -729,6 +560,3 @@ objectstore:
   controlPlane:
     enabled: false
 
-ingress:
-  hostnames:
-    -  #placeholder for the actual dns hostname of the control plane
