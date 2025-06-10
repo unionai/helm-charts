@@ -222,8 +222,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "unionai.secretName" -}}
 {{- if .config.secretNameOverride }}
 {{- .config.secretNameOverride | trunc 63 | trimSuffix "-" }}
-{{- else if and (hasKey .Values.global "service") (hasKey .Values.global.service "secretName") }}
-{{- .Values.global.service.secretName }}
+{{- else if and (hasKey .Values "service") (hasKey .Values.service "secretName") }}
+{{- .Values.service.secretName }}
 {{- else }}
 {{- include "unionai.fullname" . | trim -}}
 {{- end }}
