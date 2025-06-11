@@ -806,6 +806,8 @@ data:
       internalCommunicationConfig:
         enabled: false
       type: Noop
+    billing:
+      enable: false
     cache:
       identity:
         enabled: false
@@ -2482,6 +2484,134 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: controlplane-usage-grpc
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
+spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
+  rules:
+    - host: fake-host.domain
+      http:
+        paths:
+          
+          - path: /cloudidl.usage.UsageService/GetTaskExecutionMetrics
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+          - path: /cloudidl.usage.UsageService/GetTaskExecutionMetricsStreaming
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+          - path: /cloudidl.usage.UsageService/ListQuotas
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: controlplane-usage
+  namespace: union
+  annotations: 
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+    nginx.org/websocket-services: dataproxy-service
+spec:
+  tls:
+  - hosts:
+    - fake-host.domain
+    secretName: fake-host-tls-secret
+  rules:
+    - host: fake-host.domain
+      http:
+        paths:
+          
+          - path: /usage/GetTaskExecutionMetrics
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /usage/GetTaskExecutionMetricsStreaming
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /usage/ListQuotas
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
   name: controlplane-protected
   namespace: union
   annotations: 
@@ -2863,20 +2993,6 @@ spec:
                 name: execution
                 port:
                   number: 81
-          - path: /usage
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
-                port:
-                  number: 81
-          - path: /usage/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
-                port:
-                  number: 81
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
@@ -3113,20 +3229,6 @@ spec:
             backend:
               service:
                 name: cluster
-                port:
-                  number: 80
-          - path: /cloudidl.usage.UsageService/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
-                port:
-                  number: 80
-          - path: /cloudidl.usage.UsageService
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
                 port:
                   number: 80
           - path: /cloudidl.authorizer.AuthorizerService/*
