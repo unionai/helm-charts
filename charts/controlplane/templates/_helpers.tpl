@@ -229,6 +229,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 
+{{- define "unionai.dbSecretName" -}}
+{{- if .config.dbSecretNameOverride -}}
+{{- .config.dbSecretNameOverride | trunc 63 | trimSuffix "-" -}}
+{{- else if and (hasKey .Values "service") (hasKey .Values.service "dbSecretName") -}}
+{{- .Values.service.dbSecretName -}}
+{{- else -}}
+db-pass
+{{- end -}}
+{{- end -}}
+
 {{/*
 Selector labels
 */}}

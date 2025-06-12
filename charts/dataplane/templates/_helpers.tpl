@@ -967,3 +967,11 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- printf "*.apps.%s" .Values.host | quote }}
 {{- end }}
 {{- end -}}
+
+{{- define "ingress.dataproxy.host" -}}
+{{- if .Values.ingress.dataproxy.hostOverride }}
+{{- .Values.ingress.dataproxy.hostOverride | quote }}
+{{- else }}
+{{- .Values.host -}}
+{{- end }}
+{{- end -}}
