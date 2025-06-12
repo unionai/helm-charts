@@ -121,30 +121,6 @@ metadata:
   annotations: 
     eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
 ---
-# Source: controlplane/charts/flyte/templates/datacatalog/rbac.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
----
-# Source: controlplane/charts/flyte/templates/flytescheduler/sa.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flytescheduler
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
----
 # Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -429,7 +405,7 @@ data:
       union:
         internalConnectionConfig:
           enabled: true
-          urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+          urlPattern: '_SERVICE_.%!s(<nil>).svc.cluster.local:80'
     auth:
       appAuth:
         thirdPartyConfig:
@@ -486,7 +462,7 @@ data:
     union:
       internalConnectionConfig:
         enabled: true
-        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+        urlPattern: '_SERVICE_.%!s(<nil>).svc.cluster.local:80'
   remoteData.yaml: | 
     remoteData:
       region: us-east-1
@@ -515,91 +491,6 @@ data:
         cpu: 2
         gpu: 1
         memory: 1Gi
----
-# Source: controlplane/charts/flyte/templates/datacatalog/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: datacatalog-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-data:
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: datacatalog
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 20
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  server.yaml: | 
-    application:
-      grpcMaxRecvMsgSizeMBs: 6
-      grpcPort: 8089
-      grpcServerReflection: true
-      httpPort: 8080
-    datacatalog:
-      heartbeat-grace-period-multiplier: 3
-      max-reservation-heartbeat: 30s
-      metrics-scope: datacatalog
-      profiler-port: 10254
-      storage-prefix: metadata/datacatalog
-  storage.yaml: | 
-    storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 10
-      cache:
-        max_size_mbs: 1024
-        target_gc_percent: 70
----
-# Source: controlplane/charts/flyte/templates/flytescheduler/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-scheduler-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-data:
-  admin.yaml: | 
-    admin:
-      clientId: 'flytepropeller'
-      clientSecretLocation: /etc/secrets/client_secret
-      endpoint: dns:///fake-host.domain
-      insecure: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: postgres
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 80
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  server.yaml: | 
-    scheduler:
-      metricsScope: 'flyte:'
-      profilerPort: 10254
 ---
 # Source: controlplane/templates/configmap.yaml
 apiVersion: v1
@@ -916,7 +807,7 @@ data:
         enabled: false
       type: Noop
     billing:
-      enable: false
+      enable: true
     cache:
       identity:
         enabled: false
@@ -1080,34 +971,6 @@ spec:
       port: 10254
   selector: 
     app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
----
-# Source: controlplane/charts/flyte/templates/datacatalog/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-  annotations: 
-    projectcontour.io/upstream-protocol.h2c: grpc
-spec:
-  type: ClusterIP
-  ports:
-  - name: http
-    port: 88
-    protocol: TCP
-    targetPort: 8088
-  - name: grpc
-    port: 89
-    protocol: TCP
-    targetPort: 8089
-  selector: 
-    app.kubernetes.io/name: datacatalog
     app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/service.yaml
@@ -1334,7 +1197,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fff146907a786d52f6ae2299bf90d599a86fb10edfd30d0e9d8b3f9ecffbea9"
+        configChecksum: "2227144f82d0cffda02ff75da26fcac9a032b704e9e92a29839afc0ca701371"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -1487,202 +1350,6 @@ spec:
       - name: admin-secrets
         secret:
           secretName: flyte-admin-secrets
----
-# Source: controlplane/charts/flyte/templates/datacatalog/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: datacatalog
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "267d73b002b5d6c031cd696508fab7886026f1a71d609a9c8f448b2fc0cb709"
-      labels: 
-        app.kubernetes.io/name: datacatalog
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.0-b2
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      securityContext: 
-        fsGroup: 1001
-        fsGroupChangePolicy: OnRootMismatch
-        runAsNonRoot: true
-        runAsUser: 1001
-        seLinuxOptions:
-          type: spc_t
-      initContainers:
-      - command:
-        - datacatalog
-        - --config
-        - /etc/datacatalog/config/*.yaml
-        - migrate
-        - run
-        image: ":"
-        imagePullPolicy: ""
-        name: run-migrations
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/datacatalog/config
-          name: config-volume
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-      containers:
-      - command:
-        - datacatalog
-        - --config
-        - /etc/datacatalog/config/*.yaml
-        - serve
-        image: ":"
-        imagePullPolicy: ""
-        name: datacatalog
-        ports:
-        - containerPort: 8080
-        - containerPort: 8089
-        - containerPort: 10254
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        resources:
-          limits:
-            cpu: 500m
-            ephemeral-storage: 100Mi
-            memory: 500Mi
-          requests:
-            cpu: 10m
-            ephemeral-storage: 50Mi
-            memory: 50Mi
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/datacatalog/config
-          name: config-volume
-      serviceAccountName: datacatalog
-      volumes:
-      - name: db-pass
-        secret:
-          secretName: db-pass
-      - emptyDir: {}
-        name: shared-data
-      - projected:
-          sources:
-            - configMap:
-                name: datacatalog-config
-        name: config-volume
----
-# Source: controlplane/charts/flyte/templates/flytescheduler/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flytescheduler
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: flytescheduler
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "fff146907a786d52f6ae2299bf90d599a86fb10edfd30d0e9d8b3f9ecffbea9"
-      labels: 
-        app.kubernetes.io/name: flytescheduler
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.0-b2
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      securityContext: 
-        fsGroup: 65534
-        fsGroupChangePolicy: Always
-        runAsNonRoot: true
-        runAsUser: 1001
-        seLinuxOptions:
-          type: spc_t
-      initContainers:
-      - command:
-        - flytescheduler
-        - precheck
-        - --config
-        - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler-release:v1.16.0-b2"
-        imagePullPolicy: "IfNotPresent"
-        name: flytescheduler-check
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/flyte/config
-          name: config-volume
-        - name: auth
-          mountPath: /etc/secrets/
-      containers:
-      - command:
-        - flytescheduler
-        - run
-        - --config
-        - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler-release:v1.16.0-b2"
-        imagePullPolicy: "IfNotPresent"
-        name: flytescheduler
-        ports:
-          - containerPort: 10254
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        resources:
-          limits:
-            cpu: 250m
-            ephemeral-storage: 100Mi
-            memory: 500Mi
-          requests:
-            cpu: 10m
-            ephemeral-storage: 50Mi
-            memory: 50Mi
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/flyte/config
-          name: config-volume
-        - name: auth
-          mountPath: /etc/secrets/
-      serviceAccountName: flytescheduler
-      volumes:
-      - name: db-pass
-        secret:
-          secretName: db-pass
-      - emptyDir: {}
-        name: shared-data
-      - configMap:
-          name: flyte-scheduler-config
-        name: config-volume
-      - name: auth
-        secret:
-          secretName: flyte-secret-auth
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -2845,7 +2512,6 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
-    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   tls:
   - hosts:
@@ -2856,7 +2522,14 @@ spec:
       http:
         paths:
           
-          - path: /cloudidl.usage.UsageService(/(?!GetCustomMeasuresNames|GetMeasureGroup|GetMeasureGroups|GetBillableMeasures|GetBillingInfo|ReportBillableUsage|ReportServerlessBillableUsage|CreateCustomer|AttachBillingPlanToCustomer|GetCustomerCredits|EnqueueMetronomeRequest|EnqueueStripeRequest|GetOrgCheckoutSession).*|$)
+          - path: /cloudidl.usage.UsageService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 80
+          - path: /cloudidl.usage.UsageService
             pathType: ImplementationSpecific
             backend:
               service:
@@ -2896,7 +2569,6 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.org/websocket-services: dataproxy-service
-    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   tls:
   - hosts:
@@ -2907,7 +2579,14 @@ spec:
       http:
         paths:
           
-          - path: /usage/api/v1(/(?!custom_measures_names|measure_group|measure_groups|billable_measures|billing_info|report_billable_usage|customer_credits|checkout_session).*|$)
+          - path: /usage/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: usage
+                port:
+                  number: 81
+          - path: /usage
             pathType: ImplementationSpecific
             backend:
               service:
