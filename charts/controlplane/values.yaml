@@ -341,7 +341,41 @@ flyte:
   flytepropeller:
     enabled: false
   flyteconsole:
-    enabled: false
+    enabled: true
+    podEnv:
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://otel-collector.monitoring.svc.cluster.local:4318"
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: "http/protobuf"
+    replicaCount: 1
+    image:
+      repository: "" # -- Set the repository for the console image"
+      tag: "" # -- Set the tag for the console image
+    resources:
+      # flyteconsole service has less memory footprint but cpu goes up depends on traffic, If CPU use is high then we will use HPA
+      limits:
+        cpu: 250m
+        memory: 250Mi
+        ephemeral-storage: 200Mi # Pre-liminary limit to avoid runaway disk usage
+      requests:
+        cpu: 10m
+        memory: 50Mi
+        ephemeral-storage: 20Mi
+    serviceAccount:
+      create: true
+    podAnnotations:
+      linkerd.io/inject: disabled
+      prometheus.io/scrape: "false"
+    ga:
+      enabled: true
+      tracking_id: ""
+    service:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "600"
+        external-dns.alpha.kubernetes.io/hostname: "flyte.example.com"
+      type: ClusterIP
+    serviceMonitor:
+      enabled: false
   webhook:
     enabled: false
   cluster_resource_manager:

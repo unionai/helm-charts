@@ -1,0 +1,125 @@
+{{- define "protectedDefaultBackend" }}
+defaultBackend:
+  service:
+    name: flyteconsole
+    port:
+      number: 80
+{{- end}}
+
+{{- define "protectedConsoleHttpRoutes" }}
+- path: /
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+# NOTE: If you change this, you must update the BASE_URL value in flyteconsole.yaml
+- path: /console
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /console/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /dashboard
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /dashboard/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /resources
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /resources/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /cost
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /cost/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /loading
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+- path: /loading/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: flyteconsole
+      port:
+        number: 80
+{{- end }}
+
+
+{{- define "control-plane-library.console-protected-ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-console-protected
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations:{{ tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- with .Values.flyte.common.ingress.protectedConsoleIngressAnnotations }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+spec:
+  {{- if .Values.flyte.common.ingress.isSelfServe }}
+  {{- include "protectedDefaultBackend" . | nindent 2 -}}
+  {{- end}}
+  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.flyte.common.ingress.host }}
+    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:{{- include "protectedConsoleHttpRoutes" . | nindent 10 -}}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths: {{- include "protectedConsoleHttpRoutes" . | nindent 10 -}}
+    {{- end}}
+{{- end}} # end of define control-plane-library.console-protected-ingress # end of if .Values.flyte.common.ingress.enableProtectedConsoleIngress
