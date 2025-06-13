@@ -380,6 +380,66 @@ flyte:
     enabled: false
   cluster_resource_manager:
     enabled: false
+  cacheservice:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: "" # -- Set the repository for the private cacheservice image"
+      tag: "" # -- Set the tag for the private cacheservice datacatalog image
+      pullPolicy: "" # -- Set the pull policy for the private cacheservice  image
+    serviceAccount:
+      # -- If the service account is created by you, make this false
+      create: true
+      annotations:
+      # -- Set the role arn for the cacheservice service account which has access to the S3 bucket
+    resources:
+      limits:
+        cpu: 1
+        ephemeral-storage: 200Mi
+      requests:
+        cpu: 500m
+        ephemeral-storage: 200Mi
+        memory: 200Mi
+    configPath: /etc/cacheservice/config/*.yaml
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cacheservice
+            topologyKey: kubernetes.io/hostname
+
+    service:
+      annotations: { }
+      type: ClusterIP
+    # -- Annotations for Cacheservice pods
+    podAnnotations: { }
+    # -- Additional Cacheservice container environment variables
+    podEnv: { }
+    # -- Labels for Cacheservice pods
+    podLabels: { }
+    # -- nodeSelector for Cacheservice deployment
+    nodeSelector: { }
+    # -- tolerations for Cacheservice deployment
+    tolerations: [ ]
+    # -- Appends additional volumes to the deployment spec. May include template values.
+    additionalVolumes: [ ]
+    # -- Appends additional volume mounts to the main container's spec. May include template values.
+    additionalVolumeMounts: [ ]
+    # -- Appends additional containers to the deployment spec. May include template values.
+    additionalContainers: [ ]
+    # -- Appends extra command line arguments to the main command
+    extraArgs: { }
+    # -- Sets priorityClassName for cacheservice pod(s).
+    priorityClassName: ""
+    # -- Sets securityContext for cacheservice pod(s).
+    securityContext:
+      runAsNonRoot: true
+      fsGroup: 1001
+      runAsUser: 1001
+      fsGroupChangePolicy: "OnRootMismatch"
+      seLinuxOptions:
+        type: spc_t
   common:
     databaseSecret:
       name: db-pass
@@ -495,16 +555,6 @@ flyte:
         maxOpenConnections: 20
         connMaxLifeTime: 120s
   configmap:
-    cacheserviceServer:
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-      authorizer:
-        type: "Noop"
-        internalCommunicationConfig:
-          enabled: false
-
     adminServer:
       admin:
         flyteadmin:
@@ -576,6 +626,36 @@ flyte:
         internalConnectionConfig:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+    cacheserviceServer:
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      authorizer:
+        type: "Noop"
+        internalCommunicationConfig:
+          enabled: false
+      cacheservice:
+        storage-prefix: cached_outputs
+        metrics-scope: flyte
+        profiler-port: 10254
+        heartbeat-grace-period-multiplier: 3
+        max-reservation-heartbeat: 30s
+      cache-server:
+        grpcPort: 8089
+        httpPort: 8080
+        grpcServerReflection: true
+      otel:
+        type: otlpgrpc
+        otlpgrpc:
+          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+        sampler:
+          parentSampler: traceid
+          traceIdRatio: 0.001
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
   cloudEvents:
     enable: false
   workflow_notifications:

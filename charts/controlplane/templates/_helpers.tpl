@@ -374,3 +374,101 @@ Renders a complete tree, even values that contains template.
     {{- tpl (.value | toYaml) .context }}
   {{- end }}
 {{- end -}}
+
+
+{{/*
+Start of cacheservice helpers.
+*/}}
+{{- define "cacheservice.name" -}}
+cacheservice
+{{- end -}}
+
+{{- define "cacheservice.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "cacheservice.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "cacheservice.labels" -}}
+{{ include "cacheservice.selectorLabels" . }}
+helm.sh/chart: {{ include "flyte.chart" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "cacheservice.podLabels" -}}
+{{ include "cacheservice.labels" . }}
+{{- with .Values.flyte.cacheservice.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "cacheservice-storage.base" -}}
+storage:
+{{- if eq .Values.flyte.storage.type "s3" }}
+  type: s3
+  container: {{ .Values.flyte.storage.bucketName | quote }}
+  connection:
+    auth-type: {{ .Values.flyte.storage.s3.authType }}
+    region: {{ .Values.flyte.storage.s3.region }}
+    {{- if eq .Values.flyte.storage.s3.authType "accesskey" }}
+    access-key: {{ .Values.flyte.storage.s3.accessKey }}
+    secret-key: {{ .Values.flyte.storage.s3.secretKey }}
+    {{- end }}
+{{- else if eq .Values.flyte.storage.type "gcs" }}
+  type: stow
+  stow:
+    kind: google
+    config:
+      json: ""
+      project_id: {{ .Values.flyte.storage.gcs.projectId }}
+      scopes: https://www.googleapis.com/auth/cloud-platform
+  container: {{ .Values.flyte.storage.bucketName | quote }}
+{{- else if eq .Values.flyte.storage.type "sandbox" }}
+  type: minio
+  container: {{ .Values.flyte.storage.bucketName | quote }}
+  stow:
+    kind: s3
+    config:
+      access_key_id: minio
+      auth_type: accesskey
+      secret_key: miniostorage
+      disable_ssl: true
+      endpoint: http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000
+      region: us-east-1
+  signedUrl:
+    stowConfigOverride:
+      endpoint: http://minio.{{ .Release.Namespace }}.svc.cluster.local:9000
+{{- else if eq .Values.flyte.storage.type "custom" }}
+{{- with .Values.flyte.storage.custom -}}
+  {{ tpl (toYaml .) $ | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "cacheservice-storage" -}}
+{{ include "cacheservice-storage.base" .}}
+  enable-multicontainer: {{ .Values.flyte.storage.enableMultiContainer }}
+  limits:
+    maxDownloadMBs: {{ .Values.flyte.storage.limits.maxDownloadMBs }}
+  cache:
+    max_size_mbs: {{ .Values.flyte.storage.cache.maxSizeMBs }}
+    target_gc_percent: {{ .Values.flyte.storage.cache.targetGCPercent }}
+{{- end }}
+
+{{- define "cacheservice-databaseSecret.volumeMount" -}}
+{{- with .Values.flyte.common.databaseSecret.name -}}
+- mountPath: /etc/db
+  name: {{ . }}
+{{- end }}
+{{- end }}
+
+{{- define "cacheservice-databaseSecret.volume" -}}
+{{- with .Values.flyte.common.databaseSecret.name -}}
+- name: {{ . }}
+  secret:
+    secretName: {{ . }}
+{{- end }}
+{{- end }}
+
+{{/*
+End of cache service helpers.
+*/}}

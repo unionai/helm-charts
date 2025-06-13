@@ -1,0 +1,105 @@
+{{- if .Values.flyte.cacheservice.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "cacheservice.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  labels: {{ include "cacheservice.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.flyte.cacheservice.replicaCount }}
+  selector:
+    matchLabels: {{ include "cacheservice.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/cacheservice/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.flyte.cacheservice.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels: {{ include "cacheservice.podLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.flyte.cacheservice.securityContext }}
+      securityContext: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- if .Values.flyte.cacheservice.priorityClassName }}
+      priorityClassName: {{ .Values.flyte.cacheservice.priorityClassName }}
+      {{- end }}
+      initContainers:
+      - command:
+        - cacheservice
+        - --config
+        - {{ .Values.flyte.cacheservice.configPath }}
+        - migrate
+        - run
+        image: "{{ .Values.flyte.cacheservice.image.repository }}:{{ .Values.flyte.cacheservice.image.tag }}"
+        imagePullPolicy: "{{ .Values.flyte.cacheservice.image.pullPolicy }}"
+        name: run-migrations
+        volumeMounts: {{- include "cacheservice-databaseSecret.volumeMount" . | nindent 8 }}
+        - mountPath: /etc/cacheservice/config
+          name: config-volume
+        {{- if .Values.flyte.cacheservice.podEnv }}
+        env:
+          {{- with .Values.flyte.cacheservice.podEnv }}
+          {{- toYaml . | nindent 8 }}
+          {{- end }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+      containers:
+      - command:
+        - cacheservice
+        - --config
+        - {{ .Values.flyte.cacheservice.configPath }}
+        - serve
+        {{- with .Values.flyte.cacheservice.extraArgs }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+        {{- if .Values.flyte.cacheservice.podEnv }}
+        env:
+          {{- with .Values.flyte.cacheservice.podEnv }}
+          {{- toYaml . | nindent 8 }}
+          {{- end }}
+        {{- end }}
+        image: "{{ .Values.flyte.cacheservice.image.repository }}:{{ .Values.flyte.cacheservice.image.tag }}"
+        imagePullPolicy: "{{ .Values.flyte.cacheservice.image.pullPolicy }}"
+        name: cacheservice
+        ports:
+        - containerPort: 8088
+        - containerPort: 8089
+        - containerPort: {{ index .Values.flyte.configmap.cacheserviceServer.cacheservice "profiler-port" }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources: {{- toYaml .Values.flyte.cacheservice.resources | nindent 10 }}
+        volumeMounts: {{- include "cacheservice-databaseSecret.volumeMount" . | nindent 8 }}
+        - mountPath: /etc/cacheservice/config
+          name: config-volume
+        {{- with .Values.flyte.cacheservice.additionalVolumeMounts -}}
+        {{ tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+      {{- with .Values.flyte.cacheservice.additionalContainers -}}
+      {{- tpl (toYaml .) $ | nindent 6}}
+      {{- end }}
+      serviceAccountName: {{ template "cacheservice.name" . }}
+      volumes: {{- include "cacheservice-databaseSecret.volume" . | nindent 6 }}
+      - emptyDir: {}
+        name: shared-data
+      - configMap:
+          name: cacheservice-config
+        name: config-volume
+      {{- with .Values.flyte.cacheservice.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- with .Values.flyte.cacheservice.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.cacheservice.affinity }}
+      affinity: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.cacheservice.tolerations }}
+      tolerations: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- end }}

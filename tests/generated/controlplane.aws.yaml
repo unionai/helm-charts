@@ -145,6 +145,18 @@ metadata:
     helm.sh/chart: flyte-v1.16.0-b2
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: controlplane/templates/cacheservice/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cacheservice
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: cacheservice
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    app.kubernetes.io/managed-by: Helm
+---
 # Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -615,6 +627,72 @@ data:
     scheduler:
       metricsScope: 'flyte:'
       profilerPort: 10254
+---
+# Source: controlplane/templates/cacheservice/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cacheservice-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: cacheservice
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    app.kubernetes.io/managed-by: Helm
+data:
+  db.yaml: | 
+    database:
+      connMaxLifeTime: 120s
+      dbname: cacheservice
+      host: 'db-instance-url'
+      maxIdleConnections: 10
+      maxOpenConnections: 20
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: 'dbUser'
+  server.yaml: | 
+    authorizer:
+      internalCommunicationConfig:
+        enabled: false
+      type: Noop
+    cache-server:
+      grpcPort: 8089
+      grpcServerReflection: true
+      httpPort: 8080
+    cacheservice:
+      heartbeat-grace-period-multiplier: 3
+      max-reservation-heartbeat: 30s
+      metrics-scope: flyte
+      profiler-port: 10254
+      storage-prefix: cached_outputs
+    otel:
+      otlpgrpc:
+        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+      sampler:
+        parentSampler: traceid
+        traceIdRatio: 0.001
+      type: otlpgrpc
+    private:
+      app:
+        cacheProviderConfig:
+          kind: bypass
+    union:
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+  storage.yaml: | 
+    storage:
+      type: s3
+      container: "bucketName"
+      connection:
+        auth-type: iam
+        region: us-east-2
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 1024
+        target_gc_percent: 70
 ---
 # Source: controlplane/templates/configmap.yaml
 apiVersion: v1
@@ -1148,6 +1226,35 @@ spec:
     targetPort: 8089
   selector: 
     app.kubernetes.io/name: datacatalog
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/cacheservice/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cacheservice
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: cacheservice
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 88
+    protocol: TCP
+    targetPort: 8088
+  - name: grpc
+    port: 89
+    protocol: TCP
+    targetPort: 8089
+  - name: http-metrics
+    protocol: TCP
+    port: 10254
+  selector: 
+    app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/service.yaml
@@ -1796,6 +1903,107 @@ spec:
       - name: auth
         secret:
           secretName: flyte-secret-auth
+---
+# Source: controlplane/templates/cacheservice/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cacheservice
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: cacheservice
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2025.5.6
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels: 
+      app.kubernetes.io/name: cacheservice
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "3d9830acd051375eb4f700aa7786b85350af28da1ad5d1dcea0a297da64b915"
+      labels: 
+        app.kubernetes.io/name: cacheservice
+        app.kubernetes.io/instance: release-name
+        helm.sh/chart: controlplane-2025.5.6
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      securityContext: 
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 1001
+        seLinuxOptions:
+          type: spc_t
+      initContainers:
+      - command:
+        - cacheservice
+        - --config
+        - /etc/cacheservice/config/*.yaml
+        - migrate
+        - run
+        image: ":"
+        imagePullPolicy: ""
+        name: run-migrations
+        volumeMounts:
+        - mountPath: /etc/db
+          name: db-pass
+        - mountPath: /etc/cacheservice/config
+          name: config-volume
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+      containers:
+      - command:
+        - cacheservice
+        - --config
+        - /etc/cacheservice/config/*.yaml
+        - serve
+        image: ":"
+        imagePullPolicy: ""
+        name: cacheservice
+        ports:
+        - containerPort: 8088
+        - containerPort: 8089
+        - containerPort: 10254
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          limits:
+            cpu: 1
+            ephemeral-storage: 200Mi
+          requests:
+            cpu: 500m
+            ephemeral-storage: 200Mi
+            memory: 200Mi
+        volumeMounts:
+        - mountPath: /etc/db
+          name: db-pass
+        - mountPath: /etc/cacheservice/config
+          name: config-volume
+      serviceAccountName: cacheservice
+      volumes:
+      - name: db-pass
+        secret:
+          secretName: db-pass
+      - emptyDir: {}
+        name: shared-data
+      - configMap:
+          name: cacheservice-config
+        name: config-volume
+      affinity: 
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cacheservice
+            topologyKey: kubernetes.io/hostname
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
