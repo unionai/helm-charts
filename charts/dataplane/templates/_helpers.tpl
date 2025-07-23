@@ -140,7 +140,7 @@ tolerations:
 {{- end -}}
 
 {{- define "flytepropellerwebhook.selectorLabels" -}}
-app.kubernetes.io/name: flytepropellerwebhook
+app.kubernetes.io/name: flyte-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
