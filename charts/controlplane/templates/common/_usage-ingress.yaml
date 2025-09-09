@@ -1,0 +1,145 @@
+{{- define "usageGrpcRoutes" -}}
+{{- if .Values.services.usage.configMap.billing.enable }}
+- path: /cloudidl.usage.UsageService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 80
+- path: /cloudidl.usage.UsageService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 80
+{{- else }}
+- path: /cloudidl.usage.UsageService(/(?!GetCustomMeasuresNames|GetMeasureGroup|GetMeasureGroups|GetBillableMeasures|GetBillingInfo|ReportBillableUsage|ReportServerlessBillableUsage|CreateCustomer|AttachBillingPlanToCustomer|GetCustomerCredits|EnqueueMetronomeRequest|EnqueueStripeRequest|GetOrgCheckoutSession).*|$)
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 80
+{{- end }}
+{{- end }}
+
+{{- define "usageHttpRoutes" -}}
+{{- if .Values.services.usage.configMap.billing.enable }}
+- path: /usage/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+- path: /usage
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+{{- else }}
+- path: /usage/api/v1(/(?!custom_measures_names|measure_group|measure_groups|billable_measures|billing_info|report_billable_usage|customer_credits|checkout_session).*|$)
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: usage
+      port:
+        number: 81
+{{- end }}
+{{- end }}
+
+{{- define "control-plane-library.usage-ingress" }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-usage-grpc
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- if .Values.flyte.common.ingress.separateGrpcIngress }}
+  {{- with .Values.flyte.common.ingress.separateGrpcIngressAnnotations }}
+  {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.protectedIngressAnnotationsGrpc }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- if not .Values.services.usage.configMap.billing.enable }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  {{- end }}
+spec:
+  {{- with .Values.flyte.common.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.flyte.common.ingress.host }}
+    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+  {{- end}}
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          {{- include "usageGrpcRoutes" . | nindent 10 -}}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          {{- include "usageGrpcRoutes" . | nindent 10 -}}
+    {{- end}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-usage
+  namespace: {{ template "flyte.namespace" . }}
+  {{- with .Values.flyte.common.ingress.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4}}
+  {{- end }}
+  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- if .Values.flyte.common.ingress.enableProtectedConsoleIngress }}
+  {{- with .Values.flyte.common.ingress.protectedIngressAnnotationsWithoutSignin }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- else }}
+  {{- with .Values.flyte.common.ingress.protectedIngressAnnotations }}
+  {{- toYaml . | nindent 4 }}
+  {{- end}}
+  {{- end}}
+  {{- if not .Values.services.usage.configMap.billing.enable }}
+    nginx.ingress.kubernetes.io/use-regex: "true"
+  {{- end }}
+spec:
+  {{- with .Values.flyte.common.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  tls:
+  - hosts:
+    - {{ .Values.flyte.common.ingress.host }}
+    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+  {{- end}}
+  rules:
+    - host: {{ .Values.flyte.common.ingress.host }}
+      http:
+        paths:
+          {{- include "usageHttpRoutes" . | nindent 10 -}}
+    {{- if .Values.flyte.common.ingress.isSelfServe }}
+    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
+      http:
+        paths:
+          {{- include "usageHttpRoutes" . | nindent 10 -}}
+    {{- end}}
+{{- end }}
+

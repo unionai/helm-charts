@@ -35,19 +35,47 @@ kind: Namespace
 metadata:
   name: union-health-monitoring-production
 ---
+# Source: dataplane/charts/fluentbit/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentbit-system
+  namespace: union
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/charts/opencost/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: true
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 automountServiceAccountToken: true
 metadata:
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
   name: release-name-kube-state-metrics
   namespace: kube-system
@@ -62,9 +90,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -85,9 +113,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 automountServiceAccountToken: true
@@ -116,7 +144,7 @@ kind: ServiceAccount
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -296,13 +324,60 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
 ---
+# Source: dataplane/templates/fluent-bit/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fluentbit-system
+  namespace: union
+  labels:
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  custom_parsers.conf: |
+    [PARSER]
+        Name docker_no_time
+        Format json
+        Time_Keep Off
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+  fluent-bit.conf: |
+    [SERVICE]
+        Parsers_File /fluent-bit/etc/parsers.conf
+        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        Health_Check On
+    [INPUT]
+        Name                tail
+        Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
+        Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+        Path                /var/log/containers/*.log
+        DB                  /var/log/flb_kube.db
+        multiline.parser    docker, cri
+        Mem_Buf_Limit       5MB
+        Skip_Long_Lines     On
+        Refresh_Interval    10
+    
+    
+    [OUTPUT]
+        Name s3
+        Match *
+        upload_timeout 1m
+        s3_key_format /persisted-logs/$TAG
+        static_file_path true
+        json_date_key false
+        region us-ashburn-1
+        bucket bucket
+        endpoint https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -356,6 +431,8 @@ data:
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages: 
         enabled: true
+      billableUsageCollector: 
+        enabled: true
       dependenciesHeartbeat: 
         prometheus:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
@@ -364,6 +441,14 @@ data:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
     proxy: 
+      imageBuilderConfig:
+        authenticationType: 'noop'
+        defaultRepository: ''
+      persistedLogs:
+        objectStore:
+          pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
+          prefix: persisted-logs
+        sourceType: ObjectStore
       smConfig:
         enabled: 'true'
         k8sConfig:
@@ -373,8 +458,10 @@ data:
     logger: 
       level: 6
       show-source: true
-  # TODO: We used to have configmap-overrides here.  Do we even use those?
-  # config-overrides.yaml | ...
+  config-overrides.yaml: | 
+    cache:
+      identity:
+        enabled: false
   storage.yaml: | 
     storage:
       container: bucket
@@ -390,7 +477,7 @@ data:
           region: us-ashburn-1
       enable-multicontainer: false
       limits:
-        maxDownloadMBs: 10
+        maxDownloadMBs: 1024
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
@@ -478,11 +565,14 @@ data:
     webhook:
       certDir: /etc/webhook/certs
       embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
       secretManagerTypes:
       - Embedded
+      - K8s
       serviceName: flyte-pod-webhook
   enabled_plugins.yaml: | 
     tasks:
@@ -526,6 +616,11 @@ data:
             templateUris:
             - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
         kubernetes-enabled: false
+        templates:
+        - displayName: Task Logs
+          scheme: TaskExecution
+          templateUris:
+          - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
       container: bucket
@@ -541,23 +636,132 @@ data:
           region: us-ashburn-1
       enable-multicontainer: false
       limits:
-        maxDownloadMBs: 10
+        maxDownloadMBs: 1024
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
+---
+# Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-fluentbit
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Source: dataplane/charts/opencost/templates/clusterrole.yaml
+# Cluster role giving opencost to get, list, watch required resources
+# No write permissions are required
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+      - deployments
+      - nodes
+      - pods
+      - services
+      - resourcequotas
+      - replicationcontrollers
+      - limitranges
+      - persistentvolumeclaims
+      - persistentvolumes
+      - namespaces
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - extensions
+    resources:
+      - daemonsets
+      - deployments
+      - replicasets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - apps
+    resources:
+      - statefulsets
+      - deployments
+      - daemonsets
+      - replicasets
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - batch
+    resources:
+      - cronjobs
+      - jobs
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - autoscaling
+    resources:
+      - horizontalpodautoscalers
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - policy
+    resources:
+      - poddisruptionbudgets
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - storage.k8s.io
+    resources:
+      - storageclasses
+    verbs:
+      - get
+      - list
+      - watch
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
   name: release-name-kube-state-metrics
 rules:
@@ -711,9 +915,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -821,9 +1025,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 rules:
@@ -903,7 +1107,7 @@ kind: ClusterRole
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -931,6 +1135,8 @@ rules:
       - pods
       - configmaps
       - podtemplates
+      - secrets
+      - namespaces
       - nodes
     verbs:
       - get
@@ -1031,18 +1237,59 @@ rules:
       - post
       - deletecollection
 ---
+# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-fluentbit
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-fluentbit
+subjects:
+  - kind: ServiceAccount
+    name: fluentbit-system
+    namespace: union
+---
+# Source: dataplane/charts/opencost/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: opencost
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: opencost
+subjects:
+  - kind: ServiceAccount
+    name: opencost
+    namespace: union
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
   name: release-name-kube-state-metrics
 roleRef:
@@ -1063,9 +1310,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -1090,9 +1337,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 roleRef:
@@ -1157,7 +1404,7 @@ kind: ClusterRoleBinding
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -1229,7 +1476,7 @@ kind: Role
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -1272,7 +1519,7 @@ kind: RoleBinding
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -1285,6 +1532,52 @@ subjects:
     name: operator-system
     namespace: union
 ---
+# Source: dataplane/charts/fluentbit/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-fluentbit
+  namespace: union
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 2020
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/charts/opencost/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+  type: "ClusterIP"
+  ports:
+    - name: http
+      port: 9003
+      targetPort: 9003
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/service.yaml
 apiVersion: v1
 kind: Service
@@ -1292,22 +1585,22 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: kube-system
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
   annotations:
-    prometheus.io/scrape: 'true'
 spec:
   type: "ClusterIP"
   ports:
   - name: "http"
     protocol: TCP
     port: 8080
+    nodePort: 0
     targetPort: 8080
   
   selector:    
@@ -1325,9 +1618,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
   namespace: kube-system
@@ -1352,9 +1645,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
   namespace: kube-system
@@ -1380,9 +1673,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
   namespace: kube-system
@@ -1408,9 +1701,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
   namespace: kube-system
@@ -1436,9 +1729,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
   namespace: kube-system
@@ -1463,9 +1756,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -1493,9 +1786,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
@@ -1545,7 +1838,7 @@ kind: Service
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -1557,7 +1850,7 @@ spec:
       protocol: TCP
       name: debug
   selector:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
 ---
 # Source: dataplane/templates/propeller/service-webhook.yaml
@@ -1567,7 +1860,7 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
   labels: 
-    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -1575,7 +1868,7 @@ metadata:
     projectcontour.io/upstream-protocol.h2c: grpc
 spec:
   selector: 
-    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
   ports:
     - name: https
@@ -1612,6 +1905,177 @@ spec:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
 ---
+# Source: dataplane/charts/fluentbit/templates/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: release-name-fluentbit
+  namespace: union
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fluentbit
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fluentbit
+        app.kubernetes.io/instance: release-name
+      annotations:
+        checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+    spec:
+      serviceAccountName: fluentbit-system
+      hostNetwork: false
+      dnsPolicy: ClusterFirst
+      containers:
+        - name: fluentbit
+          image: "cr.fluentbit.io/fluent/fluent-bit:3.2.8"
+          imagePullPolicy: IfNotPresent
+          command:
+            - /fluent-bit/bin/fluent-bit
+          args:
+            - --workdir=/fluent-bit/etc
+            - --config=/fluent-bit/etc/conf/fluent-bit.conf
+          ports:
+            - name: http
+              containerPort: 2020
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+          volumeMounts:
+            - name: config
+              mountPath: /fluent-bit/etc/conf
+            - mountPath: /var/log
+              name: varlog
+            - mountPath: /var/lib/docker/containers
+              name: varlibdockercontainers
+              readOnly: true
+            - mountPath: /etc/machine-id
+              name: etcmachineid
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: fluentbit-system
+        - hostPath:
+            path: /var/log
+          name: varlog
+        - hostPath:
+            path: /var/lib/docker/containers
+          name: varlibdockercontainers
+        - hostPath:
+            path: /etc/machine-id
+            type: File
+          name: etcmachineid
+      tolerations:
+        - operator: Exists
+---
+# Source: dataplane/charts/opencost/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: opencost
+  namespace: union
+  labels:
+    helm.sh/chart: opencost-1.42.0
+    app.kubernetes.io/name: opencost
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.111.0"
+    app.kubernetes.io/part-of: opencost
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+      app.kubernetes.io/instance: release-name
+  strategy: 
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: opencost
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: opencost
+      containers:
+        - name: opencost
+          image: ghcr.io/opencost/opencost:1.111.0@sha256:6aa68e52a24b14ba41f23db08d1b9db1429a1c0300f4c0381ecc2c61fc311a97
+          imagePullPolicy: IfNotPresent
+          args:
+          ports:
+            - containerPort: 9003
+              name: http
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 4Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 9003
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          env:
+            - name: LOG_LEVEL
+              value: info
+            - name: CUSTOM_COST_ENABLED
+              value: "false"
+            - name: KUBECOST_NAMESPACE
+              value: union
+            - name: API_PORT
+              value: "9003"
+            - name: PROMETHEUS_SERVER_ENDPOINT
+              value: "http://union-operator-prometheus.union.svc:80/prometheus"
+            - name: CLUSTER_ID
+              value: "default-cluster"
+            - name: DATA_RETENTION_DAILY_RESOLUTION_DAYS
+              value: "15"
+            - name: CLOUD_COST_ENABLED
+              value: "false"
+            - name: CLOUD_COST_MONTH_TO_DATE_INTERVAL
+              value: "6"
+            - name: CLOUD_COST_REFRESH_RATE_HOURS
+              value: "6"
+            - name: CLOUD_COST_QUERY_WINDOW_DAYS
+              value: "7"
+            - name: CLOUD_COST_RUN_WINDOW_DAYS
+              value: "3"
+            # Add any additional provided variables
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -1619,13 +2083,13 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: kube-system
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
 spec:
   selector:
@@ -1639,13 +2103,13 @@ spec:
   template:
     metadata:
       labels:        
-        helm.sh/chart: kube-state-metrics-5.28.0
+        helm.sh/chart: kube-state-metrics-5.33.2
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: metrics
         app.kubernetes.io/part-of: kube-state-metrics
         app.kubernetes.io/name: kube-state-metrics
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "2.14.0"
+        app.kubernetes.io/version: "2.15.0"
         release: release-name
     spec:
       automountServiceAccountToken: true
@@ -1658,13 +2122,14 @@ spec:
         runAsUser: 65534
         seccompProfile:
           type: RuntimeDefault
+      dnsPolicy: ClusterFirst
       containers:
       - name: kube-state-metrics
         args:
         - --port=8080
         - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
         imagePullPolicy: IfNotPresent
-        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0
         ports:
         - containerPort: 8080
           name: "http"
@@ -1709,9 +2174,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -1730,9 +2195,9 @@ spec:
         
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/version: "72.9.1"
         app.kubernetes.io/part-of: prometheus
-        chart: prometheus-68.2.2
+        chart: prometheus-72.9.1
         release: "release-name"
         heritage: "Helm"
         app: prometheus-operator
@@ -1741,19 +2206,19 @@ spec:
     spec:
       containers:
         - name: prometheus
-          image: "quay.io/prometheus-operator/prometheus-operator:v0.79.2"
+          image: "quay.io/prometheus-operator/prometheus-operator:v0.82.2"
           imagePullPolicy: "IfNotPresent"
           args:
             - --kubelet-service=kube-system/union-operator-kubelet
             - --kubelet-endpoints=true
             - --kubelet-endpointslice=false
             - --localhost=127.0.0.1
-            - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.79.2
+            - --prometheus-config-reloader=quay.io/prometheus-operator/prometheus-config-reloader:v0.82.2
             - --config-reloader-cpu-request=0
             - --config-reloader-cpu-limit=0
             - --config-reloader-memory-request=0
             - --config-reloader-memory-limit=0
-            - --thanos-default-base-image=quay.io/thanos/thanos:v0.37.2
+            - --thanos-default-base-image=quay.io/thanos/thanos:v0.38.0
             - --secret-field-selector=type!=kubernetes.io/dockercfg,type!=kubernetes.io/service-account-token,type!=helm.sh/release.v1
             - --web.enable-tls=true
             - --web.cert-file=/cert/cert
@@ -1883,7 +2348,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -1942,7 +2407,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "d002db360c440832d298fa551e30e674693274d31c353da9e7b4126e7f630b8"
+        configChecksum: "f78df15d443107d82a4ae1a1fdbaaec124914f8d7c4ea407e5ac6e42d122258"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -1969,7 +2434,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2039,7 +2504,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2070,23 +2535,23 @@ kind: Deployment
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: operator
+    app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: operator
+      app.kubernetes.io/name: union-operator
       app.kubernetes.io/instance: release-name
   template:
     metadata:
       annotations:
-        configChecksum: "d002db360c440832d298fa551e30e674693274d31c353da9e7b4126e7f630b8"
+        configChecksum: "f78df15d443107d82a4ae1a1fdbaaec124914f8d7c4ea407e5ac6e42d122258"
         
       labels:
         
-        app.kubernetes.io/name: operator
+        app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
@@ -2106,7 +2571,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2191,7 +2656,7 @@ metadata:
   name: flytepropeller-webhook
   namespace: union
   labels:
-    app.kubernetes.io/name: flytepropellerwebhook
+    app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
@@ -2199,18 +2664,18 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: flytepropellerwebhook
+      app.kubernetes.io/name: flyte-pod-webhook
       app.kubernetes.io/instance: release-name
   template:
     metadata:
       labels:
         
-        app.kubernetes.io/name: flytepropellerwebhook
+        app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "18b431e507fdd3382f70dbbacb74f33585985c3451a988d4ee286109b0c322e"
+        configChecksum: "677b5c5d7a80a07114d761422917e1bdceaf4e72be82c0e9bc611210d6d199f"
         
     spec:
       securityContext: 
@@ -2223,7 +2688,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2275,7 +2740,7 @@ spec:
               mountPath: /etc/flyte/config
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2372,7 +2837,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "18b431e507fdd3382f70dbbacb74f33585985c3451a988d4ee286109b0c322e"
+        configChecksum: "677b5c5d7a80a07114d761422917e1bdceaf4e72be82c0e9bc611210d6d199f"
         
       labels:
         
@@ -2424,7 +2889,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.3.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
@@ -2470,9 +2935,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -2510,15 +2975,15 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   automountServiceAccountToken: true
-  image: "quay.io/prometheus/prometheus:v3.1.0"
-  version: v3.1.0
+  image: "quay.io/prometheus/prometheus:v3.4.1"
+  version: v3.4.1
   externalUrl: http://union-operator-prometheus.union:80
   paused: false
   replicas: 1
@@ -2534,21 +2999,15 @@ spec:
     requests:
       cpu: "4"
       memory: 8Gi
-  retention: "10d"
+  retention: "3d"
   tsdb:
     outOfOrderTimeWindow: 0s
   walCompression: true
   routePrefix: "/prometheus/"
   serviceAccountName: union-operator-prometheus
-  serviceMonitorSelector:
-    matchLabels:
-      release: "release-name"
-
+  serviceMonitorSelector: {}
   serviceMonitorNamespaceSelector: {}
-  podMonitorSelector:
-    matchLabels:
-      release: "release-name"
-
+  podMonitorSelector: {}
   podMonitorNamespaceSelector: {}
   probeSelector:
     matchLabels:
@@ -2563,14 +3022,8 @@ spec:
     seccompProfile:
       type: RuntimeDefault
   ruleNamespaceSelector: {}
-  ruleSelector:
-    matchLabels:
-      release: "release-name"
-
-  scrapeConfigSelector:
-    matchLabels:
-      release: "release-name"
-
+  ruleSelector: {}
+  scrapeConfigSelector: {}
   scrapeConfigNamespaceSelector: {}
   affinity:
     podAntiAffinity:
@@ -2579,11 +3032,734 @@ spec:
         podAffinityTerm:
           topologyKey: kubernetes.io/hostname
           labelSelector:
-            matchExpressions:
-              - {key: app.kubernetes.io/name, operator: In, values: [prometheus]}
-              - {key: prometheus, operator: In, values: [union-operator-prometheus]}
+            matchExpressions:            
+            - {key: app.kubernetes.io/name, operator: In, values: [prometheus]}
+            - {key: app.kubernetes.io/instance, operator: In, values: [union-operator-prometheus]}
   portName: http-web
+  enforcedKeepDroppedTargets: 0
+  minReadySeconds: 0
+  maximumStartupDurationSeconds: 900
   hostNetwork: false
+---
+# Source: dataplane/templates/monitoring/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: union-opencost-rules
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  groups:
+    - name: cost_calculations_15s
+      interval: 15s
+      rules:
+        - record: pod_gpu_allocation
+          expr: |
+            sum by (namespace, pod) (DCGM_FI_DEV_GPU_UTIL >= bool 0) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+        - record: execution_info # A join metric to look up execution-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_entity_name, label_execution_id, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        flyte:propeller:all:round:execution_info{domain!="", project!="", workflow_name!="", execution_id!=""}, # filter for workflow/task executions
+                        "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                      ), "label_entity_name", "$1", "workflow_name", "(.*)" # set label_entity_name to the workflow/task name from the workflow_execution_id
+                    ),
+                    "label_execution_id", "$1", "execution_id", "(.*)"
+                  ),
+                  "label_project", "$1", "project", "(.*)" # project
+                ),
+                "label_domain", "$1", "domain", "(.*)" # domain
+              )
+            )
+        - record: app_info # A join metric to look up app-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_app_name, label_app_version, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    kube_pod_labels{
+                      label_domain!="",
+                      label_project!="",
+                      label_serving_unionai_dev_app_name!="",
+                      label_serving_knative_dev_revision!=""
+                    }, # this filters for apps
+                    "label_app_name", "$1", "label_serving_unionai_dev_app_name", "(.*)" # rename to cleanup
+                  ),
+                  "label_app_version", "$1", "label_serving_knative_dev_revision", "(.*)" # the app_version is equivalent to an execution_id for workflows (lowest level of granularity)
+                ),
+                "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # join key
+              )
+            )
+        - record: workspace_info # A join metric to look up workspace info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_workspace_name, label_entity_id)(
+              label_replace(
+                label_replace(
+                  kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # filter for workspaces
+                  "label_entity_id", "$1", "label_node_id", "(.*)" # join key
+                ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
+              )
+            )
+        - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
+              # First, calculate the allocated memory for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the memory working set) exceeds requested memory
+                (
+                  sum by (namespace, pod) (
+                    container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where memory requests are <= consumed memory
+                  kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"} # needed to add node!="" to dedupe
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:cpu_usage_per_node:sum # Allocated cpu (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, calculate the allocated cpu for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the cpu usage seconds total) exceeds requested cpu
+                (
+                  sum by (namespace, pod) (
+                    irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where cpu requests are <= consumed cpu
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:gpu_usage_per_node:sum # Allocated gpu aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:used_mem_bytes:sum # the sum of used memory across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity
+              # First, calculate the used memory for each pod
+              sum by (namespace, pod) (
+                container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_mem_bytes:sum # the sum of allocated memory across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:mem_usage_bytes_total_per_node:sum
+            )
+        - record: entity_id:used_cpu:sum # the sum of used cpu across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) (
+              sum by (namespace, pod) (
+                irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_cpu:sum # the sum of allocated cpu across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:cpu_usage_per_node:sum
+            )
+        - record: entity_id:sm_occupancy:avg # the simple average of SM occupancy (a good generic measure of GPU utilization) per entity
+          expr: |
+            avg by (label_entity_type, label_domain, label_project, label_entity_id) (
+              # First, grab the SM occupancy for each pod
+              max by (namespace, pod) (
+                DCGM_FI_PROF_SM_OCCUPANCY # SM occupancy is a good proxy for actual GPU usage
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:gpu_count:sum # the count of running gpu pods per entity (need this to weight the gpu utilization when aggregating upwards - i.e. project-level)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:weighted_sm_occupancy:sum # product of SM occupancy and allocated GPU count (something like "used memory", numerator of weighted calcs)
+          expr: |
+            entity_id:sm_occupancy:avg
+            * on (label_domain, label_project, label_entity_type, label_entity_id) entity_id:gpu_count:sum
+        - record: entity_id:allocated_mem_cost:sum # Allocated cost of memory for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type) (
+              entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+              * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cpu_cost:sum # Allocated cost of cpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:cpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_gpu_cost:sum # Allocated cost of gpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:gpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cost:sum # Allocated cost of memory, cpu, and gpu for each workflow/task execution and app.
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                entity_id:allocated_mem_cost:sum
+                or
+                entity_id:allocated_cpu_cost:sum
+                or
+                entity_id:allocated_gpu_cost:sum
+              ),
+              "type", "allocated", "", "" # add type info
+            )
+        - record: entity_id:overhead_cost:sum # The amount of overhead costs (node costs that we can't allocate with container resources) to allocate to each entity (workflow/task execution or app)
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_entity_id, label_domain, label_project)( # Aggregate the per-node metrics up to workflow/task execution or app (label_entity_id)
+                # Start with each execution's and app's allocated cost per node
+                sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                  entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                  * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:cpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:gpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                )
+                # Then divide out the total allocated cost per node to get the proportion of allocated cost associated with each entity
+                / on (node) group_left()(
+                  sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                    entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                    * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:cpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:gpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  )
+                  > 0 # need to avoid dividing by zero, or gaps in the data can cause NaNs to proliferate, borking all charts
+                )
+                # Then multiply by the overhead cost per node
+                * on (node) group_left() (
+                  # To calculate overhead, start with the true cost of running each node
+                  avg by (node)(kube_node_labels{label_flyte_org_node_role="worker"}) # only look at worker nodes
+                  * on (node) max by (node) (
+                    node_total_hourly_cost{instance_type!=""} # sometimes, the instance_type can be null, causing an unlabeled label to show up in the Compute Costs dashboard charts
+                  ) * (15 / 3600) # convert hourly cost to 15-secondly cost
+                  # Then subtract out the total allocated cost on each node
+                  - on (node) group_left()(
+                    sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                      entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                      * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:cpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:gpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    )
+                  )
+                )
+              ),
+              "type", "overhead", "", "" # add type info
+            )
+        - record: entity_id:total_cost:sum # Total cost of each entity (workflow/task execution or app), including allocated (from container resources) and overhead (proportion of unallocated node costs)
+          expr: |
+            label_replace(
+              sum by (label_domain, label_project, label_entity_id, label_entity_type) (
+                entity_id:allocated_cost:sum
+                or
+                entity_id:overhead_cost:sum
+              ),
+              "type", "total", "", "" # add type info
+            )
+        - record: node:total_cost:sum # Total cost of all nodes
+          expr: |
+            sum (
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left() node_total_hourly_cost{instance_type!=""} * (15 / 3600) # convert hourly cost to 15-secondly cost
+            )
+        - record: node_type:total_cost:sum # Total cost of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left(node_type) label_replace(node_total_hourly_cost{instance_type!=""}, "node_type", "$1", "instance_type", "(.*)") * (15 / 3600) # convert hourly cost to 15-secondly cost and rename label
+            )
+        - record: node_type:uptime_hours:sum # Total uptime of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node, node_type)( # dedupe
+                label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)") # relabel
+              )
+            ) * (15 / 3600) # convert to number of hours per 15-second observation      # Aggregate the above into visible metrics
+    - name: cost_rollup_15m
+      interval: 15m
+      rules:
+        - record: execution_info15m
+          expr: |
+            max_over_time(execution_info[15m:15s])
+        - record: app_info15m
+          expr: |
+            max_over_time(app_info[15m:15s])
+        - record: workspace_info15m
+          expr: |
+            max_over_time(workspace_info[15m:15s])
+        - record: entity_id:allocated_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+        - record: entity_id:used_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+        - record: entity_id:allocated_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+        - record: entity_id:used_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:used_cpu:sum[15m:15s])
+        - record: entity_id:weighted_sm_occupancy:sum15m
+          expr: |
+            sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+        - record: entity_id:gpu_count:sum15m
+          expr: |
+            sum_over_time(entity_id:gpu_count:sum[15m:15s])
+        - record: entity_id:allocated_mem_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+        - record: entity_id:allocated_cpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_gpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+        - record: entity_id:overhead_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+        - record: entity_id:total_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:total_cost:sum[15m:15s])
+        - record: node:total_cost:sum15m
+          expr: |
+            sum_over_time(node:total_cost:sum[15m:15s])
+        - record: node_type:total_cost:sum15m
+          expr: |
+            sum_over_time(node_type:total_cost:sum[15m:15s])
+        - record: node_type:uptime_hours:sum15m
+          expr: |
+            sum_over_time(node_type:uptime_hours:sum[15m:15s])
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/servicemonitor.yaml
 apiVersion: monitoring.coreos.com/v1
@@ -2592,16 +3768,21 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: kube-system
   labels:    
-    helm.sh/chart: kube-state-metrics-5.28.0
+    helm.sh/chart: kube-state-metrics-5.33.2
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.14.0"
+    app.kubernetes.io/version: "2.15.0"
     release: release-name
 spec:
   jobLabel: app.kubernetes.io/name  
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:      
       app.kubernetes.io/name: kube-state-metrics
@@ -2621,14 +3802,19 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   jobLabel: jobLabel
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-coredns
@@ -2651,14 +3837,19 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   jobLabel: jobLabel
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-controller-manager
@@ -2685,14 +3876,19 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   jobLabel: jobLabel
-    
+  
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-etcd
@@ -2715,14 +3911,19 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   jobLabel: jobLabel
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-proxy
@@ -2745,14 +3946,19 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   jobLabel: jobLabel
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-scheduler
@@ -2778,13 +3984,18 @@ metadata:
     app: prometheus-kubelet    
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   attachMetadata:
     node: false
   jobLabel: k8s-app
@@ -2892,9 +4103,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app: prometheus-operator
@@ -2902,6 +4113,11 @@ metadata:
     app.kubernetes.io/component: prometheus-operator
 spec:
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   endpoints:
   - port: https
     scheme: https
@@ -2932,13 +4148,18 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
 spec:
   
+  sampleLimit: 0
+  targetLimit: 0
+  labelLimit: 0
+  labelNameLengthLimit: 0
+  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-prometheus
@@ -2953,11 +4174,37 @@ spec:
   - port: reloader-web
     path: "/metrics"
 ---
-# Source: dataplane/templates/operator/monitoring.yaml
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: flytepropeller
+  name: cost
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: http
+      interval: 1m
+      path: /metrics
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [ "__name__" ]
+          separator: ";"
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-service-monitor
   namespace: union
   labels:
     release: release-name
@@ -2969,8 +4216,10 @@ spec:
     matchNames:
       - "union"
   endpoints:
-    - port: "debug"
-      path: "/metrics"
+    - port: debug
+      interval: 1m
+      path: /metrics
+      honorLabels: true
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/validatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -2984,9 +4233,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3027,9 +4276,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3049,9 +4298,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3079,9 +4328,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3109,9 +4358,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3139,9 +4388,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3154,6 +4403,28 @@ subjects:
   - kind: ServiceAccount
     name: union-operator-admission
     namespace: union
+---
+# Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "release-name-fluentbit-test-connection"
+  namespace: union
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  containers:
+    - name: wget
+      image: "busybox:latest"
+      imagePullPolicy: Always
+      command: ["sh"]
+      args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
+  restartPolicy: Never
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/job-createSecret.yaml
 apiVersion: batch/v1
@@ -3169,9 +4440,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3186,9 +4457,9 @@ spec:
         
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/version: "72.9.1"
         app.kubernetes.io/part-of: prometheus
-        chart: prometheus-68.2.2
+        chart: prometheus-72.9.1
         release: "release-name"
         heritage: "Helm"
         app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3196,7 +4467,7 @@ spec:
     spec:
       containers:
         - name: create
-          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.1
+          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.3
           imagePullPolicy: IfNotPresent
           args:
             - create
@@ -3235,9 +4506,9 @@ metadata:
     
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "68.2.2"
+    app.kubernetes.io/version: "72.9.1"
     app.kubernetes.io/part-of: prometheus
-    chart: prometheus-68.2.2
+    chart: prometheus-72.9.1
     release: "release-name"
     heritage: "Helm"
     app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3252,9 +4523,9 @@ spec:
         
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "68.2.2"
+        app.kubernetes.io/version: "72.9.1"
         app.kubernetes.io/part-of: prometheus
-        chart: prometheus-68.2.2
+        chart: prometheus-72.9.1
         release: "release-name"
         heritage: "Helm"
         app.kubernetes.io/name: prometheus-prometheus-operator
@@ -3262,7 +4533,7 @@ spec:
     spec:
       containers:
         - name: patch
-          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.1
+          image: registry.k8s.io/ingress-nginx/kube-webhook-certgen:v1.5.3
           imagePullPolicy: IfNotPresent
           args:
             - patch

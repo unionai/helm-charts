@@ -1,0 +1,112 @@
+{{- if (include "imagebuilder.buildkit.enabled" .) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "imagebuilder.buildkit.fullname" . }}
+  labels:
+    {{- include "imagebuilder.buildkit.labels" . | nindent 4 }}
+spec:
+  strategy:
+    type: {{ .Values.imageBuilder.buildkit.deploymentStrategy }}
+  {{- if not .Values.imageBuilder.buildkit.autoscaling.enabled }}
+  replicas: {{ .Values.imageBuilder.buildkit.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- if or .Values.imageBuilder.buildkit.rootless .Values.imageBuilder.buildkit.podAnnotations }}
+      annotations:
+        {{- if .Values.imageBuilder.buildkit.rootless }}
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
+        {{- end }}
+        {{- with .Values.imageBuilder.buildkit.podAnnotations }}
+        {{ toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      labels:
+        {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 8 }}
+    spec:
+      containers:
+        - name: "buildkit"
+          image: "{{ .Values.imageBuilder.buildkit.image.repository }}:{{ .Values.imageBuilder.buildkit.image.tag }}"
+          imagePullPolicy: {{ .Values.imageBuilder.buildkit.image.pullPolicy }}
+          volumeMounts:
+          {{- if .Values.imageBuilder.buildkit.rootless }}
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
+          {{- end }}
+            - mountPath: /etc/buildkit
+              name: buildkit-config
+          {{- with .Values.imageBuilder.buildkit.additionalVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/{{ .Values.imageBuilder.buildkit.rootless | ternary "user/1000" ""}}/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+          {{- if .Values.imageBuilder.buildkit.rootless }}
+            - --oci-worker-no-process-sandbox
+          {{- end }}
+          ports:
+            - name: tcp
+              containerPort: 1234
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          securityContext:
+          {{- if .Values.imageBuilder.buildkit.rootless }}
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
+          {{- else }}
+            privileged: true
+          {{- end }}
+          resources:
+            {{- toYaml .Values.imageBuilder.buildkit.resources | nindent 12 }}
+      volumes:
+      {{- if .Values.imageBuilder.buildkit.rootless }}
+      - name: buildkitd
+        emptyDir: {}
+      {{- end }}
+      - configMap:
+          name: {{ include "imagebuilder.buildkit.fullname" . }}
+        name: buildkit-config
+      {{- with .Values.imageBuilder.buildkit.additionalVolumes }}
+        {{- toYaml . | nindent 6 }}
+      {{- end }}
+      {{- with .Values.imageBuilder.buildkit.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 16 }}
+            topologyKey: "kubernetes.io/hostname"
+      {{- with .Values.imageBuilder.buildkit.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

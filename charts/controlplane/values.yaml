@@ -1,0 +1,707 @@
+# -- Set the DB host used for union control plane services
+dbHost: ""
+# -- Set the DB Name used for the control plane services
+dbName: ""
+# -- Set the DB user used for the control plane services
+dbUser: ""
+# -- Set the DB password used for the controlplane services
+dbPass: ""
+# -- Set the S3 bucket name used for flyte storage
+bucketName: ""
+# -- Set the S3 bucket name used for artifacts storage
+artifactsBucketName: ""
+
+# -- Set the bucket region
+region: us-east-2
+# -- Set the image used for control plane services
+image:
+  repository: ""
+  pullPolicy: IfNotPresent
+  tag: ""
+
+controlplane:
+  enabled: true
+
+replicaCount: 1
+imagePullSecrets:
+nameOverride: ""
+fullnameOverride: ""
+serviceAccount:
+  create: true
+  annotations: {}
+podAnnotations:
+  linkerd.io/inject: disabled
+  prometheus.io/path: /metrics
+  prometheus.io/port: "10254"
+service:
+  type: ClusterIP
+  grpcport: 80
+  httpport: 81
+  debugport: 82
+  connectport: 83
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 250Mi
+env:
+- name: GOMEMLIMIT
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.memory
+- name: GOMAXPROCS
+  valueFrom:
+    resourceFieldRef:
+      resource: limits.cpu
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+secrets: {}
+podMonitor:
+  custom:
+    enabled: false
+    metricRelabelings: []
+probe:
+  enabled: false
+serviceProfile:
+  enabled: false
+spreadConstraints:
+  enabled: false
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1
+    maxSurge: 1
+argo:
+  enabled: false
+externalSecrets:
+  refreshInterval: 1h
+  refs: {}
+postgres-exporter:
+  enabled: false
+  fullnameOverride: postgres-exporter
+  serviceMonitor:
+    enabled: false
+    labels:
+      instance: union
+configMap:
+  cache:
+    identity:
+      enabled: false
+  authorizer:
+    type: "Noop"
+    internalCommunicationConfig:
+      enabled: false
+  connection:
+    environment: ""
+    region: ""
+    rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+  otel:
+    type: otlpgrpc
+    otlpgrpc:
+      endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+    sampler:
+      parentSampler: traceid
+      traceIdRatio: 0.001
+  union:
+    internalConnectionConfig:
+      enabled: true
+      urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
+    auth:
+      enable: false
+  logger:
+    level: 6
+
+services:
+  artifacts:
+    fullnameOverride: "artifacts"
+    initContainers:
+      - name: migrate
+        args:
+          - artifacts
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    args:
+      - artifacts
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "artifacts:"
+      db:
+        host: '{{ .Values.dbHost }}'
+        username: '{{.Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+      artifactsConfig:
+        app:
+          adminClient:
+            hackFlagUntilCellIsolation: true
+          artifactBlobStoreConfig:
+            container: '{{ .Values.artifactsBucketName }}'
+            stow:
+              config:
+                auth_type: iam
+                region: us-east-2
+              kind: s3
+            type: stow
+          artifactDatabaseConfig:
+            connMaxLifeTime: 1m
+            maxIdleConnections: 20
+            maxOpenConnections: 30
+            postgres:
+              dbname: '{{ .Values.dbName }}'
+              host: '{{ .Values.dbHost }}'
+              options: sslmode=disable
+              passwordPath: /etc/db/pass.txt
+              port: 5432
+              readReplicaHost: '{{ .Values.dbHost }}'
+              username:  '{{ .Values.dbUser }}'
+          artifactServerConfig:
+            httpPort: 8089
+            port: 8080
+            respectUserOrgsForServerless: true
+          artifactTriggerConfig:
+            executionMaxRetryCount: 3
+            executionSchedulerQuerySize: 20
+            executionSchedulers: 1
+            executionSchedulersWait: 10
+            triggerProcessorQuerySize: 100
+            triggerProcessors: 1
+            triggerProcessorsWait: 10
+  authorizer:
+    fullnameOverride: "authorizer"
+    args:
+      - authorizer
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "authorizer:"
+  cluster:
+    fullnameOverride: "cluster"
+    initContainers:
+      - name: migrate
+        args:
+          - cloudcluster
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    args:
+      - cloudcluster
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "cluster:"
+      cloudProvider:
+        provider: Mock
+      db:
+        host: '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+      cluster:
+        cloudflare:
+          active: false
+  dataproxy:
+    fullnameOverride: "dataproxy"
+    args:
+      - dataproxy
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "usage:"
+      dataproxy:
+        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
+        clusterSelector:
+          type: local
+  executions:
+    fullnameOverride: "executions"
+    initContainers:
+      - name: migrate
+        args:
+          - cloudpropeller
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    args:
+      - cloudpropeller
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      workspace:
+        enable: false
+      sharedService:
+        metrics:
+          scope: "executions:"
+      db:
+        host:  '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+      cloudEventsProcessor:
+        cloudProvider: Local
+      executions:
+        apps:
+          enrichIdentities: false
+          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+  usage:
+    fullnameOverride: "usage"
+    args:
+      - usage
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "usage:"
+      cloudProvider:
+        provider: Mock
+      billing:
+        enable: false
+    resources:
+      limits:
+        cpu: 3
+        memory: 512Mi
+      requests:
+        cpu: 500m
+        memory: 250Mi
+flyte:
+  # All the value below need to be duplicated due to flyte-core being a subchart.
+  # -- Set the DB host used for tenant services.
+  dbHost: ""
+  # -- Set the DB Name used for the control plane services
+  dbName: ""
+  # -- Set the DB user used for the control plane services
+  dbUser: ""
+  # -- Set the DB password used for the controlplane services
+  dbPass: ""
+  # -- Set the S3 bucket name used for flyte storage
+  bucketName: ""
+  # -- Set the bucket region
+  region: ""
+
+  flyteadmin:
+    replicaCount: 1
+    # -- Set the image used for flyteadmin
+    image:
+      repository: ""
+      pullPolicy: IfNotPresent
+      tag:  ""
+    serviceAccount:
+      annotations:
+        # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
+    podAnnotations:
+      kubectl.kubernetes.io/default-container: flyteadmin
+    initialProjects:
+      - union-health-monitoring
+      - flytesnacks
+    readinessProbe: |-
+      httpGet:
+        path: /healthcheck
+        port: 8088
+      initialDelaySeconds: 15
+      timeoutSeconds: 1
+      periodSeconds: 10
+      successThreshold: 1
+      failureThreshold: 3
+
+    livenessProbe: |-
+      httpGet:
+        path: /healthcheck
+        port: 8088
+      initialDelaySeconds: 20
+      timeoutSeconds: 1
+      periodSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+  workflow_scheduler:
+    enabled: true
+    type: native
+
+  datacatalog:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: "" # -- Set the repository for the public datacatalog image"
+      tag: "" # -- Set the tag for the public datacatalog image
+      pullPolicy: "" # -- Set the pull policy for the datacatalog image
+    serviceAccount:
+      annotations:
+        # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
+    service:
+      type: ClusterIP
+  flytepropeller:
+    enabled: false
+  flyteconsole:
+    enabled: true
+    podEnv:
+      - name: OTEL_EXPORTER_OTLP_ENDPOINT
+        value: "http://otel-collector.monitoring.svc.cluster.local:4318"
+      - name: OTEL_EXPORTER_OTLP_PROTOCOL
+        value: "http/protobuf"
+    replicaCount: 1
+    image:
+      repository: "" # -- Set the repository for the console image"
+      tag: "" # -- Set the tag for the console image
+    resources:
+      # flyteconsole service has less memory footprint but cpu goes up depends on traffic, If CPU use is high then we will use HPA
+      limits:
+        cpu: 250m
+        memory: 250Mi
+        ephemeral-storage: 200Mi # Pre-liminary limit to avoid runaway disk usage
+      requests:
+        cpu: 10m
+        memory: 50Mi
+        ephemeral-storage: 20Mi
+    serviceAccount:
+      create: true
+    podAnnotations:
+      linkerd.io/inject: disabled
+      prometheus.io/scrape: "false"
+    ga:
+      enabled: true
+      tracking_id: ""
+    service:
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "600"
+        external-dns.alpha.kubernetes.io/hostname: "flyte.example.com"
+      type: ClusterIP
+    serviceMonitor:
+      enabled: false
+  webhook:
+    enabled: false
+  cluster_resource_manager:
+    enabled: false
+  cacheservice:
+    enabled: true
+    replicaCount: 1
+    image:
+      repository: "" # -- Set the repository for the private cacheservice image"
+      tag: "" # -- Set the tag for the private cacheservice datacatalog image
+      pullPolicy: "" # -- Set the pull policy for the private cacheservice  image
+    serviceAccount:
+      # -- If the service account is created by you, make this false
+      create: true
+      annotations:
+      # -- Set the role arn for the cacheservice service account which has access to the S3 bucket
+    resources:
+      limits:
+        cpu: 1
+        ephemeral-storage: 200Mi
+      requests:
+        cpu: 500m
+        ephemeral-storage: 200Mi
+        memory: 200Mi
+    configPath: /etc/cacheservice/config/*.yaml
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: cacheservice
+            topologyKey: kubernetes.io/hostname
+
+    service:
+      annotations: { }
+      type: ClusterIP
+    # -- Annotations for Cacheservice pods
+    podAnnotations: { }
+    # -- Additional Cacheservice container environment variables
+    podEnv: { }
+    # -- Labels for Cacheservice pods
+    podLabels: { }
+    # -- nodeSelector for Cacheservice deployment
+    nodeSelector: { }
+    # -- tolerations for Cacheservice deployment
+    tolerations: [ ]
+    # -- Appends additional volumes to the deployment spec. May include template values.
+    additionalVolumes: [ ]
+    # -- Appends additional volume mounts to the main container's spec. May include template values.
+    additionalVolumeMounts: [ ]
+    # -- Appends additional containers to the deployment spec. May include template values.
+    additionalContainers: [ ]
+    # -- Appends extra command line arguments to the main command
+    extraArgs: { }
+    # -- Sets priorityClassName for cacheservice pod(s).
+    priorityClassName: ""
+    # -- Sets securityContext for cacheservice pod(s).
+    securityContext:
+      runAsNonRoot: true
+      fsGroup: 1001
+      runAsUser: 1001
+      fsGroupChangePolicy: "OnRootMismatch"
+      seLinuxOptions:
+        type: spc_t
+  common:
+    databaseSecret:
+      name: db-pass
+      secretManifest:
+        # -- Leave it empty if your secret already exists
+        # Else you can create your own secret object. You can use Kubernetes secrets, else you can configure external secrets
+        # For external secrets please install Necessary dependencies, like, of your choice
+        # - https://github.com/hashicorp/vault
+        # - https://github.com/godaddy/kubernetes-external-secrets
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: db-pass
+        type: Opaque
+        stringData:
+          # -- If using plain text you can provide the password here
+          pass.txt: '{{ .Values.dbPass }}'
+    ingress:
+      # Disables flyte subchart ingresses.
+      enabled: false
+
+      secretService: true
+      tls:
+        enabled: true
+        secretName: "" # Set the name of the secret used for TLS termination"
+      host:  "" # Set the DNS name of the ingress host used by you control plane
+      albSSLRedirect: false
+      separateGrpcIngress: true
+      annotations:
+        nginx.ingress.kubernetes.io/app-root: /console
+        # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
+        # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
+        nginx.ingress.kubernetes.io/limit-rps: "100"
+        nginx.ingress.kubernetes.io/proxy-body-size: 6m
+        nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+        nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+        nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+        nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+        nginx.ingress.kubernetes.io/server-snippet: |
+          client_header_timeout 604800;
+          client_body_timeout 604800;
+          # Increasing the default configuration from
+          #        client_header_buffer_size       1k;
+          #        large_client_header_buffers     4 8k;
+          # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+          # about expected header sizs (PE-1101).
+          # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+          # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+          # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+          # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+          # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+          client_header_buffer_size 16k;
+          large_client_header_buffers 64 32k;
+        nginx.ingress.kubernetes.io/service-upstream: "true"
+      protectedIngressAnnotations:
+        nginx.org/websocket-services: dataproxy-service
+      enableProtectedConsoleIngress: false
+      protectedIngressAnnotationsWithoutSignin:
+        nginx.org/websocket-services: dataproxy-service
+      protectedConsoleIngressAnnotations:
+        # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
+        # Specifically, the cache key should include the configurable authorization header and cookie header.
+        # Make sure to update the key if a different authorization header is used.
+        nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
+        nginx.org/websocket-services: dataproxy-service
+      protectedIngressAnnotationsGrpc:
+
+  storage:
+    # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
+    type: s3
+    # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
+    bucketName: '{{ .Values.bucketName }}'
+    s3:
+      region: "{{ .Values.region }}"
+    cache:
+      maxSizeMBs: 1024
+  db:
+    checks: false
+    datacatalog:
+      database:
+        port: 5432
+        # -- Create a user called flyteadmin
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
+        # -- Create a DB called datacatalog (OR change the name here)
+        dbname: datacatalog
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 20
+        connMaxLifeTime: 120s
+    admin:
+      database:
+        port: 5432
+        # -- Create a user called flyteadmin
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
+        # -- Create a DB called postgres (OR change the name here)
+        dbname: postgres
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 80
+        connMaxLifeTime: 120s
+    cacheservice:
+      database:
+        port: 5432
+        # -- Create a user called flyteadmin
+        username: "{{ .Values.dbUser }}"
+        host: "{{ .Values.dbHost }}"
+        # -- Create a DB called cacheservice (OR change the name here)
+        dbname: cacheservice
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 20
+        connMaxLifeTime: 120s
+  configmap:
+    adminServer:
+      admin:
+        flyteadmin:
+          metricsKeys:
+            - phase
+          useOffloadedInputs: true
+          useOffloadedWorkflowClosure: true
+        server:
+          grpc:
+            maxMessageSizeBytes: 16777216
+            enableGrpcLatencyMetrics: true
+        cloudEvents:
+          enable: true
+          type: aws
+          eventsPublisher:
+            eventTypes:
+              - workflow
+              - node
+        otel:
+          type: otlpgrpc
+          otlpgrpc:
+            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+          sampler:
+            parentSampler: traceid
+            traceIdRatio: 0.001
+        logger:
+          show-source: true
+          level: 6
+        authorizer:
+          internalCommunicationConfig:
+            enabled: false
+        union:
+          internalConnectionConfig:
+            enabled: true
+            urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+        private:
+          app:
+            cacheProviderConfig:
+              kind: bypass
+          metrics:
+            disable: true
+        cacheserviceServer:
+          otel:
+            type: otlpgrpc
+            otlpgrpc:
+              endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+            sampler:
+              parentSampler: traceid
+              traceIdRatio: 0.001
+          authorizer:
+            internalCommunicationConfig:
+              enabled: false
+          private:
+            app:
+              cacheProviderConfig:
+                kind: bypass
+        domain: { }
+      server:
+        security:
+          useAuth: false
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+      authorizer:
+        type: "Noop"
+        internalCommunicationConfig:
+          enabled: false
+      cloudEvents:
+        enable: false
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+    cacheserviceServer:
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      authorizer:
+        type: "Noop"
+        internalCommunicationConfig:
+          enabled: false
+      cacheservice:
+        storage-prefix: cached_outputs
+        metrics-scope: flyte
+        profiler-port: 10254
+        heartbeat-grace-period-multiplier: 3
+        max-reservation-heartbeat: 30s
+      cache-server:
+        grpcPort: 8089
+        httpPort: 8080
+        grpcServerReflection: true
+      otel:
+        type: otlpgrpc
+        otlpgrpc:
+          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+        sampler:
+          parentSampler: traceid
+          traceIdRatio: 0.001
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+  cloudEvents:
+    enable: false
+  workflow_notifications:
+    enabled: false
+
+unionv2:
+  enabled: false
+
+dataproxy:
+  prometheus:
+    enabled: false
+
+artifacts:
+  enabled: false
+
+objectstore:
+  controlPlane:
+    enabled: false
+
+# Disable by default, but can be explicityl enabled if needed.
+ingress-nginx:
+  enabled: false
+
+# This section is for additional objects that can be added to the Helm chart.
+extraObjects: []

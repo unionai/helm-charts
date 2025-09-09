@@ -32,6 +32,17 @@ migrated to the "dataplane" service and will use these.
 {{- end }}
 
 {{/*
+Renders a complete tree, even values that contains template.
+*/}}
+{{- define "unionai-dataplane.render" -}}
+  {{- if typeIs "string" .value }}
+    {{- tpl .value .context }}
+  {{ else }}
+    {{- tpl (.value | toYaml) .context }}
+  {{- end }}
+{{- end -}}
+
+{{/*
 Output the cluster name
 */}}
 {{- define "getClusterName" -}}
@@ -129,7 +140,7 @@ tolerations:
 {{- end -}}
 
 {{- define "flytepropellerwebhook.selectorLabels" -}}
-app.kubernetes.io/name: flytepropellerwebhook
+app.kubernetes.io/name: flyte-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -204,6 +215,91 @@ tolerations:
 {{- end }}
 {{- if .Values.flytepropellerwebhook.tolerations }}
 {{- include "flytepropellerwebhook.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{- define "nodeobserver.serviceAccountName" -}}
+{{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
+{{- end }}
+
+{{- define "nodeobserver.selectorLabels" -}}
+app.kubernetes.io/name: nodeobserver
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeobserver.labels" -}}
+{{ include "nodeobserver.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "nodeobserver.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "nodeobserver.labels" . }}
+{{- with .Values.nodeobserver.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "nodeobserver.scheduling.topologySpreadConstraints" -}}
+{{ with .Values.nodeobserver.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.affinity" -}}
+{{ with .Values.nodeobserver.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.nodeSelector" -}}
+{{ with .Values.nodeobserver.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.nodeName" -}}
+{{ with .Values.nodeobserver.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling.tolerations" -}}
+{{ with .Values.nodeobserver.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "nodeobserver.scheduling" -}}
+{{- if .Values.nodeobserver.topologySpreadConstraints }}
+{{- include "nodeobserver.scheduling.topologySpreadConstraints"}}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.nodeobserver.affinity }}
+{{- include "nodeobserver.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.nodeobserver.nodeSelector }}
+{{- include "nodeobserver.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.nodeobserver.nodeName }}
+{{- include "nodeobserver.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.nodeobserver.tolerations }}
+{{- include "nodeobserver.scheduling.tolerations" . }}
 {{- else }}
 {{- include "global.scheduling.tolerations" . }}
 {{- end }}
@@ -304,7 +400,7 @@ Create the name of the service account to use
 {{- end }}
 
 {{- define "operator.selectorLabels" -}}
-app.kubernetes.io/name: operator
+app.kubernetes.io/name: union-operator
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -721,6 +817,90 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Name of the fluentbit configMap
+*/}}
+{{- define "fluentbit.configMapName" -}}
+{{- .Values.fluentbit.existingConfigMap }}
+{{- end }}
+
+{{- define "fluentbit.labels" -}}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "fluentbit.customParsers" -}}
+[PARSER]
+    Name docker_no_time
+    Format json
+    Time_Keep Off
+    Time_Key time
+    Time_Format %Y-%m-%dT%H:%M:%S.%L
+{{- end }}
+
+{{- define "fluentbit.service" -}}
+[SERVICE]
+    Parsers_File /fluent-bit/etc/parsers.conf
+    Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+    HTTP_Server On
+    HTTP_Listen 0.0.0.0
+    Health_Check On
+{{- end }}
+
+{{- define "fluentbit.inputs" -}}
+[INPUT]
+    Name                tail
+    Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
+    Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+    Path                /var/log/containers/*.log
+    DB                  /var/log/flb_kube.db
+    multiline.parser    docker, cri
+    Mem_Buf_Limit       5MB
+    Skip_Long_Lines     On
+    Refresh_Interval    10
+{{- end }}
+
+{{- define "fluentbit.filters" -}}
+{{- end }}
+
+{{- define "fluentbit.outputs" -}}
+{{- if eq .Values.config.proxy.persistedLogs.sourceType "ObjectStore" }}
+{{/* azure uses a different output plugin*/}}
+{{- if and (hasKey .Values.storage "custom") (hasKey .Values.storage.custom "stow") (eq .Values.storage.custom.stow.kind "azure") }}
+[OUTPUT]
+    name                  azure_blob
+    match                 *
+{{- with .Values.storage.custom.stow.config.account }}
+    account_name {{ . }}
+{{- end }}
+    auth_type             key
+{{- with .Values.storage.custom.stow.config.key }}
+    shared_key {{ . }}
+{{- end }}
+    path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
+    container_name        {{ .Values.storage.custom.container }}
+    tls                   on
+{{- else }}
+[OUTPUT]
+    Name s3
+    Match *
+    upload_timeout 1m
+    s3_key_format /{{ .Values.config.proxy.persistedLogs.objectStore.prefix }}/$TAG
+    static_file_path true
+    json_date_key false
+{{- with .Values.storage.region }}
+    region {{ . }}
+{{- end }}
+{{- with .Values.storage.bucketName }}
+    bucket {{ . }}
+{{- end }}
+{{- with .Values.storage.endpoint }}
+    endpoint {{ . }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Create a full name prefix for serving resources
 */}}
 {{- define "serving.fullname" -}}
@@ -734,3 +914,64 @@ Name of the serving-envoy-bootstrap ConfigMap
 {{- define "serving.envoyBootstrapConfigMapName" -}}
 {{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}
+
+# Image Builder helpers
+
+{{/*
+The name of the buildkit deployment, service, etc
+*/}}
+{{- define "imagebuilder.buildkit.fullname" -}}
+{{- if .Values.imageBuilder.buildkit.fullnameOverride }}
+{{- .Values.imageBuilder.buildkit.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" (include "union-operator.fullname" .) "buildkit" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.selectorLabels" -}}
+app.kubernetes.io/name: imagebuilder-buildkit
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.labels" -}}
+{{ include "imagebuilder.buildkit.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Check if both imageBuilder and imageBuilder.buildkit are enabled
+*/}}
+{{- define "imagebuilder.buildkit.enabled" -}}
+{{- if and .Values.imageBuilder.enabled .Values.imageBuilder.buildkit.enabled }}
+{{- true }}
+{{- else }}
+{{- end }}
+{{- end }}
+
+{{/*
+The URI to connect to buildkit
+*/}}
+{{- define "imagebuilder.buildkit.uri" -}}
+{{- if .Values.imageBuilder.buildkitUri -}}
+{{- .Values.imageBuilder.buildkitUri | quote -}}
+{{- else -}}
+tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
+{{- end -}}
+{{- end -}}
+
+{{- define "ingress.serving.host" -}}
+{{- if .Values.ingress.serving.hostOverride }}
+{{- .Values.ingress.serving.hostOverride | quote }}
+{{- else }}
+{{- printf "*.apps.%s" .Values.host | quote }}
+{{- end }}
+{{- end -}}
+
+{{- define "ingress.dataproxy.host" -}}
+{{- if .Values.ingress.dataproxy.hostOverride }}
+{{- .Values.ingress.dataproxy.hostOverride | quote }}
+{{- else }}
+{{- .Values.host -}}
+{{- end }}
+{{- end -}}

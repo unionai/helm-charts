@@ -1,349 +1,235 @@
 # dataplane
 
-![Version: 2025.1.0](https://img.shields.io/badge/Version-2025.1.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.1.0](https://img.shields.io/badge/AppVersion-2025.1.0-informational?style=flat-square)
+![Version: 2025.4.2](https://img.shields.io/badge/Version-2025.4.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.4.0](https://img.shields.io/badge/AppVersion-2025.4.0-informational?style=flat-square)
 
 Deploys the Union dataplane components to onboard a kubernetes cluster to the Union Cloud.
 
 ## Requirements
 
-Kubernetes: `>= 1.28.0`
+Kubernetes: `>= 1.28.0-0`
 
 | Repository | Name | Version |
 |------------|------|---------|
+| https://fluent.github.io/helm-charts | fluentbit(fluent-bit) | 0.48.9 |
+| https://kubernetes-sigs.github.io/metrics-server/ | metrics-server(metrics-server) | 3.12.2 |
+| https://nvidia.github.io/dcgm-exporter/helm-charts | dcgm-exporter | 4.1.0 |
+| https://opencost.github.io/opencost-helm-chart | opencost | 1.42.0 |
 | https://prometheus-community.github.io/helm-charts | prometheus(kube-prometheus-stack) | 68.2.2 |
+| https://unionai.github.io/helm-charts | knative-operator(knative-operator) | 2025.4.0 |
 
 ## Values
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| additionalPodAnnotations | object | `{}` |  |
-| additionalPodEnvVars | object | `{}` |  |
-| additionalPodLabels | object | `{}` |  |
-| clusterName | string | `""` |  |
-| clusterresourcesync.config.clusterResourcesPrivate.app.isSelfServe | bool | `false` |  |
-| clusterresourcesync.config.cluster_resources.clusterName | string | `"{{ include \"getClusterName\" . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[0].production[0].projectQuotaCpu.value | string | `"4096"` |  |
-| clusterresourcesync.config.cluster_resources.customData[0].production[1].projectQuotaMemory.value | string | `"2Ti"` |  |
-| clusterresourcesync.config.cluster_resources.customData[0].production[2].projectQuotaNvidiaGpu.value | string | `"256"` |  |
-| clusterresourcesync.config.cluster_resources.customData[0].production[3].defaultUserRoleKey.value | string | `"{{ tpl .Values.userRoleAnnotationKey . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[0].production[4].defaultUserRoleValue.value | string | `"{{ tpl .Values.userRoleAnnotationValue . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[1].staging[0].projectQuotaCpu.value | string | `"4096"` |  |
-| clusterresourcesync.config.cluster_resources.customData[1].staging[1].projectQuotaMemory.value | string | `"2Ti"` |  |
-| clusterresourcesync.config.cluster_resources.customData[1].staging[2].projectQuotaNvidiaGpu.value | string | `"256"` |  |
-| clusterresourcesync.config.cluster_resources.customData[1].staging[3].defaultUserRoleKey.value | string | `"{{ tpl .Values.userRoleAnnotationKey . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[1].staging[4].defaultUserRoleValue.value | string | `"{{ tpl .Values.userRoleAnnotationValue . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[2].development[0].projectQuotaCpu.value | string | `"4096"` |  |
-| clusterresourcesync.config.cluster_resources.customData[2].development[1].projectQuotaMemory.value | string | `"2Ti"` |  |
-| clusterresourcesync.config.cluster_resources.customData[2].development[2].projectQuotaNvidiaGpu.value | string | `"256"` |  |
-| clusterresourcesync.config.cluster_resources.customData[2].development[3].defaultUserRoleKey.value | string | `"{{ tpl .Values.userRoleAnnotationKey . }}"` |  |
-| clusterresourcesync.config.cluster_resources.customData[2].development[4].defaultUserRoleValue.value | string | `"{{ tpl .Values.userRoleAnnotationValue . }}"` |  |
-| clusterresourcesync.config.cluster_resources.standaloneDeployment | bool | `true` |  |
-| clusterresourcesync.config.union.auth.authorizationMetadataKey | string | `"flyte-authorization"` |  |
-| clusterresourcesync.config.union.auth.clientId | string | `"{{ tpl .Values.secrets.admin.clientId . }}"` |  |
-| clusterresourcesync.config.union.auth.clientSecretLocation | string | `"/etc/union/secret/client_secret"` |  |
-| clusterresourcesync.config.union.auth.tokenRefreshWindow | string | `"5m"` |  |
-| clusterresourcesync.config.union.auth.type | string | `"ClientSecret"` |  |
-| clusterresourcesync.config.union.connection.host | string | `"dns:///{{ tpl .Values.host . }}"` |  |
-| clusterresourcesync.enabled | bool | `true` |  |
-| clusterresourcesync.nodeSelector | object | `{}` |  |
-| clusterresourcesync.podAnnotations | object | `{}` |  |
-| clusterresourcesync.podEnv | object | `{}` |  |
-| clusterresourcesync.resources.limits.cpu | string | `"1"` |  |
-| clusterresourcesync.resources.limits.memory | string | `"500Mi"` |  |
-| clusterresourcesync.resources.requests.cpu | string | `"500m"` |  |
-| clusterresourcesync.resources.requests.memory | string | `"100Mi"` |  |
-| clusterresourcesync.secretName | string | `"union-base"` |  |
-| clusterresourcesync.serviceAccountName | string | `""` |  |
-| clusterresourcesync.templates[0] | object | `{"key":"a_namespace.yaml","value":"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{ namespace }}\n  labels:\n    union.ai/namespace-type: flyte\nspec:\n  finalizers:\n  - kubernetes\n"}` | Template for namespaces resources |
-| clusterresourcesync.templates[1] | object | `{"key":"b_default_service_account.yaml","value":"apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: {{ namespace }}\n  annotations:\n    {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}\n"}` | Patch default service account |
-| clusterresourcesync.templates[2].key | string | `"c_project_resource_quota.yaml"` |  |
-| clusterresourcesync.templates[2].value | string | `"apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: project-quota\n  namespace: {{ namespace }}\nspec:\n  hard:\n    limits.cpu: {{ projectQuotaCpu }}\n    limits.memory: {{ projectQuotaMemory }}\n    requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}\n"` |  |
-| clusterresourcesync.unionCallbackEnabled | bool | `true` |  |
+| additionalPodAnnotations | object | `{}` | Define additional pod annotations for all of the Union pods. |
+| additionalPodEnvVars | object | `{}` | Define additional pod environment variables for all of the Union pods. |
+| additionalPodLabels | object | `{}` | Define additional pod labels for all of the Union pods. |
+| additionalPodSpec | object | `{}` | Define additional PodSpec values for all of the Union pods. |
+| clusterName | string | `""` | Cluster name should be shared with Union for proper functionality. |
+| clusterresourcesync | object | `{"affinity":{},"config":{"clusterResourcesPrivate":{"app":{"isSelfServe":false}},"cluster_resources":{"clusterName":"{{ include \"getClusterName\" . }}","customData":[{"production":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]},{"staging":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]},{"development":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]}],"refreshInterval":"5m","standaloneDeployment":true,"templatePath":"/etc/flyte/clusterresource/templates"},"union":{"auth":{"authorizationMetadataKey":"flyte-authorization","clientId":"{{ tpl .Values.secrets.admin.clientId . }}","clientSecretLocation":"/etc/union/secret/client_secret","tokenRefreshWindow":"5m","type":"ClientSecret"},"connection":{"host":"dns:///{{ tpl .Values.host . }}"}}},"enabled":true,"nodeName":"","nodeSelector":{},"podAnnotations":{},"podEnv":{},"resources":{"limits":{"cpu":"1","memory":"500Mi"},"requests":{"cpu":"500m","memory":"100Mi"}},"serviceAccount":{"name":""},"templates":[{"key":"a_namespace","value":"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{ namespace }}\n  labels:\n    union.ai/namespace-type: flyte\nspec:\n  finalizers:\n  - kubernetes\n"},{"key":"b_default_service_account","value":"apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: {{ namespace }}\n  annotations:\n    {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}\n"},{"key":"c_project_resource_quota","value":"apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: project-quota\n  namespace: {{ namespace }}\nspec:\n  hard:\n    limits.cpu: {{ projectQuotaCpu }}\n    limits.memory: {{ projectQuotaMemory }}\n    requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}\n"}],"tolerations":[],"topologySpreadConstraints":{}}` | clusterresourcesync contains the configuration information for the syncresources service. |
+| clusterresourcesync.affinity | object | `{}` | affinity configurations for the syncresources pods |
+| clusterresourcesync.config | object | `{"clusterResourcesPrivate":{"app":{"isSelfServe":false}},"cluster_resources":{"clusterName":"{{ include \"getClusterName\" . }}","customData":[{"production":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]},{"staging":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]},{"development":[{"projectQuotaCpu":{"value":"4096"}},{"projectQuotaMemory":{"value":"2Ti"}},{"projectQuotaNvidiaGpu":{"value":"256"}},{"defaultUserRoleKey":{"value":"{{ tpl .Values.userRoleAnnotationKey . }}"}},{"defaultUserRoleValue":{"value":"{{ tpl .Values.userRoleAnnotationValue . }}"}}]}],"refreshInterval":"5m","standaloneDeployment":true,"templatePath":"/etc/flyte/clusterresource/templates"},"union":{"auth":{"authorizationMetadataKey":"flyte-authorization","clientId":"{{ tpl .Values.secrets.admin.clientId . }}","clientSecretLocation":"/etc/union/secret/client_secret","tokenRefreshWindow":"5m","type":"ClientSecret"},"connection":{"host":"dns:///{{ tpl .Values.host . }}"}}}` | Syncresources service configuration |
+| clusterresourcesync.config.clusterResourcesPrivate | object | `{"app":{"isSelfServe":false}}` | Additional configuration for the cluster resources service |
+| clusterresourcesync.config.clusterResourcesPrivate.app | object | `{"isSelfServe":false}` | Configuration of app serving services. |
+| clusterresourcesync.config.cluster_resources.clusterName | string | `"{{ include \"getClusterName\" . }}"` | The name of the cluster.  This should always be the same as the cluster name in the config. |
+| clusterresourcesync.config.cluster_resources.refreshInterval | string | `"5m"` | How frequently to sync the cluster resources |
+| clusterresourcesync.config.cluster_resources.standaloneDeployment | bool | `true` | Start the cluster resource manager in standalone mode. |
+| clusterresourcesync.config.cluster_resources.templatePath | string | `"/etc/flyte/clusterresource/templates"` | The path to the project the templates used to configure project resource quotas. |
+| clusterresourcesync.config.union | object | `{"auth":{"authorizationMetadataKey":"flyte-authorization","clientId":"{{ tpl .Values.secrets.admin.clientId . }}","clientSecretLocation":"/etc/union/secret/client_secret","tokenRefreshWindow":"5m","type":"ClientSecret"},"connection":{"host":"dns:///{{ tpl .Values.host . }}"}}` | Connection information for the sync resources service to connect to the Union control plane.  This should not need to be changed. |
+| clusterresourcesync.enabled | bool | `true` | Enable or disable the syncresources service |
+| clusterresourcesync.nodeName | string | `""` | nodeName constraints for the syncresources pods |
+| clusterresourcesync.nodeSelector | object | `{}` | nodeSelector constraints for the syncresources pods |
+| clusterresourcesync.podAnnotations | object | `{}` | Additional pod annotations for the syncresources service |
+| clusterresourcesync.podEnv | object | `{}` | Additional pod environment variables for the syncresources service |
+| clusterresourcesync.resources | object | `{"limits":{"cpu":"1","memory":"500Mi"},"requests":{"cpu":"500m","memory":"100Mi"}}` | Kubernetes resource configuration for the syncresources service |
+| clusterresourcesync.serviceAccount | object | `{"name":""}` | Override service account values for the syncresources service |
+| clusterresourcesync.serviceAccount.name | string | `""` | Override the service account name for the syncresources service |
+| clusterresourcesync.templates | list | `[{"key":"a_namespace","value":"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{ namespace }}\n  labels:\n    union.ai/namespace-type: flyte\nspec:\n  finalizers:\n  - kubernetes\n"},{"key":"b_default_service_account","value":"apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: {{ namespace }}\n  annotations:\n    {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}\n"},{"key":"c_project_resource_quota","value":"apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: project-quota\n  namespace: {{ namespace }}\nspec:\n  hard:\n    limits.cpu: {{ projectQuotaCpu }}\n    limits.memory: {{ projectQuotaMemory }}\n    requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}\n"}]` | The templates that are used to create and/or update kubernetes resources for Union projects. |
+| clusterresourcesync.templates[0] | object | `{"key":"a_namespace","value":"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{ namespace }}\n  labels:\n    union.ai/namespace-type: flyte\nspec:\n  finalizers:\n  - kubernetes\n"}` | Template for namespaces resources |
+| clusterresourcesync.templates[1] | object | `{"key":"b_default_service_account","value":"apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: {{ namespace }}\n  annotations:\n    {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}\n"}` | Patch default service account |
+| clusterresourcesync.tolerations | list | `[]` | tolerations for the syncresources pods |
+| clusterresourcesync.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for the syncresources pods |
+| config | object | `{"admin":{"admin":{"clientId":"{{ tpl .Values.secrets.admin.clientId . }}","clientSecretLocation":"/etc/union/secret/client_secret","endpoint":"dns:///{{ tpl .Values.host . }}","insecure":false},"event":{"capacity":1000,"rate":500,"type":"admin"}},"authorizer":{"type":"noop"},"catalog":{"catalog-cache":{"cache-endpoint":"dns:///{{ tpl .Values.host . }}","endpoint":"dns:///{{ tpl .Values.host . }}","insecure":false,"type":"fallback","use-admin-auth":true}},"clusters":{"clusterConfigs":[],"labelClusterMap":{}},"configOverrides":{"cache":{"identity":{"enabled":false}}},"copilot":{"plugins":{"k8s":{"co-pilot":{"image":"{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}","name":"flyte-copilot-","start-timeout":"30s"}}}},"core":{"propeller":{"downstream-eval-duration":"30s","enable-admin-launcher":true,"leader-election":{"enabled":true,"lease-duration":"15s","lock-config-map":{"name":"propeller-leader","namespace":"union"},"renew-deadline":"10s","retry-period":"2s"},"limit-namespace":"all","literal-offloading-config":{"enabled":true},"max-workflow-retries":30,"metadata-prefix":"metadata/propeller","metrics-prefix":"flyte","prof-port":10254,"queue":{"batch-size":-1,"batching-interval":"2s","queue":{"base-delay":"5s","capacity":1000,"max-delay":"120s","rate":100,"type":"maxof"},"sub-queue":{"capacity":100,"rate":10,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"s3://{{ .Values.storage.bucketName }}","workers":4,"workflow-reeval-duration":"30s"},"webhook":{"certDir":"/etc/webhook/certs","embeddedSecretManagerConfig":{"k8sConfig":{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"},"type":"{{ .Values.proxy.secretManager.type }}"},"secretManagerTypes":["Embedded"],"serviceName":"flyte-pod-webhook"}},"domain":{"domains":[{"id":"development","name":"development"},{"id":"staging","name":"staging"},{"id":"production","name":"production"}]},"enabled_plugins":{"tasks":{"task-plugins":{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array","agent-service","echo"]}}},"k8s":{"plugins":{"k8s":{"default-cpus":"100m","default-env-vars":[],"default-memory":"100Mi"}}},"logger":{"level":4,"show-source":true},"operator":{"apps":{"enabled":"{{ .Values.serving.enabled }}"},"clusterData":{"appId":"{{ .Values.secrets.admin.clientId }}","bucketName":"{{ .Values.storage.bucketName }}","bucketRegion":"{{ .Values.storage.region }}","cloudHostName":"{{ .Values.host }}","gcpProjectId":"{{ .Values.storage.gcp.projectId }}","metadataBucketPrefix":"s3://","userRole":"{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}","userRoleKey":"{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"},"clusterId":{"organization":"{{ .Values.orgName }}"},"collectUsages":{"enabled":true},"dependenciesHeartbeat":{"prometheus":{"endpoint":"{{ include \"prometheus.health.url\" . }}"},"propeller":{"endpoint":"{{ include \"propeller.health.url\" . }}"},"proxy":{"endpoint":"{{ include \"proxy.health.url\" . }}"}},"enableTunnelService":true,"enabled":true,"syncClusterConfig":{"enabled":false}},"proxy":{"persistedLogs":{"objectStore":{"pathTemplate":"namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}","prefix":"persisted-logs"},"sourceType":"ObjectStore"},"smConfig":{"enabled":"{{ .Values.proxy.secretManager.enabled }}","k8sConfig":{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"},"type":"{{ .Values.proxy.secretManager.type }}"}},"resource_manager":{"propeller":{"resourcemanager":{"type":"noop"}}},"schedulerConfig":{"scheduler":{"metricsScope":"flyte:","profilerPort":10254}},"sharedService":{"features":{"gatewayV2":true},"port":8081},"task_logs":{"plugins":{"logs":{"cloudwatch-enabled":false,"dynamic-log-links":[{"vscode":{"displayName":"VS Code Debugger","templateUris":["/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/"]}}],"kubernetes-enabled":false,"templates":[{"displayName":"Task Logs","scheme":"TaskExecution","templateUris":["/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"]}]}}},"task_resource_defaults":{"task_resources":{"defaults":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":2,"gpu":1,"memory":"1Gi"}}},"union":{"auth":{"authorizationMetadataKey":"flyte-authorization","clientId":"{{ .Values.secrets.admin.clientId }}","clientSecretLocation":"/etc/union/secret/client_secret","tokenRefreshWindow":"5m","type":"ClientSecret"},"connection":{"host":"dns:///{{ .Values.host }}"}}}` | Global configuration settings for all Union services. |
 | config.admin | object | `{"admin":{"clientId":"{{ tpl .Values.secrets.admin.clientId . }}","clientSecretLocation":"/etc/union/secret/client_secret","endpoint":"dns:///{{ tpl .Values.host . }}","insecure":false},"event":{"capacity":1000,"rate":500,"type":"admin"}}` | Admin Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/subworkflow/launchplan#AdminConfig) |
-| config.authorizer.type | string | `"noop"` |  |
-| config.catalog | object | `{"catalog-cache":{"endpoint":"datacatalog:89","insecure":true,"type":"datacatalog"}}` | Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config) Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config) |
-| config.catalog_cache | object | `{}` |  |
-| config.clusters.clusterConfigs | list | `[]` |  |
-| config.clusters.labelClusterMap | object | `{}` |  |
+| config.catalog | object | `{"catalog-cache":{"cache-endpoint":"dns:///{{ tpl .Values.host . }}","endpoint":"dns:///{{ tpl .Values.host . }}","insecure":false,"type":"fallback","use-admin-auth":true}}` | Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config) Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config) |
+| config.configOverrides | object | `{"cache":{"identity":{"enabled":false}}}` | Override any configuration settings. |
 | config.copilot | object | `{"plugins":{"k8s":{"co-pilot":{"image":"{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}","name":"flyte-copilot-","start-timeout":"30s"}}}}` | Copilot configuration |
 | config.copilot.plugins.k8s.co-pilot | object | `{"image":"{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}","name":"flyte-copilot-","start-timeout":"30s"}` | Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig) |
-| config.core | object | `{"propeller":{"downstream-eval-duration":"30s","enable-admin-launcher":true,"leader-election":{"enabled":true,"lease-duration":"15s","lock-config-map":{"name":"propeller-leader","namespace":"union"},"renew-deadline":"10s","retry-period":"2s"},"limit-namespace":"all","literal-offloading-config":{"enabled":true},"max-workflow-retries":30,"metadata-prefix":"metadata/propeller","metrics-prefix":"flyte","prof-port":10254,"queue":{"batch-size":-1,"batching-interval":"2s","queue":{"base-delay":"5s","capacity":1000,"max-delay":"120s","rate":100,"type":"maxof"},"sub-queue":{"capacity":100,"rate":10,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"s3://{{ .Values.storage.bucketName }}","workers":4,"workflow-reeval-duration":"30s"},"webhook":{"certDir":"/etc/webhook/certs","serviceName":"flyte-pod-webhook"}}` | Core propeller configuration |
+| config.core | object | `{"propeller":{"downstream-eval-duration":"30s","enable-admin-launcher":true,"leader-election":{"enabled":true,"lease-duration":"15s","lock-config-map":{"name":"propeller-leader","namespace":"union"},"renew-deadline":"10s","retry-period":"2s"},"limit-namespace":"all","literal-offloading-config":{"enabled":true},"max-workflow-retries":30,"metadata-prefix":"metadata/propeller","metrics-prefix":"flyte","prof-port":10254,"queue":{"batch-size":-1,"batching-interval":"2s","queue":{"base-delay":"5s","capacity":1000,"max-delay":"120s","rate":100,"type":"maxof"},"sub-queue":{"capacity":100,"rate":10,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"s3://{{ .Values.storage.bucketName }}","workers":4,"workflow-reeval-duration":"30s"},"webhook":{"certDir":"/etc/webhook/certs","embeddedSecretManagerConfig":{"k8sConfig":{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"},"type":"{{ .Values.proxy.secretManager.type }}"},"secretManagerTypes":["Embedded"],"serviceName":"flyte-pod-webhook"}}` | Core propeller configuration |
 | config.core.propeller | object | `{"downstream-eval-duration":"30s","enable-admin-launcher":true,"leader-election":{"enabled":true,"lease-duration":"15s","lock-config-map":{"name":"propeller-leader","namespace":"union"},"renew-deadline":"10s","retry-period":"2s"},"limit-namespace":"all","literal-offloading-config":{"enabled":true},"max-workflow-retries":30,"metadata-prefix":"metadata/propeller","metrics-prefix":"flyte","prof-port":10254,"queue":{"batch-size":-1,"batching-interval":"2s","queue":{"base-delay":"5s","capacity":1000,"max-delay":"120s","rate":100,"type":"maxof"},"sub-queue":{"capacity":100,"rate":10,"type":"bucket"},"type":"batch"},"rawoutput-prefix":"s3://{{ .Values.storage.bucketName }}","workers":4,"workflow-reeval-duration":"30s"}` | follows the structure specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config). |
-| config.datacatalogServer | object | `{"application":{"grpcPort":8089,"grpcServerReflection":true,"httpPort":8080},"datacatalog":{"heartbeat-grace-period-multiplier":3,"max-reservation-heartbeat":"30s","metrics-scope":"datacatalog","profiler-port":10254,"storage-prefix":"metadata/datacatalog"}}` | Datacatalog server config |
-| config.domain | object | `{"domains":[{"id":"development","name":"development"},{"id":"staging","name":"staging"},{"id":"production","name":"production"}]}` | Domains configuration for Flyte projects. This enables the specified number of domains across all projects in Flyte. |
+| config.domain | object | `{"domains":[{"id":"development","name":"development"},{"id":"staging","name":"staging"},{"id":"production","name":"production"}]}` | Domains configuration for Union projects. This enables the specified number of domains across all projects in Union. |
 | config.enabled_plugins.tasks | object | `{"task-plugins":{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array","agent-service","echo"]}}` | Tasks specific configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#GetConfig) |
 | config.enabled_plugins.tasks.task-plugins | object | `{"default-for-task-types":{"container":"container","container_array":"k8s-array","sidecar":"sidecar"},"enabled-plugins":["container","sidecar","k8s-array","agent-service","echo"]}` | Plugins configuration, [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#TaskPluginConfig) |
 | config.enabled_plugins.tasks.task-plugins.enabled-plugins | list | `["container","sidecar","k8s-array","agent-service","echo"]` | [Enabled Plugins](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/config#Config). Enable sagemaker*, athena if you install the backend plugins |
 | config.k8s | object | `{"plugins":{"k8s":{"default-cpus":"100m","default-env-vars":[],"default-memory":"100Mi"}}}` | Kubernetes specific Flyte configuration |
 | config.k8s.plugins.k8s | object | `{"default-cpus":"100m","default-env-vars":[],"default-memory":"100Mi"}` | Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config) |
-| config.logger.level | int | `4` |  |
-| config.logger.show-source | bool | `true` |  |
-| config.operator.apps.enabled | bool | `false` |  |
-| config.operator.clusterData.appId | string | `"{{ .Values.secrets.admin.clientId }}"` |  |
-| config.operator.clusterData.bucketName | string | `"{{ .Values.storage.bucketName }}"` |  |
-| config.operator.clusterData.bucketRegion | string | `"{{ .Values.storage.region }}"` |  |
-| config.operator.clusterData.cloudHostName | string | `"{{ .Values.host }}"` |  |
-| config.operator.clusterData.gcpProjectId | string | `"{{ .Values.storage.gcp.projectId }}"` |  |
-| config.operator.clusterData.metadataBucketPrefix | string | `"s3://"` |  |
-| config.operator.clusterData.storageType | string | `"{{ .Values.provider }}"` |  |
-| config.operator.clusterData.userRole | string | `"{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"` |  |
-| config.operator.clusterData.userRoleKey | string | `"{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"` |  |
-| config.operator.clusterId.organization | string | `"{{ .Values.orgName }}"` |  |
-| config.operator.collectUsages.enabled | bool | `true` |  |
-| config.operator.customStorageConfig | string | `""` |  |
-| config.operator.dependenciesHeartbeat.prometheus.endpoint | string | `"{{ include \"prometheus.health.url\" . }}"` |  |
-| config.operator.dependenciesHeartbeat.propeller.endpoint | string | `"{{ include \"propeller.health.url\" . }}"` |  |
-| config.operator.dependenciesHeartbeat.proxy.endpoint | string | `"{{ include \"proxy.health.url\" . }}"` |  |
-| config.operator.enableTunnelService | bool | `true` |  |
-| config.operator.enabled | bool | `true` |  |
-| config.operator.syncClusterConfig.enabled | bool | `false` |  |
-| config.qubole | object | `{}` |  |
-| config.remoteData.remoteData.region | string | `"us-east-1"` |  |
-| config.remoteData.remoteData.scheme | string | `"local"` |  |
-| config.remoteData.remoteData.signedUrls.durationMinutes | int | `3` |  |
+| config.logger | object | `{"level":4,"show-source":true}` | Logging configuration |
+| config.operator | object | `{"apps":{"enabled":"{{ .Values.serving.enabled }}"},"clusterData":{"appId":"{{ .Values.secrets.admin.clientId }}","bucketName":"{{ .Values.storage.bucketName }}","bucketRegion":"{{ .Values.storage.region }}","cloudHostName":"{{ .Values.host }}","gcpProjectId":"{{ .Values.storage.gcp.projectId }}","metadataBucketPrefix":"s3://","userRole":"{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}","userRoleKey":"{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"},"clusterId":{"organization":"{{ .Values.orgName }}"},"collectUsages":{"enabled":true},"dependenciesHeartbeat":{"prometheus":{"endpoint":"{{ include \"prometheus.health.url\" . }}"},"propeller":{"endpoint":"{{ include \"propeller.health.url\" . }}"},"proxy":{"endpoint":"{{ include \"proxy.health.url\" . }}"}},"enableTunnelService":true,"enabled":true,"syncClusterConfig":{"enabled":false}}` | Configuration for the Union operator service |
+| config.operator.apps | object | `{"enabled":"{{ .Values.serving.enabled }}"}` | Enable app serving |
+| config.operator.clusterData | object | `{"appId":"{{ .Values.secrets.admin.clientId }}","bucketName":"{{ .Values.storage.bucketName }}","bucketRegion":"{{ .Values.storage.region }}","cloudHostName":"{{ .Values.host }}","gcpProjectId":"{{ .Values.storage.gcp.projectId }}","metadataBucketPrefix":"s3://","userRole":"{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}","userRoleKey":"{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"}` | Dataplane cluster configuration. |
+| config.operator.clusterData.appId | string | `"{{ .Values.secrets.admin.clientId }}"` | The client id used to authenticate to the control plane.  This will be provided by Union. |
+| config.operator.clusterData.bucketName | string | `"{{ .Values.storage.bucketName }}"` | The bucket name for object storage. |
+| config.operator.clusterData.bucketRegion | string | `"{{ .Values.storage.region }}"` | The bucket region for object storage. |
+| config.operator.clusterData.cloudHostName | string | `"{{ .Values.host }}"` | The hose name for control plane access. This will be provided by Union. |
+| config.operator.clusterData.gcpProjectId | string | `"{{ .Values.storage.gcp.projectId }}"` | For GCP only, the project id for object storage. |
+| config.operator.clusterData.metadataBucketPrefix | string | `"s3://"` | The prefix for constructing object storage URLs. |
+| config.operator.clusterId | object | `{"organization":"{{ .Values.orgName }}"}` | Set the cluster information for the operator service |
+| config.operator.clusterId.organization | string | `"{{ .Values.orgName }}"` | The organization name for the cluster.  This should match your organization name that you were provided. |
+| config.operator.collectUsages | object | `{"enabled":true}` | Configuration for the usage reporting service. |
+| config.operator.collectUsages.enabled | bool | `true` | Enable usage collection in the operator service. |
+| config.operator.dependenciesHeartbeat | object | `{"prometheus":{"endpoint":"{{ include \"prometheus.health.url\" . }}"},"propeller":{"endpoint":"{{ include \"propeller.health.url\" . }}"},"proxy":{"endpoint":"{{ include \"proxy.health.url\" . }}"}}` | Heartbeat check configuration. |
+| config.operator.dependenciesHeartbeat.prometheus | object | `{"endpoint":"{{ include \"prometheus.health.url\" . }}"}` | Define the prometheus health check endpoint. |
+| config.operator.dependenciesHeartbeat.propeller | object | `{"endpoint":"{{ include \"propeller.health.url\" . }}"}` | Define the propeller health check endpoint. |
+| config.operator.dependenciesHeartbeat.proxy | object | `{"endpoint":"{{ include \"proxy.health.url\" . }}"}` | Define the operator proxy health check endpoint. |
+| config.operator.enableTunnelService | bool | `true` | Enable the cloudflare tunnel service for secure communication with the control plane. |
+| config.operator.enabled | bool | `true` | Enables the operator service |
+| config.operator.syncClusterConfig | object | `{"enabled":false}` | Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy. |
+| config.proxy | object | `{"persistedLogs":{"objectStore":{"pathTemplate":"namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}","prefix":"persisted-logs"},"sourceType":"ObjectStore"},"smConfig":{"enabled":"{{ .Values.proxy.secretManager.enabled }}","k8sConfig":{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"},"type":"{{ .Values.proxy.secretManager.type }}"}}` | Configuration for the operator proxy service. |
+| config.proxy.smConfig | object | `{"enabled":"{{ .Values.proxy.secretManager.enabled }}","k8sConfig":{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"},"type":"{{ .Values.proxy.secretManager.type }}"}` | Secret manager configuration |
+| config.proxy.smConfig.enabled | string | `"{{ .Values.proxy.secretManager.enabled }}"` | Enable or disable secret manager support for the Union dataplane. |
+| config.proxy.smConfig.k8sConfig | object | `{"namespace":"{{ include \"proxy.secretsNamespace\" . }}"}` | Kubernetes specific secret manager configuration. |
+| config.proxy.smConfig.type | string | `"{{ .Values.proxy.secretManager.type }}"` | The type of secret manager to use. |
 | config.resource_manager | object | `{"propeller":{"resourcemanager":{"type":"noop"}}}` | Resource manager configuration |
 | config.resource_manager.propeller | object | `{"resourcemanager":{"type":"noop"}}` | resource manager configuration |
-| config.schedulerConfig.scheduler.metricsScope | string | `"flyte:"` |  |
-| config.schedulerConfig.scheduler.profilerPort | int | `10254` |  |
-| config.task_logs | object | `{"plugins":{"logs":{"cloudwatch-enabled":false,"kubernetes-enabled":false}}}` | Section that configures how the Task logs are displayed on the UI. This has to be changed based on your actual logging provider. Refer to [structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/logs#LogConfig) to understand how to configure various logging engines |
+| config.sharedService | object | `{"features":{"gatewayV2":true},"port":8081}` | Section that configures shared union services |
+| config.task_logs | object | `{"plugins":{"logs":{"cloudwatch-enabled":false,"dynamic-log-links":[{"vscode":{"displayName":"VS Code Debugger","templateUris":["/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/"]}}],"kubernetes-enabled":false,"templates":[{"displayName":"Task Logs","scheme":"TaskExecution","templateUris":["/console/projects/{{`{{.executionProject}}`}}/domains/{{`{{.executionDomain}}`}}/executions/{{`{{.executionName}}`}}/nodeId/{{`{{.nodeID}}`}}/taskId/{{`{{.taskID}}`}}/attempt/{{`{{.taskRetryAttempt}}`}}/view/logs?duration=all&fromExecutionNav=true"]}]}}}` | Section that configures how the Task logs are displayed on the UI. This has to be changed based on your actual logging provider. Refer to [structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/logs#LogConfig) to understand how to configure various logging engines |
 | config.task_logs.plugins.logs.cloudwatch-enabled | bool | `false` | One option is to enable cloudwatch logging for EKS, update the region and log group accordingly |
 | config.task_resource_defaults | object | `{"task_resources":{"defaults":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":2,"gpu":1,"memory":"1Gi"}}}` | Task default resources configuration Refer to the full [structure](https://pkg.go.dev/github.com/lyft/flyteadmin@v0.3.37/pkg/runtime/interfaces#TaskResourceConfiguration). |
 | config.task_resource_defaults.task_resources | object | `{"defaults":{"cpu":"100m","memory":"500Mi"},"limits":{"cpu":2,"gpu":1,"memory":"1Gi"}}` | Task default resources parameters |
-| config.union.auth.authorizationMetadataKey | string | `"flyte-authorization"` |  |
-| config.union.auth.clientId | string | `"{{ .Values.secrets.admin.clientId }}"` |  |
-| config.union.auth.clientSecretLocation | string | `"/etc/union/secret/client_secret"` |  |
-| config.union.auth.tokenRefreshWindow | string | `"5m"` |  |
-| config.union.auth.type | string | `"ClientSecret"` |  |
-| config.union.connection.host | string | `"dns:///{{ .Values.host }}"` |  |
-| databricks.enabled | bool | `false` |  |
-| databricks.plugin_config | object | `{}` |  |
-| dcgmExporter.affinity | object | `{}` |  |
-| dcgmExporter.arguments[0] | string | `"-f"` |  |
-| dcgmExporter.arguments[1] | string | `"/etc/dcgm-exporter/dcp-metrics-included.csv"` |  |
-| dcgmExporter.extraHostVolumes[0].hostPath | string | `"/home/kubernetes/bin/nvidia"` |  |
-| dcgmExporter.extraHostVolumes[0].name | string | `"nvidia-install-dir-host"` |  |
-| dcgmExporter.extraVolumeMounts[0].mountPath | string | `"/usr/local/nvidia"` |  |
-| dcgmExporter.extraVolumeMounts[0].name | string | `"nvidia-install-dir-host"` |  |
-| dcgmExporter.extraVolumeMounts[0].readOnly | bool | `true` |  |
-| dcgmExporter.kubeletPath | string | `"/var/lib/kubelet/pod-resources"` |  |
-| dcgmExporter.podSecurityContext | object | `{}` |  |
-| dcgmExporter.resources.limits.cpu | string | `"100m"` |  |
-| dcgmExporter.resources.limits.ephemeral-storage | string | `"500Mi"` |  |
-| dcgmExporter.resources.limits.memory | string | `"400Mi"` |  |
-| dcgmExporter.resources.requests.cpu | string | `"100m"` |  |
-| dcgmExporter.resources.requests.ephemeral-storage | string | `"500Mi"` |  |
-| dcgmExporter.resources.requests.memory | string | `"128Mi"` |  |
-| dcgmExporter.securityContext.capabilities.add[0] | string | `"SYS_ADMIN"` |  |
-| dcgmExporter.securityContext.privileged | bool | `true` |  |
-| dcgmExporter.securityContext.runAsNonRoot | bool | `false` |  |
-| dcgmExporter.securityContext.runAsUser | int | `0` |  |
-| dcgmExporter.serviceAccount.annotations | object | `{}` |  |
-| dcgmExporter.serviceAccount.create | bool | `true` |  |
-| dcgmExporter.serviceAccount.name | string | `"dcgm-exporter-system"` |  |
-| dcgmExporter.tolerations | object | `{}` |  |
-| flyteagent.enabled | bool | `false` |  |
-| flyteagent.plugin_config | object | `{}` |  |
-| flytepropeller.additionalContainers | object | `{}` |  |
-| flytepropeller.additionalVolumeMounts | object | `{}` |  |
-| flytepropeller.additionalVolumes | object | `{}` |  |
+| config.union | object | `{"auth":{"authorizationMetadataKey":"flyte-authorization","clientId":"{{ .Values.secrets.admin.clientId }}","clientSecretLocation":"/etc/union/secret/client_secret","tokenRefreshWindow":"5m","type":"ClientSecret"},"connection":{"host":"dns:///{{ .Values.host }}"}}` | Connection information to the union control plane. |
+| databricks | object | `{"enabled":false,"plugin_config":{}}` | Databricks integration configuration |
+| dcgm-exporter | object | `{"enabled":false}` | Dcgm exporter configuration |
+| dcgm-exporter.enabled | bool | `false` | Enable or disable the dcgm exporter |
+| fluentbit | object | `{"enabled":true,"env":[],"existingConfigMap":"fluentbit-system","serviceAccount":{"annotations":{},"name":"fluentbit-system"},"tolerations":[{"operator":"Exists"}]}` | Configuration for fluentbit used for the persistent logging feature. |
+| flyteagent | object | `{"enabled":false,"plugin_config":{}}` | Flyteagent configuration |
+| flytepropeller | object | `{"additionalContainers":{},"affinity":{},"cacheSizeMbs":0,"configPath":"/etc/flyte/config/*.yaml","enabled":true,"extraArgs":{},"nodeName":"","nodeSelector":{},"podAnnotations":{},"podEnv":{},"podLabels":{},"priorityClassName":"system-cluster-critical","replicaCount":1,"resources":{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"2","memory":"4Gi"}},"secretName":"union-secret-auth","service":{"additionalPorts":[{"name":"fasttask","port":15605,"protocol":"TCP","targetPort":15605}],"enabled":true},"serviceAccount":{"annotations":{},"create":true,"imagePullSecrets":[]},"terminationMessagePolicy":"","tolerations":[],"topologySpreadConstraints":{}}` | Flytepropeller configuration |
 | flytepropeller.affinity | object | `{}` | affinity for Flytepropeller deployment |
-| flytepropeller.cacheSizeMbs | int | `0` |  |
 | flytepropeller.configPath | string | `"/etc/flyte/config/*.yaml"` | Default regex string for searching configuration files |
-| flytepropeller.enabled | bool | `true` |  |
 | flytepropeller.extraArgs | object | `{}` | extra arguments to pass to propeller. |
+| flytepropeller.nodeName | string | `""` | nodeName constraints for Flytepropeller deployment |
 | flytepropeller.nodeSelector | object | `{}` | nodeSelector for Flytepropeller deployment |
 | flytepropeller.podAnnotations | object | `{}` | Annotations for Flytepropeller pods |
-| flytepropeller.podEnv | object | `{}` |  |
 | flytepropeller.podLabels | object | `{}` | Labels for the Flytepropeller pods |
-| flytepropeller.priorityClassName | string | `"system-cluster-critical"` |  |
 | flytepropeller.replicaCount | int | `1` | Replicas count for Flytepropeller deployment |
-| flytepropeller.resources | object | `{"limits":{"cpu":"1","ephemeral-storage":"500Mi","memory":"2Gi"},"requests":{"cpu":"1","ephemeral-storage":"500Mi","memory":"2Gi"}}` | Default resources requests and limits for Flytepropeller deployment |
-| flytepropeller.service.additionalPorts[0].name | string | `"fasttask"` |  |
-| flytepropeller.service.additionalPorts[0].port | int | `15605` |  |
-| flytepropeller.service.additionalPorts[0].protocol | string | `"TCP"` |  |
-| flytepropeller.service.additionalPorts[0].targetPort | int | `15605` |  |
-| flytepropeller.service.enabled | bool | `true` |  |
+| flytepropeller.resources | object | `{"limits":{"cpu":"2","memory":"4Gi"},"requests":{"cpu":"2","memory":"4Gi"}}` | Default resources requests and limits for Flytepropeller deployment |
 | flytepropeller.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for FlytePropeller |
 | flytepropeller.serviceAccount.annotations | object | `{}` | Annotations for ServiceAccount attached to FlytePropeller pods |
 | flytepropeller.serviceAccount.create | bool | `true` | Should a service account be created for FlytePropeller |
 | flytepropeller.serviceAccount.imagePullSecrets | list | `[]` | ImapgePullSecrets to automatically assign to the service account |
-| flytepropeller.terminationMessagePolicy | string | `""` |  |
 | flytepropeller.tolerations | list | `[]` | tolerations for Flytepropeller deployment |
-| flytepropellerwebhook.autoscaling.enabled | bool | `false` |  |
-| flytepropellerwebhook.autoscaling.maxReplicas | int | `10` |  |
-| flytepropellerwebhook.autoscaling.metrics[0].resource.name | string | `"cpu"` |  |
-| flytepropellerwebhook.autoscaling.metrics[0].resource.target.averageUtilization | int | `80` |  |
-| flytepropellerwebhook.autoscaling.metrics[0].resource.target.type | string | `"Utilization"` |  |
-| flytepropellerwebhook.autoscaling.metrics[0].type | string | `"Resource"` |  |
-| flytepropellerwebhook.autoscaling.metrics[1].resource.name | string | `"memory"` |  |
-| flytepropellerwebhook.autoscaling.metrics[1].resource.target.averageUtilization | int | `80` |  |
-| flytepropellerwebhook.autoscaling.metrics[1].resource.target.type | string | `"Utilization"` |  |
-| flytepropellerwebhook.autoscaling.metrics[1].type | string | `"Resource"` |  |
-| flytepropellerwebhook.autoscaling.minReplicas | int | `1` |  |
+| flytepropeller.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for Flytepropeller deployment |
+| flytepropellerwebhook | object | `{"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":10,"metrics":[{"resource":{"name":"cpu","target":{"averageUtilization":80,"type":"Utilization"}},"type":"Resource"},{"resource":{"name":"memory","target":{"averageUtilization":80,"type":"Utilization"}},"type":"Resource"}],"minReplicas":1},"enabled":true,"nodeName":"","nodeSelector":{},"podAnnotations":{},"podEnv":{},"podLabels":{},"priorityClassName":"","replicaCount":1,"resources":{"requests":{"cpu":"200m","ephemeral-storage":"500Mi","memory":"500Mi"}},"securityContext":{"fsGroup":65534,"fsGroupChangePolicy":"Always","runAsNonRoot":true,"runAsUser":1001,"seLinuxOptions":{"type":"spc_t"}},"service":{"annotations":{"projectcontour.io/upstream-protocol.h2c":"grpc"},"type":"ClusterIP"},"serviceAccount":{"create":true,"imagePullSecrets":[]},"tolerations":[],"topologySpreadConstraints":{}}` | Configuration for the Flytepropeller webhook |
+| flytepropellerwebhook.affinity | object | `{}` | affinity for webhook deployment |
 | flytepropellerwebhook.enabled | bool | `true` | enable or disable secrets webhook |
+| flytepropellerwebhook.nodeName | string | `""` | nodeName constraints for webhook deployment |
 | flytepropellerwebhook.nodeSelector | object | `{}` | nodeSelector for webhook deployment |
 | flytepropellerwebhook.podAnnotations | object | `{}` | Annotations for webhook pods |
 | flytepropellerwebhook.podEnv | object | `{}` | Additional webhook container environment variables |
 | flytepropellerwebhook.podLabels | object | `{}` | Labels for webhook pods |
 | flytepropellerwebhook.priorityClassName | string | `""` | Sets priorityClassName for webhook pod |
 | flytepropellerwebhook.replicaCount | int | `1` | Replicas |
-| flytepropellerwebhook.resources.requests.cpu | string | `"200m"` |  |
-| flytepropellerwebhook.resources.requests.ephemeral-storage | string | `"500Mi"` |  |
-| flytepropellerwebhook.resources.requests.memory | string | `"500Mi"` |  |
 | flytepropellerwebhook.securityContext | object | `{"fsGroup":65534,"fsGroupChangePolicy":"Always","runAsNonRoot":true,"runAsUser":1001,"seLinuxOptions":{"type":"spc_t"}}` | Sets securityContext for webhook pod(s). |
 | flytepropellerwebhook.service | object | `{"annotations":{"projectcontour.io/upstream-protocol.h2c":"grpc"},"type":"ClusterIP"}` | Service settings for the webhook |
 | flytepropellerwebhook.serviceAccount | object | `{"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for the webhook |
 | flytepropellerwebhook.serviceAccount.create | bool | `true` | Should a service account be created for the webhook |
 | flytepropellerwebhook.serviceAccount.imagePullSecrets | list | `[]` | ImagePullSecrets to automatically assign to the service account |
-| fullnameOverride | string | `""` |  |
-| host | string | `"foo.unionai.cloud"` |  |
-| image.dcgmExporter.pullPolicy | string | `"IfNotPresent"` |  |
-| image.dcgmExporter.repository | string | `"nvcr.io/nvidia/k8s/dcgm-exporter"` |  |
-| image.dcgmExporter.tag | string | `"3.1.7-3.1.4-ubuntu20.04"` |  |
-| image.flytecopilot.pullPolicy | string | `"IfNotPresent"` |  |
-| image.flytecopilot.repository | string | `"cr.flyte.org/flyteorg/flytecopilot"` |  |
-| image.flytecopilot.tag | string | `"v1.14.1"` |  |
-| image.kubeStateMetrics.pullPolicy | string | `"IfNotPresent"` |  |
-| image.kubeStateMetrics.repository | string | `"registry.k8s.io/kube-state-metrics/kube-state-metrics"` |  |
-| image.kubeStateMetrics.tag | string | `"v2.11.0"` |  |
-| image.tunnel.pullPolicy | string | `"IfNotPresent"` |  |
-| image.tunnel.repository | string | `"cloudflare/cloudflared"` |  |
-| image.tunnel.tag | string | `"2024.6.1"` |  |
-| image.union.pullPolicy | string | `"IfNotPresent"` |  |
-| image.union.repository | string | `"public.ecr.aws/p0i0a9q8/unionoperator"` |  |
-| image.union.tag | string | `"2025.01.0"` |  |
-| integration.databricks | bool | `false` |  |
-| integration.ray | bool | `false` |  |
-| integration.spark | bool | `false` |  |
-| monitoring.dcgmExporter.enabled | bool | `false` |  |
-| monitoring.kubeStateMetrics.enabled | bool | `false` |  |
-| monitoring.prometheus.enabled | bool | `true` |  |
-| nameOverride | string | `""` |  |
-| objectStore.service.grpcPort | int | `8089` |  |
-| objectStore.service.httpPort | int | `8080` |  |
-| operator.affinity | object | `{}` |  |
+| flytepropellerwebhook.tolerations | list | `[]` | tolerations for webhook deployment |
+| flytepropellerwebhook.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for webhook deployment |
+| fullnameOverride | string | `""` | Override the chart fullname. |
+| host | string | `"foo.unionai.cloud"` | Set the control plane host for your Union dataplane installation.  This will be provided by Union. |
+| image.flytecopilot | object | `{"pullPolicy":"IfNotPresent","repository":"cr.flyte.org/flyteorg/flytecopilot","tag":"v1.14.1"}` | flytecopilot repository and tag. |
+| image.kubeStateMetrics | object | `{"pullPolicy":"IfNotPresent","repository":"registry.k8s.io/kube-state-metrics/kube-state-metrics","tag":"v2.11.0"}` | Kubestatemetrics repository and tag. |
+| image.union | object | `{"pullPolicy":"IfNotPresent","repository":"public.ecr.aws/p0i0a9q8/unionoperator","tag":""}` | Image repository for the operator and union services |
+| knative-operator.crds.install | bool | `true` |  |
+| knative-operator.enabled | bool | `false` |  |
+| metrics-server.enabled | bool | `false` |  |
+| nameOverride | string | `""` | Override the chart name. |
+| nodeobserver | object | `{"affinity":{},"config":{"criticalDaemonSets":[]},"enabled":false,"nodeName":"","nodeSelector":{},"podAnnotations":{},"podEnv":[{"name":"KUBE_NODE_NAME","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}},{"name":"LOG_LEVEL","value":"4"}],"podSecurityContext":{},"resources":{"limits":{"cpu":"1","memory":"500Mi"},"requests":{"cpu":"500m","memory":"100Mi"}},"securityContext":{"capabilities":{"add":["SYS_ADMIN"]},"privileged":true,"runAsNonRoot":false,"runAsUser":0},"serviceAccount":{"name":""},"tolerations":[{"effect":"NoSchedule","operator":"Exists"}],"topologySpreadConstraints":{}}` | nodeobserver contains the configuration information for the node observer service. |
+| nodeobserver.affinity | object | `{}` | affinity configurations for the pods associated with nodeobserver services |
+| nodeobserver.enabled | bool | `false` | Enable or disable nodeobserver |
+| nodeobserver.nodeName | string | `""` | nodeName constraints for the pods associated with nodeobserver services |
+| nodeobserver.nodeSelector | object | `{}` | nodeSelector constraints for the pods associated with nodeobserver services |
+| nodeobserver.podAnnotations | object | `{}` | Additional pod annotations for the nodeobserver services |
+| nodeobserver.podEnv | list | `[{"name":"KUBE_NODE_NAME","valueFrom":{"fieldRef":{"fieldPath":"spec.nodeName"}}},{"name":"LOG_LEVEL","value":"4"}]` | Additional pod environment variables for the nodeobserver services |
+| nodeobserver.resources | object | `{"limits":{"cpu":"1","memory":"500Mi"},"requests":{"cpu":"500m","memory":"100Mi"}}` | Kubernetes resource configuration for the nodeobserver service |
+| nodeobserver.tolerations | list | `[{"effect":"NoSchedule","operator":"Exists"}]` | tolerations for the pods associated with nodeobserver services |
+| nodeobserver.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for the pods associated with nodeobserver services |
+| objectStore | object | `{"service":{"grpcPort":8089,"httpPort":8080}}` | Union Object Store configuration |
+| opencost.enabled | bool | `true` |  |
+| opencost.fullnameOverride | string | `"opencost"` |  |
+| opencost.opencost.exporter.resources.limits.cpu | string | `"1000m"` |  |
+| opencost.opencost.exporter.resources.limits.memory | string | `"4Gi"` |  |
+| opencost.opencost.exporter.resources.requests.cpu | string | `"500m"` |  |
+| opencost.opencost.exporter.resources.requests.memory | string | `"1Gi"` |  |
+| opencost.opencost.prometheus.external.enabled | bool | `true` |  |
+| opencost.opencost.prometheus.external.url | string | `"http://union-operator-prometheus.{{.Release.Namespace}}.svc:80/prometheus"` |  |
+| opencost.opencost.prometheus.internal.enabled | bool | `false` |  |
+| opencost.opencost.ui.enabled | bool | `false` |  |
+| operator.affinity | object | `{}` | affinity configurations for the operator pods |
 | operator.autoscaling.enabled | bool | `false` |  |
-| operator.autoscaling.maxReplicas | int | `20` |  |
-| operator.autoscaling.minReplicas | int | `1` |  |
-| operator.autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
 | operator.enableTunnelService | bool | `true` |  |
 | operator.imagePullSecrets | object | `{}` |  |
-| operator.nodeSelector | object | `{}` |  |
+| operator.nodeName | string | `""` | nodeName constraints for the operator pods |
+| operator.nodeSelector | object | `{}` | nodeSelector constraints for the operator pods |
 | operator.podAnnotations | object | `{}` |  |
 | operator.podEnv | object | `{}` |  |
 | operator.podLabels | object | `{}` |  |
 | operator.podSecurityContext | object | `{}` |  |
 | operator.priorityClassName | string | `""` |  |
 | operator.replicas | int | `1` |  |
-| operator.resources.limits.cpu | string | `"1"` |  |
-| operator.resources.limits.memory | string | `"500Mi"` |  |
-| operator.resources.requests.cpu | string | `"500m"` |  |
-| operator.resources.requests.memory | string | `"100Mi"` |  |
+| operator.resources.limits.cpu | string | `"2"` |  |
+| operator.resources.limits.memory | string | `"4Gi"` |  |
+| operator.resources.requests.cpu | string | `"2"` |  |
+| operator.resources.requests.memory | string | `"4Gi"` |  |
 | operator.secretName | string | `"union-secret-auth"` |  |
 | operator.securityContext | object | `{}` |  |
 | operator.serviceAccount.create | bool | `true` |  |
 | operator.serviceAccount.name | string | `"operator-system"` |  |
-| operator.tolerations | list | `[]` |  |
-| orgName | string | `""` |  |
-| prometheus.additionalPrometheusRulesMap | object | `{}` |  |
-| prometheus.alertmanager.enabled | bool | `false` |  |
-| prometheus.crds.enabled | bool | `true` |  |
-| prometheus.defaultRules.create | bool | `false` |  |
-| prometheus.defaultRules.rules.alertmanager | bool | `false` |  |
-| prometheus.defaultRules.rules.configReloaders | bool | `false` |  |
-| prometheus.defaultRules.rules.etcd | bool | `false` |  |
-| prometheus.defaultRules.rules.general | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerCpuUsageSecondsTotal | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerMemoryCache | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerMemoryRss | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerMemorySwap | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerMemoryWorkingSetBytes | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sContainerResource | bool | `false` |  |
-| prometheus.defaultRules.rules.k8sPodOwner | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeApiserverAvailability | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeApiserverBurnrate | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeApiserverHistogram | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeApiserverSlos | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeControllerManager | bool | `false` |  |
-| prometheus.defaultRules.rules.kubePrometheusGeneral | bool | `false` |  |
-| prometheus.defaultRules.rules.kubePrometheusNodeRecording | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeProxy | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeSchedulerAlerting | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeSchedulerRecording | bool | `false` |  |
-| prometheus.defaultRules.rules.kubeStateMetrics | bool | `false` |  |
-| prometheus.defaultRules.rules.kubelet | bool | `false` |  |
-| prometheus.defaultRules.rules.kubernetesApps | bool | `false` |  |
-| prometheus.defaultRules.rules.kubernetesResources | bool | `false` |  |
-| prometheus.defaultRules.rules.kubernetesStorage | bool | `false` |  |
-| prometheus.defaultRules.rules.kubernetesSystem | bool | `false` |  |
-| prometheus.defaultRules.rules.network | bool | `false` |  |
-| prometheus.defaultRules.rules.node | bool | `false` |  |
-| prometheus.defaultRules.rules.nodeExporterAlerting | bool | `false` |  |
-| prometheus.defaultRules.rules.nodeExporterRecording | bool | `false` |  |
-| prometheus.defaultRules.rules.prometheus | bool | `false` |  |
-| prometheus.defaultRules.rules.prometheusOperator | bool | `false` |  |
-| prometheus.defaultRules.rules.windows | bool | `false` |  |
-| prometheus.fullnameOverride | string | `"union"` |  |
-| prometheus.grafana.enabled | bool | `false` |  |
-| prometheus.ingress.annotations | object | `{}` |  |
-| prometheus.ingress.enabled | bool | `false` |  |
-| prometheus.ingress.hosts | list | `[]` |  |
-| prometheus.kube-state-metrics.namespaceOverride | string | `"kube-system"` |  |
-| prometheus.nameOverride | string | `""` |  |
-| prometheus.namespaceOverride | string | `"union"` |  |
-| prometheus.nodeExporter.enabled | bool | `false` |  |
-| prometheus.prometheus-node-exporter.namespaceOverride | string | `"kube-system"` |  |
-| prometheus.prometheus.enabled | bool | `true` |  |
-| prometheus.prometheus.prometheusSpec.resources.resources.limits.cpu | string | `"1"` |  |
-| prometheus.prometheus.prometheusSpec.resources.resources.limits.memory | string | `"2Gi"` |  |
-| prometheus.prometheus.prometheusSpec.resources.resources.requests.cpu | string | `"1"` |  |
-| prometheus.prometheus.prometheusSpec.resources.resources.requests.memory | string | `"2Gi"` |  |
-| prometheus.prometheusOperator.fullnameOverride | string | `"prometheus-operator"` |  |
-| provider | string | `"metal"` |  |
-| proxy.affinity | object | `{}` |  |
-| proxy.autoscaling.enabled | bool | `false` |  |
-| proxy.autoscaling.maxReplicas | int | `10` |  |
-| proxy.autoscaling.minReplicas | int | `1` |  |
-| proxy.autoscaling.targetCPUUtilizationPercentage | int | `80` |  |
-| proxy.enableTunnelService | bool | `true` |  |
-| proxy.imagePullSecrets | object | `{}` |  |
-| proxy.nodeSelector | object | `{}` |  |
-| proxy.podAnnotations | object | `{}` |  |
-| proxy.podEnv | object | `{}` |  |
-| proxy.podLabels | object | `{}` |  |
-| proxy.podSecurityContext | object | `{}` |  |
-| proxy.priorityClassName | string | `""` |  |
-| proxy.replicas | int | `1` |  |
-| proxy.resources.limits.cpu | string | `"1"` |  |
-| proxy.resources.limits.memory | string | `"500Mi"` |  |
-| proxy.resources.requests.cpu | string | `"500m"` |  |
-| proxy.resources.requests.memory | string | `"100Mi"` |  |
-| proxy.secretName | string | `"union-secret-auth"` |  |
-| proxy.securityContext | object | `{}` |  |
-| proxy.serviceAccount.create | bool | `true` |  |
-| proxy.serviceAccount.name | string | `"proxy-system"` |  |
-| proxy.tolerations | list | `[]` |  |
-| resourcequota.create | bool | `false` |  |
-| secrets.admin.clientId | string | `"dataplane-operator"` |  |
-| secrets.admin.clientSecret | string | `""` |  |
-| secrets.admin.create | bool | `true` |  |
+| operator.tolerations | list | `[]` | tolerations for the operator pods |
+| operator.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for the operator pods |
+| orgName | string | `""` | Organization name should be provided by Union. |
+| prometheus | object | `{"additionalPrometheusRulesMap":{},"alertmanager":{"enabled":false},"crds":{"enabled":true},"defaultRules":{"create":false,"rules":{"alertmanager":false,"configReloaders":false,"etcd":false,"general":false,"k8sContainerCpuUsageSecondsTotal":false,"k8sContainerMemoryCache":false,"k8sContainerMemoryRss":false,"k8sContainerMemorySwap":false,"k8sContainerMemoryWorkingSetBytes":false,"k8sContainerResource":false,"k8sPodOwner":false,"kubeApiserverAvailability":false,"kubeApiserverBurnrate":false,"kubeApiserverHistogram":false,"kubeApiserverSlos":false,"kubeControllerManager":false,"kubePrometheusGeneral":false,"kubePrometheusNodeRecording":false,"kubeProxy":false,"kubeSchedulerAlerting":false,"kubeSchedulerRecording":false,"kubeStateMetrics":false,"kubelet":false,"kubernetesApps":false,"kubernetesResources":false,"kubernetesStorage":false,"kubernetesSystem":false,"network":false,"node":false,"nodeExporterAlerting":false,"nodeExporterRecording":false,"prometheus":false,"prometheusOperator":false,"windows":false}},"fullnameOverride":"union-operator","grafana":{"additionalDataSources":[],"admin":{"existingSecret":"","passwordKey":"admin-password","userKey":"admin-user"},"adminPassword":"union-dataplane","adminUser":"admin","dashboardsConfigMaps":{},"enabled":false,"ingress":{"enabled":false}},"ingress":{"annotations":{},"enabled":false,"hosts":[]},"kube-state-metrics":{"metricRelabelings":[{"action":"keep","regex":"kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total","separator":";","sourceLabels":["__name__"]},{"action":"drop","regex":"kube_pod_status_phase;(Succeeded|Failed)","separator":";","sourceLabels":["__name__","phase"]},{"action":"replace","regex":"(.*)","sourceLabels":["node"],"targetLabel":"nodename"},{"action":"replace","regex":"(.+)","sourceLabels":["label_node_group_name"],"targetLabel":"label_node_pool_name"}],"namespaceOverride":"kube-system"},"kubeApiServer":{"enabled":false},"nameOverride":"","namespaceOverride":"union","nodeExporter":{"enabled":false},"prometheus":{"enabled":true,"prometheusSpec":{"podMonitorSelector":{},"podMonitorSelectorNilUsesHelmValues":false,"resources":{"limits":{"cpu":"4","memory":"8Gi"},"requests":{"cpu":"4","memory":"8Gi"}},"retention":"3d","routePrefix":"/prometheus/","ruleSelector":{},"ruleSelectorNilUsesHelmValues":false,"scrapeConfigSelector":{},"scrapeConfigSelectorNilUsesHelmValues":false,"serviceMonitorSelector":{},"serviceMonitorSelectorNilUsesHelmValues":false},"service":{"port":80}},"prometheus-node-exporter":{"namespaceOverride":"kube-system"},"prometheusOperator":{"fullnameOverride":"prometheus-operator"}}` | Prometheus configuration |
+| proxy | object | `{"affinity":{},"autoscaling":{"enabled":false,"maxReplicas":10,"minReplicas":1,"targetCPUUtilizationPercentage":80},"enableTunnelService":true,"imagePullSecrets":{},"nodeName":"","nodeSelector":{},"podAnnotations":{},"podEnv":{},"podLabels":{},"podSecurityContext":{},"priorityClassName":"","replicas":1,"resources":{"limits":{"cpu":"4","memory":"8Gi"},"requests":{"cpu":"4","memory":"8Gi"}},"secretManager":{"enabled":true,"namespace":"","type":"K8s"},"secretName":"union-secret-auth","securityContext":{},"serviceAccount":{"create":true,"name":"proxy-system"},"tolerations":[],"topologySpreadConstraints":{}}` | Union operator proxy configuration |
+| proxy.affinity | object | `{}` | affinity configurations for the proxy pods |
+| proxy.nodeName | string | `""` | nodeName constraint for the proxy pods |
+| proxy.nodeSelector | object | `{}` | nodeSelector constraints for the proxy pods |
+| proxy.secretManager.namespace | string | `""` | Set the namespace for union managed secrets created through the native Kubernetes secret manager. If the namespace is not set, the release namespace will be used. |
+| proxy.tolerations | list | `[]` | tolerations for the proxy pods |
+| proxy.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for the proxy pods |
+| resourcequota | object | `{"create":false}` | Create global resource quotas for the cluster. |
+| scheduling | object | `{"affinity":{},"nodeName":"","nodeSelector":{},"tolerations":[],"topologySpreadConstraints":{}}` | Global kubernetes scheduling constraints that will be applied to the pods.  Application specific constraints will always take precedence. |
+| scheduling.affinity | object | `{}` | See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node |
+| scheduling.nodeSelector | object | `{}` | See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node |
+| scheduling.tolerations | list | `[]` | See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration |
+| scheduling.topologySpreadConstraints | object | `{}` | See https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints |
+| secrets | object | `{"admin":{"clientId":"dataplane-operator","clientSecret":"","create":true}}` | Connection secrets for the Union control plane services. |
+| secrets.admin.clientId | string | `"dataplane-operator"` | The client id used to authenticate to the control plane.  This will be provided by Union. |
+| secrets.admin.clientSecret | string | `""` | The client secret used to authenticate to the control plane.  This will be provided by Union. |
+| secrets.admin.create | bool | `true` | Create the secret resource containing the client id and secret.  If set to false the user is responsible for creating the secret before the installation. |
+| serving | object | `{"enabled":false,"extraConfig":{},"metrics":true,"replicas":2,"resources":{"3scale-kourier-gateway":{"kourier-gateway":{"limits":{"cpu":"2","memory":"2Gi"},"requests":{"cpu":"1","memory":"1Gi"}}},"net-kourier-controller":{"controller":{"limits":{"cpu":"1","memory":"1Gi"},"requests":{"cpu":"500m","memory":"500Mi"}}}}}` | Configure app serving and knative. |
+| serving.enabled | bool | `false` | Enables the serving components. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work. Enables app serving in operator. |
+| serving.extraConfig | object | `{}` | Additional configuration for Knative serving |
+| serving.metrics | bool | `true` | Enables scraping of metrics from the serving component |
+| serving.replicas | int | `2` | The number of replicas to create for all components for high availability. |
+| serving.resources | object | `{"3scale-kourier-gateway":{"kourier-gateway":{"limits":{"cpu":"2","memory":"2Gi"},"requests":{"cpu":"1","memory":"1Gi"}}},"net-kourier-controller":{"controller":{"limits":{"cpu":"1","memory":"1Gi"},"requests":{"cpu":"500m","memory":"500Mi"}}}}` | Resources for serving components |
 | sparkoperator.enabled | bool | `false` |  |
 | sparkoperator.plugin_config | object | `{}` |  |
-| storage.accessKey | string | `""` |  |
-| storage.authType | string | `"accesskey"` |  |
-| storage.bucketName | string | `""` |  |
-| storage.cache.maxSizeMBs | int | `0` |  |
-| storage.cache.targetGCPercent | int | `70` |  |
-| storage.custom | object | `{}` |  |
-| storage.disableSSL | bool | `false` |  |
-| storage.enableMultiContainer | bool | `false` |  |
-| storage.endpoint | string | `""` |  |
-| storage.fastRegistrationBucketName | string | `""` |  |
-| storage.gcp.projectId | string | `""` |  |
-| storage.injectPodEnvVars | bool | `true` |  |
-| storage.limits.maxDownloadMBs | int | `10` |  |
-| storage.provider | string | `"compat"` |  |
-| storage.region | string | `"us-east-1"` |  |
-| storage.secretKey | string | `""` |  |
-| userRoleAnnotationKey | string | `"eks.amazonaws.com/role-arn"` |  |
-| userRoleAnnotationValue | string | `"arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"` |  |
+| storage | object | `{"accessKey":"","authType":"accesskey","bucketName":"","cache":{"maxSizeMBs":0,"targetGCPercent":70},"custom":{},"disableSSL":false,"enableMultiContainer":false,"endpoint":"","fastRegistrationBucketName":"","fastRegistrationURL":"","gcp":{"projectId":""},"injectPodEnvVars":true,"limits":{"maxDownloadMBs":1024},"provider":"compat","region":"us-east-1","s3ForcePathStyle":true,"secretKey":""}` | Object storage configuration used by all Union services. |
+| storage.accessKey | string | `""` | The access key used for object storage. |
+| storage.authType | string | `"accesskey"` | The authentication type.  Currently supports "accesskey" and "iam". |
+| storage.bucketName | string | `""` | The bucket name used for object storage. |
+| storage.cache | object | `{"maxSizeMBs":0,"targetGCPercent":70}` | Cache configuration for objects retrieved from object storage. |
+| storage.custom | object | `{}` | Define custom configurations for the object storage.  Only used if the provider is set to "custom". |
+| storage.disableSSL | bool | `false` | Disable SSL for object storage.  This should only used for local/sandbox installations. |
+| storage.endpoint | string | `""` | Define or override the endpoint used for the object storage service. |
+| storage.fastRegistrationBucketName | string | `""` | The bucket name used for fast registration uploads. |
+| storage.fastRegistrationURL | string | `""` | Override the URL for signed fast registration uploads.  This is only used for local/sandbox installations. |
+| storage.gcp | object | `{"projectId":""}` | Define GCP specific configuration for object storage. |
+| storage.injectPodEnvVars | bool | `true` | Injects the object storage access information into the pod environment variables.  Needed for providers that only support access and secret key based authentication. |
+| storage.limits | object | `{"maxDownloadMBs":1024}` | Internal service limits for object storage access. |
+| storage.provider | string | `"compat"` | The storage provider to use.  Currently supports "compat", "aws", "oci", and "custom". |
+| storage.region | string | `"us-east-1"` | The bucket region used for object storage. |
+| storage.s3ForcePathStyle | bool | `true` | Use path style instead of domain style urls to access the object storage service. |
+| storage.secretKey | string | `""` | The secret key used for object storage. |
+| userRoleAnnotationKey | string | `"eks.amazonaws.com/role-arn"` | This is the annotation key that is added to service accounts.  Used with GCP and AWS. |
+| userRoleAnnotationValue | string | `"arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"` | This is the value of the annotation key that is added to service accounts. Used with GCP and AWS. |

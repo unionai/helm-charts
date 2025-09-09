@@ -38,6 +38,9 @@ data:
     {{- with .Values.config.operator.collectUsages }}
       collectUsages: {{ tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
+    {{- with .Values.config.operator.billableUsageCollector }}
+      billableUsageCollector: {{ tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
     {{- with .Values.config.operator.computeResourceManager }}
       computeResourceManager: {{ tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
@@ -47,6 +50,14 @@ data:
     {{- with .Values.config.operator.org }}
       org: {{ tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
+    {{- if .Values.imageBuilder.enabled }}
+      imageBuilder:
+        enabled: {{ .Values.imageBuilder.enabled }}
+        executionNamespaceLabels:
+          union.ai/namespace-type: flyte
+        referenceConfigmapName: {{ include "union-operator.fullname" . }}
+        targetConfigMapName: {{ .Values.imageBuilder.targetConfigMapName | quote }}
+    {{- end }}
   {{- with .Values.config.proxy }}
     proxy: {{ tpl (toYaml .) $ | nindent 6 }}
   {{- end }}
@@ -54,9 +65,15 @@ data:
 {{- with .Values.config.logger }}
     logger: {{ tpl (toYaml .) $ | nindent 6 }}
 {{- end }}
-  # TODO: We used to have configmap-overrides here.  Do we even use those?
-  # config-overrides.yaml | ...
+{{- with .Values.config.configOverrides }}
+  config-overrides.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+{{- end }}
   storage.yaml: | {{ tpl (include "storage" .) $ | nindent 4 }}
 {{- if .Values.storage.fastRegistrationBucketName }}
   fast_registration_storage.yaml: | {{ tpl (include "fast-registration-storage" .) $ | nindent 4 }}
+{{- end }}
+{{- if .Values.imageBuilder.enabled }}
+  image-builder.buildkit-uri: {{ (include "imagebuilder.buildkit.uri" .) | quote }}
+  image-builder.default-repository: {{ .Values.imageBuilder.defaultRepository | quote }}
+  image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}
 {{- end }}
