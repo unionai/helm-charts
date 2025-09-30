@@ -975,3 +975,38 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- .Values.host -}}
 {{- end }}
 {{- end -}}
+
+{{- define "k8sPluginConfig" -}}
+{{- $k8sPlugins := include "k8s.plugins" . | fromYaml -}}
+{{- if and $k8sPlugins $k8sPlugins.plugins $k8sPlugins.plugins.k8s -}}
+{{- $sourceConfig := $k8sPlugins.plugins.k8s -}}
+{{- $validKeys := list
+  "default-affinity"
+  "default-tolerations"
+  "interruptible-tolerations"
+  "interruptible-node-selector-requirement"
+  "non-interruptible-node-selector-requirement"
+  "gpu-device-node-label"
+  "gpu-partition-size-node-label"
+  "gpu-unpartitioned-toleration"
+  "gpu-resource-name"
+-}}
+{{- $filteredConfig := dict -}}
+{{- $ignoredKeys := list -}}
+{{- range $key, $value := $sourceConfig -}}
+  {{- if has $key $validKeys -}}
+    {{- $_ := set $filteredConfig $key $value -}}
+  {{- else -}}
+    {{- $ignoredKeys = append $ignoredKeys $key -}}
+  {{- end -}}
+{{- end -}}
+# K8sPluginConfig is filtered to keys only necessary to assist Union control plane scheduling.
+{{- if $ignoredKeys }}
+# Ignored keys: {{ join ", " $ignoredKeys }}
+{{- end }}
+{{- if $filteredConfig }}
+k8sPluginConfig:
+{{ toYaml $filteredConfig | indent 2 }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
