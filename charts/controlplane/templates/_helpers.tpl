@@ -105,23 +105,11 @@ false
 {{- end }}
 
 {{- define "unionai.image.repository" -}}
-{{- if and (hasKey .config "image") (hasKey .config.image "repository") }}
-{{ .config.image.repository }}
-{{- else if and (hasKey .Values "image") (hasKey .Values.image "repository") }}
-{{ .Values.image.repository }}
-{{- else }}
-""
-{{- end }}
+{{ default ( dig "image" "repository" "" .config ) .Values.image.repository }}
 {{- end }}
 
 {{- define "unionai.image.tag" -}}
-{{- if and (hasKey .config "image") (hasKey .config.image "tag") }}
-{{ .config.image.tag }}
-{{- else if and (hasKey .Values "image") (hasKey .Values.image "tag") }}
-{{ .Values.image.tag }}
-{{- else }}
-""
-{{- end }}
+{{ default ( dig "image" "tag" "" .config ) .Values.image.tag }}
 {{- end }}
 
 {{- define "unionai.podAnnotations" -}}
@@ -248,29 +236,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{- define "unionai.image" -}}
-{{- $repo := "" }}
-{{- $tag := "" }}
-
-{{- if and (hasKey .config "image") (hasKey .config.image "repository") }}
-  {{- $repo = .config.image.repository }}
-{{- else if and (hasKey .Values "image") (hasKey .Values.image "repository") }}
-  {{- $repo = .Values.image.repository }}
-{{- end }}
-
-{{- if and (hasKey .config "image") (hasKey .config.image "tag") }}
-  {{- $tag = .config.image.tag }}
-{{- else if and (hasKey .Values "image") (hasKey .Values.image "tag") }}
-  {{- $tag = .Values.image.tag }}
-{{- else if hasKey .Chart "AppVersion" }}
-  {{- $tag = .Chart.AppVersion }}
-{{- end }}
-
+{{- $repo := include "unionai.image.repository" . }}
+{{- $tag := include "unionai.image.tag" . }}
 {{- if and $repo $tag }}
 {{ printf "%s:%s" $repo $tag }}
-{{- else if $repo }}
-{{ $repo }}
 {{- else }}
-""  # empty string to avoid template error
+{{ $repo }}
 {{- end }}
 {{- end }}
 
