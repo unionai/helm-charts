@@ -576,99 +576,51 @@ flyte:
         maxOpenConnections: 20
         connMaxLifeTime: 120s
   configmap:
-    adminServer:
+    admin:
       admin:
-        flyteadmin:
-          metricsKeys:
-            - phase
-          useOffloadedInputs: true
-          useOffloadedWorkflowClosure: true
-        server:
-          grpc:
-            maxMessageSizeBytes: 16777216
-            enableGrpcLatencyMetrics: true
-        cloudEvents:
-          enable: true
-          type: aws
-          eventsPublisher:
-            eventTypes:
-              - workflow
-              - node
-        otel:
-          type: otlpgrpc
-          otlpgrpc:
-            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-          sampler:
-            parentSampler: traceid
-            traceIdRatio: 0.001
-        logger:
-          show-source: true
-          level: 6
-        authorizer:
-          internalCommunicationConfig:
-            enabled: false
-        union:
-          internalConnectionConfig:
-            enabled: true
-            urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-        private:
-          app:
-            cacheProviderConfig:
-              kind: bypass
-          metrics:
-            disable: true
-        cacheserviceServer:
-          otel:
-            type: otlpgrpc
-            otlpgrpc:
-              endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-            sampler:
-              parentSampler: traceid
-              traceIdRatio: 0.001
-          authorizer:
-            internalCommunicationConfig:
-              enabled: false
-          private:
-            app:
-              cacheProviderConfig:
-                kind: bypass
-        domain: { }
+        insecure: false
+    adminServer:
+      flyteadmin:
+        metricsKeys:
+        - phase
+        useOffloadedInputs: true
+        useOffloadedWorkflowClosure: true
+        # See: https://github.com/unionai/flyte/pull/733/files
+        testing: null
       server:
+        grpc:
+          enableGrpcLatencyMetrics: true
+          maxConcurrentStreams: 500
+          maxMessageSizeBytes: 16777216
         security:
+          secure: false
           useAuth: false
+      cloudEvents:
+        enable: false
+      otel:
+        type: otlpgrpc
+        otlpgrpc:
+          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+        sampler:
+          parentSampler: traceid
+          traceIdRatio: 0.001
+      authorizer:
+        type: Noop
+        internalCommunicationConfig:
+          enabled: false
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_._SERVICE_.svc.cluster.local:80" }}'
       private:
         app:
           cacheProviderConfig:
             kind: bypass
-      authorizer:
-        type: "Noop"
-        internalCommunicationConfig:
-          enabled: false
-      cloudEvents:
-        enable: false
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
     cacheserviceServer:
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       authorizer:
-        type: "Noop"
+        type: Noop
         internalCommunicationConfig:
           enabled: false
-      cacheservice:
-        storage-prefix: cached_outputs
-        metrics-scope: flyte
-        profiler-port: 10254
-        heartbeat-grace-period-multiplier: 3
-        max-reservation-heartbeat: 30s
-      cache-server:
-        grpcPort: 8089
-        httpPort: 8080
-        grpcServerReflection: true
       otel:
         type: otlpgrpc
         otlpgrpc:
@@ -680,7 +632,14 @@ flyte:
         app:
           cacheProviderConfig:
             kind: bypass
-  cloudEvents:
+      cacheservice:
+        profiler-port: 10254
+    domain: {}
+    logger:
+      logger:
+        show-source: true
+        level: 6
+  cloud_events:
     enable: false
   workflow_notifications:
     enabled: false
