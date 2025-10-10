@@ -133,18 +133,6 @@ metadata:
     helm.sh/chart: flyte-v1.16.0-b2
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: controlplane/charts/flyte/templates/flytescheduler/sa.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flytescheduler
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
----
 # Source: controlplane/templates/cacheservice/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -593,43 +581,6 @@ data:
       cache:
         max_size_mbs: 1024
         target_gc_percent: 70
----
-# Source: controlplane/charts/flyte/templates/flytescheduler/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-scheduler-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-data:
-  admin.yaml: | 
-    admin:
-      clientId: 'flytepropeller'
-      clientSecretLocation: /etc/secrets/client_secret
-      endpoint: dns:///fake-host.domain
-      insecure: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: postgres
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 80
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  server.yaml: | 
-    scheduler:
-      metricsScope: 'flyte:'
-      profilerPort: 10254
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -1807,105 +1758,6 @@ spec:
             - configMap:
                 name: datacatalog-config
         name: config-volume
----
-# Source: controlplane/charts/flyte/templates/flytescheduler/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flytescheduler
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flytescheduler
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.0-b2
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: flytescheduler
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "024c5b1dee42d343a73651a36631447daf91428930f9d1c2a3dd1c6b6ae8d52"
-      labels: 
-        app.kubernetes.io/name: flytescheduler
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.0-b2
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      securityContext: 
-        fsGroup: 65534
-        fsGroupChangePolicy: Always
-        runAsNonRoot: true
-        runAsUser: 1001
-        seLinuxOptions:
-          type: spc_t
-      initContainers:
-      - command:
-        - flytescheduler
-        - precheck
-        - --config
-        - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler-release:v1.16.0-b2"
-        imagePullPolicy: "IfNotPresent"
-        name: flytescheduler-check
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/flyte/config
-          name: config-volume
-        - name: auth
-          mountPath: /etc/secrets/
-      containers:
-      - command:
-        - flytescheduler
-        - run
-        - --config
-        - /etc/flyte/config/*.yaml
-        image: "cr.flyte.org/flyteorg/flytescheduler-release:v1.16.0-b2"
-        imagePullPolicy: "IfNotPresent"
-        name: flytescheduler
-        ports:
-          - containerPort: 10254
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        resources:
-          limits:
-            cpu: 250m
-            ephemeral-storage: 100Mi
-            memory: 500Mi
-          requests:
-            cpu: 10m
-            ephemeral-storage: 50Mi
-            memory: 50Mi
-        volumeMounts:
-        - mountPath: /etc/db
-          name: db-pass
-        - mountPath: /etc/flyte/config
-          name: config-volume
-        - name: auth
-          mountPath: /etc/secrets/
-      serviceAccountName: flytescheduler
-      volumes:
-      - name: db-pass
-        secret:
-          secretName: db-pass
-      - emptyDir: {}
-        name: shared-data
-      - configMap:
-          name: flyte-scheduler-config
-        name: config-volume
-      - name: auth
-        secret:
-          secretName: flyte-secret-auth
 ---
 # Source: controlplane/templates/cacheservice/deployment.yaml
 apiVersion: apps/v1
