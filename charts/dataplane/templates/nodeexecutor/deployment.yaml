@@ -1,0 +1,71 @@
+{{- if .Values.executor.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: executor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      volumes:
+        - name: config-volume
+          configMap:
+            name: executor
+        - name: secret-volume
+          secret:
+            secretName: operator-cluster-name
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: executor
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          command:
+            - executor
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu:    {{ .Values.executor.resources.limits.cpu | quote }}
+              memory: {{ .Values.executor.resources.limits.memory | quote }}
+            requests:
+              cpu:    {{ .Values.executor.resources.requests.cpu | quote }}
+              memory: {{ .Values.executor.resources.requests.memory | quote }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
+{{- end }}
