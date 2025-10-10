@@ -598,6 +598,11 @@ flyte:
         security:
           secure: false
           useAuth: false
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+          populateUserFields: false
       sharedService:
         connectPort: 8089
         httpPort: 8088
@@ -620,17 +625,26 @@ flyte:
       union:
         internalConnectionConfig:
           enabled: true
-          urlPattern: '{{ printf "_SERVICE_._SERVICE_.svc.cluster.local:80" }}'
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
-          populateUserFields: false
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
     cacheserviceServer:
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       authorizer:
         type: Noop
         internalCommunicationConfig:
           enabled: false
+      cacheservice:
+        storage-prefix: cached_outputs
+        metrics-scope: flyte
+        profiler-port: 10254
+        heartbeat-grace-period-multiplier: 3
+        max-reservation-heartbeat: 30s
+      cache-server:
+        grpcPort: 8089
+        httpPort: 8080
+        grpcServerReflection: true
       otel:
         # type: otlpgrpc
         type: noop
@@ -645,8 +659,6 @@ flyte:
           cacheProviderConfig:
             kind: bypass
           populateUserFields: false
-      cacheservice:
-        profiler-port: 10254
     domain: {}
     logger:
       logger:
