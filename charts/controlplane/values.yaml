@@ -137,6 +137,7 @@ services:
         metrics:
           scope: "artifacts:"
       db:
+        dbname: artifacts
         host: '{{ .Values.dbHost }}'
         username: '{{.Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -212,6 +213,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
+        dbname: authorizer
         host: '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -557,8 +559,8 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called postgres (OR change the name here)
-        dbname: postgres
+        # -- Create a DB called flyteadmin (OR change the name here)
+        dbname: flyteadmin
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
         maxOpenConnections: 80
@@ -578,74 +580,41 @@ flyte:
   configmap:
     adminServer:
       admin:
-        flyteadmin:
-          metricsKeys:
-            - phase
-          useOffloadedInputs: true
-          useOffloadedWorkflowClosure: true
-        server:
-          grpc:
-            maxMessageSizeBytes: 16777216
-            enableGrpcLatencyMetrics: true
-        cloudEvents:
-          enable: true
-          type: aws
-          eventsPublisher:
-            eventTypes:
-              - workflow
-              - node
-        otel:
-          type: otlpgrpc
-          otlpgrpc:
-            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-          sampler:
-            parentSampler: traceid
-            traceIdRatio: 0.001
-        logger:
-          show-source: true
-          level: 6
-        authorizer:
-          internalCommunicationConfig:
-            enabled: false
-        union:
-          internalConnectionConfig:
-            enabled: true
-            urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-        private:
-          app:
-            cacheProviderConfig:
-              kind: bypass
-          metrics:
-            disable: true
-        cacheserviceServer:
-          otel:
-            type: otlpgrpc
-            otlpgrpc:
-              endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-            sampler:
-              parentSampler: traceid
-              traceIdRatio: 0.001
-          authorizer:
-            internalCommunicationConfig:
-              enabled: false
-          private:
-            app:
-              cacheProviderConfig:
-                kind: bypass
-        domain: { }
-      server:
-        security:
-          useAuth: false
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
+        endpoint: dns:///your-controlplane-domain
+        insecure: false
       authorizer:
         type: "Noop"
         internalCommunicationConfig:
           enabled: false
       cloudEvents:
         enable: false
+      connection:
+        environment: ""
+        region: ""
+        rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+      flyteadmin:
+        metricsKeys:
+          - phase
+        useOffloadedInputs: true
+        useOffloadedWorkflowClosure: true
+        # See: https://github.com/unionai/flyte/pull/733/files
+        testing: null
+      otel:
+        type: otlpgrpc
+        otlpgrpc:
+          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+        sampler:
+          parentSampler: traceid
+          traceIdRatio: 0.001
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+          # Don't rely on user API to exists
+          populateUserFields: false
+      server:
+        security:
+          useAuth: false
       union:
         internalConnectionConfig:
           enabled: true
@@ -680,6 +649,22 @@ flyte:
         app:
           cacheProviderConfig:
             kind: bypass
+    logger:
+      level: null
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      port: 8089
+    admin:
+      # Hack: Initializing clients triggers a code path in AdminService where it attempt to extract
+      # the org from the host. This constraint breaks in situations where we are using a DNS entry that
+      # does not have atleast one "." in it. The default flyte-core helm chart defaults to access flyteadmin
+      # at "flyteadmin:81". This breaks the Union specific code path. To unblock testing, we are setting
+      # the endpoint to the full DNS entry of the flyteadmin service in the cluster.
+      endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
+      insecure: true
+      clientId: null
+      clientSecretLocation: null
   cloudEvents:
     enable: false
   workflow_notifications:

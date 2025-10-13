@@ -472,3 +472,14 @@ storage:
 {{/*
 End of cache service helpers.
 */}}
+
+{{/*
+Database name validation
+*/}}
+{{- define "controlplane.validateDatabaseNames" -}}
+{{- if and .Values.dbName .Values.flyte.db.admin.database.dbname }}
+{{- if eq .Values.dbName .Values.flyte.db.admin.database.dbname }}
+{{- fail "ERROR: dbName cannot be the same as flyte.db.admin.database.dbname. The control plane services and flyteadmin must use separate databases to avoid conflicts." }}
+{{- end }}
+{{- end }}
+{{- end }}
