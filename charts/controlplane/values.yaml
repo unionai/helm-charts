@@ -108,6 +108,7 @@ configMap:
     sampler:
       parentSampler: traceid
       traceIdRatio: 0.001
+    schemaURL: https://opentelemetry.io/schemas/1.34.0
   union:
     internalConnectionConfig:
       enabled: true
@@ -119,6 +120,11 @@ configMap:
 
 services:
   artifacts:
+
+    # Artifacts service migrations conflict with Executions services. In a subsequent PR we will force database
+    # migrations to create separate databases.
+    disabled: true
+
     fullnameOverride: "artifacts"
     initContainers:
       - name: migrate
@@ -137,9 +143,11 @@ services:
         metrics:
           scope: "artifacts:"
       db:
-        dbname: artifacts
+        dbname: '{{ .Values.dbName }}'
         host: '{{ .Values.dbHost }}'
-        username: '{{.Values.dbUser }}'
+        options: sslmode=disable
+        username: '{{ .Values.dbUser }}'
+        port: 5432
         passwordPath: /etc/db/pass.txt
         connectionPool:
           maxIdleConnections: 20
@@ -161,14 +169,16 @@ services:
             connMaxLifeTime: 1m
             maxIdleConnections: 20
             maxOpenConnections: 30
+            # Duplicate for application postgres reference
             postgres:
               dbname: '{{ .Values.dbName }}'
               host: '{{ .Values.dbHost }}'
               options: sslmode=disable
               passwordPath: /etc/db/pass.txt
               port: 5432
+              # Default to the same host as the primary DB.
               readReplicaHost: '{{ .Values.dbHost }}'
-              username:  '{{ .Values.dbUser }}'
+              username: '{{ .Values.dbUser }}'
           artifactServerConfig:
             httpPort: 8089
             port: 8080
@@ -213,7 +223,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
-        dbname: authorizer
+        dbname: '{{ .Values.dbName }}'
         host: '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -234,7 +244,7 @@ services:
     configMap:
       sharedService:
         metrics:
-          scope: "usage:"
+          scope: "dataproxy:"
       dataproxy:
         secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
         clusterSelector:
@@ -260,6 +270,7 @@ services:
         metrics:
           scope: "executions:"
       db:
+        dbname: '{{ .Values.dbName }}'
         host:  '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -271,6 +282,7 @@ services:
         cloudProvider: Local
       executions:
         apps:
+          # TODO: Enable enrich identities?
           enrichIdentities: false
           publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
   usage:
@@ -355,7 +367,7 @@ flyte:
     image:
       repository: "" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
-      pullPolicy: "" # -- Set the pull policy for the datacatalog image
+      pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
     serviceAccount:
       annotations:
         # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
@@ -409,7 +421,7 @@ flyte:
     image:
       repository: "" # -- Set the repository for the private cacheservice image"
       tag: "" # -- Set the tag for the private cacheservice datacatalog image
-      pullPolicy: "" # -- Set the pull policy for the private cacheservice  image
+      pullPolicy: "IfNotPresent" # -- Set the pull policy for the private cacheservice  image
     serviceAccount:
       # -- If the service account is created by you, make this false
       create: true
@@ -547,7 +559,7 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called datacatalog (OR change the name here)
+        # -- Use a specific DB name for datacatalog
         dbname: datacatalog
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
@@ -559,7 +571,7 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called flyteadmin (OR change the name here)
+        # -- Use a specific DB name for flyteadmin
         dbname: flyteadmin
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
@@ -571,7 +583,7 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called cacheservice (OR change the name here)
+        # -- Use a specific DB name for cacheservice
         dbname: cacheservice
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
@@ -606,6 +618,7 @@ flyte:
         sampler:
           parentSampler: traceid
           traceIdRatio: 0.001
+        schemaURL: https://opentelemetry.io/schemas/1.34.0
       private:
         app:
           cacheProviderConfig:
@@ -619,6 +632,10 @@ flyte:
         internalConnectionConfig:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      sharedService:
+        connectPort: 8089
+        httpPort: 8088
+        port: 8089
     cacheserviceServer:
       union:
         internalConnectionConfig:
@@ -645,6 +662,7 @@ flyte:
         sampler:
           parentSampler: traceid
           traceIdRatio: 0.001
+        schemaURL: https://opentelemetry.io/schemas/1.34.0
       private:
         app:
           cacheProviderConfig:
