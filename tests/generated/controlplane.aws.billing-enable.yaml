@@ -36,18 +36,7 @@ spec:
       app.kubernetes.io/name: cacheservice
 ---
 # Source: controlplane/templates/pdb.yaml
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: artifacts
-spec:
-  minAvailable: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: artifacts
-      app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/templates/pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -158,18 +147,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: artifacts
-  labels:
-    helm.sh/chart: controlplane-2025.6.3
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
 ---
-# Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -258,20 +236,7 @@ stringData:
 type: Opaque
 ---
 # Source: controlplane/templates/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: artifacts
-  labels:
-    helm.sh/chart: controlplane-2025.6.3
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-type: Opaque
-stringData:
 ---
-# Source: controlplane/templates/secret.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -373,7 +338,7 @@ data:
   db.yaml: | 
     database:
       connMaxLifeTime: 120s
-      dbname: postgres
+      dbname: flyteadmin
       host: ''
       maxIdleConnections: 10
       maxOpenConnections: 80
@@ -388,63 +353,12 @@ data:
       name: staging
     - id: production
       name: production
+  logger.yaml: | 
+    level: null
   server.yaml: | 
     admin:
-      authorizer:
-        internalCommunicationConfig:
-          enabled: false
-      cacheserviceServer:
-        authorizer:
-          internalCommunicationConfig:
-            enabled: false
-        otel:
-          otlpgrpc:
-            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-          sampler:
-            parentSampler: traceid
-            traceIdRatio: 0.001
-          type: otlpgrpc
-        private:
-          app:
-            cacheProviderConfig:
-              kind: bypass
-      cloudEvents:
-        enable: true
-        eventsPublisher:
-          eventTypes:
-          - workflow
-          - node
-        type: aws
-      domain: {}
-      flyteadmin:
-        metricsKeys:
-        - phase
-        useOffloadedInputs: true
-        useOffloadedWorkflowClosure: true
-      logger:
-        level: 6
-        show-source: true
-      otel:
-        otlpgrpc:
-          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-        sampler:
-          parentSampler: traceid
-          traceIdRatio: 0.001
-        type: otlpgrpc
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
-        metrics:
-          disable: true
-      server:
-        grpc:
-          enableGrpcLatencyMetrics: true
-          maxMessageSizeBytes: 16777216
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+      endpoint: dns:///your-controlplane-domain
+      insecure: false
     auth:
       appAuth:
         thirdPartyConfig:
@@ -471,20 +385,35 @@ data:
       type: Noop
     cloudEvents:
       enable: false
+    connection:
+      environment: ""
+      region: ""
+      rootTenantURLPattern: dns:///your-controlplane-domain
     flyteadmin:
       eventVersion: 2
       metadataStoragePrefix:
       - metadata
       - admin
+      metricsKeys:
+      - phase
       metricsScope: 'flyte:'
       profilerPort: 10254
       roleNameKey: iam.amazonaws.com/role
-      testing:
-        host: http://flyteadmin
+      useOffloadedInputs: true
+      useOffloadedWorkflowClosure: true
+    otel:
+      otlpgrpc:
+        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
+      sampler:
+        parentSampler: traceid
+        traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
+      type: otlpgrpc
     private:
       app:
         cacheProviderConfig:
           kind: bypass
+        populateUserFields: false
     server:
       grpc:
         port: 8089
@@ -498,6 +427,10 @@ data:
         - '*'
         secure: false
         useAuth: false
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      port: 8089
     union:
       internalConnectionConfig:
         enabled: true
@@ -568,6 +501,8 @@ data:
       passwordPath: /etc/db/pass.txt
       port: 5432
       username: ''
+  logger.yaml: | 
+    level: null
   server.yaml: | 
     application:
       grpcMaxRecvMsgSizeMBs: 6
@@ -612,14 +547,18 @@ data:
       clientSecretLocation: /etc/secrets/client_secret
       endpoint: flyteadmin:81
       insecure: true
+    clientId: null
+    clientSecretLocation: null
+    endpoint: flyteadmin.union.svc.cluster.local:81
     event:
       capacity: 1000
       rate: 500
       type: admin
+    insecure: true
   db.yaml: | 
     database:
       connMaxLifeTime: 120s
-      dbname: postgres
+      dbname: flyteadmin
       host: ''
       maxIdleConnections: 10
       maxOpenConnections: 80
@@ -630,6 +569,8 @@ data:
     scheduler:
       metricsScope: 'flyte:'
       profilerPort: 10254
+  logger.yaml: | 
+    level: null
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -653,6 +594,8 @@ data:
       passwordPath: /etc/db/pass.txt
       port: 5432
       username: 'dbUser'
+  logger.yaml: | 
+    level: null
   server.yaml: | 
     authorizer:
       internalCommunicationConfig:
@@ -674,6 +617,7 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     private:
       app:
@@ -696,93 +640,6 @@ data:
       cache:
         max_size_mbs: 1024
         target_gc_percent: 70
----
-# Source: controlplane/templates/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: artifacts
-  labels:
-    helm.sh/chart: controlplane-2025.6.3
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-data:
-  config.yaml: |
-    artifactsConfig:
-      app:
-        adminClient:
-          hackFlagUntilCellIsolation: true
-        artifactBlobStoreConfig:
-          container: 'artifactsBucketName'
-          stow:
-            config:
-              auth_type: iam
-              region: us-east-2
-            kind: s3
-          type: stow
-        artifactDatabaseConfig:
-          connMaxLifeTime: 1m
-          maxIdleConnections: 20
-          maxOpenConnections: 30
-          postgres:
-            dbname: 'dbName'
-            host: 'db-instance-url'
-            options: sslmode=disable
-            passwordPath: /etc/db/pass.txt
-            port: 5432
-            readReplicaHost: 'db-instance-url'
-            username: 'dbUser'
-        artifactServerConfig:
-          httpPort: 8089
-          port: 8080
-          respectUserOrgsForServerless: true
-        artifactTriggerConfig:
-          executionMaxRetryCount: 3
-          executionSchedulerQuerySize: 20
-          executionSchedulers: 1
-          executionSchedulersWait: 10
-          triggerProcessorQuerySize: 100
-          triggerProcessors: 1
-          triggerProcessorsWait: 10
-    authorizer:
-      internalCommunicationConfig:
-        enabled: false
-      type: Noop
-    cache:
-      identity:
-        enabled: false
-    connection:
-      environment: staging
-      region: us-east-2
-      rootTenantURLPattern: dns:///fake-host.domain
-    db:
-      connectionPool:
-        maxConnectionLifetime: 1m
-        maxIdleConnections: 20
-        maxOpenConnections: 20
-      host: 'db-instance-url'
-      passwordPath: /etc/db/pass.txt
-      username: 'dbUser'
-    logger:
-      level: 6
-    otel:
-      otlpgrpc:
-        endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-      sampler:
-        parentSampler: traceid
-        traceIdRatio: 0.001
-      type: otlpgrpc
-    sharedService:
-      metrics:
-        scope: 'artifacts:'
-    union:
-      auth:
-        enable: false
-      internalConnectionConfig:
-        enabled: true
-        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -817,6 +674,7 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     sharedService:
       metrics:
@@ -863,6 +721,7 @@ data:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
+      dbname: 'dbName'
       host: 'db-instance-url'
       passwordPath: /etc/db/pass.txt
       username: 'dbUser'
@@ -874,6 +733,7 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     sharedService:
       metrics:
@@ -922,10 +782,11 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     sharedService:
       metrics:
-        scope: 'usage:'
+        scope: 'dataproxy:'
     union:
       auth:
         enable: false
@@ -965,6 +826,7 @@ data:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
+      dbname: 'dbName'
       host: 'db-instance-url'
       passwordPath: /etc/db/pass.txt
       username: 'dbUser'
@@ -980,6 +842,7 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     sharedService:
       metrics:
@@ -1030,6 +893,7 @@ data:
       sampler:
         parentSampler: traceid
         traceIdRatio: 0.001
+      schemaURL: https://opentelemetry.io/schemas/1.34.0
       type: otlpgrpc
     sharedService:
       metrics:
@@ -1261,40 +1125,7 @@ spec:
     app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: artifacts
-  labels:
-    helm.sh/chart: controlplane-2025.6.3
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: grpc
-      port: 80
-      protocol: TCP
-      targetPort: 8080
-    - name: connect
-      port:  83
-      protocol: TCP
-      targetPort: 8081
-    - name: http
-      port: 81
-      protocol: TCP
-      targetPort: 8089
-    - name: debug
-      port: 82
-      protocol: TCP
-      targetPort: 10254
-  selector:
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/templates/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -1484,7 +1315,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "024c5b1dee42d343a73651a36631447daf91428930f9d1c2a3dd1c6b6ae8d52"
+        configChecksum: "ea73d6d3dbab1f20248783ed7dfe1bf0ecad7acdfdeac5b7379efa8aae4d56a"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -1731,7 +1562,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "267d73b002b5d6c031cd696508fab7886026f1a71d609a9c8f448b2fc0cb709"
+        configChecksum: "4c7dd95a4db61adc28b6f793a4f978ac41a8a66a62c0938f320bf32944a1c34"
       labels: 
         app.kubernetes.io/name: datacatalog
         app.kubernetes.io/instance: release-name
@@ -1753,7 +1584,7 @@ spec:
         - migrate
         - run
         image: ":"
-        imagePullPolicy: ""
+        imagePullPolicy: "IfNotPresent"
         name: run-migrations
         volumeMounts:
         - mountPath: /etc/db
@@ -1771,7 +1602,7 @@ spec:
         - /etc/datacatalog/config/*.yaml
         - serve
         image: ":"
-        imagePullPolicy: ""
+        imagePullPolicy: "IfNotPresent"
         name: datacatalog
         ports:
         - containerPort: 8080
@@ -1828,7 +1659,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "024c5b1dee42d343a73651a36631447daf91428930f9d1c2a3dd1c6b6ae8d52"
+        configChecksum: "ea73d6d3dbab1f20248783ed7dfe1bf0ecad7acdfdeac5b7379efa8aae4d56a"
       labels: 
         app.kubernetes.io/name: flytescheduler
         app.kubernetes.io/instance: release-name
@@ -1927,7 +1758,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "08902a33b77b2a9d25690bd69c79af09b86203b5bc5c6e6c8bd50befd7f1e84"
+        configChecksum: "551f875a13330382c30e4e9e803fc56a9df9faedd4d7c1a872ddc85f19e932d"
       labels: 
         app.kubernetes.io/name: cacheservice
         app.kubernetes.io/instance: release-name
@@ -1949,7 +1780,7 @@ spec:
         - migrate
         - run
         image: ":"
-        imagePullPolicy: ""
+        imagePullPolicy: "IfNotPresent"
         name: run-migrations
         volumeMounts:
         - mountPath: /etc/db
@@ -1967,7 +1798,7 @@ spec:
         - /etc/cacheservice/config/*.yaml
         - serve
         image: ":"
-        imagePullPolicy: ""
+        imagePullPolicy: "IfNotPresent"
         name: cacheservice
         ports:
         - containerPort: 8088
@@ -2009,130 +1840,7 @@ spec:
             topologyKey: kubernetes.io/hostname
 ---
 # Source: controlplane/templates/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: artifacts
-  labels:
-    helm.sh/chart: controlplane-2025.6.3
-    app.kubernetes.io/name: artifacts
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2025.5.6"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: artifacts
-      app.kubernetes.io/instance: release-name
-  strategy:
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
-  template:
-    metadata:
-      annotations:
-        kubectl.kubernetes.io/default-container: artifacts
-        linkerd.io/inject: disabled
-        prometheus.io/path: /metrics
-        prometheus.io/port: "10254"
-      labels:
-        app.kubernetes.io/name: artifacts
-        app.kubernetes.io/instance: release-name
-    spec:
-      serviceAccountName: artifacts
-      volumes:
-      - name: secrets
-        secret:
-          secretName: artifacts
-      - name: db-pass
-        secret:
-          secretName: db-pass
-      - name: config
-        configMap:
-          name: artifacts
-      initContainers:
-        - name: artifacts-migrate
-          image: ""  # empty string to avoid template error
-          imagePullPolicy: IfNotPresent
-          args:
-          - artifacts
-          - migrate
-          - --config
-          - /etc/config/*.yaml
-          volumeMounts:
-          - name: db-pass
-            mountPath: /etc/db
-          - name: secrets
-            mountPath: /etc/secrets/
-          - name: config
-            mountPath: /etc/config/
-      containers:
-        - name: artifacts
-          image: ""  # empty string to avoid template error
-          imagePullPolicy: IfNotPresent
-          args:
-            - artifacts
-            - serve
-            - --config
-            - /etc/config/*.yaml
-          ports:
-            - name: grpc
-              containerPort: 8080
-              protocol: TCP
-            - name: http
-              containerPort: 8089
-              protocol: TCP
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-          volumeMounts:
-            - name: db-pass
-              mountPath: /etc/db
-            - name: secrets
-              mountPath: /etc/secrets/
-            - name: config
-              mountPath: /etc/config/
-          env:
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.cpu
-          resources:
-              limits:
-                cpu: 500m
-                memory: 512Mi
-              requests:
-                cpu: 250m
-                memory: 250Mi
-          livenessProbe:
-            httpGet:
-              path: /healthcheck
-              port: debug
-            initialDelaySeconds: 3
-            periodSeconds: 3
-          readinessProbe:
-            httpGet:
-              path: /healthcheck
-              port: debug
-            initialDelaySeconds: 3
-            periodSeconds: 3
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: artifacts
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
 ---
-# Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -2705,32 +2413,7 @@ spec:
                 topologyKey: "kubernetes.io/hostname"
 ---
 # Source: controlplane/templates/hpa.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: artifacts
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: artifacts
-  minReplicas: 1
-  maxReplicas: 1
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 80
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: 80
 ---
-# Source: controlplane/templates/hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:

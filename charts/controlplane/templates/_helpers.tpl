@@ -472,3 +472,67 @@ storage:
 {{/*
 End of cache service helpers.
 */}}
+
+{{/*
+Database name validation
+*/}}
+{{- define "controlplane.validateDatabaseNames" -}}
+{{- if and .Values.dbName .Values.flyte.db.admin.database.dbname }}
+{{- if eq .Values.dbName .Values.flyte.db.admin.database.dbname }}
+{{- fail "ERROR: dbName cannot be the same as flyte.db.admin.database.dbname. The control plane services and flyteadmin must use separate databases to avoid conflicts." }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
+Artifacts database configuration validation
+*/}}
+{{- define "controlplane.validateArtifactsDatabase" -}}
+{{- $dbConfig := .Values.services.artifacts.configMap.db }}
+{{- $pgConfig := .Values.services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres }}
+
+{{- if and $dbConfig $pgConfig }}
+  {{- /* Validate dbname consistency */ -}}
+  {{- if and $dbConfig.dbname $pgConfig.dbname }}
+    {{- if ne $dbConfig.dbname $pgConfig.dbname }}
+      {{- fail (printf "ERROR: Artifacts database name mismatch - services.artifacts.configMap.db.dbname (%s) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.dbname (%s)" $dbConfig.dbname $pgConfig.dbname) }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Validate host consistency */ -}}
+  {{- if and $dbConfig.host $pgConfig.host }}
+    {{- if ne $dbConfig.host $pgConfig.host }}
+      {{- fail (printf "ERROR: Artifacts database host mismatch - services.artifacts.configMap.db.host (%s) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.host (%s)" $dbConfig.host $pgConfig.host) }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Validate port consistency */ -}}
+  {{- if and $dbConfig.port $pgConfig.port }}
+    {{- if ne $dbConfig.port $pgConfig.port }}
+      {{- fail (printf "ERROR: Artifacts database port mismatch - services.artifacts.configMap.db.port (%v) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.port (%v)" $dbConfig.port $pgConfig.port) }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Validate username consistency */ -}}
+  {{- if and $dbConfig.username $pgConfig.username }}
+    {{- if ne $dbConfig.username $pgConfig.username }}
+      {{- fail (printf "ERROR: Artifacts database username mismatch - services.artifacts.configMap.db.username (%s) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.username (%s)" $dbConfig.username $pgConfig.username) }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Validate passwordPath consistency */ -}}
+  {{- if and $dbConfig.passwordPath $pgConfig.passwordPath }}
+    {{- if ne $dbConfig.passwordPath $pgConfig.passwordPath }}
+      {{- fail (printf "ERROR: Artifacts database passwordPath mismatch - services.artifacts.configMap.db.passwordPath (%s) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.passwordPath (%s)" $dbConfig.passwordPath $pgConfig.passwordPath) }}
+    {{- end }}
+  {{- end }}
+
+  {{- /* Validate options consistency */ -}}
+  {{- if and $dbConfig.options $pgConfig.options }}
+    {{- if ne $dbConfig.options $pgConfig.options }}
+      {{- fail (printf "ERROR: Artifacts database options mismatch - services.artifacts.configMap.db.options (%s) must match services.artifacts.configMap.artifactsConfig.app.artifactDatabaseConfig.postgres.options (%s)" $dbConfig.options $pgConfig.options) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+

@@ -11,7 +11,17 @@
 > Some sample Terraform configurations are available in the [providers](providers) directory.
 
 ## Prerequisites
-* Install [Helm 3](https://helm.sh/docs/intro/install/)
+
+* Install Helm 3.18
+
+```bash
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+chmod 700 get_helm.sh
+./get_helm.sh --version v3.18.0
+```
+
+> Helm 3.18 is implicitly required due to current use of the [azure/setup-helm@v4.3.1](https://github.com/Azure/setup-helm/tree/v4.3.1) Github actions plugin.
+
 * Install [union](https://docs.union.ai/byoc/api-reference/union-cli) and [uctl](https://docs.union.ai/byoc/api-reference/uctl-cli/).
 
 ## Deploy the Union operator
