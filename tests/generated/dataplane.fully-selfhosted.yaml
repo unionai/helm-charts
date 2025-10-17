@@ -127,6 +127,15 @@ metadata:
   name: clustersync-system
   namespace: union
 ---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -357,6 +366,131 @@ data:
         static_file_path true
         json_date_key false
         region us-east-1
+---
+# Source: dataplane/templates/nodeexecutor/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+data:
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: true
+  enabled_plugins.yaml: |
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - agent-service
+        - echo
+  config.yaml: |
+    executor:
+      cluster: ''
+      evaluatorCount: 64
+      maxActions: 2000
+      organization: ''
+      unionAuth:
+        injectSecret: true
+        secretName: EAGER_API_KEY
+      workerName: worker1
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 2
+          gpu: 1
+          memory: 1Gi
+    union:
+      connection:
+        host: dns:///foo.unionai.cloud
+      auth:
+        type: ClientSecret
+        clientId: dataplane-operator
+        clientSecretLocation: /etc/union/secret/app_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+    admin:
+      endpoint: dns:///foo.unionai.cloud
+      clientId: dataplane-operator
+      clientSecretLocation: /etc/secrets/client_secret
+      insecure: false
+    authorizer:
+      type: noop
+    catalog-cache:
+      cache-endpoint: dns:///foo.unionai.cloud
+      insecure: false
+      max-cache-age: 360h
+      type: cacheservicev2
+      use-admin-auth: true
+    logger:
+      level: 4
+      show-source: true
+    sharedService:
+      metrics:
+        scope: "executor:"
+      security:
+        secure: false
+        useAuth: false
+        allowCors: true
+        allowedOrigins:
+          # Accepting all domains for Sandbox installation
+          - "*"
+        allowedHeaders:
+          - "Content-Type"
+        allowLocalhostAccess: true
+    propeller:
+      node-config:
+        disable-input-file-writes: true
+    plugins:
+      ioutils:
+        remoteFileOutputPaths:
+          deckFilename: report.html
+      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+      fasttask:
+        additional-worker-args:
+          - "--last-ack-grace-period-seconds"
+          - "120"
+        callback-uri: "http://unionai-dataplane-executor.union.svc.cluster.local:15605"
+        grace-period-status-not-found: 2m
+      k8s:
+        disable-inject-owner-references: true
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+    storage:
+      container: 
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
 ---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
@@ -1771,6 +1905,23 @@ spec:
   sessionAffinity: None
   type: "ClusterIP"
 ---
+# Source: dataplane/templates/nodeexecutor/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-dataplane-executor
+  labels:
+    app: executor
+spec:
+  type: ClusterIP
+  ports:
+    - port: 15605
+      targetPort: 15605
+      protocol: TCP
+      name: fasttask
+  selector:
+    app: executor
+---
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
 kind: Service
@@ -2335,6 +2486,77 @@ spec:
         - configMap:
             name: flyte-clusterresourcesync-config
           name: config-volume
+---
+# Source: dataplane/templates/nodeexecutor/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      volumes:
+        - name: config-volume
+          configMap:
+            name: executor
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: executor
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          imagePullPolicy: IfNotPresent
+          command:
+            - executor
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu:    "4"
+              memory: "8Gi"
+            requests:
+              cpu:    "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
 ---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
