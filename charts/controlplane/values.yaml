@@ -89,6 +89,70 @@ postgres-exporter:
     enabled: false
     labels:
       instance: union
+
+ingress:
+
+  # Enable Secret Service ingress routes
+  secretService: true
+
+  # Default to the ingress class being created in nginx-ingress chart.
+  className: "controlplane"
+
+  # TLS to apply to all ingress objects.
+  # tls:
+
+  # Host to use for all ingress objects.
+  host:  "" # Set the DNS name of the ingress host used by you control plane
+
+  # Whether to create separate ingress objects for gRPC and HTTP traffic.
+  separateGrpcIngress: true
+
+  # Universal ingress annotations.
+  # Currently biased toward nginx-ingress controller
+  annotations:
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+
+    # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
+    # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+
+  separateGrpcIngressAnnotations:
+    # Must annotate gRPC ingress with this to ensure proper handling of gRPC traffic.
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+  protectedIngressAnnotations:
+    nginx.org/websocket-services: dataproxy-service
+  enableProtectedConsoleIngress: false
+  protectedIngressAnnotationsWithoutSignin:
+    nginx.org/websocket-services: dataproxy-service
+  protectedConsoleIngressAnnotations:
+    # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
+    # Specifically, the cache key should include the configurable authorization header and cookie header.
+    # Make sure to update the key if a different authorization header is used.
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
+    nginx.org/websocket-services: dataproxy-service
+  protectedIngressAnnotationsGrpc:
+
 configMap:
   cache:
     identity:
@@ -101,14 +165,8 @@ configMap:
     environment: ""
     region: ""
     rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
-  otel:
-    type: otlpgrpc
-    otlpgrpc:
-      endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-    sampler:
-      parentSampler: traceid
-      traceIdRatio: 0.001
-    schemaURL: https://opentelemetry.io/schemas/1.34.0
+  otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+    type: noop
   union:
     internalConnectionConfig:
       enabled: true
@@ -285,6 +343,18 @@ services:
           # TODO: Enable enrich identities?
           enrichIdentities: false
           publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+
+        # app:
+          # adminClient:
+            # connection:
+              # -- Override rootTenantURLPattern for adminClient to point to control plane service.
+              # endpoint: ""
+
+              # -- Insecure should be true only for local testing with self-signed certs.
+              # insecure: true|false
+
+              # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
+              # insecureSkipVerify: true|false
   usage:
     fullnameOverride: "usage"
     args:
@@ -377,11 +447,7 @@ flyte:
     enabled: false
   flyteconsole:
     enabled: true
-    podEnv:
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://otel-collector.monitoring.svc.cluster.local:4318"
-      - name: OTEL_EXPORTER_OTLP_PROTOCOL
-        value: "http/protobuf"
+    podEnv: []
     replicaCount: 1
     image:
       repository: "" # -- Set the repository for the console image"
@@ -496,52 +562,6 @@ flyte:
       # Disables flyte subchart ingresses.
       enabled: false
 
-      secretService: true
-      tls:
-        enabled: true
-        secretName: "" # Set the name of the secret used for TLS termination"
-      host:  "" # Set the DNS name of the ingress host used by you control plane
-      albSSLRedirect: false
-      separateGrpcIngress: true
-      annotations:
-        nginx.ingress.kubernetes.io/app-root: /console
-        # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
-        # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
-        nginx.ingress.kubernetes.io/limit-rps: "100"
-        nginx.ingress.kubernetes.io/proxy-body-size: 6m
-        nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
-        nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
-        nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-        nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-        nginx.ingress.kubernetes.io/server-snippet: |
-          client_header_timeout 604800;
-          client_body_timeout 604800;
-          # Increasing the default configuration from
-          #        client_header_buffer_size       1k;
-          #        large_client_header_buffers     4 8k;
-          # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
-          # about expected header sizs (PE-1101).
-          # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
-          # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
-          # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
-          # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
-          # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
-          client_header_buffer_size 16k;
-          large_client_header_buffers 64 32k;
-        nginx.ingress.kubernetes.io/service-upstream: "true"
-      protectedIngressAnnotations:
-        nginx.org/websocket-services: dataproxy-service
-      enableProtectedConsoleIngress: false
-      protectedIngressAnnotationsWithoutSignin:
-        nginx.org/websocket-services: dataproxy-service
-      protectedConsoleIngressAnnotations:
-        # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
-        # Specifically, the cache key should include the configurable authorization header and cookie header.
-        # Make sure to update the key if a different authorization header is used.
-        nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-        nginx.org/websocket-services: dataproxy-service
-      protectedIngressAnnotationsGrpc:
-
   storage:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
     type: s3
@@ -611,14 +631,8 @@ flyte:
         useOffloadedWorkflowClosure: true
         # See: https://github.com/unionai/flyte/pull/733/files
         testing: null
-      otel:
-        type: otlpgrpc
-        otlpgrpc:
-          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-        sampler:
-          parentSampler: traceid
-          traceIdRatio: 0.001
-        schemaURL: https://opentelemetry.io/schemas/1.34.0
+      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+        type: noop
       private:
         app:
           cacheProviderConfig:
@@ -655,20 +669,20 @@ flyte:
         grpcPort: 8089
         httpPort: 8080
         grpcServerReflection: true
-      otel:
-        type: otlpgrpc
-        otlpgrpc:
-          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-        sampler:
-          parentSampler: traceid
-          traceIdRatio: 0.001
-        schemaURL: https://opentelemetry.io/schemas/1.34.0
+      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+        type: noop
       private:
         app:
           cacheProviderConfig:
             kind: bypass
     logger:
+      # This level is incorrectly positioned and needs to be removed in underlying subchart
       level: null
+
+      # In order to set the log level, this is the correct structure.
+      # Log levels range from 1 (least verbose) to 5 ("DEBUG" most verbose)
+      # logger:
+      #   level: 5
     sharedService:
       connectPort: 8089
       httpPort: 8088
@@ -705,6 +719,28 @@ objectstore:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+
+  controller:
+
+    # Disable admission webhooks for simplicity
+    admissionWebhooks:
+      enabled: true
+
+    # Snippet annotations are required
+    allowSnippetAnnotations: true
+    config:
+      annotations-risk-level: "Critical"
+      grpc-connect-timeout: "1200"
+      grpc-read-timeout: "604800"
+      grpc-send-timeout: "604800"
+
+    ingressClassResource:
+      enabled: true
+      default: false # Assume shared with dataplane and require explicit ingress class assignment.
+
+      name: controlplane
+      controllerValue: union.ai/controlplane
+
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []

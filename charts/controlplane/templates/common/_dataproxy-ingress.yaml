@@ -4,33 +4,33 @@ kind: Ingress
 metadata:
   name: {{ template "flyte.name" . }}-dataproxy
   namespace: {{ template "flyte.namespace" . }}
-  {{- with .Values.flyte.common.ingress.annotations }}
+  {{- with .Values.ingress.annotations }}
   annotations: {{ tpl (toYaml .) $ | nindent 4}}
   {{- end }}
-  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- with .Values.ingress.annotationsUnary }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
-  {{- if .Values.flyte.common.ingress.enableProtectedConsoleIngress }}
-  {{- with .Values.flyte.common.ingress.protectedIngressAnnotationsWithoutSignin }}
+  {{- if .Values.ingress.enableProtectedConsoleIngress }}
+  {{- with .Values.ingress.protectedIngressAnnotationsWithoutSignin }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
   {{- else }}
-  {{- with .Values.flyte.common.ingress.protectedIngressAnnotations }}
+  {{- with .Values.ingress.protectedIngressAnnotations }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
   {{- end}}
 spec:
-  {{- with .Values.flyte.common.ingress.className }}
+  {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
   {{- end }}
-  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  {{- with .Values.ingress.tls }}
   tls:
-  - hosts:
-    - {{ .Values.flyte.common.ingress.host }}
-    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+    {{- toYaml . | nindent 4 }}
   {{- end}}
   rules:
-    - host: {{ .Values.flyte.common.ingress.host }}
+    - {{ with .Values.ingress.host -}}
+      host: {{ . }}
+      {{- end -}}
       http:
         paths:
           - path: /data/*
@@ -47,23 +47,4 @@ spec:
                 name: dataproxy
                 port:
                   number: 80
-    {{- if .Values.flyte.common.ingress.isSelfServe }}
-    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
-      http:
-        paths:
-          - path: /data/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: dataproxy-service
-                port:
-                  number: 80
-          - path: /data
-            pathType: Prefix
-            backend:
-              service:
-                name: dataproxy
-                port:
-                  number: 80
-    {{- end }}
 {{- end }}
