@@ -32,6 +32,10 @@ kubeconform-test:
 requirements:
 	@pip-sync
 
+.PHONY: gen_controlplane_version_bump
+gen_controlplane_version_bump: requirements
+	invoke builder.version-bumper --file charts/controlplane/Chart.yaml
+
 .PHONY: gen_dataplane_version_bump
 gen_dataplane_version_bump: requirements
 	invoke builder.version-bumper --file charts/dataplane/Chart.yaml
