@@ -6,7 +6,7 @@ defaultBackend:
       number: 80
 {{- end}}
 
-{{- define "protectedConsoleHttpRoutes" }}
+{{- define "protectedConsoleHttpRoutes" -}}
 - path: /
   pathType: ImplementationSpecific
   backend:
@@ -94,32 +94,27 @@ kind: Ingress
 metadata:
   name: {{ template "flyte.name" . }}-console-protected
   namespace: {{ template "flyte.namespace" . }}
-  {{- with .Values.flyte.common.ingress.annotations }}
+  {{- with .Values.ingress.annotations }}
   annotations:{{ tpl (toYaml .) $ | nindent 4}}
   {{- end }}
-  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- with .Values.ingress.annotationsUnary }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
-  {{- with .Values.flyte.common.ingress.protectedConsoleIngressAnnotations }}
+  {{- with .Values.ingress.protectedConsoleIngressAnnotations }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
 spec:
-  {{- if .Values.flyte.common.ingress.isSelfServe }}
-  {{- include "protectedDefaultBackend" . | nindent 2 -}}
-  {{- end}}
-  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
   tls:
-  - hosts:
-    - {{ .Values.flyte.common.ingress.host }}
-    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.flyte.common.ingress.host }}
+    - {{ with .Values.ingress.host -}}
+      host: {{ . }}
+      {{- end -}}
       http:
-        paths:{{- include "protectedConsoleHttpRoutes" . | nindent 10 -}}
-    {{- if .Values.flyte.common.ingress.isSelfServe }}
-    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
-      http:
-        paths: {{- include "protectedConsoleHttpRoutes" . | nindent 10 -}}
-    {{- end}}
-{{- end}} # end of define control-plane-library.console-protected-ingress # end of if .Values.flyte.common.ingress.enableProtectedConsoleIngress
+        paths: {{- include "protectedConsoleHttpRoutes" . | nindent 10 }}
+{{- end}} # end of define control-plane-library.console-protected-ingress # end of if .Values.ingress.enableProtectedConsoleIngress

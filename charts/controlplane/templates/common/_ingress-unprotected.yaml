@@ -46,7 +46,7 @@
         number: 81
 {{- end }}
 
-{{- define "httpRoutes" }}
+{{- define "httpRoutes" -}}
 # Port 87 in FlyteAdmin maps to the redoc container.
 - path: /openapi
   pathType: ImplementationSpecific
@@ -211,30 +211,24 @@ kind: Ingress
 metadata:
   name: {{ template "flyte.name" . }}
   namespace: {{ template "flyte.namespace" . }}
-  {{- with .Values.flyte.common.ingress.annotations }}
+  {{- with .Values.ingress.annotations }}
   annotations: {{ tpl (toYaml .) $ | nindent 4}}
   {{- end }}
 spec:
-  {{- with .Values.flyte.common.ingress.className }}
+  {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
   {{- end }}
-  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  {{- with .Values.ingress.tls }}
   tls:
-  - hosts:
-    - {{ .Values.flyte.common.ingress.host }}
-    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.flyte.common.ingress.host }}
+    - {{ with .Values.ingress.host -}}
+      host: {{ . }}
+      {{- end -}}
       http:
         paths:
           {{- include "httpRoutes" $ | nindent 10 }}
-    {{- if .Values.flyte.common.ingress.isSelfServe }}
-    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
-      http:
-        paths:
-          {{- include "httpRoutes" . | nindent 10 }}
-    {{- end }}
 ---
 # Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
 # enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
@@ -243,72 +237,60 @@ kind: Ingress
 metadata:
   name: {{ template "flyte.name" . }}-grpc
   namespace: {{ template "flyte.namespace" . }}
-  {{- with .Values.flyte.common.ingress.annotations }}
+  {{- with .Values.ingress.annotations }}
   annotations:
   {{- tpl (toYaml .) $ | nindent 4}}
   {{- end }}
-  {{- with .Values.flyte.common.ingress.annotationsUnary }}
+  {{- with .Values.ingress.annotationsUnary }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
-  {{- with .Values.flyte.common.ingress.separateGrpcIngressAnnotations }}
+  {{- with .Values.ingress.separateGrpcIngressAnnotations }}
   {{- toYaml . | nindent 4}}
   {{- end }}
 spec:
-  {{- with .Values.flyte.common.ingress.className }}
+  {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
   {{- end }}
-  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  {{- with .Values.ingress.tls }}
   tls:
-  - hosts:
-    - {{ .Values.flyte.common.ingress.host }}
-    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.flyte.common.ingress.host }}
+    - {{ with .Values.ingress.host -}}
+      host: {{ . }}
+      {{- end -}}
       http:
         paths:
-          {{- include "grpcRoutes" $ | nindent 10 -}}
-    {{- if .Values.flyte.common.ingress.isSelfServe }}
-    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
-      http:
-        paths:
-          {{- include "grpcRoutes" . | nindent 10 -}}
-    {{- end}}
+          {{- include "grpcRoutes" $ | nindent 10 }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: {{ template "flyte.name" . }}-grpc-streaming
   namespace: {{ template "flyte.namespace" . }}
-  {{- with .Values.flyte.common.ingress.annotations }}
+  {{- with .Values.ingress.annotations }}
   annotations:
   {{- tpl (toYaml .) $ | nindent 4}}
   {{- end }}
-  {{- with .Values.flyte.common.ingress.annotationsStreaming }}
+  {{- with .Values.ingress.annotationsStreaming }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
-  {{- with .Values.flyte.common.ingress.separateGrpcIngressAnnotations }}
+  {{- with .Values.ingress.separateGrpcIngressAnnotations }}
   {{- toYaml . | nindent 4}}
   {{- end }}
 spec:
-  {{- with .Values.flyte.common.ingress.className }}
+  {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
   {{- end }}
-  {{- if .Values.flyte.common.ingress.tls.enabled }}
+  {{- with .Values.ingress.tls }}
   tls:
-  - hosts:
-    - {{ .Values.flyte.common.ingress.host }}
-    secretName: {{ .Values.flyte.common.ingress.tls.secretName }}
+    {{- toYaml . | nindent 4 }}
   {{- end }}
   rules:
-    - host: {{ .Values.flyte.common.ingress.host }}
+    - {{ with .Values.ingress.host -}}
+      host: {{ . }}
+      {{- end -}}
       http:
         paths:
-          {{- include "grpcStreamingRoutes" $ | nindent 10 -}}
-    {{- if .Values.flyte.common.ingress.isSelfServe }}
-    - host: {{ .Values.flyte.common.ingress.selfServeVanityHost }}
-      http:
-        paths:
-          {{- include "grpcStreamingRoutes" . | nindent 10 -}}
-    {{- end}}
+          {{- include "grpcStreamingRoutes" $ | nindent 10 }}
 {{- end }}
