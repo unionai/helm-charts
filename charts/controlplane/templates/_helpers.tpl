@@ -361,7 +361,8 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
-{{- tpl ($merged | toYaml) . }}
+{{- $rendered := tpl ($merged | toYaml) . }}
+{{- $rendered }}
 {{- end }}
 
 {{/*
@@ -535,4 +536,71 @@ Artifacts database configuration validation
   {{- end }}
 {{- end }}
 {{- end }}
+
+{{/*
+Console helpers
+*/}}
+{{- define "console.name" -}}
+{{- default "unionconsole" .Values.console.nameOverride | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "console.fullname" -}}
+{{- if .Values.console.fullnameOverride }}
+{{- .Values.console.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $name := default "unionconsole" .Values.console.nameOverride }}
+{{- if contains $name .Release.Name }}
+{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- define "console.labels" -}}
+helm.sh/chart: {{ include "unionai.chart" . }}
+{{ include "console.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{- define "console.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "console.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "console.serviceAccountName" -}}
+{{- if .Values.console.serviceAccount.create }}
+{{- default (include "console.fullname" .) .Values.console.serviceAccount.name }}
+{{- else }}
+{{- default "default" .Values.console.serviceAccount.name }}
+{{- end }}
+{{- end }}
+
+{{/*
+Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
+NOTE: This is ONLY for the queue service. All other services use Postgres (dbHost).
+ScyllaDB is required for the queue service, Postgres is required for all other services.
+*/}}
+{{- define "controlplane.dbHost" -}}
+{{- if .Values.scylla.enabled -}}
+{{ printf "%s.%s.svc.cluster.local" (default "scylla" .Values.scylla.fullnameOverride) .Release.Namespace }}
+{{- else -}}
+{{ .Values.dbHost }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Queue service database port helper - returns ScyllaDB CQL port if scylla.enabled, otherwise uses 5432 (postgres default)
+NOTE: This is ONLY for the queue service. All other services use Postgres on port 5432.
+*/}}
+{{- define "controlplane.dbPort" -}}
+{{- if .Values.scylla.enabled -}}
+9042
+{{- else -}}
+5432
+{{- end -}}
+{{- end -}}
 
