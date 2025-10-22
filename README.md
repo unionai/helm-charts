@@ -12,15 +12,17 @@
 
 ## Prerequisites
 
-* Install Helm 3.18
+* Install Helm 3.19
 
 ```bash
+brew install helm
+# Or if our version is lagging behind brew
 curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
 chmod 700 get_helm.sh
-./get_helm.sh --version v3.18.0
+./get_helm.sh --version v3.19.0
 ```
 
-> Helm 3.18 is implicitly required due to current use of the [azure/setup-helm@v4.3.1](https://github.com/Azure/setup-helm/tree/v4.3.1) Github actions plugin.
+> Helm 3.19 is required to match version specific pinned in Github workflows.
 
 * Install [union](https://docs.union.ai/byoc/api-reference/union-cli) and [uctl](https://docs.union.ai/byoc/api-reference/uctl-cli/).
 

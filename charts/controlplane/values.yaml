@@ -1,10 +1,12 @@
-# -- Set the DB host used for union control plane services
+# -- Postgres DB host used for all control plane services EXCEPT the queue service
+# ScyllaDB is used exclusively by the queue service (configured in scylla section below)
+# This Postgres configuration is REQUIRED even when scylla.enabled is true
 dbHost: ""
-# -- Set the DB Name used for the control plane services
+# -- Postgres DB name used for control plane services (except queue service)
 dbName: ""
-# -- Set the DB user used for the control plane services
+# -- Postgres DB user used for control plane services (except queue service)
 dbUser: ""
-# -- Set the DB password used for the controlplane services
+# -- Postgres DB password used for control plane services (except queue service)
 dbPass: ""
 # -- Set the S3 bucket name used for flyte storage
 bucketName: ""
@@ -51,10 +53,12 @@ env:
   valueFrom:
     resourceFieldRef:
       resource: limits.memory
+      divisor: "1"
 - name: GOMAXPROCS
   valueFrom:
     resourceFieldRef:
       resource: limits.cpu
+      divisor: "1"
 autoscaling:
   enabled: true
   minReplicas: 1
@@ -285,6 +289,7 @@ services:
         host: '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
+        port: 5432
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -332,6 +337,7 @@ services:
         host:  '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
+        port: 5432
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -377,13 +383,97 @@ services:
       requests:
         cpu: 500m
         memory: 250Mi
+
+  queue:
+    fullnameOverride: "queue"
+    args:
+      - queue
+      - serve
+      - '--config'
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: "queue:"
+
+# Union console configuration.
+console:
+  enabled: true
+  replicaCount: 1
+
+  image:
+    repository: ""
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  nameOverride: ""
+  fullnameOverride: ""
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  podAnnotations:
+    kubectl.kubernetes.io/default-container: unionconsole
+
+  podLabels: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      type: spc_t
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    metricsPort: 8081
+    annotations: {}
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 250Mi
+
+  # Environment variables
+  env: []
+
+  # Additional environment variables from ConfigMap
+  envFrom: []
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+
 flyte:
   # All the value below need to be duplicated due to flyte-core being a subchart.
-  # -- Set the DB host used for tenant services.
+  # -- Postgres DB host used for tenant services (not queue service)
+  # ScyllaDB is used exclusively by the queue service
+  # This Postgres configuration is REQUIRED even when scylla.enabled is true
   dbHost: ""
-  # -- Set the DB Name used for the control plane services
+  # -- Postgres DB name used for control plane services (except queue service)
   dbName: ""
-  # -- Set the DB user used for the control plane services
+  # -- Postgres DB user used for control plane services (except queue service)
   dbUser: ""
   # -- Set the DB password used for the controlplane services
   dbPass: ""
@@ -741,6 +831,100 @@ ingress-nginx:
       name: controlplane
       controllerValue: union.ai/controlplane
 
+# ScyllaDB configuration
+# REQUIRED: ScyllaDB is used exclusively by the queue service for high-performance message queueing
+# Postgres (configured above) is used by all other control plane services
+#
+# When enabled, deploys ScyllaDB Operator and Cluster as the queue service backend
+#
+# IMPORTANT: Before enabling ScyllaDB, you MUST manually install the CRDs:
+#   Run the helper script: ./scripts/install-scylla-crds.sh
+#
+#   Or manually:
+#   helm repo add scylla-operator https://scylla-operator-charts.storage.googleapis.com/stable
+#   tmpdir=$(mktemp -d) \
+#   && helm pull scylla-operator/scylla-operator --version v1.18.1 --untar --untardir "${tmpdir}" \
+#   && kubectl apply --server-side -f "${tmpdir}"/scylla-operator/crds/ \
+#   && rm -rf "${tmpdir}"
+#
+# This is required because Helm does not properly manage CRD lifecycle updates.
+# See: https://operator.docs.scylladb.com/stable/installation/helm.html
+scylla:
+  enabled: true
+
+  # ScyllaDB cluster configuration
+  fullnameOverride: scylla
+
+  # Storage class configuration
+  storageClass:
+    create: true # TODO set to false if you have an existing storage class
+    name: "scylladb" # arbitrary name for the storage class
+    provisioner: "ebs.csi.eks.amazonaws.com"
+    parameters:
+      type: gp2
+      fsType: ext4
+    reclaimPolicy: Delete
+    volumeBindingMode: WaitForFirstConsumer
+    allowVolumeExpansion: true
+
+  # Datacenter configuration
+  datacenter: dc1
+
+  # Rack configuration
+  racks:
+    - name: rack1
+      agentResources:
+        requests:
+          cpu: 50m
+          memory: 10M
+      members: 3
+      storage:
+        capacity: 100Gi
+        storageClassName: "scylladb"  # Reference the storage class created above
+      resources:
+        limits:
+          cpu: 2
+          memory: 4Gi
+        requests:
+          cpu: 1
+          memory: 2Gi
+      # Explicitly disable placement constraints (operator adds defaults otherwise)
+      # For production with dedicated nodes, configure nodeAffinity and tolerations here
+      placement:
+        nodeAffinity: {}
+        tolerations: []
+
+  # ScyllaDB version
+  scyllaImage:
+    tag: 2025.1.5
+
+  # Developer mode (disable for production)
+  developerMode: true
+
+  # Sysctl properties
+  sysctls:
+    - fs.aio-max-nr=30000000
+
+  # Additional ScyllaDB configuration can be added here
+  # See https://operator.docs.scylladb.com/stable/generic for more options
+
+# ScyllaDB Operator configuration
+# The operator manages ScyllaDB clusters in Kubernetes
+scylla-operator:
+
+  fullnameOverride: scylla-operator
+
+  # Webhook configuration
+  webhook:
+    # Set to false if you don't need admission webhooks
+    enabled: true
+
+  # Additional operator configuration
+  # See https://operator.docs.scylladb.com/stable/installation for more options
+
+# NOTE: ScyllaDB Manager is NOT included as a subchart.
+# For backup/repair functionality, install scylla-manager separately.
+# See README.md for installation instructions.
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []

@@ -26,6 +26,7 @@ function generate {
   helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
   helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
   helm repo add flyte https://helm.flyte.org
+  helm repo add scylla https://scylla-operator-charts.storage.googleapis.com/stable
 
   for file in ${VALUES_DIR}/*.yaml; do
     OUTPUT=$(basename ${file})
