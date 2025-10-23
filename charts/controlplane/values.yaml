@@ -94,6 +94,9 @@ postgres-exporter:
     labels:
       instance: union
 
+# Default ports used by service containers.
+
+
 ingress:
 
   # Enable Secret Service ingress routes
@@ -158,27 +161,33 @@ ingress:
   protectedIngressAnnotationsGrpc:
 
 configMap:
-  cache:
-    identity:
-      enabled: false
   authorizer:
     type: "Noop"
     internalCommunicationConfig:
+      enabled: false
+  cache:
+    identity:
       enabled: false
   connection:
     environment: ""
     region: ""
     rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+  logger:
+    level: 6
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
+  sharedService:
+    connectPort: 8081
+    httpPort: 8089
+    # -- default gRPC port for control plane services
+    port: 8080
+    profilerPort: 10254
   union:
     internalConnectionConfig:
       enabled: true
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
     auth:
       enable: false
-  logger:
-    level: 6
 
 services:
   artifacts:
@@ -395,6 +404,7 @@ services:
       sharedService:
         metrics:
           scope: "queue:"
+
 
 # Union console configuration.
 console:
@@ -737,6 +747,8 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       sharedService:
+        # Flyteadmin container and service parts hardcoded and should not change.
+        # https://github.com/flyteorg/flyte/blob/v1.16.0-b2/charts/flyte-core/templates/admin/service.yaml
         connectPort: 8089
         httpPort: 8088
         port: 8089

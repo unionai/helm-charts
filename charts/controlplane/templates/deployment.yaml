@@ -3,6 +3,8 @@
 ---
 {{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart }}
 {{- if not $service.config.disabled }}
+{{- /* Reference the service specific Container port config */ -}}
+{{- $cfgMap := include "unionai.configMap" $service | fromYaml }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -105,21 +107,17 @@ spec:
           {{- end }}
           ports:
             - name: grpc
-              containerPort: 8080
+              containerPort: {{ $cfgMap.sharedService.port }}
               protocol: TCP
             - name: http
-              containerPort: 8089
+              containerPort: {{ $cfgMap.sharedService.httpPort }}
               protocol: TCP
             - name: debug
-              containerPort: 10254
+              containerPort: {{ $cfgMap.sharedService.profilerPort }}
               protocol: TCP
-          {{- with (include "unionai.sharedService" $service | fromYaml) }}
-          {{- if .connectPort }}
             - name: connect
-              containerPort: {{ .connectPort }}
+              containerPort: {{ $cfgMap.sharedService.connectPort }}
               protocol: TCP
-          {{- end }}
-          {{- end }}
           volumeMounts:
             - name: db-pass
               mountPath: /etc/db
