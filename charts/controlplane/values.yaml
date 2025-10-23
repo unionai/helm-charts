@@ -393,6 +393,36 @@ services:
         cpu: 500m
         memory: 250Mi
 
+  run-scheduler:
+    fullnameOverride: "run-scheduler"
+    args:
+      - cloudpropeller
+      - scheduler
+      - start
+      - --config
+      - "/etc/config/*.yaml"
+    initContainers:
+      - name: migrate
+        args:
+          - cloudpropeller
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "run-scheduler:"
+      db:
+        dbname: '{{ .Values.dbName }}'
+        host:  '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+
   queue:
     fullnameOverride: "queue"
     args:
@@ -404,6 +434,16 @@ services:
       sharedService:
         metrics:
           scope: "queue:"
+      queue:
+        db:
+          hosts:
+            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          threadCount: 64
+          type: cql
+        eventer:
+          recordActionThreadCount: 16
+          type: runservice
+          updateActionStatusThreadCount: 16
 
 
 # Union console configuration.
