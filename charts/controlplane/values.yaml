@@ -89,6 +89,70 @@ postgres-exporter:
     enabled: false
     labels:
       instance: union
+
+ingress:
+
+  # Enable Secret Service ingress routes
+  secretService: true
+
+  # Default to the ingress class being created in nginx-ingress chart.
+  className: "controlplane"
+
+  # TLS to apply to all ingress objects.
+  # tls:
+
+  # Host to use for all ingress objects.
+  host:  "" # Set the DNS name of the ingress host used by you control plane
+
+  # Whether to create separate ingress objects for gRPC and HTTP traffic.
+  separateGrpcIngress: true
+
+  # Universal ingress annotations.
+  # Currently biased toward nginx-ingress controller
+  annotations:
+    nginx.ingress.kubernetes.io/app-root: /console
+    nginx.ingress.kubernetes.io/service-upstream: "true"
+
+    # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
+    # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/proxy-body-size: 6m
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
+    nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_timeout 604800;
+      client_body_timeout 604800;
+      # Increasing the default configuration from
+      #        client_header_buffer_size       1k;
+      #        large_client_header_buffers     4 8k;
+      # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+      # about expected header sizs (PE-1101).
+      # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
+      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+      # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+      # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+      # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+      client_header_buffer_size 16k;
+      large_client_header_buffers 64 32k;
+
+  separateGrpcIngressAnnotations:
+    # Must annotate gRPC ingress with this to ensure proper handling of gRPC traffic.
+    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+  protectedIngressAnnotations:
+    nginx.org/websocket-services: dataproxy-service
+  enableProtectedConsoleIngress: false
+  protectedIngressAnnotationsWithoutSignin:
+    nginx.org/websocket-services: dataproxy-service
+  protectedConsoleIngressAnnotations:
+    # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
+    # Specifically, the cache key should include the configurable authorization header and cookie header.
+    # Make sure to update the key if a different authorization header is used.
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
+    nginx.org/websocket-services: dataproxy-service
+  protectedIngressAnnotationsGrpc:
+
 configMap:
   cache:
     identity:
@@ -101,13 +165,8 @@ configMap:
     environment: ""
     region: ""
     rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
-  otel:
-    type: otlpgrpc
-    otlpgrpc:
-      endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-    sampler:
-      parentSampler: traceid
-      traceIdRatio: 0.001
+  otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+    type: noop
   union:
     internalConnectionConfig:
       enabled: true
@@ -119,6 +178,11 @@ configMap:
 
 services:
   artifacts:
+
+    # Artifacts service migrations conflict with Executions services. In a subsequent PR we will force database
+    # migrations to create separate databases.
+    disabled: true
+
     fullnameOverride: "artifacts"
     initContainers:
       - name: migrate
@@ -137,8 +201,11 @@ services:
         metrics:
           scope: "artifacts:"
       db:
+        dbname: '{{ .Values.dbName }}'
         host: '{{ .Values.dbHost }}'
-        username: '{{.Values.dbUser }}'
+        options: sslmode=disable
+        username: '{{ .Values.dbUser }}'
+        port: 5432
         passwordPath: /etc/db/pass.txt
         connectionPool:
           maxIdleConnections: 20
@@ -160,14 +227,16 @@ services:
             connMaxLifeTime: 1m
             maxIdleConnections: 20
             maxOpenConnections: 30
+            # Duplicate for application postgres reference
             postgres:
               dbname: '{{ .Values.dbName }}'
               host: '{{ .Values.dbHost }}'
               options: sslmode=disable
               passwordPath: /etc/db/pass.txt
               port: 5432
+              # Default to the same host as the primary DB.
               readReplicaHost: '{{ .Values.dbHost }}'
-              username:  '{{ .Values.dbUser }}'
+              username: '{{ .Values.dbUser }}'
           artifactServerConfig:
             httpPort: 8089
             port: 8080
@@ -212,6 +281,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
+        dbname: '{{ .Values.dbName }}'
         host: '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -232,7 +302,7 @@ services:
     configMap:
       sharedService:
         metrics:
-          scope: "usage:"
+          scope: "dataproxy:"
       dataproxy:
         secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
         clusterSelector:
@@ -258,6 +328,7 @@ services:
         metrics:
           scope: "executions:"
       db:
+        dbname: '{{ .Values.dbName }}'
         host:  '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
@@ -269,8 +340,21 @@ services:
         cloudProvider: Local
       executions:
         apps:
+          # TODO: Enable enrich identities?
           enrichIdentities: false
           publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+
+        # app:
+          # adminClient:
+            # connection:
+              # -- Override rootTenantURLPattern for adminClient to point to control plane service.
+              # endpoint: ""
+
+              # -- Insecure should be true only for local testing with self-signed certs.
+              # insecure: true|false
+
+              # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
+              # insecureSkipVerify: true|false
   usage:
     fullnameOverride: "usage"
     args:
@@ -353,7 +437,7 @@ flyte:
     image:
       repository: "" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
-      pullPolicy: "" # -- Set the pull policy for the datacatalog image
+      pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
     serviceAccount:
       annotations:
         # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
@@ -363,11 +447,7 @@ flyte:
     enabled: false
   flyteconsole:
     enabled: true
-    podEnv:
-      - name: OTEL_EXPORTER_OTLP_ENDPOINT
-        value: "http://otel-collector.monitoring.svc.cluster.local:4318"
-      - name: OTEL_EXPORTER_OTLP_PROTOCOL
-        value: "http/protobuf"
+    podEnv: []
     replicaCount: 1
     image:
       repository: "" # -- Set the repository for the console image"
@@ -407,7 +487,7 @@ flyte:
     image:
       repository: "" # -- Set the repository for the private cacheservice image"
       tag: "" # -- Set the tag for the private cacheservice datacatalog image
-      pullPolicy: "" # -- Set the pull policy for the private cacheservice  image
+      pullPolicy: "IfNotPresent" # -- Set the pull policy for the private cacheservice  image
     serviceAccount:
       # -- If the service account is created by you, make this false
       create: true
@@ -482,52 +562,6 @@ flyte:
       # Disables flyte subchart ingresses.
       enabled: false
 
-      secretService: true
-      tls:
-        enabled: true
-        secretName: "" # Set the name of the secret used for TLS termination"
-      host:  "" # Set the DNS name of the ingress host used by you control plane
-      albSSLRedirect: false
-      separateGrpcIngress: true
-      annotations:
-        nginx.ingress.kubernetes.io/app-root: /console
-        # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
-        # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
-        nginx.ingress.kubernetes.io/limit-rps: "100"
-        nginx.ingress.kubernetes.io/proxy-body-size: 6m
-        nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
-        nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
-        nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
-        nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-        nginx.ingress.kubernetes.io/server-snippet: |
-          client_header_timeout 604800;
-          client_body_timeout 604800;
-          # Increasing the default configuration from
-          #        client_header_buffer_size       1k;
-          #        large_client_header_buffers     4 8k;
-          # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
-          # about expected header sizs (PE-1101).
-          # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
-          # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
-          # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
-          # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
-          # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
-          client_header_buffer_size 16k;
-          large_client_header_buffers 64 32k;
-        nginx.ingress.kubernetes.io/service-upstream: "true"
-      protectedIngressAnnotations:
-        nginx.org/websocket-services: dataproxy-service
-      enableProtectedConsoleIngress: false
-      protectedIngressAnnotationsWithoutSignin:
-        nginx.org/websocket-services: dataproxy-service
-      protectedConsoleIngressAnnotations:
-        # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
-        # Specifically, the cache key should include the configurable authorization header and cookie header.
-        # Make sure to update the key if a different authorization header is used.
-        nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-        nginx.org/websocket-services: dataproxy-service
-      protectedIngressAnnotationsGrpc:
-
   storage:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
     type: s3
@@ -545,7 +579,7 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called datacatalog (OR change the name here)
+        # -- Use a specific DB name for datacatalog
         dbname: datacatalog
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
@@ -557,8 +591,8 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called postgres (OR change the name here)
-        dbname: postgres
+        # -- Use a specific DB name for flyteadmin
+        dbname: flyteadmin
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
         maxOpenConnections: 80
@@ -569,7 +603,7 @@ flyte:
         # -- Create a user called flyteadmin
         username: "{{ .Values.dbUser }}"
         host: "{{ .Values.dbHost }}"
-        # -- Create a DB called cacheservice (OR change the name here)
+        # -- Use a specific DB name for cacheservice
         dbname: cacheservice
         passwordPath: /etc/db/pass.txt
         maxIdleConnections: 10
@@ -578,78 +612,44 @@ flyte:
   configmap:
     adminServer:
       admin:
-        flyteadmin:
-          metricsKeys:
-            - phase
-          useOffloadedInputs: true
-          useOffloadedWorkflowClosure: true
-        server:
-          grpc:
-            maxMessageSizeBytes: 16777216
-            enableGrpcLatencyMetrics: true
-        cloudEvents:
-          enable: true
-          type: aws
-          eventsPublisher:
-            eventTypes:
-              - workflow
-              - node
-        otel:
-          type: otlpgrpc
-          otlpgrpc:
-            endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-          sampler:
-            parentSampler: traceid
-            traceIdRatio: 0.001
-        logger:
-          show-source: true
-          level: 6
-        authorizer:
-          internalCommunicationConfig:
-            enabled: false
-        union:
-          internalConnectionConfig:
-            enabled: true
-            urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-        private:
-          app:
-            cacheProviderConfig:
-              kind: bypass
-          metrics:
-            disable: true
-        cacheserviceServer:
-          otel:
-            type: otlpgrpc
-            otlpgrpc:
-              endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-            sampler:
-              parentSampler: traceid
-              traceIdRatio: 0.001
-          authorizer:
-            internalCommunicationConfig:
-              enabled: false
-          private:
-            app:
-              cacheProviderConfig:
-                kind: bypass
-        domain: { }
-      server:
-        security:
-          useAuth: false
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
+        endpoint: dns:///your-controlplane-domain
+        insecure: false
       authorizer:
         type: "Noop"
         internalCommunicationConfig:
           enabled: false
       cloudEvents:
         enable: false
+      connection:
+        environment: ""
+        region: ""
+        rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+      flyteadmin:
+        metricsKeys:
+          - phase
+        useOffloadedInputs: true
+        useOffloadedWorkflowClosure: true
+        # See: https://github.com/unionai/flyte/pull/733/files
+        testing: null
+      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+        type: noop
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+          # Don't rely on user API to exists
+          populateUserFields: false
+      server:
+        security:
+          useAuth: false
       union:
         internalConnectionConfig:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      sharedService:
+        connectPort: 8089
+        httpPort: 8088
+        port: 8089
     cacheserviceServer:
       union:
         internalConnectionConfig:
@@ -669,17 +669,34 @@ flyte:
         grpcPort: 8089
         httpPort: 8080
         grpcServerReflection: true
-      otel:
-        type: otlpgrpc
-        otlpgrpc:
-          endpoint: http://otel-collector.monitoring.svc.cluster.local:4317
-        sampler:
-          parentSampler: traceid
-          traceIdRatio: 0.001
+      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+        type: noop
       private:
         app:
           cacheProviderConfig:
             kind: bypass
+    logger:
+      # This level is incorrectly positioned and needs to be removed in underlying subchart
+      level: null
+
+      # In order to set the log level, this is the correct structure.
+      # Log levels range from 1 (least verbose) to 5 ("DEBUG" most verbose)
+      # logger:
+      #   level: 5
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      port: 8089
+    admin:
+      # Hack: Initializing clients triggers a code path in AdminService where it attempt to extract
+      # the org from the host. This constraint breaks in situations where we are using a DNS entry that
+      # does not have atleast one "." in it. The default flyte-core helm chart defaults to access flyteadmin
+      # at "flyteadmin:81". This breaks the Union specific code path. To unblock testing, we are setting
+      # the endpoint to the full DNS entry of the flyteadmin service in the cluster.
+      endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
+      insecure: true
+      clientId: null
+      clientSecretLocation: null
   cloudEvents:
     enable: false
   workflow_notifications:
@@ -702,6 +719,28 @@ objectstore:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+
+  controller:
+
+    # Disable admission webhooks for simplicity
+    admissionWebhooks:
+      enabled: true
+
+    # Snippet annotations are required
+    allowSnippetAnnotations: true
+    config:
+      annotations-risk-level: "Critical"
+      grpc-connect-timeout: "1200"
+      grpc-read-timeout: "604800"
+      grpc-send-timeout: "604800"
+
+    ingressClassResource:
+      enabled: true
+      default: false # Assume shared with dataplane and require explicit ingress class assignment.
+
+      name: controlplane
+      controllerValue: union.ai/controlplane
+
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []

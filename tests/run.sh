@@ -13,21 +13,34 @@ CHARTS_DIR=${SCRIPT_DIR}/../charts
 function generate {
   TARGET_DIR=$1
   echo "Generating test files..."
+
+  # Track which charts we've already processed dependencies for
+  declare -A processed_charts
+
+  # First, add all helm repos once
+  helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+  helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+  helm repo add unionai https://unionai.github.io/helm-charts
+  helm repo add fluent https://fluent.github.io/helm-charts
+  helm repo add opencost https://opencost.github.io/opencost-helm-chart
+  helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
+  helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+  helm repo add flyte https://helm.flyte.org
+
   for file in ${VALUES_DIR}/*.yaml; do
     OUTPUT=$(basename ${file})
     CHART=$(basename ${file} | cut -d. -f1)
     TEST=$(basename ${file} | cut -d. -f2)
     echo "* Generating test output for ${CHART} (${TEST})"
-    helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-    helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
-    helm repo add unionai https://unionai.github.io/helm-charts
-    helm repo add fluent https://fluent.github.io/helm-charts
-    helm repo add opencost https://opencost.github.io/opencost-helm-chart
-    helm repo add nvidia https://nvidia.github.io/dcgm-exporter/helm-charts
-    helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-    helm repo add flyte https://helm.flyte.org
-    helm dependency build ${CHARTS_DIR}/${CHART}
-    helm dep update ${CHARTS_DIR}/${CHART}
+
+    # Only run dependency commands once per chart
+    if [[ -z "${processed_charts[$CHART]}" ]]; then
+      echo "  - Building dependencies for chart ${CHART}"
+      helm dependency build ${CHARTS_DIR}/${CHART}
+      helm dep update ${CHARTS_DIR}/${CHART}
+      processed_charts[$CHART]=1
+    fi
+
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
       --values ${file} > ${TARGET_DIR}/${OUTPUT}

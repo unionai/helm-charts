@@ -964,7 +964,7 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- if .Values.ingress.serving.hostOverride }}
 {{- .Values.ingress.serving.hostOverride | quote }}
 {{- else }}
-{{- printf "*.apps.%s" .Values.host | quote }}
+{{- printf "*.apps.%s" .Values.ingress.host | quote }}
 {{- end }}
 {{- end -}}
 
@@ -972,6 +972,6 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- if .Values.ingress.dataproxy.hostOverride }}
 {{- .Values.ingress.dataproxy.hostOverride | quote }}
 {{- else }}
-{{- .Values.host -}}
+{{- .Values.ingress.host -}}
 {{- end }}
 {{- end -}}

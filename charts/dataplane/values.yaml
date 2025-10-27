@@ -133,11 +133,54 @@ clusterresourcesync:
     clusterResourcesPrivate:
       # -- Configuration of app serving services.
       app:
-        isSelfServe: false
-    # -- Connection information for the sync resources service to connect to the Union control plane.  This should not need to be changed.
+        isServerless: false
+    # -- Connection information for the sync resources service to connect to the Union control plane.
     union:
       connection:
+        # This is the defacto configuration for Union managed control planes.
+        # -- Host to connect to
         host: 'dns:///{{ tpl .Values.host . }}'
+
+        # -- Whether to connect over insecure channel
+        # insecure: false
+
+        # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
+        # Caution: shouldn't be used for production use cases
+        # insecureSkipVerify: false
+
+        # -- Minimum timeout for establishing a connection
+        # minConnectTimeout: "10s"
+
+        # -- Max delay for grpc backoff
+        # maxBackoffDelay: "8m"
+
+        # -- gRPC per retry timeout
+        # perRetryTimeout: "30s"
+
+        # -- Max number of gRPC retries
+        # maxRetries: 3
+
+        # -- Configuration for keeping the connection alive.
+        # keepAliveConfig:
+          # -- After a duration of this time if the client doesn't see any activity it pings the server to see if the transport is still alive.
+          # time: "30s"
+          # -- After having pinged for keepalive check, the client waits for a duration of Timeout and if no activity is seen even after that the connection is closed.
+          # timeout: "5s"
+          # -- If true, client sends keepalive pings even with no active RPCs.
+          # permitWithoutStream: true
+
+        # -- Allowing trusted client claims makes use of the default client request interceptor
+        # which allows sending default claims for internal identity, external identity and its type
+        # trustedIdentityClaims:
+          # -- Enables passing of trusted claims while making inter service calls
+          # enabled: false
+          # -- External identity claim of the service which is authorized to make internal service call. These are verified against userclouds actions
+          # externalIdentityClaim: ""
+          # -- External identity type claim of app or user to use for the current service identity. It should be an 'app' for inter service communication
+          # externalIdentityTypeClaim: ""
+
+        # -- Maximum size of a message in bytes of a gRPC message
+        # maxRecvMsgSize: 67108864  # 64MB
       auth:
         type: ClientSecret
         clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
@@ -346,7 +389,7 @@ config:
       # -- The hose name for control plane access. This will be provided by Union.
       cloudHostName: "{{ .Values.host }}"
       # -- The prefix for constructing object storage URLs.
-      metadataBucketPrefix: "s3://"
+      metadataBucketPrefix: "s3://{{ .Values.storage.bucketName }}"
       # -- The bucket name for object storage.
       bucketName: "{{ .Values.storage.bucketName }}"
       # -- The bucket region for object storage.
@@ -441,10 +484,53 @@ config:
         memory: 1Gi
         # Maybe `0`?
         gpu: 1
-  # -- Connection information to the union control plane.
   union:
+    # -- Connection information to the union control plane.
     connection:
-      host: "dns:///{{ .Values.host }}"
+      # This is the defacto configuration for Union managed control planes.
+      # -- Host to connect to
+      host: 'dns:///{{ tpl .Values.host . }}'
+
+      # -- Whether to connect over insecure channel
+      # insecure: false
+
+      # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
+      # Caution: shouldn't be used for production use cases
+      # insecureSkipVerify: false
+
+      # -- Minimum timeout for establishing a connection
+      # minConnectTimeout: "10s"
+
+      # -- Max delay for grpc backoff
+      # maxBackoffDelay: "8m"
+
+      # -- gRPC per retry timeout
+      # perRetryTimeout: "30s"
+
+      # -- Max number of gRPC retries
+      # maxRetries: 3
+
+      # -- Configuration for keeping the connection alive.
+      # keepAliveConfig:
+        # -- After a duration of this time if the client doesn't see any activity it pings the server to see if the transport is still alive.
+        # time: "30s"
+        # -- After having pinged for keepalive check, the client waits for a duration of Timeout and if no activity is seen even after that the connection is closed.
+        # timeout: "5s"
+        # -- If true, client sends keepalive pings even with no active RPCs.
+        # permitWithoutStream: true
+
+      # -- Allowing trusted client claims makes use of the default client request interceptor
+      # which allows sending default claims for internal identity, external identity and its type
+      # trustedIdentityClaims:
+        # -- Enables passing of trusted claims while making inter service calls
+        # enabled: false
+        # -- External identity claim of the service which is authorized to make internal service call. These are verified against userclouds actions
+        # externalIdentityClaim: ""
+        # -- External identity type claim of app or user to use for the current service identity. It should be an 'app' for inter service communication
+        # externalIdentityTypeClaim: ""
+
+      # -- Maximum size of a message in bytes of a gRPC message
+      # maxRecvMsgSize: 67108864  # 64MB
     auth:
       type: ClientSecret
       clientId: "{{ .Values.secrets.admin.clientId }}"
@@ -521,6 +607,36 @@ fluentbit:
 flyteagent:
   enabled: false
   plugin_config: { }
+
+executor:
+  enabled: true
+  config:
+    organization: "{{ .Values.orgName }}"
+    cluster: "{{ .Values.clusterName }}"
+    workerName: worker1
+    unionAuth:
+      injectSecret: true
+      secretName: EAGER_API_KEY
+    maxActions: 2000
+    evaluatorCount: 64
+  resources:
+    limits:
+      cpu: 4
+      memory: 8Gi
+    requests:
+      cpu: 2
+      memory: 4Gi
+  podLabels:
+    app: executor
+  selector:
+    matchLabels:
+      app: executor
+  task_logs:
+    plugins:
+      logs:
+        kubernetes-enabled: true
+        # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
+        cloudwatch-enabled: false
 
 # -- Flytepropeller configuration
 flytepropeller:
@@ -771,6 +887,9 @@ operator:
 # Enable access to dataplane services.
 ingress:
   enabled: false
+
+  # The default host, ommitted if empty.
+  host: ""
 
   # -- Dataproxy specific ingress configuration.
   dataproxy:
@@ -1183,6 +1302,27 @@ imageBuilder:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+
+  controller:
+
+    # Disable admission webhooks for simplicity
+    admissionWebhooks:
+      enabled: false
+
+    # Snippet annotations are required
+    allowSnippetAnnotations: true
+    config:
+      annotations-risk-level: "Critical"
+      grpc-connect-timeout: "1200"
+      grpc-read-timeout: "604800"
+      grpc-send-timeout: "604800"
+
+    ingressClassResource:
+      enabled: true # Enable even if not utilized
+      default: false # Assume shared with controlplane and require explicit ingress class assignment.
+
+      name: dataplane
+      controllerValue: union.ai/dataplane
 
 ## -- Extra Kubernetes objects to deploy with the helm chart
 extraObjects: []

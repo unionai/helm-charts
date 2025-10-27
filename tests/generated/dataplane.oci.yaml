@@ -127,6 +127,15 @@ metadata:
   name: clustersync-system
   namespace: union
 ---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -247,7 +256,7 @@ data:
       templatePath: /etc/flyte/clusterresource/templates
     clusterResourcesPrivate:
       app:
-        isSelfServe: false
+        isServerless: false
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
@@ -371,6 +380,132 @@ data:
         bucket bucket
         endpoint https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
 ---
+# Source: dataplane/templates/nodeexecutor/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+data:
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: true
+  enabled_plugins.yaml: |
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - agent-service
+        - echo
+  config.yaml: |
+    executor:
+      cluster: 'union-oci'
+      evaluatorCount: 64
+      maxActions: 2000
+      organization: 'union'
+      unionAuth:
+        injectSecret: true
+        secretName: EAGER_API_KEY
+      workerName: worker1
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 2
+          gpu: 1
+          memory: 1Gi
+    union:
+      connection:
+        host: dns:///union.us-west-2.union.ai
+      auth:
+        type: ClientSecret
+        clientId: clientId
+        clientSecretLocation: /etc/union/secret/app_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+    admin:
+      endpoint: dns:///union.us-west-2.union.ai
+      clientId: clientId
+      clientSecretLocation: /etc/secrets/client_secret
+      insecure: false
+    authorizer:
+      type: noop
+    catalog-cache:
+      cache-endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+      max-cache-age: 360h
+      type: cacheservicev2
+      use-admin-auth: true
+    logger:
+      level: 6
+      show-source: true
+    sharedService:
+      metrics:
+        scope: "executor:"
+      security:
+        secure: false
+        useAuth: false
+        allowCors: true
+        allowedOrigins:
+          # Accepting all domains for Sandbox installation
+          - "*"
+        allowedHeaders:
+          - "Content-Type"
+        allowLocalhostAccess: true
+    propeller:
+      node-config:
+        disable-input-file-writes: true
+    plugins:
+      ioutils:
+        remoteFileOutputPaths:
+          deckFilename: report.html
+      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+      fasttask:
+        additional-worker-args:
+          - "--last-ack-grace-period-seconds"
+          - "120"
+        callback-uri: "http://unionai-dataplane-executor.union.svc.cluster.local:15605"
+        grace-period-status-not-found: 2m
+      k8s:
+        disable-inject-owner-references: true
+        default-cpus: 200m
+        default-env-vars:
+        - MORE: foo
+        default-memory: 100Mi
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+    storage:
+      container: bucket
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: accessKey
+          secret_key: secretKey
+          disable_ssl: false
+          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+          region: us-ashburn-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -426,7 +561,7 @@ data:
         bucketRegion: 'us-ashburn-1'
         cloudHostName: 'union.us-west-2.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: s3://
+        metadataBucketPrefix: s3://bucket
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages: 
@@ -1600,7 +1735,6 @@ spec:
   - name: "http"
     protocol: TCP
     port: 8080
-    nodePort: 0
     targetPort: 8080
   
   selector:    
@@ -1806,6 +1940,23 @@ spec:
     operator.prometheus.io/name: union-operator-prometheus
   sessionAffinity: None
   type: "ClusterIP"
+---
+# Source: dataplane/templates/nodeexecutor/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-dataplane-executor
+  labels:
+    app: executor
+spec:
+  type: ClusterIP
+  ports:
+    - port: 15605
+      targetPort: 15605
+      protocol: TCP
+      name: fasttask
+  selector:
+    app: executor
 ---
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
@@ -2299,7 +2450,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "183468157ea2b5adf4c79ad53ac67c810bcfe2e70aa2d6312f82458e71c1e9e"
+        configChecksum: "2a13ac0be772e2ac8b62e7d3ba4324d024fca02835861cf6a45f8bfe66bfb27"
         
       labels:
         app.kubernetes.io/name: clusterresourcesync
@@ -2348,7 +2499,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2387,6 +2538,77 @@ spec:
           operator: Equal
           value: worker
 ---
+# Source: dataplane/templates/nodeexecutor/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: executor
+  namespace: union
+  labels:
+    app: executor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: executor
+  template:
+    metadata:
+      labels:
+        app: executor
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      volumes:
+        - name: config-volume
+          configMap:
+            name: executor
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: executor
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          imagePullPolicy: IfNotPresent
+          command:
+            - executor
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu:    "4"
+              memory: "8Gi"
+            requests:
+              cpu:    "2"
+              memory: "4Gi"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
+---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -2407,7 +2629,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f78df15d443107d82a4ae1a1fdbaaec124914f8d7c4ea407e5ac6e42d122258"
+        configChecksum: "f1df7854dd3b0a2ec65cff67f763b8ad4445e8f676e5095a42cad2512336fcb"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -2434,7 +2656,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2504,7 +2726,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2547,7 +2769,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f78df15d443107d82a4ae1a1fdbaaec124914f8d7c4ea407e5ac6e42d122258"
+        configChecksum: "f1df7854dd3b0a2ec65cff67f763b8ad4445e8f676e5095a42cad2512336fcb"
         
       labels:
         
@@ -2571,7 +2793,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2688,7 +2910,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2740,7 +2962,7 @@ spec:
               mountPath: /etc/flyte/config
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2889,7 +3111,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
@@ -3036,8 +3258,6 @@ spec:
             - {key: app.kubernetes.io/name, operator: In, values: [prometheus]}
             - {key: app.kubernetes.io/instance, operator: In, values: [union-operator-prometheus]}
   portName: http-web
-  enforcedKeepDroppedTargets: 0
-  minReadySeconds: 0
   maximumStartupDurationSeconds: 900
   hostNetwork: false
 ---
@@ -3778,11 +3998,6 @@ metadata:
     release: release-name
 spec:
   jobLabel: app.kubernetes.io/name  
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:      
       app.kubernetes.io/name: kube-state-metrics
@@ -3810,11 +4025,6 @@ metadata:
 spec:
   jobLabel: jobLabel
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-coredns
@@ -3845,11 +4055,6 @@ metadata:
 spec:
   jobLabel: jobLabel
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-controller-manager
@@ -3884,11 +4089,6 @@ metadata:
 spec:
   jobLabel: jobLabel
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-etcd
@@ -3919,11 +4119,6 @@ metadata:
 spec:
   jobLabel: jobLabel
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-proxy
@@ -3954,11 +4149,6 @@ metadata:
 spec:
   jobLabel: jobLabel
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-kube-scheduler
@@ -3991,11 +4181,6 @@ metadata:
     heritage: "Helm"
 spec:
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   attachMetadata:
     node: false
   jobLabel: k8s-app
@@ -4113,11 +4298,6 @@ metadata:
     app.kubernetes.io/component: prometheus-operator
 spec:
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   endpoints:
   - port: https
     scheme: https
@@ -4155,11 +4335,6 @@ metadata:
     heritage: "Helm"
 spec:
   
-  sampleLimit: 0
-  targetLimit: 0
-  labelLimit: 0
-  labelNameLengthLimit: 0
-  labelValueLengthLimit: 0
   selector:
     matchLabels:
       app: prometheus-prometheus
