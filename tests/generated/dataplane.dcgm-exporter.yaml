@@ -530,54 +530,52 @@ data:
       connection:
         host: dns:///foo.unionai.cloud
       auth:
-        type: ClientSecret
-        clientId: dataplane-operator
-        clientSecretLocation: /etc/union/secret/app_secret
-        authorizationMetadataKey: "flyte-authorization"
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'dataplane-operator'
+        clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
+        type: ClientSecret
     admin:
+      clientId: 'dataplane-operator'
+      clientSecretLocation: /etc/union/secret/client_secret
       endpoint: dns:///foo.unionai.cloud
-      clientId: dataplane-operator
-      clientSecretLocation: /etc/secrets/client_secret
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
       cache-endpoint: dns:///foo.unionai.cloud
+      endpoint: dns:///foo.unionai.cloud
       insecure: false
-      max-cache-age: 360h
-      type: cacheservicev2
+      type: fallback
       use-admin-auth: true
     logger:
       level: 4
       show-source: true
     sharedService:
       metrics:
-        scope: "executor:"
+        scope: 'executor:'
       security:
+        allowCors: true
+        allowLocalhostAccess: true
+        allowedHeaders:
+        - Content-Type
+        allowedOrigins:
+        - '*'
         secure: false
         useAuth: false
-        allowCors: true
-        allowedOrigins:
-          # Accepting all domains for Sandbox installation
-          - "*"
-        allowedHeaders:
-          - "Content-Type"
-        allowLocalhostAccess: true
     propeller:
       node-config:
         disable-input-file-writes: true
     plugins:
+      fasttask:
+        additional-worker-args:
+        - --last-ack-grace-period-seconds
+        - "120"
+        callback-uri: http://unionai-dataplane-executor.union.svc.cluster.local:15605
+        grace-period-status-not-found: 2m
       ioutils:
         remoteFileOutputPaths:
           deckFilename: report.html
-      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-      fasttask:
-        additional-worker-args:
-          - "--last-ack-grace-period-seconds"
-          - "120"
-        callback-uri: "http://unionai-dataplane-executor.union.svc.cluster.local:15605"
-        grace-period-status-not-found: 2m
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
@@ -2838,10 +2836,12 @@ spec:
             - name: GOMEMLIMIT
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.memory
             - name: GOMAXPROCS
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.cpu
           resources:
             limits:

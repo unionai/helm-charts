@@ -132,6 +132,18 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
+  name: run-scheduler
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: run-scheduler
+      app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
   name: usage
 spec:
   minAvailable: 1
@@ -267,6 +279,18 @@ metadata:
   labels:
     helm.sh/chart: controlplane-2025.10.1
     app.kubernetes.io/name: queue
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2025.10.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: run-scheduler
+  labels:
+    helm.sh/chart: controlplane-2025.10.1
+    app.kubernetes.io/name: run-scheduler
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2025.10.0"
     app.kubernetes.io/managed-by: Helm
@@ -768,6 +792,9 @@ data:
       apps:
         enrichIdentities: false
         publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+      task:
+        enabled: true
+        enrichIdentities: false
     logger:
       level: 6
     otel:
@@ -813,9 +840,68 @@ data:
       level: 6
     otel:
       type: noop
+    queue:
+      db:
+        hosts:
+        - 'scylla-client.union.svc.cluster.local'
+        threadCount: 64
+        type: cql
+      eventer:
+        recordActionThreadCount: 16
+        type: runservice
+        updateActionStatusThreadCount: 16
     sharedService:
       metrics:
         scope: 'queue:'
+    union:
+      auth:
+        enable: false
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
+---
+# Source: controlplane/templates/configmap.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-scheduler
+  labels:
+    helm.sh/chart: controlplane-2025.10.1
+    app.kubernetes.io/name: run-scheduler
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2025.10.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    authorizer:
+      internalCommunicationConfig:
+        enabled: false
+      type: Noop
+    cache:
+      identity:
+        enabled: false
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    db:
+      connectionPool:
+        maxConnectionLifetime: 1m
+        maxIdleConnections: 20
+        maxOpenConnections: 20
+      dbname: 'dbName'
+      host: 'db-instance-url'
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: 'dbUser'
+    logger:
+      level: 6
+    otel:
+      type: noop
+    sharedService:
+      metrics:
+        scope: 'run-scheduler:'
     union:
       auth:
         enable: false
@@ -1965,6 +2051,40 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: run-scheduler
+  labels:
+    helm.sh/chart: controlplane-2025.10.1
+    app.kubernetes.io/name: run-scheduler
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2025.10.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: 8080
+    - name: connect
+      port:  83
+      protocol: TCP
+      targetPort: 8081
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 82
+      protocol: TCP
+      targetPort: 10254
+  selector:
+    app.kubernetes.io/name: run-scheduler
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
   name: usage
   labels:
     helm.sh/chart: controlplane-2025.10.1
@@ -2124,13 +2244,13 @@ spec:
           failureThreshold: 3
         resources:
           limits:
-            cpu: 250m
-            ephemeral-storage: 100Mi
-            memory: 500Mi
+            cpu: 2
+            ephemeral-storage: 500Mi
+            memory: 3Gi
           requests:
-            cpu: 10m
-            ephemeral-storage: 50Mi
-            memory: 50Mi
+            cpu: 50m
+            ephemeral-storage: 200Mi
+            memory: 500Mi
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -2310,9 +2430,9 @@ spec:
             drop: ["ALL"]
         resources:
           limits:
-            cpu: 500m
-            ephemeral-storage: 100Mi
-            memory: 500Mi
+            cpu: 1
+            ephemeral-storage: 500Mi
+            memory: 1Gi
           requests:
             cpu: 10m
             ephemeral-storage: 50Mi
@@ -3143,6 +3263,22 @@ spec:
       - name: config
         configMap:
           name: queue
+      initContainers:
+        - name: queue-migrate
+          image: ""  # empty string to avoid template error
+          imagePullPolicy: IfNotPresent
+          args:
+          - queue
+          - migrate
+          - --config
+          - /etc/config/*.yaml
+          volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
+          - name: secrets
+            mountPath: /etc/secrets/
+          - name: config
+            mountPath: /etc/config/
       containers:
         - name: queue
           image: ""  # empty string to avoid template error
@@ -3207,6 +3343,133 @@ spec:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/name: queue
+                    app.kubernetes.io/instance: release-name
+                topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: run-scheduler
+  labels:
+    helm.sh/chart: controlplane-2025.10.1
+    app.kubernetes.io/name: run-scheduler
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2025.10.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: run-scheduler
+      app.kubernetes.io/instance: release-name
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: run-scheduler
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: run-scheduler
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: run-scheduler
+      volumes:
+      - name: secrets
+        secret:
+          secretName: run-scheduler
+      - name: db-pass
+        secret:
+          secretName: db-pass
+      - name: config
+        configMap:
+          name: run-scheduler
+      initContainers:
+        - name: run-scheduler-migrate
+          image: ""  # empty string to avoid template error
+          imagePullPolicy: IfNotPresent
+          args:
+          - cloudpropeller
+          - migrate
+          - --config
+          - /etc/config/*.yaml
+          volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
+          - name: secrets
+            mountPath: /etc/secrets/
+          - name: config
+            mountPath: /etc/config/
+      containers:
+        - name: run-scheduler
+          image: ""  # empty string to avoid template error
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudpropeller
+            - scheduler
+            - start
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
+            - name: secrets
+              mountPath: /etc/secrets/
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+              limits:
+                cpu: 500m
+                memory: 512Mi
+              requests:
+                cpu: 250m
+                memory: 250Mi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: run-scheduler
                     app.kubernetes.io/instance: release-name
                 topologyKey: "kubernetes.io/hostname"
 ---
@@ -3435,6 +3698,32 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: queue
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# Source: controlplane/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: run-scheduler
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: run-scheduler
   minReplicas: 1
   maxReplicas: 1
   metrics:
@@ -4280,6 +4569,20 @@ spec:
                 port:
                   number: 89
           - path: /flyteidl.cacheservice.CacheService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  number: 89
+          - path: /flyteidl.cacheservice.v2.CacheService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cacheservice
+                port:
+                  number: 89
+          - path: /flyteidl.cacheservice.v2.CacheService
             pathType: ImplementationSpecific
             backend:
               service:
@@ -5349,6 +5652,9 @@ spec:
                 name: release-name-unionconsole
                 port:
                   number: 80
+---
+# Source: controlplane/templates/secret.yaml
+---
 ---
 # Source: controlplane/templates/secret.yaml
 ---
