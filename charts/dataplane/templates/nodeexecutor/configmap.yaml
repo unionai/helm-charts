@@ -23,59 +23,42 @@ data:
     {{ toYaml . | nindent 6 }}
     {{- end }}
     union:
+      {{- with .Values.config.union.connection }}
       connection:
-        host: dns:///{{ .Values.host }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.config.union.auth }}
       auth:
-        type: ClientSecret
-        clientId: {{ .Values.secrets.admin.clientId }}
-        clientSecretLocation: /etc/union/secret/app_secret
-        authorizationMetadataKey: "flyte-authorization"
-        tokenRefreshWindow: 5m
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+    {{- with .Values.config.admin.admin }}
     admin:
-      endpoint: dns:///{{ .Values.host }}
-      clientId: {{ .Values.secrets.admin.clientId }}
-      clientSecretLocation: /etc/secrets/client_secret
-      insecure: false
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.config.authorizer }}
     authorizer:
-      type: noop
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with index .Values.config.catalog "catalog-cache" }}
     catalog-cache:
-      cache-endpoint: dns:///{{ .Values.host }}
-      insecure: false
-      max-cache-age: 360h
-      type: cacheservicev2
-      use-admin-auth: true
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.config.logger }}
     logger:
-      level: {{ .Values.config.logger.level }}
-      show-source: true
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.executor.sharedService }}
     sharedService:
-      metrics:
-        scope: "executor:"
-      security:
-        secure: false
-        useAuth: false
-        allowCors: true
-        allowedOrigins:
-          # Accepting all domains for Sandbox installation
-          - "*"
-        allowedHeaders:
-          - "Content-Type"
-        allowLocalhostAccess: true
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.executor.propeller }}
     propeller:
-      node-config:
-        disable-input-file-writes: true
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.executor.plugins }}
     plugins:
-      ioutils:
-        remoteFileOutputPaths:
-          deckFilename: report.html
-      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-      fasttask:
-        additional-worker-args:
-          - "--last-ack-grace-period-seconds"
-          - "120"
-        callback-uri: "http://unionai-dataplane-executor.{{.Release.Namespace}}.svc.cluster.local:15605"
-        grace-period-status-not-found: 2m
-      k8s:
-        disable-inject-owner-references: true
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
 {{- with .Values.config.k8s.plugins.k8s }}
 {{ tpl (toYaml .) $ | indent 8 }}
 {{- end }}

@@ -158,17 +158,19 @@ ingress:
   protectedIngressAnnotationsGrpc:
 
 configMap:
-  cache:
-    identity:
-      enabled: false
   authorizer:
     type: "Noop"
     internalCommunicationConfig:
+      enabled: false
+  cache:
+    identity:
       enabled: false
   connection:
     environment: ""
     region: ""
     rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+  logger:
+    level: 6
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   union:
@@ -177,8 +179,6 @@ configMap:
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
     auth:
       enable: false
-  logger:
-    level: 6
 
 services:
   artifacts:
@@ -345,10 +345,6 @@ services:
       cloudEventsProcessor:
         cloudProvider: Local
       executions:
-        apps:
-          # TODO: Enable enrich identities?
-          enrichIdentities: false
-          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
 
         # app:
           # adminClient:
@@ -361,6 +357,17 @@ services:
 
               # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
               # insecureSkipVerify: true|false
+
+        apps:
+          # Identity service is disabled by default. Enriching identities can be enabled here.
+          enrichIdentities: false
+          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+
+        # Enable V2 specific endpoints
+        task:
+          enabled: true
+          # Identity service is disabled by default. Enriching identities can be enabled here.
+          enrichIdentities: false
   usage:
     fullnameOverride: "usage"
     args:
@@ -384,6 +391,36 @@ services:
         cpu: 500m
         memory: 250Mi
 
+  run-scheduler:
+    fullnameOverride: "run-scheduler"
+    args:
+      - cloudpropeller
+      - scheduler
+      - start
+      - --config
+      - "/etc/config/*.yaml"
+    initContainers:
+      - name: migrate
+        args:
+          - cloudpropeller
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "run-scheduler:"
+      db:
+        dbname: '{{ .Values.dbName }}'
+        host:  '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+
   queue:
     fullnameOverride: "queue"
     args:
@@ -391,10 +428,28 @@ services:
       - serve
       - '--config'
       - /etc/config/*.yaml
+    initContainers:
+      - name: migrate
+        args:
+          - queue
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
     configMap:
       sharedService:
         metrics:
           scope: "queue:"
+      queue:
+        db:
+          hosts:
+            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          threadCount: 64
+          type: cql
+        eventer:
+          recordActionThreadCount: 16
+          type: runservice
+          updateActionStatusThreadCount: 16
+
 
 # Union console configuration.
 console:
@@ -516,6 +571,15 @@ flyte:
       periodSeconds: 5
       successThreshold: 1
       failureThreshold: 3
+    resources:
+      limits:
+        cpu: 2
+        ephemeral-storage: 500Mi
+        memory: 3Gi
+      requests:
+        cpu: 50m
+        ephemeral-storage: 200Mi
+        memory: 500Mi
 
   workflow_scheduler:
     enabled: false
@@ -528,6 +592,15 @@ flyte:
       repository: "" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
+    resources:
+      limits:
+        cpu: 1
+        ephemeral-storage: 500Mi
+        memory: 1Gi
+      requests:
+        cpu: 10m
+        ephemeral-storage: 50Mi
+        memory: 50Mi
     serviceAccount:
       annotations:
         # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
@@ -737,6 +810,8 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       sharedService:
+        # Flyteadmin container and service parts hardcoded and should not change.
+        # https://github.com/flyteorg/flyte/blob/v1.16.0-b2/charts/flyte-core/templates/admin/service.yaml
         connectPort: 8089
         httpPort: 8088
         port: 8089
