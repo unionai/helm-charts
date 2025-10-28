@@ -1,10 +1,12 @@
-# -- Set the DB host used for union control plane services
+# -- Postgres DB host used for all control plane services EXCEPT the queue service
+# ScyllaDB is used exclusively by the queue service (configured in scylla section below)
+# This Postgres configuration is REQUIRED even when scylla.enabled is true
 dbHost: ""
-# -- Set the DB Name used for the control plane services
+# -- Postgres DB name used for control plane services (except queue service)
 dbName: ""
-# -- Set the DB user used for the control plane services
+# -- Postgres DB user used for control plane services (except queue service)
 dbUser: ""
-# -- Set the DB password used for the controlplane services
+# -- Postgres DB password used for control plane services (except queue service)
 dbPass: ""
 # -- Set the S3 bucket name used for flyte storage
 bucketName: ""
@@ -51,10 +53,12 @@ env:
   valueFrom:
     resourceFieldRef:
       resource: limits.memory
+      divisor: "1"
 - name: GOMAXPROCS
   valueFrom:
     resourceFieldRef:
       resource: limits.cpu
+      divisor: "1"
 autoscaling:
   enabled: true
   minReplicas: 1
@@ -154,17 +158,19 @@ ingress:
   protectedIngressAnnotationsGrpc:
 
 configMap:
-  cache:
-    identity:
-      enabled: false
   authorizer:
     type: "Noop"
     internalCommunicationConfig:
+      enabled: false
+  cache:
+    identity:
       enabled: false
   connection:
     environment: ""
     region: ""
     rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+  logger:
+    level: 6
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   union:
@@ -173,8 +179,6 @@ configMap:
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
     auth:
       enable: false
-  logger:
-    level: 6
 
 services:
   artifacts:
@@ -285,6 +289,7 @@ services:
         host: '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
+        port: 5432
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -332,6 +337,7 @@ services:
         host:  '{{ .Values.dbHost }}'
         username:  '{{ .Values.dbUser }}'
         passwordPath: /etc/db/pass.txt
+        port: 5432
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
@@ -339,10 +345,6 @@ services:
       cloudEventsProcessor:
         cloudProvider: Local
       executions:
-        apps:
-          # TODO: Enable enrich identities?
-          enrichIdentities: false
-          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
 
         # app:
           # adminClient:
@@ -355,6 +357,17 @@ services:
 
               # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
               # insecureSkipVerify: true|false
+
+        apps:
+          # Identity service is disabled by default. Enriching identities can be enabled here.
+          enrichIdentities: false
+          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+
+        # Enable V2 specific endpoints
+        task:
+          enabled: true
+          # Identity service is disabled by default. Enriching identities can be enabled here.
+          enrichIdentities: false
   usage:
     fullnameOverride: "usage"
     args:
@@ -377,13 +390,144 @@ services:
       requests:
         cpu: 500m
         memory: 250Mi
+
+  run-scheduler:
+    fullnameOverride: "run-scheduler"
+    args:
+      - cloudpropeller
+      - scheduler
+      - start
+      - --config
+      - "/etc/config/*.yaml"
+    initContainers:
+      - name: migrate
+        args:
+          - cloudpropeller
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "run-scheduler:"
+      db:
+        dbname: '{{ .Values.dbName }}'
+        host:  '{{ .Values.dbHost }}'
+        username:  '{{ .Values.dbUser }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+
+  queue:
+    fullnameOverride: "queue"
+    args:
+      - queue
+      - serve
+      - '--config'
+      - /etc/config/*.yaml
+    initContainers:
+      - name: migrate
+        args:
+          - queue
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "queue:"
+      queue:
+        db:
+          hosts:
+            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          threadCount: 64
+          type: cql
+        eventer:
+          recordActionThreadCount: 16
+          type: runservice
+          updateActionStatusThreadCount: 16
+
+
+# Union console configuration.
+console:
+  replicaCount: 1
+
+  image:
+    repository: ""
+    pullPolicy: IfNotPresent
+    tag: ""
+
+  nameOverride: ""
+  fullnameOverride: ""
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  podAnnotations:
+    kubectl.kubernetes.io/default-container: unionconsole
+
+  podLabels: {}
+
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    fsGroupChangePolicy: OnRootMismatch
+    seLinuxOptions:
+      type: spc_t
+
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+      - ALL
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+    metricsPort: 8081
+    annotations: {}
+
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 250Mi
+
+  # Environment variables
+  env: []
+
+  # Additional environment variables from ConfigMap
+  envFrom: []
+
+  nodeSelector: {}
+
+  tolerations: []
+
+  affinity: {}
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+
 flyte:
   # All the value below need to be duplicated due to flyte-core being a subchart.
-  # -- Set the DB host used for tenant services.
+  # -- Postgres DB host used for tenant services (not queue service)
+  # ScyllaDB is used exclusively by the queue service
+  # This Postgres configuration is REQUIRED even when scylla.enabled is true
   dbHost: ""
-  # -- Set the DB Name used for the control plane services
+  # -- Postgres DB name used for control plane services (except queue service)
   dbName: ""
-  # -- Set the DB user used for the control plane services
+  # -- Postgres DB user used for control plane services (except queue service)
   dbUser: ""
   # -- Set the DB password used for the controlplane services
   dbPass: ""
@@ -426,6 +570,15 @@ flyte:
       periodSeconds: 5
       successThreshold: 1
       failureThreshold: 3
+    resources:
+      limits:
+        cpu: 2
+        ephemeral-storage: 500Mi
+        memory: 3Gi
+      requests:
+        cpu: 50m
+        ephemeral-storage: 200Mi
+        memory: 500Mi
 
   workflow_scheduler:
     enabled: false
@@ -438,6 +591,15 @@ flyte:
       repository: "" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
+    resources:
+      limits:
+        cpu: 1
+        ephemeral-storage: 500Mi
+        memory: 1Gi
+      requests:
+        cpu: 10m
+        ephemeral-storage: 50Mi
+        memory: 50Mi
     serviceAccount:
       annotations:
         # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
@@ -647,6 +809,8 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       sharedService:
+        # Flyteadmin container and service parts hardcoded and should not change.
+        # https://github.com/flyteorg/flyte/blob/v1.16.0-b2/charts/flyte-core/templates/admin/service.yaml
         connectPort: 8089
         httpPort: 8088
         port: 8089
@@ -741,6 +905,100 @@ ingress-nginx:
       name: controlplane
       controllerValue: union.ai/controlplane
 
+# ScyllaDB configuration
+# REQUIRED: ScyllaDB is used exclusively by the queue service for high-performance message queueing
+# Postgres (configured above) is used by all other control plane services
+#
+# When enabled, deploys ScyllaDB Operator and Cluster as the queue service backend
+#
+# IMPORTANT: Before enabling ScyllaDB, you MUST manually install the CRDs:
+#   Run the helper script: ./scripts/install-scylla-crds.sh
+#
+#   Or manually:
+#   helm repo add scylla-operator https://scylla-operator-charts.storage.googleapis.com/stable
+#   tmpdir=$(mktemp -d) \
+#   && helm pull scylla-operator/scylla-operator --version v1.18.1 --untar --untardir "${tmpdir}" \
+#   && kubectl apply --server-side -f "${tmpdir}"/scylla-operator/crds/ \
+#   && rm -rf "${tmpdir}"
+#
+# This is required because Helm does not properly manage CRD lifecycle updates.
+# See: https://operator.docs.scylladb.com/stable/installation/helm.html
+scylla:
+  enabled: true
+
+  # ScyllaDB cluster configuration
+  fullnameOverride: scylla
+
+  # Storage class configuration
+  storageClass:
+    create: true # TODO set to false if you have an existing storage class
+    name: "scylladb" # arbitrary name for the storage class
+    provisioner: "ebs.csi.eks.amazonaws.com"
+    parameters:
+      type: gp2
+      fsType: ext4
+    reclaimPolicy: Delete
+    volumeBindingMode: WaitForFirstConsumer
+    allowVolumeExpansion: true
+
+  # Datacenter configuration
+  datacenter: dc1
+
+  # Rack configuration
+  racks:
+    - name: rack1
+      agentResources:
+        requests:
+          cpu: 50m
+          memory: 10M
+      members: 3
+      storage:
+        capacity: 100Gi
+        storageClassName: "scylladb"  # Reference the storage class created above
+      resources:
+        limits:
+          cpu: 2
+          memory: 4Gi
+        requests:
+          cpu: 1
+          memory: 2Gi
+      # Explicitly disable placement constraints (operator adds defaults otherwise)
+      # For production with dedicated nodes, configure nodeAffinity and tolerations here
+      placement:
+        nodeAffinity: {}
+        tolerations: []
+
+  # ScyllaDB version
+  scyllaImage:
+    tag: 2025.1.5
+
+  # Developer mode (disable for production)
+  developerMode: true
+
+  # Sysctl properties
+  sysctls:
+    - fs.aio-max-nr=30000000
+
+  # Additional ScyllaDB configuration can be added here
+  # See https://operator.docs.scylladb.com/stable/generic for more options
+
+# ScyllaDB Operator configuration
+# The operator manages ScyllaDB clusters in Kubernetes
+scylla-operator:
+
+  fullnameOverride: scylla-operator
+
+  # Webhook configuration
+  webhook:
+    # Set to false if you don't need admission webhooks
+    enabled: true
+
+  # Additional operator configuration
+  # See https://operator.docs.scylladb.com/stable/installation for more options
+
+# NOTE: ScyllaDB Manager is NOT included as a subchart.
+# For backup/repair functionality, install scylla-manager separately.
+# See README.md for installation instructions.
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []

@@ -438,54 +438,52 @@ data:
       connection:
         host: dns:///union.us-west-2.union.ai
       auth:
-        type: ClientSecret
-        clientId: clientId
-        clientSecretLocation: /etc/union/secret/app_secret
-        authorizationMetadataKey: "flyte-authorization"
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'clientId'
+        clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
+        type: ClientSecret
     admin:
+      clientId: 'clientId'
+      clientSecretLocation: /etc/union/secret/client_secret
       endpoint: dns:///union.us-west-2.union.ai
-      clientId: clientId
-      clientSecretLocation: /etc/secrets/client_secret
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
       cache-endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///union.us-west-2.union.ai
       insecure: false
-      max-cache-age: 360h
-      type: cacheservicev2
+      type: fallback
       use-admin-auth: true
     logger:
       level: 6
       show-source: true
     sharedService:
       metrics:
-        scope: "executor:"
+        scope: 'executor:'
       security:
+        allowCors: true
+        allowLocalhostAccess: true
+        allowedHeaders:
+        - Content-Type
+        allowedOrigins:
+        - '*'
         secure: false
         useAuth: false
-        allowCors: true
-        allowedOrigins:
-          # Accepting all domains for Sandbox installation
-          - "*"
-        allowedHeaders:
-          - "Content-Type"
-        allowLocalhostAccess: true
     propeller:
       node-config:
         disable-input-file-writes: true
     plugins:
+      fasttask:
+        additional-worker-args:
+        - --last-ack-grace-period-seconds
+        - "120"
+        callback-uri: http://unionai-dataplane-executor.union.svc.cluster.local:15605
+        grace-period-status-not-found: 2m
       ioutils:
         remoteFileOutputPaths:
           deckFilename: report.html
-      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-      fasttask:
-        additional-worker-args:
-          - "--last-ack-grace-period-seconds"
-          - "120"
-        callback-uri: "http://unionai-dataplane-executor.union.svc.cluster.local:15605"
-        grace-period-status-not-found: 2m
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
@@ -2471,7 +2469,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2535,7 +2533,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2553,10 +2551,12 @@ spec:
             - name: GOMEMLIMIT
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.memory
             - name: GOMAXPROCS
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.cpu
           resources:
             limits:
@@ -2620,7 +2620,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2688,7 +2688,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2747,7 +2747,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2854,7 +2854,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2904,7 +2904,7 @@ spec:
               mountPath: /etc/flyte/config
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3041,7 +3041,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.10.2"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:

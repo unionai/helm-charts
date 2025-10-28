@@ -23,12 +23,14 @@ spec:
         - name: config-volume
           configMap:
             name: executor
+        {{- if .Values.secrets.admin.enable }}
         - name: secret-volume
           secret:
-            secretName: union-secret-auth
+            secretName: {{ .Values.operator.secretName }}
         - name: auth
           secret:
-            secretName: union-secret-auth
+            secretName: {{ .Values.operator.secretName }}
+        {{- end }}
       containers:
         - name: executor
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -49,10 +51,12 @@ spec:
             - name: GOMEMLIMIT
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.memory
             - name: GOMAXPROCS
               valueFrom:
                 resourceFieldRef:
+                  divisor: "1"
                   resource: limits.cpu
           resources:
             limits:
@@ -64,8 +68,10 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
+            {{- if .Values.secrets.admin.enable }}
             - name: secret-volume
               mountPath: /etc/union/secret
             - name: auth
               mountPath: /etc/secrets/
+            {{- end }}
 {{- end }}
