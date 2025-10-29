@@ -1,0 +1,238 @@
+# ============================================================================
+# Union Control Plane Configuration for AWS
+# ============================================================================
+# This file provides a production-ready template for deploying Union control
+# plane on AWS EKS. Replace the placeholder values below with your actual
+# configuration.
+#
+# For more details, see: https://docs.union.ai/deployment/
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Configuration Variables to Replace
+# ----------------------------------------------------------------------------
+# Before deployment, replace these TODO placeholders throughout this file:
+#
+# 1. UNION_HOST - Union control plane hostname
+#    Format: Fully qualified domain name
+#    Example: "mike-test.us-west-2.union.ai" or "union.example.com"
+#    Note: Should be accessible address to control plane
+#
+# 2. AWS_REGION - AWS region for resources
+#    Format: AWS region code
+#    Example: "us-west-2", "us-east-1", "eu-west-1"
+#
+# 3. DB_HOST - PostgreSQL database hostname
+#    Format: RDS endpoint or hostname
+#    Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
+#    Note: RDS endpoint format: <...>.AWS_REGION.rds.amazonaws.com
+#
+# 4. DB_NAME - PostgreSQL database name
+#    Format: Valid PostgreSQL database name
+#    Example: "unionai" or "union_controlplane"
+#
+# 5. DB_USER - PostgreSQL database username
+#    Format: Valid PostgreSQL username
+#    Example: "unionai" or "admin"
+#
+# 6. DB_PASSWORD - PostgreSQL database password
+#    Format: Secure password string
+#    Note: Store in Kubernetes secret, not directly in this file
+#    Source: Create Kubernetes secret with key "pass.txt"
+#    Referenced by: KUBERNETES_SECRET_NAME
+#
+# 7. BUCKET_NAME - S3 bucket for control plane metadata
+#    Format: Valid S3 bucket name
+#    Example: "union-controlplane-metadata"
+#    Note: Bucket must exist before deployment
+#
+# 8. ARTIFACTS_BUCKET_NAME - S3 bucket for artifacts storage
+#    Format: Valid S3 bucket name
+#    Example: "union-controlplane-artifacts"
+#    Note: Can be same as BUCKET_NAME or separate bucket
+#
+# 9. KUBERNETES_SECRET_NAME - Kubernetes secret name for credentials
+#    Format: Valid Kubernetes secret name
+#    Example: "union-controlplane-secrets"
+#    Note: Secret must contain "pass.txt" key with database password
+#
+# 10. ARTIFACT_IAM_ROLE_ARN - IAM role for artifacts service
+#     Format: Full ARN
+#     Example: "arn:aws:iam::123456789012:role/union-artifacts-role"
+#     Permissions: S3 access to ARTIFACTS_BUCKET_NAME
+#
+# 11. FLYTEADMIN_IAM_ROLE_ARN - IAM role for Flyte services
+#     Format: Full ARN
+#     Example: "arn:aws:iam::123456789012:role/union-flyteadmin-role"
+#     Permissions: S3 access to BUCKET_NAME
+#     Note: Also used by datacatalog and cacheservice
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration
+# ----------------------------------------------------------------------------
+
+# Pin fullname override for more readable resource names
+fullnameOverride: "controlplane"
+
+# Self-hosted specific designation
+unionPlatform:
+  productType: "selfhosted"
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Database Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+
+# PostgreSQL database hostname
+dbHost: "" # TODO: Replace with DB_HOST
+
+# PostgreSQL database name
+dbName: "" # TODO: Replace with DB_NAME
+
+# PostgreSQL database port (default: 5432)
+dbPort: 5432
+
+# PostgreSQL database username
+dbUser: "" # TODO: Replace with DB_USER
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+
+# S3 bucket for control plane metadata
+bucketName: "" # TODO: Replace with BUCKET_NAME
+
+# S3 bucket for artifacts storage
+artifactsBucketName: "" # TODO: Replace with ARTIFACTS_BUCKET_NAME
+
+# ----------------------------------------------------------------------------
+# SECTION 4: Secrets Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+
+service:
+  # Kubernetes secret name containing database password
+  secretName: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+  dbSecretName: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Connection Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+
+configMap:
+  connection:
+    # Environment designation (will be removed in future release)
+    environment: staging
+
+    # AWS region for services
+    region: "" # TODO: Replace with AWS_REGION
+
+    # Control plane URL pattern
+    rootTenantURLPattern: dns:///<UNION_HOST> # TODO: Replace with UNION_HOST
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Console Configuration
+# ----------------------------------------------------------------------------
+
+console:
+  fullnameOverride: "unionconsole"
+
+# ----------------------------------------------------------------------------
+# SECTION 7: Extra Kubernetes Objects (OPTIONAL)
+# ----------------------------------------------------------------------------
+
+extraObjects: []
+# Example: Create a secret with the Helm chart
+# - apiVersion: "v1"
+#   kind: "Secret"
+#   metadata:
+#     name: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Service-Specific Configuration
+# ----------------------------------------------------------------------------
+
+services:
+  # Artifacts service configuration
+  artifacts:
+    disabled: true
+    serviceAccount:
+      annotations:
+        # IAM role for artifacts service
+        eks.amazonaws.com/role-arn: "" # TODO: Replace with ARTIFACT_IAM_ROLE_ARN
+    configMap:
+      db:
+        host: '{{ .Values.dbHost }}'
+        username: '{{ .Values.dbUser }}'
+      artifactsConfig:
+        app:
+          artifactBlobStoreConfig:
+            stow:
+              config:
+                # AWS region for artifacts storage
+                region: "" # TODO: Replace with AWS_REGION
+
+  # Executions service configuration
+  executions:
+    configMap:
+      executions:
+        apps:
+          # App serving URL pattern (work in progress for self-hosted)
+          publicURLPattern: https://%s.apps.<UNION_HOST> # TODO: Replace with UNION_HOST
+
+# ----------------------------------------------------------------------------
+# SECTION 9: Flyte Core Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+
+flyte:
+  # Database configuration
+  dbHost: "" # TODO: Replace with DB_HOST
+  dbName: "" # TODO: Replace with DB_NAME
+  dbUser: "" # TODO: Replace with DB_USER
+
+  # Storage configuration
+  bucketName: "" # TODO: Replace with BUCKET_NAME
+  region: "" # TODO: Replace with AWS_REGION
+
+  # Flyteadmin service configuration
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "" # TODO: Replace with FLYTEADMIN_IAM_ROLE_ARN
+
+  # Datacatalog service configuration
+  datacatalog:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "" # TODO: Replace with FLYTEADMIN_IAM_ROLE_ARN
+
+  # Cache service configuration
+  cacheservice:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "" # TODO: Replace with FLYTEADMIN_IAM_ROLE_ARN
+
+  # Common configuration
+  common:
+    databaseSecret:
+      name: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+
+  # Config maps for Flyte services
+  configmap:
+    admin:
+      admin:
+        # Direct intra-cluster access to flyteadmin
+        endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
+        insecure: true
+        clientId: null
+        clientSecretLocation: null
+
+    adminServer:
+      admin:
+        # External admin endpoint
+        endpoint: dns:///<UNION_HOST> # TODO: Replace with UNION_HOST
+        insecure: true
+      connection:
+        environment: staging
+        region: "" # TODO: Replace with AWS_REGION
+        rootTenantURLPattern: dns:///<UNION_HOST> # TODO: Replace with UNION_HOST
+
