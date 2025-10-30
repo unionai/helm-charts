@@ -1,14 +1,69 @@
+# ----------------------------------------------------------------------------
+# Global Configuration
+# ----------------------------------------------------------------------------
+# Global values are accessible to both the chart and all subcharts.
+# Override these in deployment-specific values files:
+#   - values.aws.yaml: AWS-specific configuration (RDS, S3, IAM roles)
+#   - values.aws.selfhosted-intracluster.yaml: Intra-cluster deployment variables
+#
+# Usage:
+#   helm install -f values.aws.yaml [...]
+#   helm install -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml [...]
+
+global:
+  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
+  #    Format: "hostname" (no protocol prefix for standard BYOC)
+  #    Example: "mycompany.unionai.cloud" or "union.example.com"
+  #    Source: Provided by Union team for BYOC deployments
+  UNION_CONTROL_PLANE_HOST: ""
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-us-east-1" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 4. CLIENT_ID - Client ID for dataplane authentication
+  #    Format: String provided by Union team
+  #    Example: "dataplane-prod-client"
+  #    Source: Provided by Union team
+  CLIENT_ID: ""
+
+  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-metadata-bucket"
+  #    Note: Bucket must exist before deployment
+  METADATA_BUCKET: ""
+
+  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-fast-registration-bucket"
+  #    Note: Can be same as metadata bucket or separate
+  FAST_REGISTRATION_BUCKET: ""
+
+# ----------------------------------------------------------------------------
+# Additional Configuration
+# ----------------------------------------------------------------------------
+# Note: Most configuration now comes from globals above.
+# Database host, name, user, buckets, and region are all configured via globals.
+
 # -- Override the chart name.
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
 # -- Set the control plane host for your Union dataplane installation.  This will be provided by Union.
-host: "foo.unionai.cloud"
+host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
 
 # -- Cluster name should be shared with Union for proper functionality.
-clusterName: ""
+clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name should be provided by Union.
-orgName: ""
+orgName: "{{ .Values.global.ORG_NAME }}"
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -280,7 +335,7 @@ config:
   core:
     # -- follows the structure specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config).
     propeller:
-      rawoutput-prefix: "s3://{{ .Values.storage.bucketName }}"
+      rawoutput-prefix: "s3://{{ tpl .Values.storage.bucketName . }}"
       metadata-prefix: metadata/propeller
       workers: 4
       max-workflow-retries: 30
@@ -381,23 +436,23 @@ config:
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
-      organization: "{{ .Values.orgName }}"
+      organization: "{{ tpl .Values.orgName . }}"
     # -- Dataplane cluster configuration.
     clusterData:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
-      appId: "{{ .Values.secrets.admin.clientId }}"
+      appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ .Values.host }}"
+      cloudHostName: "{{ tpl .Values.host . }}"
       # -- The prefix for constructing object storage URLs.
-      metadataBucketPrefix: "s3://{{ .Values.storage.bucketName }}"
+      metadataBucketPrefix: "s3://{{ tpl .Values.storage.bucketName . }}"
       # -- The bucket name for object storage.
-      bucketName: "{{ .Values.storage.bucketName }}"
+      bucketName: "{{ tpl .Values.storage.bucketName . }}"
       # -- The bucket region for object storage.
-      bucketRegion: "{{ .Values.storage.region }}"
+      bucketRegion: "{{ tpl .Values.storage.region . }}"
       userRoleKey: "{{ tpl (.Values.userRoleAnnotationKey | toString) $ }}"
       userRole: "{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"
       # -- For GCP only, the project id for object storage.
-      gcpProjectId: "{{ .Values.storage.gcp.projectId }}"
+      gcpProjectId: "{{ tpl .Values.storage.gcp.projectId . }}"
     # -- Configuration for the usage reporting service.
     collectUsages:
       # -- Enable usage collection in the operator service.
@@ -533,7 +588,7 @@ config:
       # maxRecvMsgSize: 67108864  # 64MB
     auth:
       type: ClientSecret
-      clientId: "{{ .Values.secrets.admin.clientId }}"
+      clientId: "{{ tpl .Values.secrets.admin.clientId . }}"
       clientSecretLocation: /etc/union/secret/client_secret
       authorizationMetadataKey: "flyte-authorization"
       tokenRefreshWindow: 5m
@@ -611,8 +666,8 @@ flyteagent:
 executor:
   enabled: true
   config:
-    organization: "{{ .Values.orgName }}"
-    cluster: "{{ .Values.clusterName }}"
+    organization: "{{ tpl .Values.orgName . }}"
+    cluster: "{{ tpl .Values.clusterName . }}"
     workerName: worker1
     unionAuth:
       injectSecret: true
@@ -1142,9 +1197,9 @@ storage:
   # -- The storage provider to use.  Currently supports "compat", "aws", "oci", and "custom".
   provider: "compat"
   # -- The bucket name used for object storage.
-  bucketName: ""
+  bucketName: '{{ .Values.global.METADATA_BUCKET }}'
   # -- The bucket name used for fast registration uploads.
-  fastRegistrationBucketName: ""
+  fastRegistrationBucketName: '{{ .Values.global.FAST_REGISTRATION_BUCKET }}'
   # -- Override the URL for signed fast registration uploads.  This is only used for local/sandbox installations.
   fastRegistrationURL: ""
   # -- The bucket region used for object storage.

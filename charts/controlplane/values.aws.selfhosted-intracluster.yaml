@@ -17,82 +17,66 @@
 # ----------------------------------------------------------------------------
 # Configuration Variables to Replace
 # ----------------------------------------------------------------------------
-# Before deployment, replace these TODO placeholders:
+# IMPORTANT: This file is ADDITIVE and must be used WITH values.aws.yaml:
+#   helm install -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml [...]
 #
-# 1. UNION_ORG - Organization name
-#    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-#    Example: "acme-corp" or "my-organization"
-#    Note: Must match the orgName configured in dataplane
-#
-# 2. FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
-#    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
-#    Example: "flyteadmin.union-cp.svc.cluster.local:81"
-#    How to find: kubectl get svc -n union-cp flyteadmin
-#
-# 3. CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
-#    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
-#    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
-#    How to find: kubectl get svc -n union-cp | grep nginx-controller
-#    Note: Used for intra-cluster service-to-service communication
-#
-# 4. INSECURE_SKIP_VERIFY - Skip SSL certificate verification
-#    Format: Boolean (true/false)
-#    Set to: true if using self-signed certs, false for trusted CA
-#    Default: true for self-signed certificates
-#
-# 5. TLS_SECRET_NAMESPACE - Kubernetes namespace for TLS secret
-#    Format: Valid Kubernetes namespace name
-#    Example: "union-cp" or "default"
-#    Note: Namespace where TLS certificate secret is stored
-#
-# 6. TLS_SECRET_NAME - Kubernetes secret name for TLS certificates
-#    Format: Valid Kubernetes secret name
-#    Example: "controlplane-tls-cert" or "union-cp-tls"
-#    Note: Secret should contain tls.crt and tls.key
-#
-# 7. DATAPLANE_HOST - Dataplane ingress controller FQDN
-#    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
-#    Example: "dataplane-nginx-controller.union.svc.cluster.local"
-#    How to find: kubectl get svc -n union | grep nginx-controller
-#
-# 8. KUBERNETES_SECRET_NAME - Kubernetes secret for credentials (OPTIONAL)
-#    Format: Valid Kubernetes secret name
-#    Example: "union-controlplane-secrets"
-#    Note: Only needed if creating secret via extraObjects
-#
-# 9. AWS_REGION - AWS region (OPTIONAL, for External Secrets Operator)
-#    Format: AWS region code
-#    Example: "us-west-2", "us-east-1"
-#    Note: Only needed if using External Secrets Operator with AWS
-#
-# 10. AWS_MANAGED_DB_SECRET_NAME - AWS Secrets Manager secret (OPTIONAL)
-#     Format: AWS Secrets Manager secret name
-#     Example: "rds!cluster-abc123"
-#     Note: Only if using AWS-managed RDS credentials
-#     Reference: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html
+# Configure all base variables in values.aws.yaml, then add the intra-cluster
+# specific variables below.
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
-# SECTION 1: Core Configuration Overrides
+# SECTION 1: Intra-Cluster Global Configuration
+# ----------------------------------------------------------------------------
+# These globals will be deep-merged with globals from values.yaml and values.aws.yaml.
+
+global:
+  # Organization name (must match dataplane orgName)
+  # Example: "acme-corp" or "my-organization"
+  UNION_ORG: ""
+
+  # Internal Flyteadmin service endpoint
+  # Example: "flyteadmin.union-cp.svc.cluster.local:81"
+  # Find with: kubectl get svc -n union-cp flyteadmin
+  FLYTEADMIN_ENDPOINT: ""
+
+  # Control plane ingress controller FQDN (for intra-cluster routing)
+  # Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  # Find with: kubectl get svc -n union-cp | grep nginx-controller
+  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+
+  # TLS secret configuration
+  # Example namespace: "union-cp"
+  TLS_SECRET_NAMESPACE: ""
+  # Example name: "controlplane-tls-cert"
+  TLS_SECRET_NAME: ""
+
+  # Dataplane ingress controller URL
+  # Example: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
+  # Find service with: kubectl get svc -n union | grep nginx-controller
+  DATAPLANE_ENDPOINT: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Configuration Overrides
 # ----------------------------------------------------------------------------
 # These settings override the base values.aws.yaml for intra-cluster mode.
 
 configMap:
   # Flyteadmin endpoint for intra-cluster communication
   admin:
-    endpoint: "" # TODO: Replace with FLYTEADMIN_ENDPOINT
+    endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
     insecure: true
 
   # Control plane connection configuration
   connection:
     # Use control plane ingress controller for intra-cluster routing
-    rootTenantURLPattern: "dns:///<CONTROLPLANE_INTRA_CLUSTER_HOST>" # TODO: Replace with CONTROLPLANE_INTRA_CLUSTER_HOST
+    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
   # Shared service security configuration
   sharedService:
     security:
-      # Single-tenant mode: must match dataplane organization
-      singleTenantOrgID: "" # TODO: Replace with UNION_ORG
+      # NOTE: Temporary configuration for single-tenant mode
+      # Subject to removal in the future
+      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
 
   # Union service connection configuration
   union:
@@ -102,20 +86,20 @@ configMap:
       insecure: false
 
       # Skip SSL verification if using self-signed certificates
-      insecureSkipVerify: true # TODO: Replace with INSECURE_SKIP_VERIFY
+      insecureSkipVerify: true
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Console Configuration
+# SECTION 3: Console Configuration
 # ----------------------------------------------------------------------------
 
 console:
   env:
     # Single-tenant organization override
     - name: UNION_ORG_OVERRIDE
-      value: "" # TODO: Replace with UNION_ORG
+      value: '{{ .Values.global.UNION_ORG }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 3: Extra Kubernetes Objects (OPTIONAL)
+# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
 # ----------------------------------------------------------------------------
 # Additional Kubernetes resources to deploy with the control plane.
 
@@ -125,10 +109,11 @@ extraObjects: []
 # - apiVersion: "v1"
 #   kind: "Secret"
 #   metadata:
-#     name: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
 
 # Example 2: Use External Secrets Operator with AWS Secrets Manager
 # Automatically syncs RDS credentials from AWS Secrets Manager
+# Note: AWS_REGION and AWS_MANAGED_DB_SECRET_NAME should be added to globals
 # - apiVersion: "external-secrets.io/v1"
 #   kind: "SecretStore"
 #   metadata:
@@ -136,17 +121,17 @@ extraObjects: []
 #   spec:
 #     provider:
 #       aws:
-#         region: "" # TODO: Replace with AWS_REGION
+#         region: '{{ .Values.global.AWS_REGION }}'
 #         service: "SecretsManager"
 #
 # - apiVersion: "external-secrets.io/v1"
 #   kind: "ExternalSecret"
 #   metadata:
-#     name: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
 #   spec:
 #     data:
 #     - remoteRef:
-#         key: "" # TODO: Replace with AWS_MANAGED_DB_SECRET_NAME
+#         key: '{{ .Values.global.AWS_MANAGED_DB_SECRET_NAME }}'
 #         property: "password"
 #       secretKey: "pass.txt"
 #     refreshInterval: "1h"
@@ -154,7 +139,7 @@ extraObjects: []
 #       kind: "SecretStore"
 #       name: "default"
 #     target:
-#       name: "" # TODO: Replace with KUBERNETES_SECRET_NAME
+#       name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
 
 # Example 3: Use cert-manager for TLS certificate management
 # Creates a self-signed certificate for intra-cluster TLS
@@ -166,17 +151,17 @@ extraObjects: []
 #   spec:
 #     dnsNames:
 #     - "localhost"
-#     - "controlplane-nginx-controller.union-cp.svc.cluster.local"
+#     - '{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 #     ipAddresses:
 #     - "127.0.0.1"
 #     issuerRef:
 #       group: "cert-manager.io"
 #       kind: "ClusterIssuer"
 #       name: "selfsigned-issuer"
-#     secretName: "" # TODO: Replace with TLS_SECRET_NAME
+#     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 4: Flyte Core Configuration
+# SECTION 5: Flyte Core Configuration
 # ----------------------------------------------------------------------------
 
 flyte:
@@ -184,20 +169,21 @@ flyte:
     adminServer:
       admin:
         # Flyteadmin endpoint via control plane ingress
-        endpoint: "dns:///<CONTROLPLANE_INTRA_CLUSTER_HOST>" # TODO: Replace with CONTROLPLANE_INTRA_CLUSTER_HOST
+        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
         insecure: true
 
       connection:
         # Control plane connection pattern
-        rootTenantURLPattern: "dns:///<CONTROLPLANE_INTRA_CLUSTER_HOST>" # TODO: Replace with CONTROLPLANE_INTRA_CLUSTER_HOST
+        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
       sharedService:
         security:
-          # Single-tenant organization (must match dataplane)
-          singleTenantOrgID: "" # TODO: Replace with UNION_ORG
+          # NOTE: Temporary configuration for single-tenant mode
+          # Subject to removal in the future
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 5: Ingress Configuration
+# SECTION 6: Ingress Configuration
 # ----------------------------------------------------------------------------
 
 ingress:
@@ -206,11 +192,11 @@ ingress:
     # TLS configuration for intra-cluster HTTPS
     - hosts:
         - localhost
-        - <CONTROLPLANE_INTRA_CLUSTER_HOST> # TODO: Replace with CONTROLPLANE_INTRA_CLUSTER_HOST
-      secretName: "" # TODO: Replace with TLS_SECRET_NAME
+        - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+      secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 6: NGINX Ingress Controller
+# SECTION 7: NGINX Ingress Controller
 # ----------------------------------------------------------------------------
 
 ingress-nginx:
@@ -230,7 +216,9 @@ ingress-nginx:
 
     # Apply TLS certificate to all HTTPS connections
     extraArgs:
-      default-ssl-certificate: "<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>" # TODO: Replace TLS_SECRET_NAMESPACE and TLS_SECRET_NAME
+      # TODO (DIRECTLY CONFIGURE): Set to the values of {{ .Values.global.TLS_SECRET_NAMESPACE }}/{{ .Values.global.TLS_SECRET_NAME }}
+      # nginx-ingress subchart does not support templating here directly.
+      default-ssl-certificate: '<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>'
 
     # Admission webhooks configuration
     admissionWebhooks:
@@ -253,7 +241,7 @@ ingress-nginx:
       name: controlplane
 
 # ----------------------------------------------------------------------------
-# SECTION 7: Service-Specific Configuration
+# SECTION 8: Service-Specific Configuration
 # ----------------------------------------------------------------------------
 
 services:
@@ -262,7 +250,7 @@ services:
     configMap:
       dataproxy:
         # Connect to dataplane ingress controller
-        secureTunnelTenantURLPattern: "http://<DATAPLANE_HOST>:80" # TODO: Replace with DATAPLANE_HOST
+        secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
 
   # Executions service configuration
   executions:
@@ -272,6 +260,6 @@ services:
           adminClient:
             connection:
               # Flyteadmin endpoint for executions service
-              endpoint: "" # TODO: Replace with FLYTEADMIN_ENDPOINT
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
               insecure: true
 

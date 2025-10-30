@@ -16,27 +16,27 @@
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# Configuration Variables to Replace
+# SECTION 1: Global Configuration for Intra-Cluster Deployment
 # ----------------------------------------------------------------------------
-# Before deployment, replace these TODO placeholders:
-#
-# 1. CONTROL_PLANE_HOST - Internal ingress controller endpoint
-#    Format: "dns:///SERVICE-NAME.NAMESPACE.svc.cluster.local"
-#    Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-#    How to find: kubectl get svc -n union-cp | grep nginx-controller
-#
-# 2. INSECURE_SKIP_VERIFY - Skip SSL certificate verification
-#    Set to: "true" if using self-signed certs, "false" for trusted certs
-#    Default: "true" for intra-cluster with self-signed certificates
-#
-# 3. FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
-#    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
-#    Example: "flyteadmin.union-cp.svc.cluster.local:81"
-#    How to find: kubectl get svc -n union-cp flyteadmin
-# ----------------------------------------------------------------------------
+# These globals will be deep-merged with the base globals from values.aws.yaml.
+# Helm automatically merges the globals sections when using multiple -f flags.
+
+global:
+  # 1. CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
+  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
+  #    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  #    How to find: kubectl get svc -n union-cp | grep nginx-controller
+  #    Note: Used for direct communication with control plane
+  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+
+  # 2. FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
+  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
+  #    Example: "flyteadmin.union-cp.svc.cluster.local:81"
+  #    How to find: kubectl get svc -n union-cp flyteadmin
+  FLYTEADMIN_ENDPOINT: ""
 
 # ----------------------------------------------------------------------------
-# Cluster Resource Sync Configuration
+# SECTION 2: Cluster Resource Sync Configuration
 # ----------------------------------------------------------------------------
 # Syncs Kubernetes resources (namespaces, service accounts, quotas) with
 # the control plane using intra-cluster communication.
@@ -47,11 +47,11 @@ clusterresourcesync:
       connection:
         # Control plane host for intra-cluster communication
         # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-        host: "" # TODO: Set to CONTROL_PLANE_HOST
+        host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
         # Skip SSL certificate verification for self-signed certs
         # Set to true for self-signed certificates, false for trusted CA certs
-        insecureSkipVerify: true # TODO: Set to INSECURE_SKIP_VERIFY
+        insecureSkipVerify: true
 
       # Disable authentication for direct intra-cluster service-to-service calls
       auth:
@@ -68,7 +68,7 @@ config:
     admin:
       # Flyteadmin endpoint (control plane admin service)
       # Example: "flyteadmin.union-cp.svc.cluster.local:81"
-      endpoint: "" # TODO: Set to FLYTEADMIN_ENDPOINT
+      endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
 
       # Use insecure (non-TLS) connection for intra-cluster HTTP communication
       insecure: true
@@ -82,8 +82,8 @@ config:
     catalog-cache:
       # Control plane host for catalog service
       # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-      cache-endpoint: "" # TODO: Set to CONTROL_PLANE_HOST
-      endpoint: "" # TODO: Set to CONTROL_PLANE_HOST
+      cache-endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+      endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
       # Use insecure connection for intra-cluster communication
       insecure: true
@@ -98,18 +98,18 @@ config:
         # These allow task pods to connect to the control plane
         default-env-vars:
           # Override endpoint for task pods to use internal control plane
-          - _U_EP_OVERRIDE: "" # TODO: Set to CONTROL_PLANE_HOST
+          - _U_EP_OVERRIDE: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
           # Skip SSL verification if using self-signed certificates
-          - _U_INSECURE_SKIP_VERIFY: "true" # TODO: Set to INSECURE_SKIP_VERIFY
+          - _U_INSECURE_SKIP_VERIFY: 'true'
 
   union:
     connection:
       # Control plane connection for Union services
       # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-      host: # TODO: Set to CONTROL_PLANE_HOST
+      host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
       # Skip SSL verification for self-signed certificates
-      insecureSkipVerify: true # TODO: Set to INSECURE_SKIP_VERIFY
+      insecureSkipVerify: true
 
     auth:
       # Disable OAuth authentication for intra-cluster communication

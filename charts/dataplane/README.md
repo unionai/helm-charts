@@ -56,18 +56,10 @@ Download the AWS reference values file and fill in your configuration:
 # Download the template
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.yaml
 
-# Edit the file and replace all empty "" values with your configuration
-# Look for sections marked with "TODO: Replace with..."
-vi values.aws.yaml
+# values.aws.yaml are accessible to edit directly.
 ```
 
-**Required configuration sections:**
-
-- **Core Identity**: `host`, `clusterName`, `orgName`
-- **Storage**: S3 bucket names and AWS region
-- **IAM Roles**: ARNs for backend, worker, and FluentBit roles
-- **Secrets**: Client ID and secret from Union team
-- **FluentBit**: IAM role for logging
+Edit `values.aws.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
 
 #### Step 4: Install the Union Dataplane
 

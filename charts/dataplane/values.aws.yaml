@@ -7,86 +7,51 @@
 # For more details, see: https://docs.union.ai/deployment/
 # ============================================================================
 
-# ----------------------------------------------------------------------------
-# Configuration Variables to Replace
-# ----------------------------------------------------------------------------
-# Before deployment, replace these TODO placeholders throughout this file:
-#
-# 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-#    Format: "hostname" (no protocol prefix for standard BYOC)
-#    Example: "mycompany.unionai.cloud" or "union.example.com"
-#    Source: Provided by Union team for BYOC deployments
-#
-# 2. CLUSTER_NAME - Unique cluster identifier
-#    Format: Lowercase alphanumeric with hyphens
-#    Example: "prod-us-east-1" or "staging-cluster"
-#    Note: Must be unique within your organization
-#
-# 3. ORG_NAME - Organization name
-#    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-#    Example: "acme-corp" or "my-organization"
-#    Source: Provided by Union team
-#
-# 4. S3_METADATA_BUCKET - S3 bucket for workflow metadata
-#    Format: Valid S3 bucket name
-#    Example: "my-union-metadata-bucket"
-#    Note: Bucket must exist before deployment
-#
-# 5. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-#    Format: Valid S3 bucket name
-#    Example: "my-union-fast-registration-bucket"
-#    Note: Can be same as metadata bucket or separate
-#
-# 6. AWS_REGION - AWS region for S3 buckets
-#    Format: AWS region code
-#    Example: "us-east-1", "us-west-2", "eu-west-1"
-#
-# 7. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
-#    Format: Full ARN
-#    Example: "arn:aws:iam::123456789012:role/union-backend-role"
-#    Permissions: S3 access, ECR (if private images)
-#
-# 8. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
-#    Format: Full ARN
-#    Example: "arn:aws:iam::123456789012:role/union-worker-role"
-#    Permissions: S3 access, AWS services used by workflows
-#
-# 9. CLIENT_ID - Client ID for dataplane authentication
-#    Format: String provided by Union team
-#    Example: "dataplane-prod-client"
-#    Source: Provided by Union team
-#
-# 10. CLIENT_SECRET - Client secret for dataplane authentication
-#     Format: String provided by Union team (keep secure!)
-#     Example: "base64encodedstring..."
-#     Source: Provided by Union team
-#
-# 11. FLUENTBIT_IAM_ROLE_ARN - IAM role for FluentBit logging
-#     Format: Full ARN
-#     Example: "arn:aws:iam::123456789012:role/union-fluentbit-role"
-#     Permissions: CloudWatch Logs, S3 (for log storage)
+# Before deployment, replace these placeholders in the globals section below.
+# The globals section makes these values accessible to both the chart and
+# future subcharts, ensuring consistent configuration across all components.
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
-# SECTION 1: Core Identity Configuration (REQUIRED)
+# SECTION 1: Global Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
-# These values uniquely identify your dataplane and control plane connection.
-# All values should be provided by the Union team for managed control planes.
+# These values are accessible to both the chart and all potential subcharts.
 
-# Union control plane hostname
-host: ""  # TODO: Replace with UNION_CONTROL_PLANE_HOST
+global:
 
-# Unique cluster identifier
-clusterName: ""  # TODO: Replace with CLUSTER_NAME
+  # 1. AWS_REGION - AWS region for S3 buckets
+  #    Format: AWS region code
+  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  AWS_REGION: ""
 
-# Organization name
-orgName: ""  # TODO: Replace with ORG_NAME
+  # 2. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
+  #    Permissions: S3 access, ECR (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
+  #    Permissions: S3 access, AWS services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
+  # ----------------------------------------------------------------------------
+  # Note: Additional intra-cluster deployment variables are defined in
+  # values.aws.selfhosted-intracluster.yaml and will be merged with these
+  # globals when using: -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml
+  # ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
 
 # Cloud provider identifier (do not change for AWS)
 provider: aws
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Object Storage Configuration (REQUIRED)
+# SECTION 3: Object Storage Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
 # Configure S3 buckets for workflow metadata and fast registration.
 # These buckets must be created before deployment.
@@ -95,33 +60,26 @@ storage:
   provider: aws
   authType: iam  # Use IAM roles for pods (IRSA recommended)
 
-  # S3 bucket for workflow metadata and outputs
-  bucketName: ""  # TODO: Replace with S3_METADATA_BUCKET
-
-  # S3 bucket for fast registration (code uploads)
-  fastRegistrationBucketName: ""  # TODO: Replace with S3_FAST_REGISTRATION_BUCKET
-
   # AWS region for S3 buckets
-  region: ""  # TODO: Replace with AWS_REGION
-
+  region: '{{ .Values.global.AWS_REGION }}'
   enableMultiContainer: true
 
 # ----------------------------------------------------------------------------
-# SECTION 3: IAM Roles (REQUIRED for AWS)
+# SECTION 4: IAM Roles (REQUIRED for AWS)
 # ----------------------------------------------------------------------------
 # Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
 # These IAM roles must be created with appropriate trust policies and permissions.
 
 # IAM role for Union backend services (operator, propeller, etc.)
 additionalServiceAccountAnnotations:
-  eks.amazonaws.com/role-arn: ""  # TODO: Replace with BACKEND_IAM_ROLE_ARN
+  eks.amazonaws.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
 
 # IAM role for workflow execution pods
 userRoleAnnotationKey: eks.amazonaws.com/role-arn
-userRoleAnnotationValue: ""  # TODO: Replace with WORKER_IAM_ROLE_ARN
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 4: Authentication Secrets (REQUIRED)
+# SECTION 5: Authentication Secrets (REQUIRED)
 # ----------------------------------------------------------------------------
 # Client credentials for authenticating with the Union control plane.
 # These will be provided by the Union team for managed control planes.
@@ -129,63 +87,22 @@ userRoleAnnotationValue: ""  # TODO: Replace with WORKER_IAM_ROLE_ARN
 secrets:
   admin:
     # Client ID for dataplane authentication
-    clientId: ""  # TODO: Replace with CLIENT_ID
+    clientId: '{{ .Values.global.CLIENT_ID }}'
 
     # Client secret for dataplane authentication (keep this secure!)
-    clientSecret: ""  # TODO: Replace with CLIENT_SECRET
+    clientSecret: ""
 
     # Whether to create the Kubernetes secret
     # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
     create: true
 
 # ----------------------------------------------------------------------------
-# SECTION 5: Logging Configuration (REQUIRED)
+# SECTION 6: Logging Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
 # FluentBit collects and forwards logs to the control plane.
 
 fluentbit:
-  enabled: true
   serviceAccount:
-    # Service account name for FluentBit
     name: fluentbit-system
-
-    annotations:
-      # IAM role for FluentBit to write logs
-      eks.amazonaws.com/role-arn: ""  # TODO: Replace with FLUENTBIT_IAM_ROLE_ARN
-
-# ----------------------------------------------------------------------------
-# SECTION 6: Optional Features
-# ----------------------------------------------------------------------------
-# Configure optional Union platform features.
-
-# Knative Serving for deploying ML models and applications
-serving:
-  enabled: false  # Set to true to enable app serving
-  metrics: true
-  resources:
-    net-kourier-controller:
-      controller:
-        limits:
-          memory: 2Gi
-        requests:
-          memory: 1Gi
-
-# Custom Resource Definitions
-crds:
-  flyte: true  # Required for Union workflows
-  serving: false  # Set to true if serving.enabled is true
-
-# Knative operator (required if serving is enabled)
-knative-operator:
-  enabled: false  # Set to true if serving.enabled is true
-
-# Metrics server (enable if not already installed in your cluster)
-metrics-server:
-  enabled: true
-  fullNameOverride: metrics-server
-
-# Image Builder for containerizing Python tasks
-imageBuilder:
-  enabled: false  # Set to true to enable in-cluster image building
-  defaultRepository: ""  # Example: "123456789012.dkr.ecr.us-east-1.amazonaws.com/union-images"
-  authenticationType: ""  # Example: "aws-ecr" for ECR authentication
+    # Annotations may be required for IRSA
+    annotations: {}

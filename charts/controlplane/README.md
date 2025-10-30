@@ -123,14 +123,7 @@ curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/contro
 
 #### Step 2: Fill in Required Values
 
-Edit `values.aws.yaml` and replace all empty `""` values marked with `# TODO`:
-
-- **Database**: PostgreSQL connection details (host, name, user, secret name)
-- **Storage**: S3 bucket names and AWS region
-- **IAM Roles**: ARNs for control plane services
-- **Host**: Your control plane hostname
-
-See the **Configuration Variables to Replace** section at the top of `values.aws.yaml` for detailed guidance.
+Edit `values.aws.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
 
 #### Step 3: Create Database Password Secret
 

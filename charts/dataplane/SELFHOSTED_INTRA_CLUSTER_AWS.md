@@ -60,36 +60,10 @@ Download and configure both the base AWS values and the intra-cluster overlay:
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.yaml
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.selfhosted-intracluster.yaml
 
-# Edit the base AWS configuration
-vi values.aws.yaml
-# Fill in: clusterName, orgName, S3 buckets, IAM roles
-
-# Edit the intra-cluster configuration
-vi values.aws.selfhosted-intracluster.yaml
+# values.aws.yaml, values.aws.selfhosted-intracluster.yaml are accessible to edit directly.
 ```
 
-**Configure `values.aws.yaml`** (base configuration):
-
-Fill in the standard required values:
-
-- `clusterName`: Unique identifier for this dataplane cluster
-- `orgName`: Your organization name
-- S3 bucket names and AWS region
-- IAM role ARNs for backend services and workers
-- Note: Leave `host` and `secrets` empty - these will be overridden by the intra-cluster config
-
-**Configure `values.aws.selfhosted-intracluster.yaml`** (overlay configuration):
-
-Update these values in `values.aws.selfhosted-intracluster.yaml` using the control plane service addresses:
-
-- **CONTROL_PLANE_HOST**: `dns:///controlplane-nginx-controller.union-cp.svc.cluster.local`
-  - Replace `controlplane-nginx-controller` with your actual service name
-  - Replace `union-cp` with your actual control plane namespace
-- **INSECURE_SKIP_VERIFY**: `true` (if using self-signed certificates) or `false` (if using trusted CA)
-- **FLYTEADMIN_ENDPOINT**: `flyteadmin.union-cp.svc.cluster.local:81`
-  - Replace `flyteadmin` with your actual service name if different
-  - Replace `union-cp` with your actual control plane namespace
-  - Port `81` is the default; verify with `kubectl get svc -n union-cp flyteadmin`
+Edit `values.aws.yaml` and `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
 
 ### Step 3: Install with Multiple Values Files
 
