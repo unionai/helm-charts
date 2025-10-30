@@ -214,7 +214,7 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: release-name-unionconsole
+  name: unionconsole
   labels:
     helm.sh/chart: controlplane-2025.10.2
     app.kubernetes.io/name: unionconsole
@@ -326,15 +326,6 @@ type: Opaque
 stringData:
   client_secret: foobar
 ---
-# Source: controlplane/charts/flyte/templates/common/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: db-pass
-stringData:
-  pass.txt: ''
-type: Opaque
----
 # Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -386,7 +377,7 @@ data:
     level: null
   server.yaml: | 
     admin:
-      endpoint: dns:///your-controlplane-domain
+      endpoint: dns:///
       insecure: false
     auth:
       appAuth:
@@ -415,9 +406,9 @@ data:
     cloudEvents:
       enable: false
     connection:
-      environment: ""
-      region: ""
-      rootTenantURLPattern: dns:///your-controlplane-domain
+      environment: staging
+      region: ''
+      rootTenantURLPattern: dns:///
     flyteadmin:
       eventVersion: 2
       metadataStoragePrefix:
@@ -568,12 +559,12 @@ data:
     database:
       connMaxLifeTime: 120s
       dbname: cacheservice
-      host: 'db-instance-url'
+      host: ''
       maxIdleConnections: 10
       maxOpenConnections: 20
       passwordPath: /etc/db/pass.txt
       port: 5432
-      username: 'dbUser'
+      username: ''
   logger.yaml: | 
     level: null
   server.yaml: | 
@@ -604,10 +595,10 @@ data:
   storage.yaml: | 
     storage:
       type: s3
-      container: "bucketName"
+      container: ""
       connection:
         auth-type: iam
-        region: us-east-2
+        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -689,11 +680,11 @@ data:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      dbname: 'dbName'
-      host: 'db-instance-url'
+      dbname: ''
+      host: ''
       passwordPath: /etc/db/pass.txt
       port: 5432
-      username: 'dbUser'
+      username: ''
     logger:
       level: 6
     otel:
@@ -783,15 +774,15 @@ data:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      dbname: 'dbName'
-      host: 'db-instance-url'
+      dbname: ''
+      host: ''
       passwordPath: /etc/db/pass.txt
       port: 5432
-      username: 'dbUser'
+      username: ''
     executions:
       apps:
         enrichIdentities: false
-        publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+        publicURLPattern: https://%s.apps.
       task:
         enabled: true
         enrichIdentities: false
@@ -890,11 +881,11 @@ data:
         maxConnectionLifetime: 1m
         maxIdleConnections: 20
         maxOpenConnections: 20
-      dbname: 'dbName'
-      host: 'db-instance-url'
+      dbname: ''
+      host: ''
       passwordPath: /etc/db/pass.txt
       port: 5432
-      username: 'dbUser'
+      username: ''
     logger:
       level: 6
     otel:
@@ -1854,7 +1845,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: release-name-unionconsole
+  name: unionconsole
   labels:
     helm.sh/chart: controlplane-2025.10.2
     app.kubernetes.io/name: unionconsole
@@ -2135,7 +2126,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f3a241555d3d0b9ab5087e3aa8b7d132da888621a79f84b708d885160a22e78"
+        configChecksum: "083a96f271b073ce096c13e40bc2a9379e8b1851df48357e86e1a32fe931aef"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -2166,7 +2157,7 @@ spec:
               drop: ["ALL"]
           volumeMounts:
           - mountPath: /etc/db
-            name: db-pass
+            name: <KUBERNETES_SECRET_NAME>
           - mountPath: /etc/flyte/config
             name: base-config-volume
         - command:
@@ -2186,7 +2177,7 @@ spec:
               drop: ["ALL"]
           volumeMounts:
           - mountPath: /etc/db
-            name: db-pass
+            name: <KUBERNETES_SECRET_NAME>
           - mountPath: /etc/flyte/config
             name: base-config-volume
         - name: generate-secrets
@@ -2257,7 +2248,7 @@ spec:
             drop: ["ALL"]
         volumeMounts:
         - mountPath: /etc/db
-          name: db-pass
+          name: <KUBERNETES_SECRET_NAME>
         - mountPath: /srv/flyte
           name: shared-data
         - mountPath: /etc/flyte/config
@@ -2266,9 +2257,9 @@ spec:
           name: admin-secrets
       serviceAccountName: flyteadmin
       volumes:
-      - name: db-pass
+      - name: <KUBERNETES_SECRET_NAME>
         secret:
-          secretName: db-pass
+          secretName: <KUBERNETES_SECRET_NAME>
       - emptyDir: {}
         name: shared-data
       - emptyDir: {}
@@ -2404,7 +2395,7 @@ spec:
         name: run-migrations
         volumeMounts:
         - mountPath: /etc/db
-          name: db-pass
+          name: <KUBERNETES_SECRET_NAME>
         - mountPath: /etc/datacatalog/config
           name: config-volume
         securityContext:
@@ -2439,14 +2430,14 @@ spec:
             memory: 50Mi
         volumeMounts:
         - mountPath: /etc/db
-          name: db-pass
+          name: <KUBERNETES_SECRET_NAME>
         - mountPath: /etc/datacatalog/config
           name: config-volume
       serviceAccountName: datacatalog
       volumes:
-      - name: db-pass
+      - name: <KUBERNETES_SECRET_NAME>
         secret:
-          secretName: db-pass
+          secretName: <KUBERNETES_SECRET_NAME>
       - emptyDir: {}
         name: shared-data
       - projected:
@@ -2605,7 +2596,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "98ba3df1e70b7f6da77f8250a4ef596d9e0fe856cfa3cffd56d6dc992ca0776"
+        configChecksum: "26538ec4e1dbb2cd13a9750004c2241d761662bf37f7c1be5700b000e9a3954"
       labels: 
         app.kubernetes.io/name: cacheservice
         app.kubernetes.io/instance: release-name
@@ -2631,7 +2622,7 @@ spec:
         name: run-migrations
         volumeMounts:
         - mountPath: /etc/db
-          name: db-pass
+          name: <KUBERNETES_SECRET_NAME>
         - mountPath: /etc/cacheservice/config
           name: config-volume
         securityContext:
@@ -2665,14 +2656,14 @@ spec:
             memory: 200Mi
         volumeMounts:
         - mountPath: /etc/db
-          name: db-pass
+          name: <KUBERNETES_SECRET_NAME>
         - mountPath: /etc/cacheservice/config
           name: config-volume
       serviceAccountName: cacheservice
       volumes:
-      - name: db-pass
+      - name: <KUBERNETES_SECRET_NAME>
         secret:
-          secretName: db-pass
+          secretName: <KUBERNETES_SECRET_NAME>
       - emptyDir: {}
         name: shared-data
       - configMap:
@@ -2690,7 +2681,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: release-name-unionconsole
+  name: unionconsole
   labels:
     helm.sh/chart: controlplane-2025.10.2
     app.kubernetes.io/name: unionconsole
@@ -2716,7 +2707,7 @@ spec:
         app.kubernetes.io/name: unionconsole
         app.kubernetes.io/instance: release-name
     spec:
-      serviceAccountName: release-name-unionconsole
+      serviceAccountName: unionconsole
       securityContext:
         fsGroupChangePolicy: OnRootMismatch
         runAsNonRoot: true
@@ -2784,10 +2775,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: authorizer
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: authorizer
@@ -2894,10 +2885,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: cluster
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: cluster
@@ -3020,10 +3011,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: dataproxy
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: dataproxy
@@ -3130,10 +3121,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: executions
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: executions
@@ -3256,10 +3247,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: queue
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: queue
@@ -3382,10 +3373,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: run-scheduler
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: run-scheduler
@@ -3509,10 +3500,10 @@ spec:
       volumes:
       - name: secrets
         secret:
-          secretName: usage
+          secretName: 
       - name: db-pass
         secret:
-          secretName: db-pass
+          secretName: 
       - name: config
         configMap:
           name: usage
@@ -5628,14 +5619,14 @@ spec:
             pathType: ImplementationSpecific
             backend:
               service:
-                name: release-name-unionconsole
+                name: unionconsole
                 port:
                   number: 80
           - path: /v2/*
             pathType: ImplementationSpecific
             backend:
               service:
-                name: release-name-unionconsole
+                name: unionconsole
                 port:
                   number: 80
 ---
