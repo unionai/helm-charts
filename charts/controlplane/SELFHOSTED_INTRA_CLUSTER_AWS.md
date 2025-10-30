@@ -122,37 +122,10 @@ Download and configure both the base AWS values and the intra-cluster overlay:
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.yaml
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.selfhosted-intracluster.yaml
 
-# Edit the base AWS configuration
-vi values.aws.yaml
-# Fill in: UNION_HOST, DB credentials, S3 buckets, IAM roles
-
-# Edit the intra-cluster configuration
-vi values.aws.selfhosted-intracluster.yaml
-# Fill in: UNION_ORG, service endpoints, TLS secret names
+# values.aws.yaml, values.aws.selfhosted-intracluster.yaml are accessible to edit directly.
 ```
 
-**Configure `values.aws.yaml`** (base configuration):
-
-Fill in the standard required values:
-
-- `UNION_HOST`: Your control plane hostname (e.g., `union.example.com`)
-- `DB_HOST`, `DB_NAME`, `DB_USER`: PostgreSQL connection details
-- `KUBERNETES_SECRET_NAME`: Name of secret containing database password
-- `BUCKET_NAME`, `ARTIFACTS_BUCKET_NAME`: S3 bucket names
-- `AWS_REGION`: AWS region for resources
-- `ARTIFACT_IAM_ROLE_ARN`, `FLYTEADMIN_IAM_ROLE_ARN`: IAM role ARNs
-
-**Configure `values.aws.selfhosted-intracluster.yaml`** (overlay configuration):
-
-Update these key values:
-
-- **UNION_ORG**: Organization name (must match dataplane `orgName`)
-- **FLYTEADMIN_ENDPOINT**: `flyteadmin.union-cp.svc.cluster.local:81`
-- **CONTROLPLANE_INTRA_CLUSTER_HOST**: `controlplane-nginx-controller.union-cp.svc.cluster.local`
-- **INSECURE_SKIP_VERIFY**: `true` (if using self-signed certificates)
-- **TLS_SECRET_NAME**: `controlplane-tls-cert` (from Step 2)
-- **TLS_SECRET_NAMESPACE**: `union-cp`
-- **DATAPLANE_HOST**: `dataplane-nginx-controller.union.svc.cluster.local`
+Edit `values.aws.yaml` and `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
 
 ### Step 4: Create Database Password Secret
 

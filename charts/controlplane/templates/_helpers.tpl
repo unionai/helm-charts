@@ -222,8 +222,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "unionai.secretName" -}}
 {{- if .config.secretNameOverride }}
 {{- .config.secretNameOverride | trunc 63 | trimSuffix "-" }}
-{{- else if and (hasKey .Values "service") (hasKey .Values.service "secretName") }}
-{{- .Values.service.secretName }}
+{{- else if and (hasKey .Values "defaults") (hasKey .Values.defaults "secretName") }}
+{{- tpl .Values.defaults.secretName . }}
 {{- else }}
 {{- include "unionai.fullname" . | trim -}}
 {{- end }}
@@ -232,8 +232,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "unionai.dbSecretName" -}}
 {{- if .config.dbSecretNameOverride -}}
 {{- .config.dbSecretNameOverride | trunc 63 | trimSuffix "-" -}}
-{{- else if and (hasKey .Values "service") (hasKey .Values.service "dbSecretName") -}}
-{{- .Values.service.dbSecretName -}}
+{{- else if and (hasKey .Values "defaults") (hasKey .Values.defaults "dbSecretName") -}}
+{{- tpl .Values.defaults.dbSecretName . -}}
 {{- else -}}
 db-pass
 {{- end -}}
@@ -478,9 +478,9 @@ End of cache service helpers.
 Database name validation
 */}}
 {{- define "controlplane.validateDatabaseNames" -}}
-{{- if and .Values.dbName .Values.flyte.db.admin.database.dbname }}
-{{- if eq .Values.dbName .Values.flyte.db.admin.database.dbname }}
-{{- fail "ERROR: dbName cannot be the same as flyte.db.admin.database.dbname. The control plane services and flyteadmin must use separate databases to avoid conflicts." }}
+{{- if and .Values.global.DB_NAME .Values.flyte.db.admin.database.dbname }}
+{{- if eq .Values.global.DB_NAME .Values.flyte.db.admin.database.dbname }}
+{{- fail "ERROR: globals.DB_NAME cannot be the same as flyte.db.admin.database.dbname. The control plane services and flyteadmin must use separate databases to avoid conflicts." }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -581,14 +581,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{/*
 Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
-NOTE: This is ONLY for the queue service. All other services use Postgres (dbHost).
+NOTE: This is ONLY for the queue service. All other services use Postgres (globals.DB_HOST).
 ScyllaDB is required for the queue service, Postgres is required for all other services.
 */}}
 {{- define "controlplane.dbHost" -}}
 {{- if .Values.scylla.enabled -}}
 {{ printf "%s.%s.svc.cluster.local" (default "scylla" .Values.scylla.fullnameOverride) .Release.Namespace }}
 {{- else -}}
-{{ .Values.dbHost }}
+{{ .Values.global.DB_HOST }}
 {{- end -}}
 {{- end -}}
 
