@@ -39,7 +39,7 @@ Choose standard hosted deployment when:
 
 1. **Kubernetes cluster** (>= 1.28.0) with sufficient resources for both control plane and dataplane
    - Recommended: At least 6 nodes with 8 CPU / 16GB RAM each
-   - Storage: Persistent volumes for PostgreSQL and ScyllaDB (if embedded)
+   - Storage: Ability to create Persisten Volumes for Prometheus and ScyllaDB (if embedded)
 
 2. **PostgreSQL database**:
    - Version: PostgreSQL 12+
@@ -185,34 +185,32 @@ The dataplane will connect to the control plane using the service endpoints conf
 
 ### Single-Tenant Mode
 
-Intra-cluster deployments use single-tenant mode with an explicit organization:
+Intra-cluster deployments uses an experimental single-tenant mode with an explicit organization. Refer to [values.aws.selfhosted-intracluster.yaml](./values.aws.selfhosted-intracluster.yaml) for example configuration.
 
 ```yaml
-configMap:
-  sharedService:
-    security:
-      singleTenantOrgID: "your-org-name"  # Must match dataplane orgName
+global:
+  # Update here to your organization designation
+  UNION_ORG: ""
 
-console:
-  env:
-    - name: UNION_ORG_OVERRIDE
-      value: "your-org-name"
+  # There are references to .Values.globa.UNION_ORG where the
+  # override is configured.
 ```
 
 ### TLS Requirements
 
-gRPC requires TLS for HTTP/2 with NGINX:
+gRPC requires TLS for HTTP/2 with NGINX. Refer to [values.aws.selfhosted-intracluster.yaml](./values.aws.selfhosted-intracluster.yaml) for example configuration.
 
 ```yaml
-union:
-  connection:
-    insecure: false  # Must use TLS
-    insecureSkipVerify: true  # Skip verification for self-signed certs
+global:
+  # Configure namespace and name of the Kubernetes TLS secret.
+  TLS_SECRET_NAMESPACE: ""
+  TLS_SECRET_NAME: ""
 
 ingress-nginx:
   controller:
     extraArgs:
-      default-ssl-certificate: "union-cp/controlplane-tls-cert"
+      # NOTE: This has to be explicitly set.
+      default-ssl-certificate: "<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>"
 ```
 
 ### Service Discovery
@@ -348,23 +346,6 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
   kubectl get networkpolicies -n union-cp
   kubectl get networkpolicies -n union
   ```
-
-### Single-tenant organization mismatch
-
-Ensure the organization name matches between control plane and dataplane:
-
-**Control plane** (`values.aws.selfhosted-intracluster.yaml`):
-```yaml
-configMap:
-  sharedService:
-    security:
-      singleTenantOrgID: "acme-corp"
-```
-
-**Dataplane** (`values.aws.yaml`):
-```yaml
-orgName: "acme-corp"
-```
 
 ## Reference Configuration Files
 
