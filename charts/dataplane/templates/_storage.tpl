@@ -14,7 +14,7 @@ the stow based options to provide additional configuration flexibility.
       secret_key: {{ .Values.storage.secretKey }}
       disable_ssl: {{ .Values.storage.disableSSL }}
       endpoint: {{ .Values.storage.endpoint }}
-      region: {{ .Values.storage.region }}
+      region: {{ .Values.storage.region | quote }}
 {{- with .Values.storage.fastRegistrationURL }}
   signedURL:
     stowConfigOverride:
@@ -24,7 +24,7 @@ the stow based options to provide additional configuration flexibility.
   type: s3
   connection:
     auth-type: {{ .Values.storage.authType }}
-    region: {{ .Values.storage.region }}
+    region: {{ .Values.storage.region | quote }}
     {{- if eq .Values.storage.authType "accesskey" }}
     access-key: {{ .Values.storage.accessKey }}
     secret-key: {{ .Values.storage.secretKey }}
