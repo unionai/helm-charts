@@ -51,29 +51,25 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
-### Step 2: Configure Both Values Files
+### Step 2: Configure Values File
 
-Download and configure both the base AWS values and the intra-cluster overlay:
+Download and configure the self-contained intra-cluster values file:
 
 ```bash
-# Download both configuration files
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.yaml
+# Download the self-contained intra-cluster configuration file
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.selfhosted-intracluster.yaml
-
-# values.aws.yaml, values.aws.selfhosted-intracluster.yaml are accessible to edit directly.
 ```
 
-Edit `values.aws.yaml` and `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
+Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
 
-### Step 3: Install with Multiple Values Files
+### Step 3: Install Dataplane
 
-**Important**: The intra-cluster values file is **additive** and must be used together with the base AWS values file:
+Install the dataplane using the self-contained intra-cluster values file:
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
-  --values values.aws.yaml \
   --values values.aws.selfhosted-intracluster.yaml \
   --timeout 10m \
   --wait
@@ -81,9 +77,9 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
 
 **Important notes:**
 
-- The order matters: `values.aws.yaml` provides the base, `values.aws.selfhosted-intracluster.yaml` overlays intra-cluster settings
-- Both files are required for intra-cluster deployment
-- The intra-cluster file disables external authentication and enables internal service discovery
+- `values.aws.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
+- No additional values files are required
+- The file disables external authentication and enables internal service discovery for intra-cluster communication
 
 ### Step 4: Verify Intra-Cluster Communication
 
@@ -153,8 +149,8 @@ kubectl get svc --all-namespaces | grep nginx-controller
 
 ## Reference Configuration Files
 
-- [values.aws.yaml](values.aws.yaml) - Base AWS configuration
-- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Intra-cluster overlay
+- [values.aws.yaml](values.aws.yaml) - Standard AWS configuration (for hosted control plane deployments)
+- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
 
 ## Additional Resources
 

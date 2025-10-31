@@ -113,19 +113,16 @@ kubectl create secret tls controlplane-tls-cert \
 
 See the example in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
-### Step 3: Configure Values Files
+### Step 3: Configure Values File
 
-Download and configure both the base AWS values and the intra-cluster overlay:
+Download and configure the intra-cluster values file:
 
 ```bash
-# Download both configuration files
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.yaml
+# Download the self-contained intra-cluster configuration file
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.selfhosted-intracluster.yaml
-
-# values.aws.yaml, values.aws.selfhosted-intracluster.yaml are accessible to edit directly.
 ```
 
-Edit `values.aws.yaml` and `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
+Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
 
 ### Step 4: Create Database Password Secret
 
@@ -138,13 +135,12 @@ kubectl create secret generic union-controlplane-secrets \
 
 ### Step 5: Install Control Plane
 
-**Important**: The intra-cluster values file is **additive** and must be used together with the base AWS values file:
+Install the control plane using the self-contained intra-cluster values file:
 
 ```bash
 helm upgrade --install unionai-controlplane unionai/controlplane \
   --namespace union-cp \
   --create-namespace \
-  --values values.aws.yaml \
   --values values.aws.selfhosted-intracluster.yaml \
   --timeout 15m \
   --wait
@@ -152,9 +148,9 @@ helm upgrade --install unionai-controlplane unionai/controlplane \
 
 **Important notes:**
 
-- The order matters: `values.aws.yaml` provides the base, `values.aws.selfhosted-intracluster.yaml` overlays intra-cluster settings
-- Both files are required for intra-cluster deployment
-- The intra-cluster file enables single-tenant mode and configures internal networking
+- `values.aws.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
+- No additional values files are required
+- The file configures single-tenant mode and internal networking for intra-cluster communication
 
 ### Step 6: Verify Control Plane Installation
 
@@ -349,8 +345,8 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
 
 ## Reference Configuration Files
 
-- [values.aws.yaml](values.aws.yaml) - Base AWS configuration
-- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Intra-cluster overlay
+- [values.aws.yaml](values.aws.yaml) - Standard AWS configuration (for hosted control plane deployments)
+- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
 
 ## Next Steps
 
