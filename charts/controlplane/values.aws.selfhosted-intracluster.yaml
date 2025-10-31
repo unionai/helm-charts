@@ -4,32 +4,72 @@
 # This configuration is for deploying Union control plane in the SAME
 # Kubernetes cluster as the Union dataplane (co-located deployment).
 #
-# IMPORTANT: This file is ADDITIVE and must be used WITH values.aws.yaml:
-#   helm install ... -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml
+# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
+#   helm install ... -f values.aws.selfhosted-intracluster.yaml
 #
 # Key differences from standard deployment:
 # - Uses intra-cluster communication (internal Kubernetes networking)
 # - Requires TLS certificates for gRPC/HTTP2 with NGINX
 # - Single-tenant mode with explicit organization configuration
 # - Direct communication between control plane and dataplane services
+# - Includes all AWS-specific configuration (RDS, S3, IAM roles)
 # ============================================================================
 
 # ----------------------------------------------------------------------------
 # Configuration Variables to Replace
 # ----------------------------------------------------------------------------
-# IMPORTANT: This file is ADDITIVE and must be used WITH values.aws.yaml:
-#   helm install -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml [...]
-#
-# Configure all base variables in values.aws.yaml, then add the intra-cluster
-# specific variables below.
+# Configure ALL variables below for your self-hosted intra-cluster deployment.
+# This file includes both AWS infrastructure configuration AND intra-cluster
+# specific settings. Replace all empty "" values with your actual configuration.
 # ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
-# SECTION 1: Intra-Cluster Global Configuration
+# SECTION 1: Global Configuration
 # ----------------------------------------------------------------------------
-# These globals will be deep-merged with globals from values.yaml and values.aws.yaml.
+# Configure all global variables for your self-hosted intra-cluster deployment.
 
 global:
+
+  # AWS region for all resources
+  # Example: "us-west-2", "us-east-1", "eu-west-1"
+  AWS_REGION: ""
+
+  # PostgreSQL RDS endpoint
+  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
+  DB_HOST: ""
+
+  # PostgreSQL database name
+  # Example: "unionai" or "union_controlplane"
+  DB_NAME: ""
+
+  # PostgreSQL username
+  # Example: "unionai" or "admin"
+  DB_USER: ""
+
+  # S3 bucket for control plane metadata
+  # Example: "union-controlplane-metadata"
+  BUCKET_NAME: ""
+
+  # S3 bucket for artifacts storage
+  # Example: "union-controlplane-artifacts"
+  ARTIFACTS_BUCKET_NAME: ""
+
+  # Name of Kubernetes secret containing the DB password and other service specific secrets.
+  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
+  # Example: "union-controlplane-secrets"
+  # Note: Secret must contain "pass.txt" key
+  KUBERNETES_SECRET_NAME: ""
+
+  # IAM role ARN for artifacts service (IRSA)
+  # Leave empty if artifacts service is disabled
+  # Example: "arn:aws:iam::123456789012:role/union-artifacts-role"
+  ARTIFACT_IAM_ROLE_ARN: ""
+
+  # IAM role ARN for Flyte services (IRSA)
+  # Example: "arn:aws:iam::123456789012:role/union-flyteadmin-role"
+  # Note: Used by flyteadmin, datacatalog, and cacheservice
+  FLYTEADMIN_IAM_ROLE_ARN: ""
+
   # Organization name (must match dataplane orgName)
   # Example: "acme-corp" or "my-organization"
   UNION_ORG: ""
@@ -58,7 +98,7 @@ global:
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Configuration Overrides
 # ----------------------------------------------------------------------------
-# These settings override the base values.aws.yaml for intra-cluster mode.
+# These settings configure intra-cluster communication and single-tenant mode.
 
 configMap:
   # Flyteadmin endpoint for intra-cluster communication
@@ -182,6 +222,21 @@ flyte:
           # Subject to removal in the future
           singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
 
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  datacatalog:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  cacheservice:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
 # ----------------------------------------------------------------------------
 # SECTION 6: Ingress Configuration
 # ----------------------------------------------------------------------------
@@ -245,6 +300,13 @@ ingress-nginx:
 # ----------------------------------------------------------------------------
 
 services:
+
+  # Artifacts service configuration
+  artifacts:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+
   # Dataproxy service configuration
   dataproxy:
     configMap:
@@ -262,4 +324,3 @@ services:
               # Flyteadmin endpoint for executions service
               endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
               insecure: true
-
