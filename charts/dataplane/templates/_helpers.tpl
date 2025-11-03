@@ -962,9 +962,9 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
-{{- .Values.ingress.serving.hostOverride | quote }}
+{{- tpl .Values.ingress.serving.hostOverride . | quote }}
 {{- else }}
-{{- printf "*.apps.%s" .Values.ingress.host | quote }}
+{{- printf "*.apps.%s" (tpl .Values.ingress.host .) | quote }}
 {{- end }}
 {{- end -}}
 
