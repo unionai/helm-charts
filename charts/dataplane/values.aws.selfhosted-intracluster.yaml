@@ -4,8 +4,8 @@
 # This configuration is for deploying Union dataplane in the SAME Kubernetes
 # cluster as the Union control plane (co-located deployment).
 #
-# IMPORTANT: This file is ADDITIVE and must be used WITH values.aws.yaml:
-#   helm install ... -f values.aws.yaml -f values.aws.selfhosted-intracluster.yaml
+# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
+#   helm install ... -f values.aws.selfhosted-intracluster.yaml
 #
 # Key differences from standard BYOC deployment:
 # - Uses intra-cluster communication (no external networking)
@@ -13,15 +13,59 @@
 # - Can use self-signed certificates
 # - No API key authentication (direct service-to-service)
 # - More cost-effective for single-cluster deployments
+# - Includes all AWS-specific configuration (S3, IAM roles)
 # ============================================================================
 
 # ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration for Intra-Cluster Deployment
+# SECTION 1: Global Configuration
 # ----------------------------------------------------------------------------
-# These globals will be deep-merged with the base globals from values.aws.yaml.
-# Helm automatically merges the globals sections when using multiple -f flags.
+# Configure ALL variables below for your self-hosted intra-cluster deployment.
+# This file includes both AWS infrastructure configuration AND intra-cluster
+# specific settings.
 
 global:
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-us-east-1" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-metadata-bucket"
+  #    Note: Bucket must exist before deployment
+  METADATA_BUCKET: ""
+
+  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-fast-registration-bucket"
+  #    Note: Can be same as metadata bucket or separate
+  FAST_REGISTRATION_BUCKET: ""
+
+  # 1. AWS_REGION - AWS region for S3 buckets
+  #    Format: AWS region code
+  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  AWS_REGION: ""
+
+  # 2. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
+  #    Permissions: S3 access, ECR (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
+  #    Permissions: S3 access, AWS services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
   # 1. CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
   #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
   #    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
@@ -34,6 +78,42 @@ global:
   #    Example: "flyteadmin.union-cp.svc.cluster.local:81"
   #    How to find: kubectl get svc -n union-cp flyteadmin
   FLYTEADMIN_ENDPOINT: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
+
+# Cloud provider identifier (do not change for AWS)
+provider: aws
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Object Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Configure S3 buckets for workflow metadata and fast registration.
+# These buckets must be created before deployment.
+
+storage:
+  provider: aws
+  authType: iam  # Use IAM roles for pods (IRSA recommended)
+
+  # AWS region for S3 buckets
+  region: '{{ .Values.global.AWS_REGION }}'
+  enableMultiContainer: true
+
+# ----------------------------------------------------------------------------
+# SECTION 4: IAM Roles (REQUIRED for AWS)
+# ----------------------------------------------------------------------------
+# Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
+# These IAM roles must be created with appropriate trust policies and permissions.
+
+# IAM role for Union backend services (operator, propeller, etc.)
+additionalServiceAccountAnnotations:
+  eks.amazonaws.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
+
+# IAM role for workflow execution pods
+userRoleAnnotationKey: eks.amazonaws.com/role-arn
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Cluster Resource Sync Configuration
@@ -148,6 +228,14 @@ ingress:
     class: "dataplane"
   enabled: true
 
+  # Ingress architecture for serving will change in the future.
+  # This is a temporary configuration for intra-cluster deployments.
+  serving:
+    # Default to using the intra-cluster host for serving
+    hostOverride: "*.apps.{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+    # Assume the same ingress class as the dataproxy
+    class: "dataplane"
+
 # NGINX Ingress controller for dataplane
 ingress-nginx:
   enabled: true
@@ -220,3 +308,14 @@ serving:
   auth:
     # Disable authentication for serving (work in progress)
     enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Logging Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# FluentBit collects and forwards logs to the control plane.
+
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    # Annotations may be required for IRSA
+    annotations: {}
