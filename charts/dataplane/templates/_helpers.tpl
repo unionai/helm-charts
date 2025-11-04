@@ -812,7 +812,7 @@ Global service account annotations
 */}}
 {{- define "global.serviceAccountAnnotations" -}}
 {{- with .Values.additionalServiceAccountAnnotations }}
-{{- toYaml . }}
+{{- tpl (toYaml .) $ }}
 {{- end }}
 {{- end -}}
 
@@ -870,11 +870,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     name                  azure_blob
     match                 *
 {{- with .Values.storage.custom.stow.config.account }}
-    account_name {{ . }}
+    account_name {{ tpl . $ }}
 {{- end }}
     auth_type             key
 {{- with .Values.storage.custom.stow.config.key }}
-    shared_key {{ . }}
+    shared_key {{ tpl . $ }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
     container_name        {{ .Values.storage.custom.container }}
@@ -888,13 +888,13 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     static_file_path true
     json_date_key false
 {{- with .Values.storage.region }}
-    region {{ . }}
+    region {{ tpl . $ }}
 {{- end }}
 {{- with .Values.storage.bucketName }}
-    bucket {{ . }}
+    bucket {{ tpl . $ }}
 {{- end }}
 {{- with .Values.storage.endpoint }}
-    endpoint {{ . }}
+    endpoint {{ tpl . $ }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -962,9 +962,9 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
-{{- .Values.ingress.serving.hostOverride | quote }}
+{{- tpl .Values.ingress.serving.hostOverride . | quote }}
 {{- else }}
-{{- printf "*.apps.%s" .Values.ingress.host | quote }}
+{{- printf "*.apps.%s" (tpl .Values.ingress.host .) | quote }}
 {{- end }}
 {{- end -}}
 

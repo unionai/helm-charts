@@ -90,6 +90,84 @@ helm install scylla-manager scylla/scylla-manager \
 
 Refer to the [ScyllaDB Manager documentation](https://operator.docs.scylladb.com/stable/manager) for detailed configuration options.
 
+## Quick Start
+
+Choose your cloud provider to get started:
+
+- [AWS (Amazon Web Services)](#quick-start-aws)
+- GCP (Google Cloud Platform) - *Coming soon*
+- Azure (Microsoft Azure) - *Coming soon*
+
+---
+
+### Quick Start: AWS
+
+For AWS deployments, we provide reference configuration files that make it easy to get started.
+
+#### Prerequisites (AWS)
+
+Before you begin, ensure you have:
+
+1. **AWS EKS cluster** (Kubernetes >= 1.28.0)
+2. **PostgreSQL database** (RDS or self-hosted)
+3. **S3 buckets** for control plane metadata and artifacts
+4. **IAM roles** configured with IRSA for control plane services
+5. **Helm 3.18+** installed locally
+
+#### Step 1: Download Configuration Template
+
+```bash
+# Download the AWS reference values file
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.yaml
+```
+
+#### Step 2: Fill in Required Values
+
+Edit `values.aws.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
+
+#### Step 3: Create Database Password Secret
+
+```bash
+kubectl create namespace union-cp
+kubectl create secret generic union-controlplane-secrets \
+  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
+  -n union-cp
+```
+
+#### Step 4: Install Control Plane
+
+```bash
+helm repo add unionai https://unionai.github.io/helm-charts/
+helm repo update
+
+helm upgrade --install unionai-controlplane unionai/controlplane \
+  --namespace union-cp \
+  --values values.aws.yaml \
+  --timeout 15m \
+  --wait
+```
+
+#### Step 5: Verify Installation
+
+Check that all control plane components are running:
+
+```bash
+# Check pod status
+kubectl get pods -n union-cp
+
+# Verify services are available
+kubectl get svc -n union-cp
+
+# Check flyteadmin logs
+kubectl logs -n union-cp deploy/flyteadmin --tail=50
+```
+
+Expected output: All pods should be in `Running` state.
+
+For detailed configuration options and alternative deployment models, see the sections below.
+
+---
+
 ## Installation
 
 ### Database Architecture
@@ -97,7 +175,7 @@ Refer to the [ScyllaDB Manager documentation](https://operator.docs.scylladb.com
 The Union control plane requires **both** database systems:
 
 1. **Postgres**: Required for all control plane services (identity, executions, monolith, etc.)
-   - Configure via `dbHost`, `dbName`, `dbUser`, `dbPass`
+   - Configure via `dbHost`, `dbName`, `dbUser`, and database secret
    - Must be provided (external or in-cluster)
 
 2. **ScyllaDB**: Required exclusively for the queue service
@@ -262,6 +340,30 @@ kubectl delete pvc -n union-cp --all
 # Delete namespace
 kubectl delete namespace union-cp
 ```
+
+## Alternative Deployment Models
+
+### Self-Hosted Intra-Cluster Deployment (AWS)
+
+For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the dedicated guide:
+
+**[Self-Hosted Intra-Cluster Deployment Guide (AWS)](SELFHOSTED_INTRA_CLUSTER_AWS.md)**
+
+This deployment model is ideal for:
+
+- Fully self-hosted Union deployments
+- Single-cluster architectures with co-located control plane and dataplane
+- Environments requiring simplified networking and reduced costs
+- Deployments with strict data sovereignty requirements
+
+The intra-cluster guide covers:
+
+- TLS certificate generation for intra-cluster communication
+- Single-tenant mode configuration
+- Service discovery between control plane and dataplane
+- Complete end-to-end setup for both control plane and dataplane
+
+---
 
 ## Troubleshooting
 

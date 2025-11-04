@@ -1,25 +1,75 @@
-# -- Postgres DB host used for all control plane services EXCEPT the queue service
-# ScyllaDB is used exclusively by the queue service (configured in scylla section below)
-# This Postgres configuration is REQUIRED even when scylla.enabled is true
-dbHost: ""
-# -- Postgres DB name used for control plane services (except queue service)
-dbName: ""
-# -- Postgres DB user used for control plane services (except queue service)
-dbUser: ""
-# -- Postgres DB password used for control plane services (except queue service)
-dbPass: ""
-# -- Set the S3 bucket name used for flyte storage
-bucketName: ""
-# -- Set the S3 bucket name used for artifacts storage
-artifactsBucketName: ""
+# ----------------------------------------------------------------------------
+# Global Configuration
+# ----------------------------------------------------------------------------
+# Global values are accessible to both the chart and all subcharts.
+# Override these in deployment-specific values files:
+#   - values.aws.yaml: AWS-specific configuration (RDS, S3, IAM roles)
+#   - values.aws.selfhosted-intracluster.yaml: Self-contained intra-cluster configuration
+#
+# Usage:
+#   helm install -f values.aws.yaml [...]
+#   helm install -f values.aws.selfhosted-intracluster.yaml [...]
 
-# -- Set the bucket region
-region: us-east-2
+global:
+
+  # Control plane hostname (FQDN)
+  # Example: "mycompany.union.ai" or "union.example.com"
+  UNION_HOST: ""
+
+  # AWS region for all resources
+  # TODO: Will eventually be moved to values.aws.yaml
+  # Example: "us-west-2", "us-east-1", "eu-west-1"
+  AWS_REGION: ""
+
+  # PostgreSQL RDS endpoint
+  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
+  DB_HOST: ""
+
+  # PostgreSQL database name
+  # Example: "unionai" or "union_controlplane"
+  DB_NAME: ""
+
+  # PostgreSQL username
+  # Example: "unionai" or "admin"
+  DB_USER: ""
+
+  # S3 bucket for control plane metadata
+  # Example: "union-controlplane-metadata"
+  BUCKET_NAME: ""
+
+  # S3 bucket for artifacts storage
+  # Example: "union-controlplane-artifacts"
+  ARTIFACTS_BUCKET_NAME: ""
+
+  # Name of Kubernetes secret containing the DB password and other service specific secrets.
+  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
+  # Example: "union-controlplane-secrets"
+  # Note: Secret must contain "pass.txt" key
+  KUBERNETES_SECRET_NAME: ""
+
+# ----------------------------------------------------------------------------
+# Additional Configuration
+# ----------------------------------------------------------------------------
+# Note: Most configuration now comes from globals above.
+# Database host, name, user, buckets, and region are all configured via globals.
+
+# It's recommended to create a Kubernetes secret and reference it via
+# globals.KUBERNETES_SECRET_NAME rather than storing the password here
+dbPass: ""
 # -- Set the image used for control plane services
 image:
   repository: ""
   pullPolicy: IfNotPresent
   tag: ""
+
+# -- Default config for Union services (excluding flyte subchart)
+defaults:
+  # Defaults to assume secrets and db credentials are stored in the same Kubernetes secret.
+  #
+  # Kubernetes secret names for service credentials
+  secretName: "{{ .Values.global.KUBERNETES_SECRET_NAME }}"
+  # Database secret name for database password
+  dbSecretName: "{{ .Values.global.KUBERNETES_SECRET_NAME }}"
 
 controlplane:
   enabled: true
@@ -27,7 +77,11 @@ controlplane:
 replicaCount: 1
 imagePullSecrets:
 nameOverride: ""
-fullnameOverride: ""
+# Configuring the fullnameOverride ensures that all deployed resources
+# have predictable names that do not depend on the release name.
+# This can be important in the context of self-hosted deployments
+# where dataplanes interact through well-known service names. (e.g. ingress-nginx controller)
+fullnameOverride: "controlplane"
 serviceAccount:
   create: true
   annotations: {}
@@ -114,7 +168,8 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
-    nginx.ingress.kubernetes.io/app-root: /console
+    # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
+    nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/service-upstream: "true"
 
     # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
@@ -166,9 +221,9 @@ configMap:
     identity:
       enabled: false
   connection:
-    environment: ""
-    region: ""
-    rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+    environment: "staging"
+    region: '{{ .Values.global.AWS_REGION }}'
+    rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
   logger:
     level: 6
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
@@ -205,10 +260,10 @@ services:
         metrics:
           scope: "artifacts:"
       db:
-        dbname: '{{ .Values.dbName }}'
-        host: '{{ .Values.dbHost }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host: '{{ .Values.global.DB_HOST }}'
         options: sslmode=disable
-        username: '{{ .Values.dbUser }}'
+        username: '{{ .Values.global.DB_USER }}'
         port: 5432
         passwordPath: /etc/db/pass.txt
         connectionPool:
@@ -220,11 +275,11 @@ services:
           adminClient:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
-            container: '{{ .Values.artifactsBucketName }}'
+            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
             stow:
               config:
                 auth_type: iam
-                region: us-east-2
+                region: '{{ .Values.global.AWS_REGION }}'
               kind: s3
             type: stow
           artifactDatabaseConfig:
@@ -233,14 +288,14 @@ services:
             maxOpenConnections: 30
             # Duplicate for application postgres reference
             postgres:
-              dbname: '{{ .Values.dbName }}'
-              host: '{{ .Values.dbHost }}'
+              dbname: '{{ .Values.global.DB_NAME }}'
+              host: '{{ .Values.global.DB_HOST }}'
               options: sslmode=disable
               passwordPath: /etc/db/pass.txt
               port: 5432
               # Default to the same host as the primary DB.
-              readReplicaHost: '{{ .Values.dbHost }}'
-              username: '{{ .Values.dbUser }}'
+              readReplicaHost: '{{ .Values.global.DB_HOST }}'
+              username: '{{ .Values.global.DB_USER }}'
           artifactServerConfig:
             httpPort: 8089
             port: 8080
@@ -285,9 +340,9 @@ services:
       cloudProvider:
         provider: Mock
       db:
-        dbname: '{{ .Values.dbName }}'
-        host: '{{ .Values.dbHost }}'
-        username:  '{{ .Values.dbUser }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        username:  '{{ .Values.global.DB_USER }}'
         passwordPath: /etc/db/pass.txt
         port: 5432
         connectionPool:
@@ -333,9 +388,9 @@ services:
         metrics:
           scope: "executions:"
       db:
-        dbname: '{{ .Values.dbName }}'
-        host:  '{{ .Values.dbHost }}'
-        username:  '{{ .Values.dbUser }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host:  '{{ .Values.global.DB_HOST }}'
+        username:  '{{ .Values.global.DB_USER }}'
         passwordPath: /etc/db/pass.txt
         port: 5432
         connectionPool:
@@ -361,7 +416,8 @@ services:
         apps:
           # Identity service is disabled by default. Enriching identities can be enabled here.
           enrichIdentities: false
-          publicURLPattern: https://%s.apps.%s.cloud-staging.union.ai
+          # App serving URL pattern (work in progress for self-hosted)
+          publicURLPattern: 'https://%s.apps.{{ .Values.global.UNION_HOST }}'
 
         # Enable V2 specific endpoints
         task:
@@ -411,9 +467,9 @@ services:
         metrics:
           scope: "run-scheduler:"
       db:
-        dbname: '{{ .Values.dbName }}'
-        host:  '{{ .Values.dbHost }}'
-        username:  '{{ .Values.dbUser }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host:  '{{ .Values.global.DB_HOST }}'
+        username:  '{{ .Values.global.DB_USER }}'
         passwordPath: /etc/db/pass.txt
         port: 5432
         connectionPool:
@@ -461,7 +517,8 @@ console:
     tag: ""
 
   nameOverride: ""
-  fullnameOverride: ""
+  # More readable resource names.
+  fullnameOverride: "unionconsole"
 
   serviceAccount:
     create: true
@@ -520,21 +577,14 @@ console:
       maxUnavailable: 1
 
 flyte:
-  # All the value below need to be duplicated due to flyte-core being a subchart.
-  # -- Postgres DB host used for tenant services (not queue service)
-  # ScyllaDB is used exclusively by the queue service
-  # This Postgres configuration is REQUIRED even when scylla.enabled is true
-  dbHost: ""
-  # -- Postgres DB name used for control plane services (except queue service)
-  dbName: ""
-  # -- Postgres DB user used for control plane services (except queue service)
-  dbUser: ""
-  # -- Set the DB password used for the controlplane services
-  dbPass: ""
-  # -- Set the S3 bucket name used for flyte storage
-  bucketName: ""
-  # -- Set the bucket region
-  region: ""
+  # Database configuration (references globals)
+  dbHost: '{{ .Values.global.DB_HOST }}'
+  dbName: '{{ .Values.global.DB_NAME }}'
+  dbUser: '{{ .Values.global.DB_USER }}'
+
+  # Storage configuration (references globals)
+  bucketName: '{{ .Values.global.BUCKET_NAME }}'
+  region: '{{ .Values.global.AWS_REGION }}'
 
   flyteadmin:
     replicaCount: 1
@@ -544,8 +594,8 @@ flyte:
       pullPolicy: IfNotPresent
       tag:  ""
     serviceAccount:
-      annotations:
-        # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
+      # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
+      annotations: {}
     podAnnotations:
       kubectl.kubernetes.io/default-container: flyteadmin
     initialProjects:
@@ -601,15 +651,15 @@ flyte:
         ephemeral-storage: 50Mi
         memory: 50Mi
     serviceAccount:
-      annotations:
-        # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
+      # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
+      annotations: {}
     service:
       type: ClusterIP
   flytepropeller:
     enabled: false
   flyteconsole:
     enabled: true
-    podEnv: []
+    podEnv: {}
     replicaCount: 1
     image:
       repository: "" # -- Set the repository for the console image"
@@ -653,8 +703,8 @@ flyte:
     serviceAccount:
       # -- If the service account is created by you, make this false
       create: true
-      annotations:
       # -- Set the role arn for the cacheservice service account which has access to the S3 bucket
+      annotations: {}
     resources:
       limits:
         cpu: 1
@@ -705,21 +755,27 @@ flyte:
         type: spc_t
   common:
     databaseSecret:
-      name: db-pass
-      secretManifest:
-        # -- Leave it empty if your secret already exists
+      # -- Specify name of K8s Secret which contains Database password. Leave it empty if you don't need this Secret
+      # flyte-org/flyte flyte-core helm chart _helpers.tpl does not render templates.
+      # Therefore we have to explicitly set the value here.
+      # Ref: https://github.com/flyteorg/flyte/pull/6711
+      # TODO (DIRECTLY CONFIGURE): Match value to global.KUBERNETES_SECRET_NAME
+      name: "<KUBERNETES_SECRET_NAME>"
+      # -- Leave it empty if your secret already exists
+      secretManifest: {}
+
         # Else you can create your own secret object. You can use Kubernetes secrets, else you can configure external secrets
         # For external secrets please install Necessary dependencies, like, of your choice
         # - https://github.com/hashicorp/vault
         # - https://github.com/godaddy/kubernetes-external-secrets
-        apiVersion: v1
-        kind: Secret
-        metadata:
-          name: db-pass
-        type: Opaque
-        stringData:
-          # -- If using plain text you can provide the password here
-          pass.txt: '{{ .Values.dbPass }}'
+        # apiVersion: v1
+        # kind: Secret
+        # metadata:
+        #   name: db-pass
+        # type: Opaque
+        # stringData:
+        #   # -- If using plain text you can provide the password here
+        #   pass.txt: '{{ .Values.dbPass }}'
     ingress:
       # Disables flyte subchart ingresses.
       enabled: false
@@ -728,9 +784,9 @@ flyte:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
     type: s3
     # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
-    bucketName: '{{ .Values.bucketName }}'
+    bucketName: '{{ .Values.global.BUCKET_NAME }}'
     s3:
-      region: "{{ .Values.region }}"
+      region: "{{ .Values.global.AWS_REGION }}"
     cache:
       maxSizeMBs: 1024
   db:
@@ -739,8 +795,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.dbUser }}"
-        host: "{{ .Values.dbHost }}"
+        username: "{{ .Values.global.DB_USER }}"
+        host: "{{ .Values.global.DB_HOST }}"
         # -- Use a specific DB name for datacatalog
         dbname: datacatalog
         passwordPath: /etc/db/pass.txt
@@ -751,8 +807,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.dbUser }}"
-        host: "{{ .Values.dbHost }}"
+        username: "{{ .Values.global.DB_USER }}"
+        host: "{{ .Values.global.DB_HOST }}"
         # -- Use a specific DB name for flyteadmin
         dbname: flyteadmin
         passwordPath: /etc/db/pass.txt
@@ -763,8 +819,8 @@ flyte:
       database:
         port: 5432
         # -- Create a user called flyteadmin
-        username: "{{ .Values.dbUser }}"
-        host: "{{ .Values.dbHost }}"
+        username: "{{ .Values.global.DB_USER }}"
+        host: "{{ .Values.global.DB_HOST }}"
         # -- Use a specific DB name for cacheservice
         dbname: cacheservice
         passwordPath: /etc/db/pass.txt
@@ -774,7 +830,7 @@ flyte:
   configmap:
     adminServer:
       admin:
-        endpoint: dns:///your-controlplane-domain
+        endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
       authorizer:
         type: "Noop"
@@ -783,9 +839,9 @@ flyte:
       cloudEvents:
         enable: false
       connection:
-        environment: ""
-        region: ""
-        rootTenantURLPattern: dns:///your-controlplane-domain # e.g. dns:///staging.union.ai
+        environment: "staging"
+        region: '{{ .Values.global.AWS_REGION }}'
+        rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
       flyteadmin:
         metricsKeys:
           - phase

@@ -1,0 +1,321 @@
+# ============================================================================
+# Union Dataplane Configuration for Self-Hosted Intra-Cluster Deployment
+# ============================================================================
+# This configuration is for deploying Union dataplane in the SAME Kubernetes
+# cluster as the Union control plane (co-located deployment).
+#
+# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
+#   helm install ... -f values.aws.selfhosted-intracluster.yaml
+#
+# Key differences from standard BYOC deployment:
+# - Uses intra-cluster communication (no external networking)
+# - No Cloudflare tunnel required
+# - Can use self-signed certificates
+# - No API key authentication (direct service-to-service)
+# - More cost-effective for single-cluster deployments
+# - Includes all AWS-specific configuration (S3, IAM roles)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration
+# ----------------------------------------------------------------------------
+# Configure ALL variables below for your self-hosted intra-cluster deployment.
+# This file includes both AWS infrastructure configuration AND intra-cluster
+# specific settings.
+
+global:
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-us-east-1" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-metadata-bucket"
+  #    Note: Bucket must exist before deployment
+  METADATA_BUCKET: ""
+
+  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-fast-registration-bucket"
+  #    Note: Can be same as metadata bucket or separate
+  FAST_REGISTRATION_BUCKET: ""
+
+  # 1. AWS_REGION - AWS region for S3 buckets
+  #    Format: AWS region code
+  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  AWS_REGION: ""
+
+  # 2. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
+  #    Permissions: S3 access, ECR (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
+  #    Permissions: S3 access, AWS services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
+  # 1. CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
+  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
+  #    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  #    How to find: kubectl get svc -n union-cp | grep nginx-controller
+  #    Note: Used for direct communication with control plane
+  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+
+  # 2. FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
+  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
+  #    Example: "flyteadmin.union-cp.svc.cluster.local:81"
+  #    How to find: kubectl get svc -n union-cp flyteadmin
+  FLYTEADMIN_ENDPOINT: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
+
+# Cloud provider identifier (do not change for AWS)
+provider: aws
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Object Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Configure S3 buckets for workflow metadata and fast registration.
+# These buckets must be created before deployment.
+
+storage:
+  provider: aws
+  authType: iam  # Use IAM roles for pods (IRSA recommended)
+
+  # AWS region for S3 buckets
+  region: '{{ .Values.global.AWS_REGION }}'
+  enableMultiContainer: true
+
+# ----------------------------------------------------------------------------
+# SECTION 4: IAM Roles (REQUIRED for AWS)
+# ----------------------------------------------------------------------------
+# Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
+# These IAM roles must be created with appropriate trust policies and permissions.
+
+# IAM role for Union backend services (operator, propeller, etc.)
+additionalServiceAccountAnnotations:
+  eks.amazonaws.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
+
+# IAM role for workflow execution pods
+userRoleAnnotationKey: eks.amazonaws.com/role-arn
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Cluster Resource Sync Configuration
+# ----------------------------------------------------------------------------
+# Syncs Kubernetes resources (namespaces, service accounts, quotas) with
+# the control plane using intra-cluster communication.
+
+clusterresourcesync:
+  config:
+    union:
+      connection:
+        # Control plane host for intra-cluster communication
+        # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
+        host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+
+        # Skip SSL certificate verification for self-signed certs
+        # Set to true for self-signed certificates, false for trusted CA certs
+        insecureSkipVerify: true
+
+      # Disable authentication for direct intra-cluster service-to-service calls
+      auth:
+        enable: false
+
+# ----------------------------------------------------------------------------
+# Core Service Configuration
+# ----------------------------------------------------------------------------
+# Configure dataplane services to communicate with control plane services
+# using Kubernetes internal networking (ClusterIP services).
+
+config:
+  admin:
+    admin:
+      # Flyteadmin endpoint (control plane admin service)
+      # Example: "flyteadmin.union-cp.svc.cluster.local:81"
+      endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+
+      # Use insecure (non-TLS) connection for intra-cluster HTTP communication
+      insecure: true
+
+      # Disable OAuth2 client credentials (not needed for intra-cluster)
+      clientId: null
+      clientSecretLocation: null
+
+  catalog:
+    # Catalog service for task caching and reuse
+    catalog-cache:
+      # Control plane host for catalog service
+      # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
+      cache-endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+      endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+
+      # Use insecure connection for intra-cluster communication
+      insecure: true
+
+      # Disable admin authentication (direct service-to-service)
+      use-admin-auth: false
+
+  k8s:
+    plugins:
+      k8s:
+        # Environment variables injected into all task pods
+        # These allow task pods to connect to the control plane
+        default-env-vars:
+          # Override endpoint for task pods to use internal control plane
+          - _U_EP_OVERRIDE: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+          # Skip SSL verification if using self-signed certificates
+          - _U_INSECURE_SKIP_VERIFY: 'true'
+
+  union:
+    connection:
+      # Control plane connection for Union services
+      # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
+      host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+
+      # Skip SSL verification for self-signed certificates
+      insecureSkipVerify: true
+
+    auth:
+      # Disable OAuth authentication for intra-cluster communication
+      enable: false
+
+  operator:
+    # Disable Cloudflare tunnel (not needed for intra-cluster)
+    enableTunnelService: false
+
+    # Disable billable usage collector (typically for Union-managed control planes)
+    billableUsageCollector:
+      enabled: false
+
+# ----------------------------------------------------------------------------
+# Executor Configuration
+# ----------------------------------------------------------------------------
+# Configure how workflow tasks are executed.
+
+executor:
+  config:
+    unionAuth:
+      # Disable API key injection (not needed for intra-cluster communication)
+      injectSecret: false
+
+# ----------------------------------------------------------------------------
+# Ingress Configuration
+# ----------------------------------------------------------------------------
+# Configure ingress for external access to dataplane services.
+
+# Extra Kubernetes objects to be deployed alongside Union
+extraObjects: []
+
+# Ingress configuration for Union dataplane and serving
+ingress:
+  dataproxy:
+    class: "dataplane"
+  enabled: true
+
+  # Ingress architecture for serving will change in the future.
+  # This is a temporary configuration for intra-cluster deployments.
+  serving:
+    # Default to using the intra-cluster host for serving
+    hostOverride: "*.apps.{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+    # Assume the same ingress class as the dataproxy
+    class: "dataplane"
+
+# NGINX Ingress controller for dataplane
+ingress-nginx:
+  enabled: true
+
+  # Service name for the ingress controller
+  # This creates a service: "dataplane-nginx-controller"
+  # External traffic enters through this service
+  fullnameOverride: "dataplane-nginx"
+
+  controller:
+    service:
+      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
+      # Change to LoadBalancer or NodePort for external access
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
+
+    ingressClassResource:
+      # Ingress class name used in Ingress resources
+      name: "dataplane"
+
+# ----------------------------------------------------------------------------
+# Operator Configuration
+# ----------------------------------------------------------------------------
+
+operator:
+  # Disable Cloudflare tunnel (not needed for intra-cluster deployment)
+  enableTunnelService: false
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration
+# ----------------------------------------------------------------------------
+
+# Prometheus for metrics collection and monitoring
+prometheus:
+  prometheusOperator:
+    admissionWebhooks:
+      # Disable admission webhooks by default
+      # Enable if you have cert-manager installed
+      enabled: false
+
+      # Optional: Enable webhooks with cert-manager
+      # enabled: true
+      # certManager:
+      #   enabled: true
+      #   issuerRef:
+      #     group: "cert-manager.io"
+      #     kind: "ClusterIssuer"
+      #     name: "selfsigned-issuer"
+
+      patch:
+        enabled: false
+
+# ----------------------------------------------------------------------------
+# Secrets Configuration
+# ----------------------------------------------------------------------------
+
+secrets:
+  admin:
+    # Disable admin secret creation (OAuth not used for intra-cluster)
+    enable: false
+    create: false
+
+# ----------------------------------------------------------------------------
+# App Serving Configuration (Work in Progress)
+# ----------------------------------------------------------------------------
+
+serving:
+  auth:
+    # Disable authentication for serving (work in progress)
+    enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Logging Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# FluentBit collects and forwards logs to the control plane.
+
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    # Annotations may be required for IRSA
+    annotations: {}
