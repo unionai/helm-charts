@@ -15,7 +15,7 @@ function generate {
   echo "Generating test files..."
 
   # Track which charts we've already processed dependencies for
-  declare -A processed_charts
+  processed_charts=""
 
   # First, add all helm repos once
   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -35,15 +35,35 @@ function generate {
     echo "* Generating test output for ${CHART} (${TEST})"
 
     # Only run dependency commands once per chart
-    if [[ -z "${processed_charts[$CHART]}" ]]; then
+    if [[ ! " ${processed_charts} " =~ " ${CHART} " ]]; then
       echo "  - Building dependencies for chart ${CHART}"
       helm dependency build ${CHARTS_DIR}/${CHART}
       helm dep update ${CHARTS_DIR}/${CHART}
-      processed_charts[$CHART]=1
+      processed_charts="${processed_charts} ${CHART}"
+    fi
+
+    # Check for additional values files specified in comments
+    ADDITIONAL_VALUES=""
+    HELM_VALUES_LINE=$(head -n 10 ${file} | grep "^# helm-values:" || true)
+    if [[ -n "${HELM_VALUES_LINE}" ]]; then
+      # Extract the values file names from the comment
+      VALUES_FILES=$(echo "${HELM_VALUES_LINE}" | sed 's/^# helm-values: *//')
+      # Split by comma and build --values flags
+      IFS=',' read -ra VALUES_ARRAY <<< "${VALUES_FILES}"
+      for val_file in "${VALUES_ARRAY[@]}"; do
+        val_file=$(echo "${val_file}" | xargs) # trim whitespace
+        if [[ -f "${CHARTS_DIR}/${CHART}/${val_file}" ]]; then
+          ADDITIONAL_VALUES="${ADDITIONAL_VALUES} --values ${CHARTS_DIR}/${CHART}/${val_file}"
+          echo "  - Including additional values file: ${val_file}"
+        else
+          echo "  - WARNING: Additional values file not found: ${val_file}"
+        fi
+      done
     fi
 
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
+      ${ADDITIONAL_VALUES} \
       --values ${file} > ${TARGET_DIR}/${OUTPUT}
   done
 }
