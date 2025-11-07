@@ -184,18 +184,6 @@ metadata:
   annotations: 
     eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
 ---
-# Source: controlplane/charts/flyte/templates/datacatalog/rbac.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
----
 # Source: controlplane/charts/scylla-operator/templates/operator.serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -523,69 +511,6 @@ metadata:
 data: 
   BASE_URL: /console
   CONFIG_DIR: /etc/flyte/config
----
-# Source: controlplane/charts/flyte/templates/datacatalog/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: datacatalog-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-data:
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: datacatalog
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 20
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  otel.yaml: | 
-    otel:
-      file:
-        filename: /tmp/trace.txt
-      jaeger:
-        endpoint: http://localhost:14268/api/traces
-      otlpgrpc:
-        endpoint: http://localhost:4317
-      otlphttp:
-        endpoint: http://localhost:4318/v1/traces
-      sampler:
-        parentSampler: always
-      type: noop
-  logger.yaml: | 
-    level: null
-  server.yaml: | 
-    application:
-      grpcMaxRecvMsgSizeMBs: 6
-      grpcPort: 8089
-      grpcServerReflection: true
-      httpPort: 8080
-    datacatalog:
-      heartbeat-grace-period-multiplier: 3
-      max-reservation-heartbeat: 30s
-      metrics-scope: flyte
-      profiler-port: 10254
-      storage-prefix: metadata/datacatalog
-  storage.yaml: | 
-    storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 10
-      cache:
-        max_size_mbs: 1024
-        target_gc_percent: 70
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -1808,31 +1733,6 @@ spec:
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/flyte/templates/datacatalog/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: http-metrics
-      protocol: TCP
-      port: 10254
-    - name: grpc
-      port: 89
-      protocol: TCP
-      targetPort: 8089
-  selector: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
----
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.service.yaml
 apiVersion: v1
 kind: Service
@@ -2391,107 +2291,6 @@ spec:
       volumes:
       - emptyDir: {}
         name: shared-data
----
-# Source: controlplane/charts/flyte/templates/datacatalog/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: datacatalog
-      app.kubernetes.io/instance: release-name
-  strategy: 
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
-  template:
-    metadata:
-      annotations:
-        configChecksum: "cab2089b79c3d7aa07de4a12387b30b68869152623228b97476656bfb8d6583"
-      labels: 
-        app.kubernetes.io/name: datacatalog
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.1
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      securityContext: 
-        fsGroup: 1001
-        fsGroupChangePolicy: OnRootMismatch
-        runAsNonRoot: true
-        runAsUser: 1001
-        seLinuxOptions:
-          type: spc_t
-      initContainers:
-      - command:
-        - datacatalog
-        - --config
-        - /etc/datacatalog/config/*.yaml
-        - migrate
-        - run
-        image: ":"
-        imagePullPolicy: "IfNotPresent"
-        name: run-migrations
-        volumeMounts:
-        - mountPath: /etc/db
-          name: <KUBERNETES_SECRET_NAME>
-        - mountPath: /etc/datacatalog/config
-          name: config-volume
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-      containers:
-      - command:
-        - datacatalog
-        - --config
-        - /etc/datacatalog/config/*.yaml
-        - serve
-        image: ":"
-        imagePullPolicy: "IfNotPresent"
-        name: datacatalog
-        ports:
-        - containerPort: 8080
-        - containerPort: 8089
-        - containerPort: 10254
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        resources:
-          limits:
-            cpu: 1
-            ephemeral-storage: 500Mi
-            memory: 1Gi
-          requests:
-            cpu: 10m
-            ephemeral-storage: 50Mi
-            memory: 50Mi
-        volumeMounts:
-        - mountPath: /etc/db
-          name: <KUBERNETES_SECRET_NAME>
-        - mountPath: /etc/datacatalog/config
-          name: config-volume
-      serviceAccountName: datacatalog
-      volumes:
-      - name: <KUBERNETES_SECRET_NAME>
-        secret:
-          secretName: <KUBERNETES_SECRET_NAME>
-      - emptyDir: {}
-        name: shared-data
-      - projected:
-          sources:
-            - configMap:
-                name: datacatalog-config
-        name: config-volume
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.deployment.yaml
 apiVersion: apps/v1
@@ -3644,39 +3443,6 @@ spec:
         name: cpu
         target:
           averageUtilization: 70
-          type: Utilization
-      type: Resource
----
-# Source: controlplane/charts/flyte/templates/datacatalog/hpa.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: datacatalog
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: datacatalog
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: datacatalog
-  minReplicas: 1
-  maxReplicas: 10
-  metrics:
-    
-    - resource:
-        name: cpu
-        target:
-          averageUtilization: 80
-          type: Utilization
-      type: Resource
-    - resource:
-        name: memory
-        target:
-          averageUtilization: 80
           type: Utilization
       type: Resource
 ---
