@@ -2,19 +2,18 @@
 {{- range $serviceKey, $serviceConfig := .Values.services }}
 {{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart }}
 ---
-{{- if not $service.config.disabled }}
+{{- $autoscaling := (include "unionai.autoscaling" $service | fromYaml) }}
 {{- $replicaCount := include "unionai.replicaCount" $service | trim | int}}
-{{- if and (not $service.config.disabled) (ge $replicaCount 1) }}
+{{- if and (not $service.config.disabled) (or (ge $replicaCount 1) (and $autoscaling.enabled (ge $autoscaling.maxReplicas 1))) }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: {{ include "unionai.fullname" $service }}
 spec:
-  minAvailable: 1
+  minAvailable: "33%"
   selector:
     matchLabels:
       {{- include "unionai.selectorLabels" $service | nindent 6 }}
-{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}

@@ -579,6 +579,22 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 {{- end }}
 
+{{- define "console.autoscaling" -}}
+{{- if and (hasKey .Values.console "autoscaling") }}
+{{ toYaml .Values.console.autoscaling }}
+{{- else if and (hasKey .Values "autoscaling") }}
+{{ toYaml .Values.autoscaling }}
+{{- end }}
+{{- end }}
+
+{{- define "console.strategy" -}}
+{{- if and (hasKey .Values.console "strategy") .Values.console.strategy }}
+{{ toYaml .Values.console.strategy }}
+{{- else if and (hasKey .Values "strategy") .Values.strategy }}
+{{ toYaml .Values.strategy }}
+{{- end }}
+{{- end }}
+
 {{/*
 Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
 NOTE: This is ONLY for the queue service. All other services use Postgres (globals.DB_HOST).
