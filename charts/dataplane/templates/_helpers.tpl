@@ -58,6 +58,13 @@ Adds custom PodSpec values.
 {{- end }}
 {{- end -}}
 
+{{- define "flytepropeller.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.flytepropeller.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
 {{- define "flytepropeller.selectorLabels" -}}
 app.kubernetes.io/name: flytepropeller
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -224,6 +231,13 @@ tolerations:
 {{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
 {{- end }}
 
+{{- define "nodeobserver.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.nodeobserver.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
 {{- define "nodeobserver.selectorLabels" -}}
 app.kubernetes.io/name: nodeobserver
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -312,6 +326,13 @@ Create the name of the clusterresources service account
 {{- default "clustersync-system" .Values.clusterresourcesync.serviceAccount.name }}
 {{- end }}
 
+{{- define "clusterresourcesync.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.clusterresourcesync.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
 {{- define "clusterresourcesync.selectorLabels" -}}
 app.kubernetes.io/name: clusterresourcesync
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -397,6 +418,13 @@ Create the name of the service account to use
 */}}
 {{- define "operator.serviceAccountName" -}}
 {{- default "operator-system" .Values.operator.serviceAccount.name }}
+{{- end }}
+
+{{- define "operator.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.operator.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
 {{- end }}
 
 {{- define "operator.selectorLabels" -}}
@@ -497,6 +525,13 @@ Create the name of the service account to use
 */}}
 {{- define "proxy.serviceAccountName" -}}
 {{- default "proxy-system" .Values.proxy.serviceAccount.name }}
+{{- end }}
+
+{{- define "proxy.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.proxy.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
 {{- end }}
 
 {{- define "proxy.secretsNamespace" -}}
@@ -975,3 +1010,10 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- .Values.ingress.host -}}
 {{- end }}
 {{- end -}}
+
+{{- define "executor.serviceAccount.annotations" -}}
+{{ include "global.serviceAccountAnnotations" . }}
+{{- with .Values.executor.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
