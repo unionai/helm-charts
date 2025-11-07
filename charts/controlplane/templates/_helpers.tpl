@@ -106,19 +106,19 @@ false
 
 {{- define "unionai.image.repository" -}}
 {{- if and (hasKey .config "image") (hasKey .config.image "repository") }}
-{{ .config.image.repository }}
+{{ tpl .config.image.repository . }}
 {{- else if and (hasKey .Values "image") (hasKey .Values.image "repository") }}
-{{ .Values.image.repository }}
+{{ tpl .Values.image.repository . }}
 {{- else }}
 ""
 {{- end }}
 {{- end }}
 
 {{- define "unionai.image.tag" -}}
-{{- if and (hasKey .config "image") (hasKey .config.image "tag") }}
-{{ .config.image.tag }}
+{{- if and (hasKey .config "image") (hasKey .config.image "tag") (ne (tpl .config.image.tag .) "") }}
+{{ tpl .config.image.tag . }}
 {{- else if and (hasKey .Values "image") (hasKey .Values.image "tag") }}
-{{ .Values.image.tag }}
+{{ tpl .Values.image.tag . }}
 {{- else }}
 ""
 {{- end }}
@@ -252,15 +252,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- $tag := "" }}
 
 {{- if and (hasKey .config "image") (hasKey .config.image "repository") }}
-  {{- $repo = .config.image.repository }}
+  {{- $repo = tpl .config.image.repository . }}
 {{- else if and (hasKey .Values "image") (hasKey .Values.image "repository") }}
-  {{- $repo = .Values.image.repository }}
+  {{- $repo = tpl .Values.image.repository . }}
 {{- end }}
 
 {{- if and (hasKey .config "image") (hasKey .config.image "tag") }}
-  {{- $tag = .config.image.tag }}
+  {{- $tag = tpl (.config.image.tag | toString) . }}
 {{- else if and (hasKey .Values "image") (hasKey .Values.image "tag") }}
-  {{- $tag = .Values.image.tag }}
+  {{- $tag = tpl (.Values.image.tag | toString) . }}
 {{- else if hasKey .Chart "AppVersion" }}
   {{- $tag = .Chart.AppVersion }}
 {{- end }}
