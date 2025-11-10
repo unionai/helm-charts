@@ -227,6 +227,21 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "flyteconnector.name" -}}
+flyteconnector
+{{- end -}}
+
+{{- define "flyteconnector.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "flyteconnector.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "flyteconnector.labels" -}}
+{{ include "flyteconnector.selectorLabels" . }}
+helm.sh/chart: {{ include "flyte.chart" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
 {{- define "nodeobserver.serviceAccountName" -}}
 {{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
 {{- end }}
