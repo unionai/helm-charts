@@ -1,0 +1,74 @@
+{{- if .Values.flyteconnector.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "flyteconnector.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels: {{ include "flyteconnector.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.flyteconnector.replicaCount }}
+  selector:
+    matchLabels: {{ include "flyteconnector.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- with .Values.flyteconnector.podAnnotations }}
+          {{- toYaml . | nindent 8 }}
+          {{- end }}
+      labels: {{ include "flyteconnector.labels" . | nindent 8 }}
+    spec:
+      {{- if .Values.flyteconnector.priorityClassName }}
+      priorityClassName: {{ .Values.flyteconnector.priorityClassName }}
+      {{- end }}
+      containers:
+        - command:
+            - flyte
+            - serve
+            - connector
+          image: "{{ .Values.flyteconnector.image.repository }}:{{ .Values.flyteconnector.image.tag }}"
+          imagePullPolicy: "{{ .Values.flyteconnector.image.pullPolicy }}"
+          name: flyteconnector
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /
+              port: 9090
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 5
+          env:
+            - name: AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT
+              value: "google-cloud-platform://"
+            - name: LOG_LEVEL
+              value: "10"
+            {{- with .Values.flyteconnector.additionalEnvs -}}
+            {{ tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          ports:
+            - containerPort: {{ .Values.flyteconnector.ports.containerPort }}
+              name: {{ .Values.flyteconnector.ports.name }}
+            - containerPort: {{ .Values.flyteconnector.prometheusPort.containerPort }}
+              name: {{ .Values.flyteconnector.prometheusPort.name }}
+          resources: {{- toYaml .Values.flyteconnector.resources | nindent 12 }}
+          {{- with .Values.flyteconnector.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 10 }}
+          {{- end }}
+      {{- with .Values.flyteconnector.additionalContainers -}}
+      {{- tpl (toYaml .) $ | nindent 6}}
+      {{- end }}
+      serviceAccountName: {{ template "flyteconnector.name" . }}
+      {{- with .Values.flyteconnector.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- with .Values.flyteconnector.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyteconnector.affinity }}
+      affinity: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyteconnector.tolerations }}
+      tolerations: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- end }}
