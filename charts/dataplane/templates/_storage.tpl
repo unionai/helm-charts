@@ -30,11 +30,13 @@ the stow based options to provide additional configuration flexibility.
     secret-key: {{ .Values.storage.secretKey }}
     {{- end }}
 {{- else if eq .Values.storage.provider "gcs" }}
-  kind: google
-  config:
-    json: ""
-    project_id: {{ required "GCP project required for GCS storage provider" .Values.storage.gcp.projectId }}
-    scopes: https://www.googleapis.com/auth/cloud-platform
+  type: stow
+  stow:
+      kind: google
+      config:
+        json: ""
+        project_id: {{ required "GCP project required for GCS storage provider" .Values.storage.gcp.projectId }}
+        scopes: https://www.googleapis.com/auth/cloud-platform
 {{- else if eq .Values.storage.provider "custom" }}
 {{- with .Values.storage.custom -}}
   {{ tpl (toYaml .) $ | nindent 2 }}
