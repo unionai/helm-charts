@@ -17,9 +17,9 @@
 ```bash
 brew install helm
 # Or if our version is lagging behind brew
-curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4
 chmod 700 get_helm.sh
-./get_helm.sh --version v3.19.0
+./get_helm.sh --version v4.0.0
 ```
 
 > Helm 3.19 is required to match version specific pinned in Github workflows.
