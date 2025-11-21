@@ -37,8 +37,8 @@ function generate {
     # Only run dependency commands once per chart
     if [[ ! " ${processed_charts} " =~ " ${CHART} " ]]; then
       echo "  - Building dependencies for chart ${CHART}"
-      helm dependency build ${CHARTS_DIR}/${CHART}
       helm dep update ${CHARTS_DIR}/${CHART}
+      helm dependency build ${CHARTS_DIR}/${CHART}
       processed_charts="${processed_charts} ${CHART}"
     fi
 
