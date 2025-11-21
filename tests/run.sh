@@ -63,6 +63,7 @@ function generate {
 
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
+      --kube-version 1.32.0 \
       ${ADDITIONAL_VALUES} \
       --values ${file} > ${TARGET_DIR}/${OUTPUT}
   done
