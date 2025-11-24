@@ -2485,7 +2485,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2549,7 +2549,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2636,7 +2636,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2704,7 +2704,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2770,7 +2770,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2877,7 +2877,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2936,7 +2936,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3077,7 +3077,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.2"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
@@ -3140,6 +3140,47 @@ webhooks:
         namespace: union
         name: prometheus-operator
         path: /admission-prometheusrules/mutate
+    timeoutSeconds: 10
+    admissionReviewVersions: ["v1", "v1beta1"]
+    sideEffects: None
+---
+# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/validatingWebhookConfiguration.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name:  union-operator-admission
+  annotations:
+    
+  labels:
+    app: prometheus-admission
+    
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "72.9.1"
+    app.kubernetes.io/part-of: prometheus
+    chart: prometheus-72.9.1
+    release: "release-name"
+    heritage: "Helm"
+    app.kubernetes.io/name: prometheus-prometheus-operator
+    app.kubernetes.io/component: prometheus-operator-webhook
+webhooks:
+  - name: prometheusrulemutate.monitoring.coreos.com
+    failurePolicy: Ignore
+    rules:
+      - apiGroups:
+          - monitoring.coreos.com
+        apiVersions:
+          - "*"
+        resources:
+          - prometheusrules
+        operations:
+          - CREATE
+          - UPDATE
+    clientConfig:
+      service:
+        namespace: union
+        name: prometheus-operator
+        path: /admission-prometheusrules/validate
     timeoutSeconds: 10
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
@@ -4353,47 +4394,6 @@ spec:
       interval: 1m
       path: /metrics
       honorLabels: true
----
-# Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/validatingWebhookConfiguration.yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: ValidatingWebhookConfiguration
-metadata:
-  name:  union-operator-admission
-  annotations:
-    
-  labels:
-    app: prometheus-admission
-    
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "72.9.1"
-    app.kubernetes.io/part-of: prometheus
-    chart: prometheus-72.9.1
-    release: "release-name"
-    heritage: "Helm"
-    app.kubernetes.io/name: prometheus-prometheus-operator
-    app.kubernetes.io/component: prometheus-operator-webhook
-webhooks:
-  - name: prometheusrulemutate.monitoring.coreos.com
-    failurePolicy: Ignore
-    rules:
-      - apiGroups:
-          - monitoring.coreos.com
-        apiVersions:
-          - "*"
-        resources:
-          - prometheusrules
-        operations:
-          - CREATE
-          - UPDATE
-    clientConfig:
-      service:
-        namespace: union
-        name: prometheus-operator
-        path: /admission-prometheusrules/validate
-    timeoutSeconds: 10
-    admissionReviewVersions: ["v1", "v1beta1"]
-    sideEffects: None
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/job-patch/serviceaccount.yaml
 apiVersion: v1
