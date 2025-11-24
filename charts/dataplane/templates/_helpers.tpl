@@ -1017,3 +1017,22 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{ toYaml . }}
 {{- end }}
 {{- end }}
+
+{{- define "executor.selectorLabels" -}}
+app.kubernetes.io/name: executor
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "executor.labels" -}}
+{{ include "executor.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "executor.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "executor.labels" . }}
+{{- with .Values.executor.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
