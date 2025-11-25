@@ -6,7 +6,10 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -81,7 +84,10 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 data:
   task_logs.yaml: | 
     plugins:
@@ -148,6 +154,8 @@ data:
     logger:
       level: 4
       show-source: true
+    namespace_mapping:
+      template: 'union'
     sharedService:
       metrics:
         scope: 'executor:'
@@ -227,19 +235,19 @@ data:
         default-memory: 100Mi
   config.yaml: |
     union:
-      connection: 
+      connection:
         host: dns:///union.us-west-2.union.ai
-      auth: 
+      auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'my-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
-    sharedService: 
+    sharedService:
       features:
         gatewayV2: true
       port: 8081
-    authorizer: 
+    authorizer:
       type: noop
     operator:
       enabled: true
@@ -249,11 +257,11 @@ data:
         deploymentToRestart: union-operator-proxy
       limitNamespace: 'union'
       disableClusterPermissions: true
-      apps: 
+      apps:
         enabled: 'false'
-      syncClusterConfig: 
+      syncClusterConfig:
         enabled: false
-      clusterId: 
+      clusterId:
         organization: 'union'
       clusterData:
         appId: 'my-client-id'
@@ -264,16 +272,16 @@ data:
         metadataBucketPrefix: s3://bucket
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
-      collectUsages: 
+      collectUsages:
         enabled: false
-      billableUsageCollector: 
+      billableUsageCollector:
         enabled: false
-      dependenciesHeartbeat: 
+      dependenciesHeartbeat:
         propeller:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
-    proxy: 
+    proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
         defaultRepository: ''
@@ -288,7 +296,7 @@ data:
           namespace: 'union'
         type: 'K8s'
   logger.yaml: |
-    logger: 
+    logger:
       level: 4
       show-source: true
   config-overrides.yaml: | 
@@ -433,9 +441,12 @@ data:
         - FLYTE_AWS_SECRET_ACCESS_KEY: test
         default-memory: 100Mi
   logger.yaml: |
-    logger: 
+    logger:
       level: 4
       show-source: true
+  namespace_config.yaml: | 
+    namespace_mapping:
+      template: 'union'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
@@ -759,7 +770,10 @@ kind: Service
 metadata:
   name: release-name-dataplane-executor
   labels:
-    app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 spec:
   type: ClusterIP
   ports:
@@ -768,7 +782,8 @@ spec:
       protocol: TCP
       name: fasttask
   selector:
-    app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: release-name
 ---
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
@@ -822,15 +837,15 @@ kind: Service
 metadata:
   name: flyte-pod-webhook
   namespace: union
-  labels: 
+  labels:
     app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
-  annotations: 
+  annotations:
     projectcontour.io/upstream-protocol.h2c: grpc
 spec:
-  selector: 
+  selector:
     app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
   ports:
@@ -849,7 +864,7 @@ kind: Service
 metadata:
   namespace: union
   name: flytepropeller
-  labels: 
+  labels:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
@@ -864,7 +879,7 @@ spec:
       port: 15605
       protocol: TCP
       targetPort: 15605
-  selector: 
+  selector:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
 ---
@@ -875,16 +890,25 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: executor
+      app.kubernetes.io/name: executor
+      app.kubernetes.io/instance: release-name
   template:
     metadata:
+      annotations:
+        configChecksum: "2016253d202ba18f95f81196102d326b774067141606a2db343b5ae1a068888"
       labels:
-        app: executor
+        app.kubernetes.io/name: executor
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
     spec:
       securityContext:
         fsGroup: 1337
@@ -916,16 +940,37 @@ spec:
               containerPort: 10254
               protocol: TCP
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: GOMEMLIMIT
               valueFrom:
                 resourceFieldRef:
-                  divisor: "1"
+                  divisor: 1
                   resource: limits.memory
             - name: GOMAXPROCS
               valueFrom:
                 resourceFieldRef:
-                  divisor: "1"
+                  divisor: 1
                   resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
           resources:
             limits:
               cpu:    "4"
@@ -961,7 +1006,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "250779afed88ceeb263fd1c2f11b55fff895d8b8e0df00ba32995fed6af679a"
+        configChecksum: "60baae9c1bcd25686bd15967085cab8ca55f0686b40a8a58ae3370af1c2198c"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -978,7 +1023,6 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
-      priorityClassName: 
       serviceAccountName: proxy-system
       securityContext:
         {}
@@ -1089,16 +1133,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "250779afed88ceeb263fd1c2f11b55fff895d8b8e0df00ba32995fed6af679a"
+        configChecksum: "60baae9c1bcd25686bd15967085cab8ca55f0686b40a8a58ae3370af1c2198c"
         
       labels:
-        
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      priorityClassName: 
       serviceAccountName: operator-system
       securityContext:
         {}
@@ -1201,16 +1243,15 @@ spec:
   template:
     metadata:
       labels:
-        
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "199dbf88c79f06c7fc85d6642b930ea58c2f3aa3d2e4d5238ed217989bef2a5"
+        configChecksum: "e752262ec8c01118293cbf355f45bf04f89efbb891c43ac62a809321717f61b"
         
     spec:
-      securityContext: 
+      securityContext:
         fsGroup: 65534
         fsGroupChangePolicy: Always
         runAsNonRoot: true
@@ -1357,10 +1398,9 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "199dbf88c79f06c7fc85d6642b930ea58c2f3aa3d2e4d5238ed217989bef2a5"
+        configChecksum: "e752262ec8c01118293cbf355f45bf04f89efbb891c43ac62a809321717f61b"
         
       labels:
-        
         
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: release-name
