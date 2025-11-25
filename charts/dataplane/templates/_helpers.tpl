@@ -59,7 +59,7 @@ Adds custom PodSpec values.
 {{- end -}}
 
 {{- define "flytepropeller.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.flytepropeller.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -71,48 +71,48 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "flytepropeller.labels" -}}
-{{ include "flytepropeller.selectorLabels" . }}
+{{- include "flytepropeller.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropeller.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ include "flytepropeller.labels" . }}
+{{- include "global.podLabels" . }}
+{{- include "flytepropeller.labels" . }}
 {{- with .Values.flytepropeller.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
 {{- define "flytepropeller.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.flytepropeller.topologySpreadConstraints }}
+{{- with .Values.flytepropeller.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.affinity" -}}
-{{ with .Values.flytepropeller.affinity }}
+{{- with .Values.flytepropeller.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.nodeSelector" -}}
-{{ with .Values.flytepropeller.nodeSelector }}
+{{- with .Values.flytepropeller.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.nodeName" -}}
-{{ with .Values.flytepropeller.nodeName }}
+{{- with .Values.flytepropeller.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.tolerations" -}}
-{{ with .Values.flytepropeller.tolerations }}
+{{- with .Values.flytepropeller.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -152,48 +152,48 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.labels" -}}
-{{ include "flytepropellerwebhook.selectorLabels" . }}
+{{- include "flytepropellerwebhook.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ include "flytepropellerwebhook.labels" . }}
+{{- include "global.podLabels" . }}
+{{- include "flytepropellerwebhook.labels" . }}
 {{- with .Values.flytepropellerwebhook.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.flytepropellerwebhook.topologySpreadConstraints }}
+{{- with .Values.flytepropellerwebhook.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.affinity" -}}
-{{ with .Values.flytepropellerwebhook.affinity }}
+{{- with .Values.flytepropellerwebhook.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.nodeSelector" -}}
-{{ with .Values.flytepropellerwebhook.nodeSelector }}
+{{- with .Values.flytepropellerwebhook.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.nodeName" -}}
-{{ with .Values.flytepropellerwebhook.nodeName }}
+{{- with .Values.flytepropellerwebhook.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.tolerations" -}}
-{{ with .Values.flytepropellerwebhook.tolerations }}
+{{- with .Values.flytepropellerwebhook.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -232,7 +232,7 @@ tolerations:
 {{- end }}
 
 {{- define "nodeobserver.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.nodeobserver.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -244,48 +244,48 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "nodeobserver.labels" -}}
-{{ include "nodeobserver.selectorLabels" . }}
+{{- include "nodeobserver.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "nodeobserver.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ include "nodeobserver.labels" . }}
+{{- include "global.podLabels" . }}
+{{- include "nodeobserver.labels" . }}
 {{- with .Values.nodeobserver.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
 {{- define "nodeobserver.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.nodeobserver.topologySpreadConstraints }}
+{{- with .Values.nodeobserver.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.affinity" -}}
-{{ with .Values.nodeobserver.affinity }}
+{{- with .Values.nodeobserver.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.nodeSelector" -}}
-{{ with .Values.nodeobserver.nodeSelector }}
+{{- with .Values.nodeobserver.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.nodeName" -}}
-{{ with .Values.nodeobserver.nodeName }}
+{{- with .Values.nodeobserver.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.tolerations" -}}
-{{ with .Values.nodeobserver.tolerations }}
+{{- with .Values.nodeobserver.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -327,7 +327,7 @@ Create the name of the clusterresources service account
 {{- end }}
 
 {{- define "clusterresourcesync.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.clusterresourcesync.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -339,47 +339,47 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "clusterresourcesync.labels" -}}
-{{ include "clusterresourcesync.selectorLabels" . }}
+{{- include "clusterresourcesync.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "clusterresourcesync.podLabels" -}}
-{{ include "clusterresourcesync.labels" . }}
+{{- include "clusterresourcesync.labels" . }}
 {{- with .Values.clusterresourcesync.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
 {{- define "clusterresourcesync.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.clusterresourcesync.topologySpreadConstraints }}
+{{- with .Values.clusterresourcesync.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.affinity" -}}
-{{ with .Values.clusterresourcesync.affinity }}
+{{- with .Values.clusterresourcesync.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.nodeSelector" -}}
-{{ with .Values.clusterresourcesync.nodeSelector }}
+{{- with .Values.clusterresourcesync.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.nodeName" -}}
-{{ with .Values.clusterresourcesync.nodeName }}
+{{- with .Values.clusterresourcesync.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.tolerations" -}}
-{{ with .Values.clusterresourcesync.tolerations }}
+{{- with .Values.clusterresourcesync.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -421,7 +421,7 @@ Create the name of the service account to use
 {{- end }}
 
 {{- define "operator.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.operator.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -433,47 +433,47 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "operator.labels" -}}
-{{ include "operator.selectorLabels" . }}
+{{- include "operator.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "operator.podLabels" -}}
-{{ include "operator.labels" . }}
+{{- include "operator.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
 
 {{- define "operator.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.operator.topologySpreadConstraints }}
+{{- with .Values.operator.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "operator.scheduling.affinity" -}}
-{{ with .Values.operator.affinity }}
+{{- with .Values.operator.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "operator.scheduling.nodeSelector" -}}
-{{ with .Values.operator.nodeSelector }}
+{{- with .Values.operator.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "operator.scheduling.nodeName" -}}
-{{ with .Values.operator.nodeName }}
+{{- with .Values.operator.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "operator.scheduling.tolerations" -}}
-{{ with .Values.operator.tolerations }}
+{{- with .Values.operator.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -528,7 +528,7 @@ Create the name of the service account to use
 {{- end }}
 
 {{- define "proxy.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.proxy.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -544,13 +544,13 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "proxy.labels" -}}
-{{ include "proxy.selectorLabels" . }}
+{{- include "proxy.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "proxy.podLabels" -}}
-{{ include "proxy.labels" . }}
+{{- include "proxy.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -569,12 +569,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "kubeStateMetrics.labels" -}}
-{{ include "kubeStateMetrics.selectorLabels" . }}
+{{- include "kubeStateMetrics.selectorLabels" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "kubeStateMetrics.podLabels" -}}
-{{ include "kubeStateMetrics.labels" . }}
+{{- include "kubeStateMetrics.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -594,12 +594,12 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "dcgmExporter.labels" -}}
-{{ include "dcgmExporter.selectorLabels" . }}
+{{- include "dcgmExporter.selectorLabels" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "dcgmExporter.podLabels" -}}
-{{ include "dcgmExporter.labels" . }}
+{{- include "dcgmExporter.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -677,34 +677,34 @@ http://{{ include "union-operator.fullname" . }}-proxy:8080
 {{- end -}}
 
 {{- define "proxy.scheduling.topologySpreadConstraints" -}}
-{{ with .Values.proxy.topologySpreadConstraints }}
+{{- with .Values.proxy.topologySpreadConstraints }}
 topologySpreadConstraints:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "proxy.scheduling.affinity" -}}
-{{ with .Values.proxy.affinity }}
+{{- with .Values.proxy.affinity }}
 affinity:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "proxy.scheduling.nodeSelector" -}}
-{{ with .Values.proxy.nodeSelector }}
+{{- with .Values.proxy.nodeSelector }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
 {{- end }}
 
 {{- define "proxy.scheduling.nodeName" -}}
-{{ with .Values.proxy.nodeName }}
+{{- with .Values.proxy.nodeName }}
 nodeName: {{ toYaml . }}
 {{- end }}
 {{- end }}
 
 {{- define "proxy.scheduling.tolerations" -}}
-{{ with .Values.proxy.tolerations }}
+{{- with .Values.proxy.tolerations }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -969,7 +969,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "imagebuilder.buildkit.labels" -}}
-{{ include "imagebuilder.buildkit.selectorLabels" . }}
+{{- include "imagebuilder.buildkit.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
@@ -1012,7 +1012,7 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- end -}}
 
 {{- define "executor.serviceAccount.annotations" -}}
-{{ include "global.serviceAccountAnnotations" . }}
+{{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.executor.serviceAccount.annotations }}
 {{ toYaml . }}
 {{- end }}
@@ -1024,14 +1024,14 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{- define "executor.labels" -}}
-{{ include "executor.selectorLabels" . }}
+{{- include "executor.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "executor.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ include "executor.labels" . }}
+{{- include "global.podLabels" . }}
+{{- include "executor.labels" . }}
 {{- with .Values.executor.podLabels }}
 {{ toYaml . }}
 {{- end }}
