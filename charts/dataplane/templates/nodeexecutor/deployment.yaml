@@ -5,16 +5,18 @@ metadata:
   name: executor
   namespace: {{ .Release.Namespace }}
   labels:
-    app: executor
+    {{- include "executor.labels" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: executor
+      {{- include "executor.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/nodeexecutor/configmap.yaml") . | sha256sum | trunc 63 | quote }}
       labels:
-        app: executor
+        {{- include "executor.podLabels" . | nindent 8 }}
     spec:
       securityContext:
         fsGroup: 1337
@@ -31,6 +33,9 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
         {{- end }}
+      {{- with .Values.executor.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
       containers:
         - name: executor
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -48,16 +53,10 @@ spec:
               containerPort: 10254
               protocol: TCP
           env:
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  divisor: "1"
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  divisor: "1"
-                  resource: limits.cpu
+            {{- include "global.podEnvVars" . | nindent 12 }}
+            {{- with .Values.executor.podEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           resources:
             limits:
               cpu:    {{ .Values.executor.resources.limits.cpu | quote }}
@@ -74,4 +73,7 @@ spec:
             - name: auth
               mountPath: /etc/secrets/
             {{- end }}
+          {{- with .Values.executor.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
 {{- end }}
