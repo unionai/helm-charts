@@ -1018,21 +1018,20 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- end }}
 {{- end }}
 
+{{/*
+TODO: Make these consistent with label sets in other components.
+Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
+*/}}
 {{- define "executor.selectorLabels" -}}
-app.kubernetes.io/name: executor
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{- .Values.executor.selector.matchLabels | default (dict "app" "executor") | toYaml }}
 {{- end -}}
 
 {{- define "executor.labels" -}}
 {{- include "executor.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "executor.podLabels" -}}
-{{- include "global.podLabels" . }}
-{{- include "executor.labels" . }}
-{{- with .Values.executor.podLabels }}
-{{ toYaml . }}
-{{- end }}
+{{- $labels := include "executor.labels" . | fromYaml -}}
+{{- $podLabels := .Values.executor.podLabels | default dict -}}
+{{- mustMergeOverwrite $podLabels $labels | toYaml }}
 {{- end -}}
