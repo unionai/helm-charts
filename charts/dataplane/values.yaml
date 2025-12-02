@@ -341,7 +341,7 @@ config:
   core:
     # -- follows the structure specified [here](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/config).
     propeller:
-      rawoutput-prefix: "s3://{{ tpl .Values.storage.bucketName . }}"
+      rawoutput-prefix: '{{ include "storage.metadata-prefix" . }}'
       metadata-prefix: metadata/propeller
       workers: 4
       max-workflow-retries: 30
@@ -378,6 +378,8 @@ config:
     webhook:
       certDir: /etc/webhook/certs
       serviceName: flyte-pod-webhook
+      servicePort: "{{ .Values.flytepropellerwebhook.service.port }}"
+      listenPort: "{{ .Values.flytepropellerwebhook.service.targetPort }}"
       secretManagerTypes:
       - Embedded
       - K8s
@@ -457,7 +459,7 @@ config:
       # -- The hose name for control plane access. This will be provided by Union.
       cloudHostName: "{{ tpl .Values.host . }}"
       # -- The prefix for constructing object storage URLs.
-      metadataBucketPrefix: "s3://{{ tpl .Values.storage.bucketName . }}"
+      metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
       bucketName: "{{ tpl .Values.storage.bucketName . }}"
       # -- The bucket region for object storage.
@@ -823,6 +825,10 @@ flytepropellerwebhook:
     annotations:
       projectcontour.io/upstream-protocol.h2c: grpc
     type: ClusterIP
+    # -- HTTPS port for the webhook service
+    port: 443
+    # -- Target port for the webhook service (container port)
+    targetPort: 9443
 
   # -- Annotations for webhook pods
   podAnnotations: {}
@@ -850,6 +856,10 @@ flytepropellerwebhook:
       type: spc_t
 
   resources:
+    limits:
+      cpu: 1
+      ephemeral-storage: 500Mi
+      memory: 500Mi
     requests:
       cpu: 200m
       ephemeral-storage: 500Mi
@@ -1212,6 +1222,13 @@ proxy:
     requests:
       cpu: "500m"
       memory: "500Mi"
+  tunnel_resources:
+    limits:
+      cpu: "3"
+      memory: "3Gi"
+    requests:
+      cpu: "500m"
+      memory: "500Mi"
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
@@ -1461,4 +1478,7 @@ extraObjects: []
 
 ## -- Automatically create namespaces to deploy into
 namespaces:
+  enabled: true
+
+monitoring:
   enabled: true

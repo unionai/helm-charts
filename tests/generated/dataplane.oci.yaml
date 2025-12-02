@@ -570,7 +570,7 @@ data:
         bucketRegion: 'us-ashburn-1'
         cloudHostName: 'union.us-west-2.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: s3://bucket
+        metadataBucketPrefix: 's3://bucket'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -703,7 +703,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: s3://bucket
+      rawoutput-prefix: 's3://bucket'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -714,10 +714,12 @@ data:
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
+      listenPort: '9443'
       secretManagerTypes:
       - Embedded
       - K8s
       serviceName: flyte-pod-webhook
+      servicePort: '443'
   enabled_plugins.yaml: | 
     tasks:
       task-plugins:
@@ -2510,7 +2512,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2584,7 +2586,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2667,7 +2669,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "cb798183775bde1371385027d30c2bc7bb5dd9a3fa0390a2312597912589383"
+        configChecksum: "a3ae2b6bb352f9db7adb268f99173d99aa68d38ceeed561abed76c1b05d4fc8"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -2693,7 +2695,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2763,7 +2765,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2779,6 +2781,13 @@ spec:
                   name: union-secret-auth
                   key: tunnel_token
                   optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
       
       nodeSelector:
         flyte.org/node-role: worker
@@ -2806,7 +2815,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "cb798183775bde1371385027d30c2bc7bb5dd9a3fa0390a2312597912589383"
+        configChecksum: "a3ae2b6bb352f9db7adb268f99173d99aa68d38ceeed561abed76c1b05d4fc8"
         
       labels:
         app.kubernetes.io/name: union-operator
@@ -2828,7 +2837,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2931,7 +2940,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "5db57c30478f4c0a5eaf335817fd6252b2f8878c37b4fde2bc4459079e4f814"
+        configChecksum: "69dcda034ed0f2392a45dc6a61d85e032639e16b731630ae10e2ac75f8b0984"
         
     spec:
       securityContext:
@@ -2944,7 +2953,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2987,16 +2996,21 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+          resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3041,11 +3055,11 @@ spec:
           ports:
             - containerPort: 9443
             - containerPort: 10254
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
             requests:
               cpu: 200m
               ephemeral-storage: 500Mi
@@ -3093,7 +3107,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5db57c30478f4c0a5eaf335817fd6252b2f8878c37b4fde2bc4459079e4f814"
+        configChecksum: "69dcda034ed0f2392a45dc6a61d85e032639e16b731630ae10e2ac75f8b0984"
         
       labels:
         
@@ -3144,7 +3158,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:

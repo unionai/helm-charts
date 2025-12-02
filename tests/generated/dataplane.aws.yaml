@@ -570,7 +570,7 @@ data:
         bucketRegion: 'us-east-2'
         cloudHostName: 'union.us-west-2.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: s3://bucket
+        metadataBucketPrefix: 's3://bucket'
         userRole: 'arn:aws:iam::000000000000:role/union-flyte-role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -691,7 +691,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: s3://bucket
+      rawoutput-prefix: 's3://bucket'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -702,10 +702,12 @@ data:
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
+      listenPort: '9443'
       secretManagerTypes:
       - Embedded
       - K8s
       serviceName: flyte-pod-webhook
+      servicePort: '443'
   enabled_plugins.yaml: | 
     tasks:
       task-plugins:
@@ -2485,7 +2487,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2551,7 +2553,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2632,7 +2634,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7611ec76551125d88307f32bacd59bc8bdf827f3bad9f32cb24d0d30d81250d"
+        configChecksum: "d95b887a317fda3f5e46e200151e0e19b37aab7b0336d04af954891d9be0174"
         
       labels:
         app.kubernetes.io/name: operator-proxy
@@ -2658,7 +2660,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2726,7 +2728,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2742,6 +2744,13 @@ spec:
                   name: union-secret-auth
                   key: tunnel_token
                   optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
 ---
 # Source: dataplane/templates/operator/deployment.yaml
 apiVersion: apps/v1
@@ -2761,7 +2770,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7611ec76551125d88307f32bacd59bc8bdf827f3bad9f32cb24d0d30d81250d"
+        configChecksum: "d95b887a317fda3f5e46e200151e0e19b37aab7b0336d04af954891d9be0174"
         
       labels:
         app.kubernetes.io/name: union-operator
@@ -2783,7 +2792,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2876,7 +2885,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "f98c89d46f3bc73e3d4ec98e6b9dc82412264689fa0091066c13d3e3d9e2035"
+        configChecksum: "0ebdbf8609425b732cd841a9b56a0e7ded774528dc7a8241bbdd778a4facfaa"
         
     spec:
       securityContext:
@@ -2889,7 +2898,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2930,16 +2939,21 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+          resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2982,11 +2996,11 @@ spec:
           ports:
             - containerPort: 9443
             - containerPort: 10254
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
             requests:
               cpu: 200m
               ephemeral-storage: 500Mi
@@ -3026,7 +3040,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f98c89d46f3bc73e3d4ec98e6b9dc82412264689fa0091066c13d3e3d9e2035"
+        configChecksum: "0ebdbf8609425b732cd841a9b56a0e7ded774528dc7a8241bbdd778a4facfaa"
         
       labels:
         
@@ -3075,7 +3089,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.12.1"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
