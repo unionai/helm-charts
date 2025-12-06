@@ -1035,3 +1035,112 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
 {{- mustMergeOverwrite $podLabels $labels | toYaml }}
 {{- end -}}
+
+{{/*
+Webhook certificate helpers
+*/}}
+
+{{/*
+Get the webhook service name
+*/}}
+{{- define "flytepropellerwebhook.serviceName" -}}
+flyte-pod-webhook
+{{- end -}}
+
+{{/*
+Get the webhook secret name
+*/}}
+{{- define "flytepropellerwebhook.secretName" -}}
+flyte-pod-webhook
+{{- end -}}
+
+{{/*
+Get the webhook service DNS names for certificate generation
+*/}}
+{{- define "flytepropellerwebhook.certDnsNames" -}}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . -}}
+{{- $namespace := .Release.Namespace -}}
+- {{ $serviceName }}
+- {{ $serviceName }}.{{ $namespace }}
+- {{ $serviceName }}.{{ $namespace }}.svc
+- {{ $serviceName }}.{{ $namespace }}.svc.cluster.local
+{{- end -}}
+
+{{/*
+Check if cert-manager CRDs are available in the cluster.
+Uses lookup to detect cert-manager, with fallback for template-only environments.
+Returns "true" if cert-manager is available, empty string otherwise.
+*/}}
+{{- define "flytepropellerwebhook.certManagerAvailable" -}}
+{{- if .Values.flytepropellerwebhook.certificate.certManager.issuerRef -}}
+{{- /* User explicitly configured cert-manager issuer, assume it's available */ -}}
+true
+{{- else if .Capabilities.APIVersions.Has "cert-manager.io/v1" -}}
+{{- /* cert-manager CRDs are registered */ -}}
+true
+{{- else -}}
+{{- /* Try lookup as last resort - this works during helm install but not helm template */ -}}
+{{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io" -}}
+{{- if $crd -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Determine if we should use cert-manager based on configuration and availability.
+For Flux/ArgoCD compatibility, when provider is "certManager", we trust the user's configuration.
+*/}}
+{{- define "flytepropellerwebhook.useCertManager" -}}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "certManager" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Generate self-signed CA and server certificates for the webhook.
+This uses Helm's genCA and genSignedCert functions.
+The certificates are cached in a lookup to ensure consistency across template renders.
+*/}}
+{{- define "flytepropellerwebhook.generateCerts" -}}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $secretName := include "flytepropellerwebhook.secretName" . -}}
+{{- /* Check if secret already exists to maintain certificate stability */ -}}
+{{- $existingSecret := lookup "v1" "Secret" $namespace $secretName -}}
+{{- if and $existingSecret $existingSecret.data (index $existingSecret.data "ca.crt") -}}
+{{- /* Reuse existing certificates (new key names) */ -}}
+caCert: {{ index $existingSecret.data "ca.crt" }}
+serverCert: {{ index $existingSecret.data "tls.crt" }}
+serverKey: {{ index $existingSecret.data "tls.key" }}
+{{- else if and $existingSecret $existingSecret.data (index $existingSecret.data "ca-cert.pem") -}}
+{{- /* Reuse existing certificates (old key names - for backward compatibility) */ -}}
+caCert: {{ index $existingSecret.data "ca-cert.pem" }}
+serverCert: {{ index $existingSecret.data "server-cert.pem" }}
+serverKey: {{ index $existingSecret.data "server-key.pem" }}
+{{- else -}}
+{{- /* Generate new certificates */ -}}
+{{- $dnsNames := list $serviceName (printf "%s.%s" $serviceName $namespace) (printf "%s.%s.svc" $serviceName $namespace) (printf "%s.%s.svc.cluster.local" $serviceName $namespace) -}}
+{{- $ca := genCA (printf "%s.%s.svc" $serviceName $namespace) 3650 -}}
+{{- $cert := genSignedCert (printf "%s.%s.svc" $serviceName $namespace) nil $dnsNames 365 $ca -}}
+caCert: {{ $ca.Cert | b64enc }}
+serverCert: {{ $cert.Cert | b64enc }}
+serverKey: {{ $cert.Key | b64enc }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Get the CA bundle for the webhook configuration.
+This returns the base64-encoded CA certificate based on the certificate provider.
+*/}}
+{{- define "flytepropellerwebhook.caBundle" -}}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "external" -}}
+{{- .Values.flytepropellerwebhook.certificate.external.caCert -}}
+{{- else if eq .Values.flytepropellerwebhook.certificate.provider "helm" -}}
+{{- $certs := include "flytepropellerwebhook.generateCerts" . | fromYaml -}}
+{{- $certs.caCert -}}
+{{- else if eq .Values.flytepropellerwebhook.certificate.provider "certManager" -}}
+{{- /* For cert-manager, caBundle is injected by cert-manager's cainjector */ -}}
+{{- /* Return empty to signal that cainjector should handle it */ -}}
+{{- end -}}
+{{- end -}}
