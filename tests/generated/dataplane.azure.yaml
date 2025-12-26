@@ -35,35 +35,6 @@ kind: Namespace
 metadata:
   name: union-health-monitoring-production
 ---
-# Source: dataplane/charts/dcgm-exporter/templates/serviceaccount.yaml
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-dcgm-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-automountServiceAccountToken: false
----
 # Source: dataplane/charts/fluentbit/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -76,6 +47,9 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    azure.workload.identity/client-id: '{{ tpl .Values.global.AZURE_BACKEND_CLIENT_ID
+      . }}'
 ---
 # Source: dataplane/charts/opencost/templates/serviceaccount.yaml
 apiVersion: v1
@@ -155,6 +129,8 @@ kind: ServiceAccount
 metadata:
   name: clustersync-system
   namespace: union
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: v1
@@ -164,6 +140,8 @@ metadata:
   namespace: union
   labels:
     app: executor
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -175,6 +153,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -186,6 +166,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 apiVersion: v1
@@ -193,6 +175,8 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-webhook-system
   namespace: union
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
@@ -200,6 +184,20 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-system
   namespace: union
+  annotations:
+    azure.workload.identity/client-id: 'test-backend-client-id'
+---
+# Source: dataplane/templates/common/auth-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: union-secret-auth
+  namespace: union
+type: Opaque
+data:
+  # TODO(rob): update or configure operator to use client_secret like all the other components.
+  app_secret: dGVzdC1jbGllbnQtc2VjcmV0LXZhbHVl
+  client_secret: dGVzdC1jbGllbnQtc2VjcmV0LXZhbHVl
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -208,7 +206,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name:
+  cluster_name: dGVzdC1henVyZS1jbHVzdGVy
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -218,100 +216,6 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
 type: Opaque
----
-# Source: dataplane/charts/dcgm-exporter/templates/metrics-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: exporter-metrics-config-map
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-data:
-  metrics: |
-    # Format
-    # If line starts with a '#' it is considered a comment
-    # DCGM FIELD, Prometheus metric type, help message
-    
-    # Clocks
-    DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
-    DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
-    
-    # Temperature
-    DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
-    DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
-    
-    # Power
-    DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-    DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
-    
-    # PCIE
-    # DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
-    # DCGM_FI_PROF_PCIE_RX_BYTES,  counter, Total number of bytes received through PCIe RX via NVML.
-    DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
-    
-    # Utilization (the sample period varies depending on the product)
-    DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
-    DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-    DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
-    DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
-    
-    # Errors and violations
-    DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
-    # DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in ns).
-    # DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in ns).
-    # DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in ns).
-    # DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in ns).
-    # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
-    # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
-    
-    # Memory usage
-    DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
-    DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-    
-    # ECC
-    # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
-    # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Total number of double-bit volatile ECC errors.
-    # DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Total number of single-bit persistent ECC errors.
-    # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
-    
-    # Retired pages
-    # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
-    # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-    # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
-    
-    # NVLink
-    # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
-    # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
-    # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
-    # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-    DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
-    # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
-    
-    # VGPU License status
-    DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
-    
-    # Remapped rows
-    DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
-    DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
-    DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
-    
-    # DCP metrics
-    DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
-    DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
-    DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
-    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
-    DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
-    # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
-    # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
-    # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
-    DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
-    DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -327,7 +231,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: ''
+      clusterName: 'test-azure-cluster'
       customData:
       - production:
         - projectQuotaCpu:
@@ -337,9 +241,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-client-id'
       - staging:
         - projectQuotaCpu:
             value: "4096"
@@ -348,9 +252,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-client-id'
       - development:
         - projectQuotaCpu:
             value: "4096"
@@ -359,9 +263,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-client-id'
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
@@ -371,17 +275,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///
+        host: dns:///test.dataplane.union.ai
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -395,6 +299,9 @@ data:
       name: staging
     - id: production
       name: production
+  namespace_config.yaml: | 
+    namespace_mapping:
+      template: '{{`{{ domain }}`}}'
   clusters.yaml: |
     clusters:
       clusterConfigs: []
@@ -482,17 +389,6 @@ data:
         Mem_Buf_Limit       5MB
         Skip_Long_Lines     On
         Refresh_Interval    10
-    
-    
-    [OUTPUT]
-        Name s3
-        Match *
-        upload_timeout 1m
-        s3_key_format /persisted-logs/$TAG
-        static_file_path true
-        json_date_key false
-        region us-east-1
-        bucket
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -525,10 +421,10 @@ data:
         - fast-task
   config.yaml: |
     executor:
-      cluster: ''
+      cluster: 'test-azure-cluster'
       evaluatorCount: 64
       maxActions: 2000
-      organization: ''
+      organization: 'test-org'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -543,29 +439,31 @@ data:
           memory: 2Ti
     union:
       connection:
-        host: dns:///
+        host: dns:///test.dataplane.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///test.dataplane.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
     logger:
       level: 4
       show-source: true
+    namespace_mapping:
+      template: '{{ domain }}'
     sharedService:
       metrics:
         scope: 'executor:'
@@ -594,25 +492,37 @@ data:
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: 'test-storage-account'
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
         co-pilot:
           image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
           name: flyte-copilot-
           start-timeout: 30s
     storage:
       container: 
-      type: stow
+      container: 'test-metadata-container'
       stow:
-        kind: s3
         config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -631,18 +541,36 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   k8s.yaml: | 
+    Error: 'error converting YAML to JSON: yaml: invalid map key: map[interface {}]interface
+      {}{".Values.global.AZURE_STORAGE_ACCOUNT":interface {}(nil)}'
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: 'test-storage-account'
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
   config.yaml: |
     union:
       connection:
-        host: dns:///
+        host: dns:///test.dataplane.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -663,16 +591,25 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: ''
+        organization: 'test-org'
       clusterData:
-        appId: 'dataplane-operator'
+        appId: 'test-client-id'
         bucketName: ''
         bucketRegion: 'us-east-1'
-        cloudHostName: ''
+        cloudHostName: 'test.dataplane.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://{{ .Values.global.METADATA_BUCKET }}'
-        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-        userRoleKey: 'eks.amazonaws.com/role-arn'
+        metadataBucketPrefix: abfs://{{ .Values.global.METADATA_CONTAINER }}@{{ .Values.global.AZURE_STORAGE_ACCOUNT }}.dfs.core.windows.net
+        userRole: 'test-worker-client-id'
+        userRoleKey: 'azure.workload.identity/client-id'
+        # -- storageType is only used when syncClusterConfig is enabled. It is intentionally disabled and it should not be used.
+        storageType: custom
+        customStorageConfig: |
+          container: 'test-metadata-container'
+          stow:
+            config:
+              account: 'test-storage-account'
+            kind: azure
+          type: stow
       collectUsages:
         enabled: true
       billableUsageCollector:
@@ -684,20 +621,26 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: '{{ domain }}'
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
         defaultRepository: ''
       persistedLogs:
+        azureLogAnalytics:
+          logAnalyticsWorkspaceResourceIdTemplate: /subscriptions/test-subscription-id/resourceGroups/test-resource-group/providers/Microsoft.OperationalInsights/workspaces/union-{{ .Values.global.ORG_NAME }}
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
           prefix: persisted-logs
-        sourceType: ObjectStore
+        sourceType: AzureLogAnalytics
       smConfig:
-        enabled: 'true'
+        azureConfig:
+          vaultURI: 'test-azure-key-vault-uri'
+        enabled: true
         k8sConfig:
           namespace: 'union'
-        type: 'K8s'
+        type: Azure
   logger.yaml: |
     logger:
       level: 4
@@ -709,17 +652,13 @@ data:
   storage.yaml: | 
     storage:
       container: 
-      type: stow
+      container: 'test-metadata-container'
       stow:
-        kind: s3
         config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -728,16 +667,12 @@ data:
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
       container: ""
-      type: stow
+      container: 'test-metadata-container'
       stow:
-        kind: s3
         config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -748,9 +683,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -758,8 +693,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///test.dataplane.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -809,15 +744,18 @@ data:
     webhook:
       certDir: /etc/webhook/certs
       embeddedSecretManagerConfig:
+        azureConfig:
+          vaultURI: 'test-azure-key-vault-uri'
+        enabled: true
         imagePullSecrets:
           enabled: true
         k8sConfig:
           namespace: 'union'
-        type: 'K8s'
+        type: Azure
       listenPort: '9443'
       secretManagerTypes:
+      - Azure
       - Embedded
-      - K8s
       serviceName: flyte-pod-webhook
       servicePort: '443'
   enabled_plugins.yaml: | 
@@ -836,22 +774,66 @@ data:
         - echo
         - fast-task
   k8s.yaml: | 
+    Error: 'error converting YAML to JSON: yaml: invalid map key: map[interface {}]interface
+      {}{".Values.global.AZURE_STORAGE_ACCOUNT":interface {}(nil)}'
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: 'test-storage-account'
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
   logger.yaml: |
     logger:
       level: 4
       show-source: true
+  namespace_config.yaml: | 
+    namespace_mapping:
+      template: '{{ domain }}'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
         type: noop
   task_logs.yaml: | 
     plugins:
+      fasttask:
+        logs:
+          azure-log-templates:
+          - displayName: Azure Logs
+            templateUris:
+            - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2Ftest-subscription-id%2FresourceGroups%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          stackdriver-enabled: false
+      k8s-array:
+        logs:
+          config:
+            azure-log-templates:
+            - displayName: Azure Logs
+              templateUris:
+              - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%%2Fsubscriptions%%2Ftest-subscription-id%%2FresourceGroups%%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            stackdriver-enabled: false
       logs:
+        azure-log-templates:
+        - displayName: Azure Logs
+          templateUris:
+          - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2Ftest-subscription-id%2FresourceGroups%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
         cloudwatch-enabled: false
         dynamic-log-links:
         - vscode:
@@ -859,6 +841,7 @@ data:
             templateUris:
             - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
         kubernetes-enabled: false
+        stackdriver-enabled: false
         templates:
         - displayName: Task Logs
           scheme: TaskExecution
@@ -867,17 +850,13 @@ data:
   storage.yaml: | 
     storage:
       container: 
-      type: stow
+      container: 'test-metadata-container'
       stow:
-        kind: s3
         config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -1690,25 +1669,6 @@ subjects:
     name: flytepropeller-system
     namespace: union
 ---
-# Source: dataplane/charts/dcgm-exporter/templates/role.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: dcgm-exporter-read-cm
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  resourceNames: ["exporter-metrics-config-map"]
-  verbs: ["get"]
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -1755,28 +1715,6 @@ rules:
       - create
       - update
 ---
-# Source: dataplane/charts/dcgm-exporter/templates/rolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-dcgm-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-subjects:
-- kind: ServiceAccount
-  name: release-name-dcgm-exporter
-  namespace: union
-roleRef:
-  kind: Role
-  name: dcgm-exporter-read-cm
-  apiGroup: rbac.authorization.k8s.io
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1815,46 +1753,6 @@ subjects:
   - kind: ServiceAccount
     name: operator-system
     namespace: union
----
-# Source: dataplane/charts/dcgm-exporter/templates/service.yaml
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: v1
-kind: Service
-metadata:
-  name: release-name-dcgm-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  internalTrafficPolicy: Cluster
-  ports:
-  - name: "metrics"
-    port: 9400
-    targetPort: 9400
-    protocol: TCP
-  selector:
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
@@ -2244,127 +2142,6 @@ spec:
   selector:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
----
-# Source: dataplane/charts/dcgm-exporter/templates/daemonset.yaml
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: release-name-dcgm-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  updateStrategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 0
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: dcgm-exporter
-      app.kubernetes.io/instance: release-name
-      app.kubernetes.io/component: dcgm-exporter
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: dcgm-exporter
-        app.kubernetes.io/instance: release-name
-        app.kubernetes.io/component: dcgm-exporter
-    spec:
-      priorityClassName: system-node-critical
-      hostPID: false
-      serviceAccountName: release-name-dcgm-exporter
-      automountServiceAccountToken: false
-      tolerations:
-      - effect: NoSchedule
-        key: node-role.kubernetes.io/control-plane
-        operator: Exists
-      volumes:
-      - name: "pod-gpu-resources"
-        hostPath:
-          path: /var/lib/kubelet/pod-resources
-      - configMap:
-          items:
-          - key: metrics
-            path: default-counters.csv
-          name: exporter-metrics-config-map
-        name: exporter-metrics-volume
-      containers:
-      - name: exporter
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            add:
-            - SYS_ADMIN
-            drop:
-            - ALL
-          runAsNonRoot: false
-          runAsUser: 0
-        image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04"
-        imagePullPolicy: "IfNotPresent"
-        args:
-        - -f
-        - /etc/dcgm-exporter/default-counters.csv
-        env:
-        - name: "DCGM_EXPORTER_KUBERNETES"
-          value: "true"
-        - name: "DCGM_EXPORTER_LISTEN"
-          value: ":9400"
-        - name: NODE_NAME
-          valueFrom:
-            fieldRef:
-              fieldPath: spec.nodeName
-        - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
-          value: uid
-        ports:
-        - name: "metrics"
-          containerPort: 9400
-        volumeMounts:
-        - name: "pod-gpu-resources"
-          readOnly: true
-          mountPath: "/var/lib/kubelet/pod-resources"
-        - mountPath: /etc/dcgm-exporter/default-counters.csv
-          name: exporter-metrics-volume
-          subPath: default-counters.csv
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 9400
-            scheme: HTTP
-          initialDelaySeconds: 45
-          periodSeconds: 5
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 9400
-            scheme: HTTP
-          initialDelaySeconds: 45
-        resources:
-          limits:
-            cpu: 200m
-            memory: 1Gi
-          requests:
-            cpu: 100m
-            memory: 128Mi
 ---
 # Source: dataplane/charts/fluentbit/templates/daemonset.yaml
 apiVersion: apps/v1
@@ -2760,7 +2537,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ef57effb8a4388e02ca6dc0593b7546e36e7175dca3885c92c4f645b8bfaaf3"
+        configChecksum: "1101758e8bd1f6ef7e6032ac645c2e391c74c871aa4d5a67aa3a8cc311d102f"
         
       labels:
         app.kubernetes.io/name: clusterresourcesync
@@ -2854,9 +2631,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f7ce4132f0ae5bcff5facb57e8a0269c8c3748854a9478573589d620cbbfb25"
+        configChecksum: "cd540c9eafb2daf2d29955e773be107d96cb38a9216a92bfacaed78db13b600"
       labels:
         app: executor
+        azure.workload.identity/use: "true"
     spec:
       securityContext:
         fsGroup: 1337
@@ -2954,13 +2732,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "e9c60b09ea182badd065c41ef3c10099096a347fc0d93043baa6bc5a794e0e1"
+        configChecksum: "b8e2fb285140184db1f03332e90f313f5b6dea0746f80ed3441e2a1ccaa7b71"
         
       labels:
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        azure.workload.identity/use: "true"
     spec:
       volumes:
         - name: config-volume
@@ -3090,13 +2869,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "e9c60b09ea182badd065c41ef3c10099096a347fc0d93043baa6bc5a794e0e1"
+        configChecksum: "b8e2fb285140184db1f03332e90f313f5b6dea0746f80ed3441e2a1ccaa7b71"
         
       labels:
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        azure.workload.identity/use: "true"
     spec:
       serviceAccountName: operator-system
       securityContext:
@@ -3201,12 +2981,14 @@ spec:
     metadata:
       labels:
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        azure.workload.identity/use: "true"
       annotations:
-        configChecksum: "eb143ce6be255b47f17bd0c0aecee6687b729074d10d821c018d98f7e566c6c"
+        configChecksum: "50e777c42876e4e502ab5a7172fcaeb43a3d7d2ed3d8b0db8306b2f5c8772ce"
         
     spec:
       securityContext:
@@ -3361,15 +3143,17 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "eb143ce6be255b47f17bd0c0aecee6687b729074d10d821c018d98f7e566c6c"
+        configChecksum: "50e777c42876e4e502ab5a7172fcaeb43a3d7d2ed3d8b0db8306b2f5c8772ce"
         
       labels:
         
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        azure.workload.identity/use: "true"
     spec:
       priorityClassName: system-cluster-critical
       containers:
@@ -3378,7 +3162,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - ''
+            - 'test-azure-cluster'
           env:
           - name: POD_NAME
             valueFrom:
@@ -3436,36 +3220,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
----
-# Source: dataplane/charts/dcgm-exporter/templates/tls-secret.yaml
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
----
-# Source: dataplane/charts/dcgm-exporter/templates/web-config-configmap.yaml
-# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -4302,54 +4056,6 @@ spec:
         - record: node_type:uptime_hours:sum15m
           expr: |
             sum_over_time(node_type:uptime_hours:sum[15m:15s])
----
-# Source: dataplane/charts/dcgm-exporter/templates/service-monitor.yaml
-# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: release-name-dcgm-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: dcgm-exporter
-      app.kubernetes.io/instance: release-name
-      app.kubernetes.io/component: dcgm-exporter
-  namespaceSelector:
-    matchNames:
-    - "union"
-  endpoints:
-  - port: "metrics"
-    path: "/metrics"
-    interval: "15s"
-    honorLabels: true
-    relabelings:
-      
-      []
-    metricRelabelings:
-      
-      []
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/servicemonitor.yaml
 apiVersion: monitoring.coreos.com/v1
