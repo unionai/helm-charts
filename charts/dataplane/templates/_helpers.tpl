@@ -345,7 +345,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "clusterresourcesync.podLabels" -}}
-{{- include "clusterresourcesync.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "clusterresourcesync.labels" . }}
 {{- with .Values.clusterresourcesync.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -439,7 +440,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "operator.podLabels" -}}
-{{- include "operator.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "operator.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -550,7 +552,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "proxy.podLabels" -}}
-{{- include "proxy.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "proxy.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -1031,7 +1034,8 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{- end -}}
 
 {{- define "executor.podLabels" -}}
-{{- $labels := include "executor.labels" . | fromYaml -}}
+{{ include "global.podLabels" . }}
+{{ $labels := include "executor.labels" . | fromYaml -}}
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
 {{- mustMergeOverwrite $podLabels $labels | toYaml }}
 {{- end -}}
