@@ -77,8 +77,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropeller.podLabels" -}}
-{{- include "global.podLabels" . }}
-{{- include "flytepropeller.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "flytepropeller.labels" . }}
 {{- with .Values.flytepropeller.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -158,8 +158,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.podLabels" -}}
-{{- include "global.podLabels" . }}
-{{- include "flytepropellerwebhook.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "flytepropellerwebhook.labels" . }}
 {{- with .Values.flytepropellerwebhook.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -756,7 +756,7 @@ Global pod labels
 */}}
 {{- define "global.podLabels" -}}
 {{- with .Values.additionalPodLabels }}
-{{- toYaml . }}
+{{ toYaml . }}
 {{- end }}
 {{- end -}}
 
