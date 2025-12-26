@@ -652,7 +652,8 @@ key authentication is used, the appropriate environment variables to
 access the storage is injected.
 */}}
 {{- define "k8s.plugins" -}}
-{{- $plugins := include "k8s.plugins.defaultEnvVariables" . | fromYaml }}
+{{- $envVarsRendered := tpl (include "k8s.plugins.defaultEnvVariables" .) $ }}
+{{- $plugins := $envVarsRendered | fromYaml }}
 {{- $_ := merge $plugins .Values.config.k8s }}
 {{- with $plugins }}
 {{- (toYaml .) }}
