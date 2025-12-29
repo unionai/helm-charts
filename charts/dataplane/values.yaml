@@ -632,7 +632,7 @@ dcgm-exporter:
     honorLabels: true
 
     additionalLabels:
-      platform.union.ai/group: union-features
+      platform.union.ai/prometheus-group: union-features
 
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
@@ -738,7 +738,7 @@ opencost:
         enabled: true
 
         additionalLabels:
-          platform.union.ai/group: union-features
+          platform.union.ai/prometheus-group: union-features
 
         metricRelabelings:
         - sourceLabels: [ "__name__" ]
@@ -1162,7 +1162,7 @@ prometheus:
   namespaceOverride: ""
 
   commonLabels:
-    platform.union.ai/group: union-features
+    platform.union.ai/prometheus-group: union-features
 
   prometheusOperator:
     # TODO: Identify if this fullnameOverride is necessary.
@@ -1209,13 +1209,21 @@ prometheus:
       # If you want to limit the scope of the prometheus service to only the helm release, set this to true
       # and/or set the selectors to the appropriate values.
       ruleSelectorNilUsesHelmValues: false
-      ruleSelector: {}
+      ruleSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       scrapeConfigSelectorNilUsesHelmValues: false
-      scrapeConfigSelector: {}
+      scrapeConfigSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       serviceMonitorSelectorNilUsesHelmValues: false
-      serviceMonitorSelector: {}
+      serviceMonitorSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       podMonitorSelectorNilUsesHelmValues: false
-      podMonitorSelector: {}
+      podMonitorSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       # Prometheus with Union requires relatively high memory due to high cardinality
       # from executions.
       resources:
@@ -1257,7 +1265,7 @@ prometheus:
       monitor:
 
         additionalLabels:
-          platform.union.ai/group: union-features
+          platform.union.ai/prometheus-group: union-features
 
         http:
           metricRelabelings:
@@ -1587,4 +1595,72 @@ namespaces:
   enabled: true
 
 monitoring:
-  enabled: true
+  enabled: false
+
+  # Override the name to distinguish from main prometheus
+  nameOverride: "union-monitoring"
+  fullnameOverride: "union-monitoring"
+
+  prometheusOperator:
+    enabled: true
+
+  # Assume CRDs are installed with union-features kube-prometheus-stack
+  crds:
+    enabled: false
+
+  alertmanager:
+    enabled: false
+
+  coreDns:
+    enabled: true
+  defaultRules:
+    create: true
+  kubeApiServer:
+    enabled: true
+  kubeControllerManager:
+    enabled: true
+  kubeEtcd:
+    enabled: true
+  kubeProxy:
+    enabled: true
+  kubeScheduler:
+    enabled: true
+  nodeExporter:
+    enabled: true
+  grafana:
+    enabled: true
+    adminPassword: admin
+  kubelet:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+
+  # Prometheus configuration for Union health monitoring
+  prometheus:
+    enabled: true
+    service:
+      port: 80
+    prometheusSpec:
+      maximumStartupDurationSeconds: 600
+      retention: 7d
+      # Focus on Union-specific monitoring resources
+      ruleSelectorNilUsesHelmValues: false
+      ruleSelector:
+        matchLabels:
+          platform.union.ai/monitoring-type: health
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorSelector:
+        matchLabels:
+          platform.union.ai/monitoring-type: health
+      podMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelector:
+        matchLabels:
+          platform.union.ai/monitoring-type: health
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+      routePrefix: /union-monitoring/
