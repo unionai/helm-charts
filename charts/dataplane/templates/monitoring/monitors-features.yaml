@@ -116,7 +116,31 @@ Required Scrape Jobs
 Service and Pod Monitors that are intended to support Union features.
 
 */ -}}
-{{- if and (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") .Values.serving.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flytepropeller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flytepropeller.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "flytepropeller.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - "{{ .Release.Namespace }}"
+  endpoints:
+    - port: debug
+      path: /metrics
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          separator: ";"
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+{{- if and (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") .Values.serving.enabled }}
+---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
 metadata:
