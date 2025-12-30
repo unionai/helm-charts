@@ -79,6 +79,14 @@ Adds custom PodSpec values.
 {{- end }}
 {{- end -}}
 
+{{/*
+Create a full name prefix for serving resources
+*/}}
+{{- define "flytepropeller.fullname" -}}
+{{- $name := include "unionai-dataplane.fullname" . }}
+{{- printf "%s-flytepropeller" $name }}
+{{- end }}
+
 {{- define "flytepropeller.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.flytepropeller.serviceAccount.annotations }}
