@@ -804,7 +804,7 @@ executor:
   task_logs:
     plugins:
       logs:
-        kubernetes-enabled: true
+        kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
   sharedService:
@@ -984,6 +984,73 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+  # -- Configuration for the webhook MutatingWebhookConfiguration and certificates
+  webhook:
+    # -- Enable Helm-managed MutatingWebhookConfiguration (if false, the webhook will create its own)
+    enabled: true
+    # -- Failure policy for the webhook (Fail or Ignore)
+    failurePolicy: Fail
+    # -- Reinvocation policy for the webhook
+    reinvocationPolicy: Never
+    # -- Timeout in seconds for the webhook
+    timeoutSeconds: 30
+    # -- Webhook configurations to create
+    webhooks:
+      # -- Secrets injection webhook configuration
+      secrets:
+        enabled: true
+        # -- Name of the webhook
+        name: flyte-pod-webhook.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/secrets
+        # -- Object selector for the webhook
+        objectSelector:
+          matchLabels:
+            inject-flyte-secrets: "true"
+      # -- Managed image webhook configuration (requires Union operator support)
+      managedImage:
+        enabled: false
+        # -- Name of the webhook
+        name: managed-image-webhook.union.ai
+        # -- Path for the webhook
+        path: /mutate--v1-pod/managed-image
+        # -- Object selector for the webhook (matchExpressions)
+        objectSelector:
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
+
+  # -- Configuration for webhook certificates
+  certificate:
+    # -- Certificate provider:
+    # -- "helm" - Generate self-signed certificates using Helm's crypto functions. Certs are preserved on upgrade if secret exists.
+    # -- "certManager" - Use cert-manager to provision and manage certificates. Requires cert-manager to be installed.
+    # -- "external" - Use externally provided certificates (set caCert, serverCert, serverKey below).
+    provider: helm
+    # -- Duration of the certificate (only used with certManager provider)
+    duration: 8760h
+    # -- Renew before duration (only used with certManager provider)
+    renewBefore: 720h
+    # -- cert-manager configuration (only used when provider is "certManager")
+    certManager:
+      # -- Issuer reference for cert-manager. If not set, a self-signed issuer will be created.
+      issuerRef: {}
+        # name: selfsigned-issuer
+        # kind: ClusterIssuer
+        # group: cert-manager.io
+    # -- External certificate configuration (only used when provider is "external")
+    external:
+      # -- Base64-encoded CA certificate (PEM format)
+      caCert: ""
+      # -- Base64-encoded TLS certificate (PEM format)
+      tlsCrt: ""
+      # -- Base64-encoded TLS private key (PEM format)
+      tlsKey: ""
 
 # Container images
 image:
