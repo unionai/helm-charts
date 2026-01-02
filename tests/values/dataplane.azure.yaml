@@ -1,95 +1,19 @@
-# ============================================================================
-# Union Dataplane Configuration for Azure
-# ============================================================================
-# This file provides a production-ready template for deploying Union dataplane
-# on Azure AKS. Replace the placeholder values below with your actual configuration.
-#
-# For more details, see: https://docs.union.ai/deployment/
-# ============================================================================
-
-# Before deployment, replace these placeholders in the globals section below.
-# The globals section makes these values accessible to both the chart and
-# future subcharts, ensuring consistent configuration across all components.
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# These values are accessible to both the chart and all potential subcharts.
+# Testing ../../charts/dataplane.values.azure.yaml
 
 global:
 
-  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-  #    Format: "hostname" (no protocol prefix for standard BYOC)
-  #    Example: "mycompany.unionai.cloud" or "union.example.com"
-  #    Source: Provided by Union team for BYOC deployments
-  UNION_CONTROL_PLANE_HOST: ""
-
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-eastus" or "staging-cluster"
-  #    Note: Must be unique within your organization
-  CLUSTER_NAME: ""
-
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
-  ORG_NAME: ""
-
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
-  CLIENT_ID: ""
-
-  # 5. METADATA_CONTAINER - Azure Blob container for workflow metadata
-  #    Format: Valid Azure Blob container name
-  #    Example: "union-metadata"
-  #    Note: Container must exist before deployment
-  METADATA_CONTAINER: ""
-
-  # 6. AZURE_STORAGE_ACCOUNT - Azure Storage Account name
-  #    Format: 3-24 lowercase alphanumeric characters
-  #    Example: "unionstorageaccount"
-  #    Note: Storage account must exist before deployment
-  AZURE_STORAGE_ACCOUNT: ""
-
-  # 7. AZURE_SUBSCRIPTION_ID - Azure Subscription ID
-  #    Format: GUID
-  #    Example: "12345678-1234-1234-1234-123456789abc"
-  #    Source: Azure Portal > Subscriptions
-  AZURE_SUBSCRIPTION_ID: ""
-
-  # 8. AZURE_TENANT_ID - Azure AD Tenant ID
-  #    Format: GUID
-  #    Example: "87654321-4321-4321-4321-cba987654321"
-  #    Source: Azure Portal > Azure Active Directory > Overview
-  AZURE_TENANT_ID: ""
-
-  # 9. AZURE_RESOURCE_GROUP - Azure Resource Group name
-  #    Format: Valid Azure resource group name
-  #    Example: "rg-union-prod-eastus"
-  #    Note: Resource group containing Union resources
-  AZURE_RESOURCE_GROUP: ""
-
-  # 10. AZURE_BACKEND_CLIENT_ID - Managed Identity for Union backend services
-  #     Format: GUID (Client ID of User-Assigned Managed Identity)
-  #     Example: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-  #     Permissions: Storage Blob Data Contributor on storage account
-  AZURE_BACKEND_CLIENT_ID: ""
-
-  # 11. AZURE_WORKER_CLIENT_ID - Managed Identity for workflow execution pods
-  #     Format: GUID (Client ID of User-Assigned Managed Identity)
-  #     Example: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj"
-  #     Permissions: Storage Blob Data Contributor, Azure services used by workflows
-  AZURE_WORKER_CLIENT_ID: ""
-
-  # 12. AZURE_KEY_VAULT_URI - Azure Key Vault URI for secrets management
-  #     Format: Full Key Vault URI
-  #     Example: "https://kv-myorg-prod.vault.azure.net/"
-  #     Note: Key Vault must exist with appropriate access policies
-  AZURE_KEY_VAULT_URI: ""
+  UNION_CONTROL_PLANE_HOST: "test.dataplane.union.ai"
+  CLUSTER_NAME: "test-azure-cluster"
+  ORG_NAME: "test-org"
+  CLIENT_ID: "test-client-id"
+  METADATA_CONTAINER: "test-metadata-container"
+  AZURE_STORAGE_ACCOUNT: "test-storage-account"
+  AZURE_SUBSCRIPTION_ID: "test-subscription-id"
+  AZURE_TENANT_ID: "test-tenant-id"
+  AZURE_RESOURCE_GROUP: "test-resource-group"
+  AZURE_BACKEND_CLIENT_ID: "test-backend-client-id"
+  AZURE_WORKER_CLIENT_ID: "test-worker-client-id"
+  AZURE_KEY_VAULT_URI: "test-azure-key-vault-uri"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)
@@ -108,7 +32,6 @@ provider: azure
 
 storage:
   provider: custom
-  bucketName: '{{ .Values.global.METADATA_CONTAINER }}'
   enableMultiContainer: true
 
   # Custom storage configuration using stow with Azure backend
@@ -150,7 +73,7 @@ secrets:
     clientId: '{{ .Values.global.CLIENT_ID }}'
 
     # Client secret for dataplane authentication (keep this secure!)
-    clientSecret: ""
+    clientSecret: "test-client-secret-value"
 
     # Whether to create the Kubernetes secret
     # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
@@ -164,8 +87,10 @@ secrets:
 fluentbit:
   serviceAccount:
     name: fluentbit-system
-    # Annotations may be required for Workload Identity
-    annotations: {}
+    # Workload Identity requires client ID annotation for Azure Blob access
+    # Third-party subchart doesn't support templating - using hardcoded test value
+    annotations:
+      azure.workload.identity/client-id: "test-backend-client-id"
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Workload Identity Pod Labels (REQUIRED)
@@ -173,7 +98,6 @@ fluentbit:
 # Pod labels required for Azure Workload Identity webhook injection.
 
 additionalPodLabels:
-  # Enable workload identity by default
   azure.workload.identity/use: "true"
 
 # ----------------------------------------------------------------------------
@@ -181,24 +105,24 @@ additionalPodLabels:
 # ----------------------------------------------------------------------------
 # Configuration for Azure services including Key Vault, Log Analytics, and scheduling.
 
-# Namespace configuration
-namespace_config:
-  namespace_mapping:
-    template: '{{`{{ domain }}`}}'
 config:
-#--------------------------------------------------------------
-  ## Optional integration with Azure Key Vault secrets manager
-  # core:
-  #   webhook:
-  #     embeddedSecretManagerConfig:
-  #       enabled: true
-  #       type: Azure
-  #       azureConfig:
-  #         vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
-  #     secretManagerTypes:
-  #       - Azure
-  #       - Embedded
-#-------------------------------------------------------------
+  # Core webhook configuration with Azure Key Vault secret manager
+  core:
+    webhook:
+      embeddedSecretManagerConfig:
+        enabled: true
+        type: Azure
+        azureConfig:
+          vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+      secretManagerTypes:
+        - Azure
+        - Embedded
+
+  # Namespace configuration
+  namespace_config:
+    namespace_mapping:
+      template: '{{`{{ domain }}`}}'
+
   # Operator configuration with Azure Blob Storage metadata path
   operator:
     clusterData:

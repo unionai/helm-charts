@@ -48,7 +48,7 @@ the stow based options to provide additional configuration flexibility.
 
 {{- define "storage" -}}
 storage:
-  container: {{ .Values.storage.bucketName }}
+  container: {{ tpl .Values.storage.bucketName . | quote }}
 {{- include "storage.base" . }}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
@@ -66,17 +66,17 @@ fastRegistrationStorage:
 
 {{- define "storage.metadata-prefix" -}}
 {{- if eq .Values.storage.provider "compat" -}}
-s3://{{ .Values.storage.bucketName -}}
+s3://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "oci" -}}
-oci://{{ .Values.storage.bucketName -}}
+oci://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "aws" -}}
-s3://{{ .Values.storage.bucketName -}}
+s3://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "azure" -}}
-azblob://{{ .Values.storage.bucketName -}}
+azblob://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "gcs" -}}
-gs://{{ .Values.storage.bucketName -}}
+gs://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "custom" -}}
-s3://{{ .Values.storage.bucketName -}}
+s3://{{ tpl .Values.storage.bucketName . -}}
 {{- else -}}
 {{- fail "invalid provider" -}}
 {{- end -}}
