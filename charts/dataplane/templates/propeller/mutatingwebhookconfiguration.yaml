@@ -1,0 +1,127 @@
+{{- if .Values.flytepropellerwebhook.webhook.enabled }}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . }}
+{{- $secretName := include "flytepropellerwebhook.secretName" . }}
+{{- $namespace := .Release.Namespace }}
+{{- $useCertManager := include "flytepropellerwebhook.useCertManager" . }}
+{{- $lowPrivilege := .Values.low_privilege }}
+{{- /* Generate certs once and reuse for both secret and webhook config */ -}}
+{{- $certs := dict }}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "helm" }}
+{{- $certs = include "flytepropellerwebhook.generateCerts" . | fromYaml }}
+{{- else if eq .Values.flytepropellerwebhook.certificate.provider "external" }}
+{{- $_ := set $certs "caCert" .Values.flytepropellerwebhook.certificate.external.caCert }}
+{{- $_ := set $certs "serverCert" .Values.flytepropellerwebhook.certificate.external.tlsCrt }}
+{{- $_ := set $certs "serverKey" .Values.flytepropellerwebhook.certificate.external.tlsKey }}
+{{- end }}
+{{- /* Create the Secret first (for helm and external providers) */ -}}
+{{- if ne .Values.flytepropellerwebhook.certificate.provider "certManager" }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
+type: Opaque
+data:
+  ca.crt: {{ $certs.caCert }}
+  tls.crt: {{ $certs.serverCert }}
+  tls.key: {{ $certs.serverKey }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: flyte-pod-webhook
+  labels:
+    {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
+  {{- if $useCertManager }}
+  annotations:
+    {{- $secretName := include "flytepropellerwebhook.secretName" . }}
+    cert-manager.io/inject-ca-from: {{ $namespace }}/{{ $secretName }}-cert
+  {{- end }}
+webhooks:
+{{- if .Values.flytepropellerwebhook.webhook.webhooks.secrets.enabled }}
+  - name: {{ .Values.flytepropellerwebhook.webhook.webhooks.secrets.name }}
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    clientConfig:
+      {{- if not $useCertManager }}
+      caBundle: {{ $certs.caCert }}
+      {{- end }}
+      service:
+        name: {{ $serviceName }}
+        namespace: {{ $namespace }}
+        path: {{ .Values.flytepropellerwebhook.webhook.webhooks.secrets.path }}
+        port: {{ .Values.flytepropellerwebhook.service.port }}
+    failurePolicy: {{ .Values.flytepropellerwebhook.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    {{- if $lowPrivilege }}
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $namespace }}
+    {{- else }}
+    namespaceSelector: {}
+    {{- end }}
+    objectSelector:
+      {{- with .Values.flytepropellerwebhook.webhook.webhooks.secrets.objectSelector }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    reinvocationPolicy: {{ .Values.flytepropellerwebhook.webhook.reinvocationPolicy }}
+    rules:
+      - apiGroups:
+          - '*'
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+        resources:
+          - pods
+        scope: '*'
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: {{ .Values.flytepropellerwebhook.webhook.timeoutSeconds }}
+{{- end }}
+{{- if .Values.flytepropellerwebhook.webhook.webhooks.managedImage.enabled }}
+  - name: {{ .Values.flytepropellerwebhook.webhook.webhooks.managedImage.name }}
+    admissionReviewVersions:
+      - v1
+      - v1beta1
+    clientConfig:
+      {{- if not $useCertManager }}
+      caBundle: {{ $certs.caCert }}
+      {{- end }}
+      service:
+        name: {{ $serviceName }}
+        namespace: {{ $namespace }}
+        path: {{ .Values.flytepropellerwebhook.webhook.webhooks.managedImage.path }}
+        port: {{ .Values.flytepropellerwebhook.service.port }}
+    failurePolicy: {{ .Values.flytepropellerwebhook.webhook.failurePolicy }}
+    matchPolicy: Equivalent
+    {{- if $lowPrivilege }}
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $namespace }}
+    {{- else }}
+    namespaceSelector: {}
+    {{- end }}
+    objectSelector:
+      {{- with .Values.flytepropellerwebhook.webhook.webhooks.managedImage.objectSelector }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+    reinvocationPolicy: {{ .Values.flytepropellerwebhook.webhook.reinvocationPolicy }}
+    rules:
+      - apiGroups:
+          - '*'
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+        resources:
+          - pods
+        scope: '*'
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: {{ .Values.flytepropellerwebhook.webhook.timeoutSeconds }}
+{{- end }}
+{{- end }}
