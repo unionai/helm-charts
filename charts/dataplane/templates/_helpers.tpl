@@ -77,8 +77,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropeller.podLabels" -}}
-{{- include "global.podLabels" . }}
-{{- include "flytepropeller.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "flytepropeller.labels" . }}
 {{- with .Values.flytepropeller.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -158,8 +158,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.podLabels" -}}
-{{- include "global.podLabels" . }}
-{{- include "flytepropellerwebhook.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "flytepropellerwebhook.labels" . }}
 {{- with .Values.flytepropellerwebhook.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -345,7 +345,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "clusterresourcesync.podLabels" -}}
-{{- include "clusterresourcesync.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "clusterresourcesync.labels" . }}
 {{- with .Values.clusterresourcesync.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -439,7 +440,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "operator.podLabels" -}}
-{{- include "operator.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "operator.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -550,7 +552,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{- define "proxy.podLabels" -}}
-{{- include "proxy.labels" . }}
+{{ include "global.podLabels" . }}
+{{ include "proxy.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -649,7 +652,8 @@ key authentication is used, the appropriate environment variables to
 access the storage is injected.
 */}}
 {{- define "k8s.plugins" -}}
-{{- $plugins := include "k8s.plugins.defaultEnvVariables" . | fromYaml }}
+{{- $envVarsRendered := tpl (include "k8s.plugins.defaultEnvVariables" .) $ }}
+{{- $plugins := $envVarsRendered | fromYaml }}
 {{- $_ := merge $plugins .Values.config.k8s }}
 {{- with $plugins }}
 {{- (toYaml .) }}
@@ -756,7 +760,7 @@ Global pod labels
 */}}
 {{- define "global.podLabels" -}}
 {{- with .Values.additionalPodLabels }}
-{{- toYaml . }}
+{{ toYaml . }}
 {{- end }}
 {{- end -}}
 
@@ -1031,7 +1035,8 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{- end -}}
 
 {{- define "executor.podLabels" -}}
-{{- $labels := include "executor.labels" . | fromYaml -}}
+{{ include "global.podLabels" . }}
+{{ $labels := include "executor.labels" . | fromYaml -}}
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
 {{- mustMergeOverwrite $podLabels $labels | toYaml }}
 {{- end -}}

@@ -47,6 +47,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    azure.workload.identity/client-id: test-backend-client-id
 ---
 # Source: dataplane/charts/opencost/templates/serviceaccount.yaml
 apiVersion: v1
@@ -127,8 +129,7 @@ metadata:
   name: clustersync-system
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
-    test-clustersync-annotation: test-clustersync-annotation-value
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: v1
@@ -139,8 +140,7 @@ metadata:
   labels:
     app: executor
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
-    test-executor-annotation: test-executor-annotation-value
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -153,8 +153,7 @@ metadata:
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
-    test-proxy-annotation: test-proxy-annotation-value
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -167,8 +166,7 @@ metadata:
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
-    test-operator-annotation: test-operator-annotation-value
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 apiVersion: v1
@@ -177,7 +175,7 @@ metadata:
   name: flytepropeller-webhook-system
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
@@ -186,8 +184,7 @@ metadata:
   name: flytepropeller-system
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
-    test-propeller-annotation: test-propeller-annotation-value
+    azure.workload.identity/client-id: 'test-backend-client-id'
 ---
 # Source: dataplane/templates/common/auth-secret.yaml
 apiVersion: v1
@@ -198,8 +195,8 @@ metadata:
 type: Opaque
 data:
   # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: Y2xpZW50U2VjcmV0
-  client_secret: Y2xpZW50U2VjcmV0
+  app_secret: dGVzdC1jbGllbnQtc2VjcmV0LXZhbHVl
+  client_secret: dGVzdC1jbGllbnQtc2VjcmV0LXZhbHVl
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -208,7 +205,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tYXdz
+  cluster_name: dGVzdC1henVyZS1jbHVzdGVy
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -233,7 +230,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: 'union-aws'
+      clusterName: 'test-azure-cluster'
       customData:
       - production:
         - projectQuotaCpu:
@@ -243,9 +240,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'test-worker-client-id'
       - staging:
         - projectQuotaCpu:
             value: "4096"
@@ -254,9 +251,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'test-worker-client-id'
       - development:
         - projectQuotaCpu:
             value: "4096"
@@ -265,9 +262,9 @@ data:
         - projectQuotaNvidiaGpu:
             value: "256"
         - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
+            value: 'azure.workload.identity/client-id'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'test-worker-client-id'
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
@@ -277,17 +274,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.dataplane.union.ai
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -301,13 +298,16 @@ data:
       name: staging
     - id: production
       name: production
+  namespace_config.yaml: | 
+    namespace_mapping:
+      template: '{{`{{ domain }}`}}'
   clusters.yaml: |
     clusters:
       clusterConfigs: []
       labelClusterMap: {}
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
@@ -388,17 +388,6 @@ data:
         Mem_Buf_Limit       5MB
         Skip_Long_Lines     On
         Refresh_Interval    10
-    
-    
-    [OUTPUT]
-        Name s3
-        Match *
-        upload_timeout 1m
-        s3_key_format /persisted-logs/$TAG
-        static_file_path true
-        json_date_key false
-        region us-east-2
-        bucket bucket
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -431,10 +420,10 @@ data:
         - fast-task
   config.yaml: |
     executor:
-      cluster: 'union-aws'
+      cluster: 'test-azure-cluster'
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: 'test-org'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -449,29 +438,31 @@ data:
           memory: 2Ti
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.dataplane.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.dataplane.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
     logger:
-      level: 6
+      level: 4
       show-source: true
+    namespace_mapping:
+      template: '{{ domain }}'
     sharedService:
       metrics:
         scope: 'executor:'
@@ -500,18 +491,36 @@ data:
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: test-storage-account
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
         co-pilot:
           image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: ""
+      container: 'test-metadata-container'
+      stow:
+        config:
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -534,15 +543,31 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: test-storage-account
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
   config.yaml: |
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.dataplane.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -563,16 +588,25 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: 'test-org'
       clusterData:
-        appId: 'clientId'
-        bucketName: 'bucket'
-        bucketRegion: 'us-east-2'
-        cloudHostName: 'union.us-west-2.union.ai'
+        appId: 'test-client-id'
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test.dataplane.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
-        userRole: 'arn:aws:iam::000000000000:role/union-flyte-role'
-        userRoleKey: 'eks.amazonaws.com/role-arn'
+        metadataBucketPrefix: abfs://test-metadata-container@test-storage-account.dfs.core.windows.net
+        userRole: 'test-worker-client-id'
+        userRoleKey: 'azure.workload.identity/client-id'
+        # -- storageType is only used when syncClusterConfig is enabled. It is intentionally disabled and it should not be used.
+        storageType: custom
+        customStorageConfig: |
+          container: 'test-metadata-container'
+          stow:
+            config:
+              account: 'test-storage-account'
+            kind: azure
+          type: stow
       collectUsages:
         enabled: true
       billableUsageCollector:
@@ -584,23 +618,29 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: '{{ domain }}'
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
         defaultRepository: ''
       persistedLogs:
+        azureLogAnalytics:
+          logAnalyticsWorkspaceResourceIdTemplate: /subscriptions/test-subscription-id/resourceGroups/test-resource-group/providers/Microsoft.OperationalInsights/workspaces/union-test-org
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
           prefix: persisted-logs
-        sourceType: ObjectStore
+        sourceType: AzureLogAnalytics
       smConfig:
-        enabled: 'true'
+        azureConfig:
+          vaultURI: 'test-azure-key-vault-uri'
+        enabled: true
         k8sConfig:
           namespace: 'union'
-        type: 'K8s'
+        type: Azure
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
   config-overrides.yaml: | 
     cache:
@@ -608,11 +648,13 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: ""
+      container: 'test-metadata-container'
+      stow:
+        config:
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -621,11 +663,13 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: ""
+      container: 'test-metadata-container'
+      stow:
+        config:
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -636,9 +680,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -646,8 +690,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.dataplane.union.ai
+      endpoint: dns:///test.dataplane.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -691,21 +735,24 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://bucket'
+      rawoutput-prefix: 's3://'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
       certDir: /etc/webhook/certs
       embeddedSecretManagerConfig:
+        azureConfig:
+          vaultURI: 'test-azure-key-vault-uri'
+        enabled: true
         imagePullSecrets:
           enabled: true
         k8sConfig:
           namespace: 'union'
-        type: 'K8s'
+        type: Azure
       listenPort: '9443'
       secretManagerTypes:
+      - Azure
       - Embedded
-      - K8s
       serviceName: flyte-pod-webhook
       servicePort: '443'
   enabled_plugins.yaml: | 
@@ -727,19 +774,61 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - AZURE_STORAGE_ACCOUNT_NAME: test-storage-account
+        default-labels:
+        - azure.workload.identity/use: "true"
         default-memory: 100Mi
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+          - spot
+        interruptible-tolerations:
+        - effect: NoSchedule
+          key: kubernetes.azure.com/scalesetpriority
+          operator: Equal
+          value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
+  namespace_config.yaml: | 
+    namespace_mapping:
+      template: '{{ domain }}'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
         type: noop
   task_logs.yaml: | 
     plugins:
+      fasttask:
+        logs:
+          azure-log-templates:
+          - displayName: Azure Logs
+            templateUris:
+            - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2Ftest-subscription-id%2FresourceGroups%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          stackdriver-enabled: false
+      k8s-array:
+        logs:
+          config:
+            azure-log-templates:
+            - displayName: Azure Logs
+              templateUris:
+              - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%%2Fsubscriptions%%2Ftest-subscription-id%%2FresourceGroups%%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            stackdriver-enabled: false
       logs:
+        azure-log-templates:
+        - displayName: Azure Logs
+          templateUris:
+          - https://portal.azure.com#@test-tenant-id/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2Ftest-subscription-id%2FresourceGroups%2Ftest-resource-group/source/LogsBlade.AnalyticsShareLinkToQuery/q/
         cloudwatch-enabled: false
         dynamic-log-links:
         - vscode:
@@ -747,6 +836,7 @@ data:
             templateUris:
             - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
         kubernetes-enabled: false
+        stackdriver-enabled: false
         templates:
         - displayName: Task Logs
           scheme: TaskExecution
@@ -754,11 +844,13 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: ""
+      container: 'test-metadata-container'
+      stow:
+        config:
+          account: 'test-storage-account'
+        kind: azure
+      type: stow
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -2440,10 +2532,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "beb2d119e33eba298440e6cc0870f66b5c734a036d3f97dd8a149e2e35c88a0"
+        configChecksum: "1101758e8bd1f6ef7e6032ac645c2e391c74c871aa4d5a67aa3a8cc311d102f"
         
       labels:
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: clusterresourcesync
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2535,9 +2628,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "25f3d00bb5e8a9d204889496853445d6407c16c7ad3e44ee8208d00766a1100"
+        configChecksum: "b7ec56dce00a421087ba275b5ba221316b2692a8e4cb2aad2746810f2b54929"
       labels:
         
+        azure.workload.identity/use: "true"
         app: executor
     spec:
       securityContext:
@@ -2636,10 +2730,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b1507ce2d99749929d20b814f9a4c2c7f51877262c630efd25945d498572fae"
+        configChecksum: "8330ed525c5e6956ed0d1ad63962c0903e8c25b423af2fcc7824542b832251f"
         
       labels:
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2773,10 +2868,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b1507ce2d99749929d20b814f9a4c2c7f51877262c630efd25945d498572fae"
+        configChecksum: "8330ed525c5e6956ed0d1ad63962c0903e8c25b423af2fcc7824542b832251f"
         
       labels:
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2885,12 +2981,13 @@ spec:
     metadata:
       labels:
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "a117f9330ea328233dc53166364b93089e37b2ea07da3917fd4e8824b42dd2a"
+        configChecksum: "1f682776cf1f3f8e97f665dd17c1ed65e255a9f5a82095b846af522c87e7458"
         
     spec:
       securityContext:
@@ -3045,11 +3142,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a117f9330ea328233dc53166364b93089e37b2ea07da3917fd4e8824b42dd2a"
+        configChecksum: "1f682776cf1f3f8e97f665dd17c1ed65e255a9f5a82095b846af522c87e7458"
         
       labels:
         
         
+        azure.workload.identity/use: "true"
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -3062,7 +3160,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - union-aws
+            - 'test-azure-cluster'
           env:
           - name: POD_NAME
             valueFrom:
