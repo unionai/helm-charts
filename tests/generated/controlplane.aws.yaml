@@ -912,6 +912,119 @@ data:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
     usage:
+      taskMetrics:
+        agentQuery:
+          mappings:
+            dgx_job:
+              queries:
+                EXECUTION_METRIC_ALLOCATED_CPU_AVG: CPU_ALLOCATION:MEAN
+                EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: MEM_ALLOCATION:MEAN
+                EXECUTION_METRIC_CPU_UTILIZATION: CPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_GPU_UTILIZATION: GPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_MEMORY_UTILIZATION: MEM_UTILIZATION:MEAN
+        metricDelayToleranceDuration: 0s
+        promQuery:
+          queries:
+            EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_APP_REPLICA_COUNT: |
+              sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{.Namespace}}", pod=~"{{.AppName}}.*"} == 1) or vector(0)
+            EXECUTION_METRIC_APP_REQUESTS: |
+              sum(rate((
+                envoy_cluster_upstream_rq_xx{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, envoy_response_code_class)
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
+              histogram_quantile(0.5, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"${{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
+              histogram_quantile(0.90, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"${{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
+              histogram_quantile(0.95, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"${{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_CPU_UTILIZATION: |
+              (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
+              (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}) /
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} + DCGM_FI_DEV_FB_FREE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
+              sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_GPU_SM_ACTIVE: |
+              sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
+              sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_UTILIZATION: |
+              sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_LIMIT_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_MEMORY_UTILIZATION: |
+              (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_REQUEST_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_CPU_AVG: |
+              sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
+              sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
 ---
 # Source: controlplane/templates/scylla/storageclass.yaml
