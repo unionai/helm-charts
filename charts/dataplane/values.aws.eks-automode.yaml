@@ -1,8 +1,9 @@
 # ============================================================================
-# Union Dataplane Configuration for AWS
+# Union Dataplane Configuration for AWS EKS Auto Mode
 # ============================================================================
 # This file provides a production-ready template for deploying Union dataplane
-# on AWS EKS. Replace the placeholder values below with your actual configuration.
+# on AWS EKS using Auto Mode. Replace the placeholder values below with your
+# actual configuration.
 #
 # For more details, see: https://docs.union.ai/deployment/
 # ============================================================================
@@ -290,4 +291,154 @@ dcgm-exporter:
   # -- It's common practice to taint accelerator nodes to ensure non accelerator workloads
   #
   #    tolerations to ensure it only runs on GPU nodes.
-  # tolerations: []
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Union/Flyte Kubernetes specific Configuration
+# ----------------------------------------------------------------------------
+
+config:
+  k8s:
+    plugins:
+      k8s:
+        # AWS EKS Auto Mode Accelerator Configuration
+
+        # This configuration maps specific GPU types to EKS Auto Mode compatible
+        # eks.amazonaws.com/instance-gpu-name.
+        #
+        # flyte-sdk hardcodess certain common NVIDIA GPU types to specific names. This mapping is use
+        # https://github.com/flyteorg/flyte-sdk/blob/f85f2f2733dcb6cf235bad0b34d4aa0482a5835d/src/flyte/_internal/runtime/resources_serde.py#L7-L25https://github.com/flyteorg/flyte-sdk/blob/4a440fd468044b85e26141ca9c73ff91eb2ff04c/src/flyte/_internal/runtime/resources_serde.py#L7-L25
+        # The following block unmaps these GPU types to the corresponding EKS Auto Mode compatible names.
+        accelerator-devices:
+          # Flyte uppercases the GPU type names, so we need to map them to the lowercase names used by EKS Auto Mode.
+          - NVIDIA-TESLA-T4: t4
+          - NVIDIA-TESLA-V100: v100
+          - NVIDIA-TESLA-A100: a100
+          - NVIDIA-A10G: a10g
+          - NVIDIA-TESLA-K80: k80
+          - NVIDIA-H100: h100
+          - NVIDIA-L4: l4
+          - NVIDIA-L40S: l40s
+        accelerator-device-classes:
+          - NVIDIA_GPU:
+              resource-name: nvidia.com/gpu
+              device-node-label: eks.amazonaws.com/instance-gpu-name
+              pod-template:
+                template:
+                  spec:
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: eks.amazonaws.com/instance-gpu-manufacturer
+                                  operator: In
+                                  values:
+                                    - nvidia
+
+# ----------------------------------------------------------------------------
+# SECTION 9: Optional Config
+# ----------------------------------------------------------------------------
+
+# AWS EKS Auto Mode allows creating Nodepools through Kubernetes manifests.
+# This section shows an example of creating a simple GPU accelerated nodepool.
+#
+extraObjects:
+  # Example of a T4 specific node pool for GPU workloads. Adjust the instance types and labels as needed.
+  - apiVersion: karpenter.sh/v1
+    kind: NodePool
+    metadata:
+      name: gpu-t4
+    spec:
+      template:
+        metadata:
+          labels:
+            # It's best practice to label nvidia accelerated nodepools to assist
+            # Nvidia specific daemonsets targeting.
+            nvidia.com/gpu: "true"
+        spec:
+          # Reference to the default eks.amazonaws.com NodeClass
+          nodeClassRef:
+            group: eks.amazonaws.com
+            kind: NodeClass
+            name: default
+
+          # Ensure pods that don't require nvidia GPUs are not scheduled on these nodes by tainting them.
+          taints:
+            - key: nvidia.com/gpu
+              value: "true"
+              effect: NoSchedule
+
+          # Instance requirements for g4dn family (NVIDIA T4 GPUs)
+          # EKS Auto Mode automatically handles driver installation and readiness
+          requirements:
+            # Instance family - g4dn uses NVIDIA T4 GPUs
+            - key: eks.amazonaws.com/instance-family
+              operator: In
+              values:
+                - g4dn
+
+            # Use on-demand instances for GPU reliability
+            # Comment this out if you want to allow spot instances
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values:
+                - on-demand
+
+            - key: kubernetes.io/arch
+              operator: In
+              values:
+                - amd64
+
+            # Ensure nodes have GPUs
+            - key: eks.amazonaws.com/instance-gpu-count
+              operator: Gt
+              values:
+                - "0"
+
+            # Ensure GPU type is T4
+            - key: eks.amazonaws.com/instance-gpu-name
+              operator: In
+              values:
+                - t4
+
+      # Resource limits for this node pool
+      # Adjust based on your budget and workload needs
+      limits:
+        cpu: "1000"           # Max total CPUs across all nodes in this pool
+        memory: 4000Gi        # Max total memory across all nodes
+        nvidia.com/gpu: "50"  # Max total GPUs (adjust as needed)
+
+      # Disruption settings for node lifecycle management
+      # Ref: https://karpenter.sh/docs/concepts/disruption/
+      disruption:
+        # Assume this nodepool is targetted exclusively for Union ephemeral workloads.
+        # This means that we can assume that there will be no long-running workloads
+        # on these nodes, and we can safely evict all pods when scaling down.
+        consolidationPolicy: WhenEmpty
+
+        # Wait 10 minutes to see if a new run will schedule before consolidating the node.
+        consolidateAfter: 10m
+
+        # Allow gradual rollouts and consolidation
+        budgets:
+          # Allow or more aggressive disruption budget for nodepools running Union workloads.
+          # Our consolidation policy is "WhenEmpty", so we can allow up to 50% of the nodes
+          # to be disrupted at a time.
+          - nodes: "50%"
+            reasons:
+              - Underutilized
+              - Empty
+          # Don't allow any disruption if the node is not empty to avoid evicting non-Union workloads.
+          # Assume each Union workload is short-lived and can be safely evicted when scaling down,
+          # so we can allow 100% disruption for empty nodes.
+          - nodes: "0"
+            reasons:
+              - Drifted
+
+      # Priority weight (lower = less preferred)
+      # GPU nodes are more expensive, so prefer general-purpose nodes first
+      weight: 10
