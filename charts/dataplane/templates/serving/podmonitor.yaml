@@ -1,0 +1,28 @@
+{{- /*
+Service Monitor used specifically for Union features.
+*/ -}}
+{{- if .Values.serving.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "serving.fullname" . }}
+  labels:
+    platform.union.ai/prometheus-group: union-features
+    {{- include "3scale-kourier-gateway.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "3scale-kourier-gateway.selectorLabels" . | nindent 6 }}
+  namespaceSelector:
+    matchNames:
+      - "{{ .Release.Namespace }}"
+  podMetricsEndpoints:
+    - port: metrics
+      path: /stats/prometheus
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [__name__]
+          separator: ";"
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+{{- end }}
