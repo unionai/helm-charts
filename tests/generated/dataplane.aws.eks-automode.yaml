@@ -617,6 +617,31 @@ data:
           deckFilename: report.html
       k8s:
         disable-inject-owner-references: true
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
@@ -651,6 +676,31 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
@@ -844,6 +894,31 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
@@ -2428,7 +2503,7 @@ spec:
                 - fargate
       tolerations:
       - effect: NoSchedule
-        key: node-role.kubernetes.io/control-plane
+        key: nvidia.com/gpu
         operator: Exists
       volumes:
       - name: "pod-gpu-resources"
@@ -2987,7 +3062,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3a0aa83fc3d13ec3d4106701f07589b6ac79ee78731a0fa1a6744bd5246be26"
+        configChecksum: "44c06b14fad86b1861fb819b55c169a45a38866cc3360625683deb7c6c7e679"
       labels:
         
         app: executor
@@ -3088,7 +3163,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "406af0eee1ce6710a187811a571d9736c443e28228db13126bc41e3a57e6495"
+        configChecksum: "1c734cb1d61c891f56db51d5452490b8c8835c6d7bcb65a7dff7f0aff06b032"
         
       labels:
         
@@ -3225,7 +3300,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "406af0eee1ce6710a187811a571d9736c443e28228db13126bc41e3a57e6495"
+        configChecksum: "1c734cb1d61c891f56db51d5452490b8c8835c6d7bcb65a7dff7f0aff06b032"
         
       labels:
         
@@ -3342,7 +3417,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "460161136ec2089bf2f6359deac2d8f919dbf5d3c6c7e54273639ab8f9b8774"
+        configChecksum: "6851d70998e8ac77eb7ee15be7b8d9abc75ce7e42801c956f5fc3da9dfb5956"
         
     spec:
       securityContext:
@@ -3497,7 +3572,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "460161136ec2089bf2f6359deac2d8f919dbf5d3c6c7e54273639ab8f9b8774"
+        configChecksum: "6851d70998e8ac77eb7ee15be7b8d9abc75ce7e42801c956f5fc3da9dfb5956"
         
       labels:
         
@@ -3684,6 +3759,63 @@ webhooks:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+---
+# Source: dataplane/templates/common/extra-manifests.yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-t4
+spec:
+  disruption:
+    budgets:
+    - nodes: 50%
+      reasons:
+      - Underutilized
+      - Empty
+    - nodes: "0"
+      reasons:
+      - Drifted
+    consolidateAfter: 10m
+    consolidationPolicy: WhenEmpty
+  limits:
+    cpu: "1000"
+    memory: 4000Gi
+    nvidia.com/gpu: "50"
+  template:
+    metadata:
+      labels:
+        nvidia.com/gpu: "true"
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+      - key: eks.amazonaws.com/instance-family
+        operator: In
+        values:
+        - g4dn
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - amd64
+      - key: eks.amazonaws.com/instance-gpu-count
+        operator: Gt
+        values:
+        - "0"
+      - key: eks.amazonaws.com/instance-gpu-name
+        operator: In
+        values:
+        - t4
+      taints:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        value: "true"
+  weight: 10
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus/prometheus.yaml
 apiVersion: monitoring.coreos.com/v1
