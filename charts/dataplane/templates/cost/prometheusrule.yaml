@@ -6,6 +6,7 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     release: {{ .Release.Name }}
+    platform.union.ai/prometheus-group: union-features
 spec:
   groups:
     - name: cost_calculations_15s
@@ -62,6 +63,32 @@ spec:
                 ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
               )
             )
+        - record: fast_task_execution_duration
+          expr: |
+            max by (label_domain, label_project, label_execution_id, label_entity_id, namespace, pod)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          flyte:propeller:all:node:fast_task:fast_task_execution_duration{domain!="", project!="", execution_id!="", exported_namespace!="", exported_pod!=""},
+                          "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                        ),
+                        "label_execution_id", "$1", "execution_id", "(.*)"
+                      ),
+                      "label_project", "$1", "project", "(.*)" # project
+                    ),
+                    "label_domain", "$1", "domain", "(.*)" # domain
+                  ),
+                  "namespace", "$1", "exported_namespace", "(.*)"
+                ),
+                "pod", "$1", "exported_pod", "(.*)"
+              )
+            )
+        - record: fast_task_execution_duration_rate
+          expr: |
+            irate(fast_task_execution_duration[1m]) > 0 or absent(irate(fast_task_execution_duration[1m])) * fast_task_execution_duration
         - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
           expr: |
             sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
@@ -125,6 +152,13 @@ spec:
                       "label_domain", "$1", "label_domain", "(.*)"
                     ),
                     "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="",label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
                   )
                 )
               )
@@ -204,6 +238,13 @@ spec:
                     "label_project", "$1", "label_project", "(.*)"
                   )
                 )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
+                  )
+                )
               )
               # Then filter for pods only in the "Running" or "Pending" phase
               * on (namespace, pod) group_left() (
@@ -269,6 +310,13 @@ spec:
                       "label_domain", "$1", "label_domain", "(.*)"
                     ),
                     "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
                   )
                 )
               )
@@ -338,6 +386,13 @@ spec:
                     "label_project", "$1", "label_project", "(.*)"
                   )
                 )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
+                  )
+                )
               )
               # Then filter for pods only in the "Running" or "Pending" phase
               * on (namespace, pod) group_left() (
@@ -403,6 +458,13 @@ spec:
                       "label_domain", "$1", "label_domain", "(.*)"
                     ),
                     "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
                   )
                 )
               )
@@ -473,6 +535,13 @@ spec:
                     "label_project", "$1", "label_project", "(.*)"
                   )
                 )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
+                  )
+                )
               )
               # Then filter for pods only in the "Running" or "Pending" phase
               * on (namespace, pod) group_left() (
@@ -534,6 +603,13 @@ spec:
                       "label_domain", "$1", "label_domain", "(.*)"
                     ),
                     "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    fast_task_execution_duration_rate{label_domain!="", label_project!="", label_execution_id!=""},
+                    "label_entity_type", "fast_task", "", ""
                   )
                 )
               )
