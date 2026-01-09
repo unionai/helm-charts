@@ -5,7 +5,7 @@
 # cluster as the Union control plane (co-located deployment).
 #
 # IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
-#   helm install ... -f values.aws.selfhosted-intracluster.yaml
+#   helm install ... -f values.gcp.selfhosted-intracluster.yaml
 #
 # Key differences from standard BYOC deployment:
 # - Uses intra-cluster communication (no external networking)
@@ -13,7 +13,7 @@
 # - Can use self-signed certificates
 # - No API key authentication (direct service-to-service)
 # - More cost-effective for single-cluster deployments
-# - Includes all AWS-specific configuration (S3, IAM roles)
+# - Includes all GCP-specific configuration (GCS, Workload Identity)
 # ============================================================================
 
 # ----------------------------------------------------------------------------
@@ -37,40 +37,50 @@ global:
   #    Source: Provided by Union team
   ORG_NAME: ""
 
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
+  # 5. METADATA_BUCKET - GCS bucket for workflow metadata
+  #    Format: Valid GCS bucket name
   #    Example: "my-union-metadata-bucket"
   #    Note: Bucket must exist before deployment
   METADATA_BUCKET: ""
 
-  #    S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
+  #    FAST_REGISTRATION_BUCKET - GCS bucket for code uploads
+  #    Format: Valid GCS bucket name
   #    Example: "my-union-fast-registration-bucket"
   #    Note: Can be same as metadata bucket or separate
   FAST_REGISTRATION_BUCKET: ""
 
-  #    AWS_REGION - AWS region for S3 buckets
-  #    Format: AWS region code
-  #    Example: "us-east-1", "us-west-2", "eu-west-1"
-  AWS_REGION: ""
+  #    GCP_REGION - Region for GCS buckets
+  #    Format: GCP region code
+  #    Example: "us-central1", "us-east1", "europe-west1"
+  GCP_REGION: ""
 
-  #    BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
-  #    Permissions: S3 access, ECR (if private images)
+  #    GOOGLE_PROJECT_ID - GCP project ID
+  #    Format: GCP project ID
+  #    Example: "my-gcp-project"
+  GOOGLE_PROJECT_ID: ""
+
+  #    BACKEND_IAM_ROLE_ARN - GCP service account for Union backend services
+  #    Format: service-account-name@project-id.iam.gserviceaccount.com
+  #    Example: "union-backend@my-project.iam.gserviceaccount.com"
+  #    Permissions: GCS access, GCR/Artifact Registry (if private images)
   BACKEND_IAM_ROLE_ARN: ""
 
-  #    WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
-  #    Permissions: S3 access, AWS services used by workflows
+  #    WORKER_IAM_ROLE_ARN - GCP service account for workflow execution pods
+  #    Format: service-account-name@project-id.iam.gserviceaccount.com
+  #    Example: "union-worker@my-project.iam.gserviceaccount.com"
+  #    Permissions: GCS access, GCP services used by workflows
   WORKER_IAM_ROLE_ARN: ""
+
+  #    IMAGE_REPOSITORY_PREFIX - GCP Artifact Registry repository prefix
+  #    Format: REGION-docker.pkg.dev/PROJECT_ID/REPOSITORY_NAME
+  #    Example: "us-central1-docker.pkg.dev/my-project/union"
+  IMAGE_REPOSITORY_PREFIX: "public.ecr.aws/p0i0a9q8"
 
   #    CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
   #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
   #    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
   #    How to find: kubectl get svc -n union-cp | grep nginx-controller
-  #    Note: Used for direct communication with control plane from union operator.
+  #    Note: Used for direct communication with control plane
   #    Currently we need to point it to ingress controller service url instead of
   #    one of the control plane service url since operator talks to multiple union
   #    services.(executions for V1, cluster). In the future we will try to avoid going
@@ -82,18 +92,20 @@ global:
   #    Example: "queue.union-cp.svc.cluster.local:80"
   #    How to find: kubectl get svc -n union-cp | grep queue
   #    Note: Used for direct communication with queue service from worker pods
-  QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
+  QUEUE_SERVICE_HOST: ""
+
 
   #    FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
   #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
   #    Example: "flyteadmin.union-cp.svc.cluster.local:81"
   #    How to find: kubectl get svc -n union-cp flyteadmin
-  FLYTEADMIN_ENDPOINT: ""
+  FLYTEADMIN_ENDPOINT: "flyteadmin.union-cp.svc.cluster.local:81"
 
   #    CACHESERVICE_ENDPOINT - Internal Cacheservice endpoint
   #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
-  #    Example: "cacheservice.union-cp.svc.cluster.local:81"
+  #    Example: "cacheservice.union-cp.svc.cluster.local:89"
   #    How to find: kubectl get svc -n union-cp cacheservice
+  #    Note: Port 89 is the gRPC port for cacheservice
   #
   #    Cache service does not support insecure skip verify, there we can overwrite
   #    the endpoint here to skip nginx as grpc through nginx must use TLS.
@@ -104,39 +116,55 @@ global:
 # ----------------------------------------------------------------------------
 # These values reference the globals defined above.
 
-# Cloud provider identifier (do not change for AWS)
-provider: aws
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Cloud provider identifier
+provider: gcp
 
 # ----------------------------------------------------------------------------
 # SECTION 3: Object Storage Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
-# Configure S3 buckets for workflow metadata and fast registration.
+# Configure GCS buckets for workflow metadata and fast registration.
 # These buckets must be created before deployment.
 
 storage:
-  provider: aws
-  authType: iam  # Use IAM roles for pods (IRSA recommended)
-
-  # AWS region for S3 buckets
-  region: '{{ .Values.global.AWS_REGION }}'
+  provider: gcs  # GCS provider (not custom)
+  region: '{{ .Values.global.GCP_REGION }}'
   enableMultiContainer: true
 
-# ----------------------------------------------------------------------------
-# SECTION 4: IAM Roles (REQUIRED for AWS)
-# ----------------------------------------------------------------------------
-# Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
-# These IAM roles must be created with appropriate trust policies and permissions.
+  # GCP configuration
+  gcp:
+    projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+    # Workload Identity provides authentication automatically
 
-# IAM role for Union backend services (operator, propeller, etc.)
+# ----------------------------------------------------------------------------
+# SECTION 4: Image Configuration
+# ----------------------------------------------------------------------------
+# Override image repositories to use GCP Artifact Registry
+# Note: Templates don't render in image fields, must use hardcoded values
+
+image:
+  union:
+    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
+    # tag will be set from Chart.AppVersion or can be overridden
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Workload Identity (REQUIRED for GCP)
+# ----------------------------------------------------------------------------
+# Configure Workload Identity for secure GCP access.
+# These GCP service accounts must be created with appropriate IAM bindings.
+
+# GCP service account for Union backend services (operator, propeller, etc.)
 additionalServiceAccountAnnotations:
-  eks.amazonaws.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
+  iam.gke.io/gcp-service-account: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
 
-# IAM role for workflow execution pods
-userRoleAnnotationKey: eks.amazonaws.com/role-arn
+# GCP service account for workflow execution pods
+userRoleAnnotationKey: iam.gke.io/gcp-service-account
 userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Cluster Resource Sync Configuration
+# SECTION 6: Cluster Resource Sync Configuration
 # ----------------------------------------------------------------------------
 # Syncs Kubernetes resources (namespaces, service accounts, quotas) with
 # the control plane using intra-cluster communication.
@@ -158,12 +186,16 @@ clusterresourcesync:
         enable: false
 
 # ----------------------------------------------------------------------------
-# Core Service Configuration
+# SECTION 7: Core Service Configuration
 # ----------------------------------------------------------------------------
 # Configure dataplane services to communicate with control plane services
 # using Kubernetes internal networking (ClusterIP services).
 
 config:
+  # Override storage paths to use gs:// instead of s3://
+  core:
+    propeller:
+      rawoutput-prefix: "gs://nav-test1-data"
   admin:
     admin:
       # Flyteadmin endpoint (control plane admin service)
@@ -229,6 +261,16 @@ config:
     # Disable billable usage collector (typically for Union-managed control planes)
     billableUsageCollector:
       enabled: false
+
+    # Override storage paths and GCP project ID
+    clusterData:
+      metadataBucketPrefix: "gs://nav-test1-data"
+      gcpProjectId: "nav-selfhosted-validate"
+
+    # Override dependencies heartbeat to only check proxy
+    dependenciesHeartbeat:
+      proxy:
+        endpoint: 'http://union-operator-proxy:10254'
 
 # ----------------------------------------------------------------------------
 # Executor Configuration
@@ -303,19 +345,19 @@ prometheus:
     admissionWebhooks:
       # Disable admission webhooks by default
       # Enable if you have cert-manager installed
-      enabled: false
+      enabled: true
 
       # Optional: Enable webhooks with cert-manager
       # enabled: true
-      # certManager:
-      #   enabled: true
-      #   issuerRef:
-      #     group: "cert-manager.io"
-      #     kind: "ClusterIssuer"
-      #     name: "selfsigned-issuer"
+      #certManager:
+      #  enabled: true
+      #  issuerRef:
+      #    group: "cert-manager.io"
+      #    kind: "ClusterIssuer"
+      #    name: "selfsigned-issuer"
 
       patch:
-        enabled: false
+        enabled: true
 
 # ----------------------------------------------------------------------------
 # Secrets Configuration
@@ -346,155 +388,18 @@ fluentbit:
     name: fluentbit-system
     # Annotations may be required for IRSA
     annotations: {}
-<<<<<<< Updated upstream
 
 # ----------------------------------------------------------------------------
-# SECTION 7: Task Level Monitoring
+# SECTION 7: Enable Opencost used for getting instance level cost data. 
 # ----------------------------------------------------------------------------
+opencost:
+  # Currently we are disabling this as V2 console is not yet integrated with this cost data.
+  enabled: false
 
-# DCGM Exporter
-dcgm-exporter:
-
-  # dcgm-exporter
-  enabled: true
-
-  # Configure AWS specific affinity
-  # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-          - matchExpressions:
-              - key: node.kubernetes.io/instance-type
-                operator: In
-                values:
-                  ## NVIDIA GPU instance types
-                  - g3.4xlarge
-                  - g3.8xlarge
-                  - g3.16xlarge
-                  - g3s.xlarge
-                  - g4ad.2xlarge
-                  - g4ad.4xlarge
-                  - g4ad.8xlarge
-                  - g4ad.16xlarge
-                  - g4ad.xlarge
-                  - g4dn.2xlarge
-                  - g4dn.4xlarge
-                  - g4dn.8xlarge
-                  - g4dn.12xlarge
-                  - g4dn.16xlarge
-                  - g4dn.metal
-                  - g4dn.xlarge
-                  - g5.2xlarge
-                  - g5.4xlarge
-                  - g5.8xlarge
-                  - g5.12xlarge
-                  - g5.16xlarge
-                  - g5.24xlarge
-                  - g5.48xlarge
-                  - g5.xlarge
-                  - g5g.2xlarge
-                  - g5g.4xlarge
-                  - g5g.8xlarge
-                  - g5g.16xlarge
-                  - g5g.metal
-                  - g5g.xlarge
-                  - g6.2xlarge
-                  - g6.4xlarge
-                  - g6.8xlarge
-                  - g6.12xlarge
-                  - g6.16xlarge
-                  - g6.24xlarge
-                  - g6.48xlarge
-                  - g6.xlarge
-                  - g6e.2xlarge
-                  - g6e.4xlarge
-                  - g6e.8xlarge
-                  - g6e.12xlarge
-                  - g6e.16xlarge
-                  - g6e.24xlarge
-                  - g6e.48xlarge
-                  - g6e.xlarge
-                  - gr6.4xlarge
-                  - gr6.8xlarge
-                  - p2.8xlarge
-                  - p2.16xlarge
-                  - p2.xlarge
-                  - p3.2xlarge
-                  - p3.8xlarge
-                  - p3.16xlarge
-                  - p3dn.24xlarge
-                  - p4d.24xlarge
-                  - p4de.24xlarge
-                  - p5.48xlarge
-                  - p5e.48xlarge
-                  - p5en.48xlarge
-                  - ml.g3.4xlarge
-                  - ml.g3.8xlarge
-                  - ml.g3.16xlarge
-                  - ml.g3s.xlarge
-                  - ml.g4ad.2xlarge
-                  - ml.g4ad.4xlarge
-                  - ml.g4ad.8xlarge
-                  - ml.g4ad.16xlarge
-                  - ml.g4ad.xlarge
-                  - ml.g4dn.2xlarge
-                  - ml.g4dn.4xlarge
-                  - ml.g4dn.8xlarge
-                  - ml.g4dn.12xlarge
-                  - ml.g4dn.16xlarge
-                  - ml.g4dn.metal
-                  - ml.g4dn.xlarge
-                  - ml.g5.2xlarge
-                  - ml.g5.4xlarge
-                  - ml.g5.8xlarge
-                  - ml.g5.12xlarge
-                  - ml.g5.16xlarge
-                  - ml.g5.24xlarge
-                  - ml.g5.48xlarge
-                  - ml.g5.xlarge
-                  - ml.g5g.2xlarge
-                  - ml.g5g.4xlarge
-                  - ml.g5g.8xlarge
-                  - ml.g5g.16xlarge
-                  - ml.g5g.metal
-                  - ml.g5g.xlarge
-                  - ml.g6.2xlarge
-                  - ml.g6.4xlarge
-                  - ml.g6.8xlarge
-                  - ml.g6.12xlarge
-                  - ml.g6.16xlarge
-                  - ml.g6.24xlarge
-                  - ml.g6.48xlarge
-                  - ml.g6.xlarge
-                  - ml.g6e.2xlarge
-                  - ml.g6e.4xlarge
-                  - ml.g6e.8xlarge
-                  - ml.g6e.12xlarge
-                  - ml.g6e.16xlarge
-                  - ml.g6e.24xlarge
-                  - ml.g6e.48xlarge
-                  - ml.g6e.xlarge
-                  - ml.gr6.4xlarge
-                  - ml.gr6.8xlarge
-                  - ml.p2.8xlarge
-                  - ml.p2.16xlarge
-                  - ml.p2.xlarge
-                  - ml.p3.2xlarge
-                  - ml.p3.8xlarge
-                  - ml.p3.16xlarge
-                  - ml.p3dn.24xlarge
-                  - ml.p4d.24xlarge
-                  - ml.p4de.24xlarge
-                  - ml.p5.48xlarge
-                  - ml.p5e.48xlarge
-                  - ml.p5en.48xlarge
-              - key: eks.amazonaws.com/compute-type
-                operator: NotIn
-                values:
-                  - fargate
-
-  # -- It's common practice to taint accelerator nodes to ensure non accelerator workloads
-  #
-  #    tolerations to ensure it only runs on GPU nodes.
-  # tolerations: []
+# ----------------------------------------------------------------------------
+# SECTION 8: Override priority class due to GKE restriction where it doesn't 
+#            allow running pods with system-cluster-critical other core kube
+#            components.
+# ----------------------------------------------------------------------------
+flytepropeller: 
+  priorityClassName: ""
