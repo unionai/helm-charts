@@ -43,6 +43,27 @@ Renders a complete tree, even values that contains template.
 {{- end -}}
 
 {{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "unionai-dataplane.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{- define "unionai-dataplane.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "unionai-dataplane.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "unionai-dataplane.labels" -}}
+helm.sh/chart: {{ include "unionai-dataplane.chart" . }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
 Output the cluster name
 */}}
 {{- define "getClusterName" -}}
@@ -58,6 +79,14 @@ Adds custom PodSpec values.
 {{- end }}
 {{- end -}}
 
+{{/*
+Create a full name prefix for serving resources
+*/}}
+{{- define "flytepropeller.fullname" -}}
+{{- $name := include "unionai-dataplane.fullname" . }}
+{{- printf "%s-flytepropeller" $name }}
+{{- end }}
+
 {{- define "flytepropeller.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.flytepropeller.serviceAccount.annotations }}
@@ -65,15 +94,18 @@ Adds custom PodSpec values.
 {{- end }}
 {{- end }}
 
+{{- define "flytepropeller.uniqueLabels" -}}
+app.kubernetes.io/component: flytepropeller
+{{- end }}
+
 {{- define "flytepropeller.selectorLabels" -}}
-app.kubernetes.io/name: flytepropeller
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "flytepropeller.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "flytepropeller.labels" -}}
-{{- include "flytepropeller.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "flytepropeller.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "flytepropeller.podLabels" -}}
@@ -146,15 +178,18 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "flytepropellerwebhook.uniqueLabels" -}}
+app.kubernetes.io/component: flyte-pod-webhook
+{{- end }}
+
 {{- define "flytepropellerwebhook.selectorLabels" -}}
-app.kubernetes.io/name: flyte-pod-webhook
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "flytepropellerwebhook.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.labels" -}}
-{{- include "flytepropellerwebhook.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "flytepropellerwebhook.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "flytepropellerwebhook.podLabels" -}}
@@ -238,15 +273,18 @@ tolerations:
 {{- end }}
 {{- end }}
 
+{{- define "nodeobserver.uniqueLabels" -}}
+app.kubernetes.io/component: nodeobserver
+{{- end -}}
+
 {{- define "nodeobserver.selectorLabels" -}}
-app.kubernetes.io/name: nodeobserver
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "nodeobserver.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "nodeobserver.labels" -}}
-{{- include "nodeobserver.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "nodeobserver.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "nodeobserver.podLabels" -}}
@@ -333,15 +371,18 @@ Create the name of the clusterresources service account
 {{- end }}
 {{- end }}
 
+{{- define "clusterresourcesync.uniqueLabels" -}}
+app.kubernetes.io/component: clusterresourcesync
+{{- end }}
+
 {{- define "clusterresourcesync.selectorLabels" -}}
-app.kubernetes.io/name: clusterresourcesync
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "clusterresourcesync.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "clusterresourcesync.labels" -}}
-{{- include "clusterresourcesync.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "clusterresourcesync.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "clusterresourcesync.podLabels" -}}
@@ -428,15 +469,18 @@ Create the name of the service account to use
 {{- end }}
 {{- end }}
 
+{{- define "operator.uniqueLabels" -}}
+app.kubernetes.io/component: union-operator
+{{- end }}
+
 {{- define "operator.selectorLabels" -}}
-app.kubernetes.io/name: union-operator
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "operator.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "operator.labels" -}}
-{{- include "operator.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "operator.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "operator.podLabels" -}}
@@ -540,69 +584,23 @@ Create the name of the service account to use
 {{- default .Release.Namespace .Values.proxy.secretManager.namespace }}
 {{- end }}
 
+{{- define "proxy.uniqueLabels" -}}
+app.kubernetes.io/component: operator-proxy
+{{- end }}
+
 {{- define "proxy.selectorLabels" -}}
-app.kubernetes.io/name: operator-proxy
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "proxy.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "proxy.labels" -}}
-{{- include "proxy.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "proxy.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "proxy.podLabels" -}}
 {{ include "global.podLabels" . }}
 {{ include "proxy.labels" . }}
-{{- with .Values.operator.podLabels }}
-{{ toYaml . }}
-{{- end }}
-{{- end -}}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "kubeStateMetrics.serviceAccountName" -}}
-{{- default "kube-state-metrics" .Values.kubeStateMetrics.serviceAccount.name }}
-{{- end }}
-
-{{- define "kubeStateMetrics.selectorLabels" -}}
-app.kubernetes.io/name: kube-state-metrics
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-
-{{- define "kubeStateMetrics.labels" -}}
-{{- include "kubeStateMetrics.selectorLabels" . }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{- define "kubeStateMetrics.podLabels" -}}
-{{- include "kubeStateMetrics.labels" . }}
-{{- with .Values.operator.podLabels }}
-{{ toYaml . }}
-{{- end }}
-{{- end -}}
-
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "dcgmExporter.serviceAccountName" -}}
-{{- default "dcgm-exporter-system" .Values.dcgmExporter.serviceAccount.name }}
-{{- end }}
-
-{{- define "dcgmExporter.selectorLabels" -}}
-app.kubernetes.io/name: dcgm-exporter
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-
-{{- define "dcgmExporter.labels" -}}
-{{- include "dcgmExporter.selectorLabels" . }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{- define "dcgmExporter.podLabels" -}}
-{{- include "dcgmExporter.labels" . }}
 {{- with .Values.operator.podLabels }}
 {{ toYaml . }}
 {{- end }}
@@ -667,6 +665,11 @@ http://{{ include "union-operator.fullname" . }}-prometheus:80/-/healthy
 {{- define "prometheus.service.url" -}}
 http://{{ include "union-operator.fullname" . }}-prometheus:80
 {{- end -}}
+
+{{- define "kubeStateMetrics.labels" -}}
+{{- include "unionai-dataplane.labels" . }}
+app.kubernetes.io/component: kube-state-metrics
+{{- end }}
 
 {{- define "propeller.health.url" -}}
 http://flytepropeller:10254
@@ -954,6 +957,34 @@ Name of the serving-envoy-bootstrap ConfigMap
 {{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}
 
+{{- define "serving.uniqueLabels" -}}
+app.kubernetes.io/component: serving
+{{- end -}}
+
+{{- define "serving.selectorLabels" -}}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "serving.uniqueLabels" . }}
+{{- end -}}
+
+{{- define "serving.labels" -}}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "serving.uniqueLabels" . }}
+{{- end -}}
+
+{{- define "3scale-kourier-gateway.uniqueLabels" -}}
+app.kubernetes.io/component: 3scale-kourier-gateway
+{{- end -}}
+
+{{- define "3scale-kourier-gateway.selectorLabels" -}}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "3scale-kourier-gateway.uniqueLabels" . }}
+{{- end -}}
+
+{{- define "3scale-kourier-gateway.labels" -}}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "3scale-kourier-gateway.uniqueLabels" . }}
+{{- end -}}
+
 # Image Builder helpers
 
 {{/*
@@ -967,15 +998,18 @@ The name of the buildkit deployment, service, etc
 {{- end }}
 {{- end }}
 
+{{- define "imagebuilder.buildkit.uniqueLabels" -}}
+app.kubernetes.io/component: imagebuilder-buildkit
+{{- end -}}
+
 {{- define "imagebuilder.buildkit.selectorLabels" -}}
-app.kubernetes.io/name: imagebuilder-buildkit
-app.kubernetes.io/instance: {{ .Release.Name }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "imagebuilder.buildkit.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "imagebuilder.buildkit.labels" -}}
-{{- include "imagebuilder.buildkit.selectorLabels" . }}
-platform.union.ai/service-group: {{ .Release.Name }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "imagebuilder.buildkit.uniqueLabels" . }}
 {{- end -}}
 
 {{/*
@@ -1022,16 +1056,22 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- end }}
 {{- end }}
 
+{{- define "executor.uniqueLabels" -}}
+app.kubernetes.io/component: executor
+{{- end }}
+
 {{/*
 TODO: Make these consistent with label sets in other components.
 Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
 */}}
 {{- define "executor.selectorLabels" -}}
-{{- .Values.executor.selector.matchLabels | default (dict "app" "executor") | toYaml }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{ include "executor.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "executor.labels" -}}
-{{- include "executor.selectorLabels" . }}
+{{ include "unionai-dataplane.labels" . }}
+{{ include "executor.uniqueLabels" . }}
 {{- end -}}
 
 {{- define "executor.podLabels" -}}
