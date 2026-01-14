@@ -43,8 +43,9 @@ Choose standard hosted deployment when:
 
 2. **PostgreSQL database**:
    - Version: PostgreSQL 12+
-   - Can be AWS RDS or self-hosted in the cluster
-   - Required for all control plane services
+   - Can be AWS RDS or self-hosted in the cluster (it's not deployed by the Helm chart)
+   - Required for all control plane services. 
+   - Memory-optimized instances are recommended.
 
 3. **ScyllaDB** (for queue service):
    - Can be deployed via the Helm chart (embedded) or externally managed
