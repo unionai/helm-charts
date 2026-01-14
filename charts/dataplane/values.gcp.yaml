@@ -1,0 +1,40 @@
+# Work in progress: GCP specific overrides for dataplane chart
+
+# DCGM Exporter
+dcgm-exporter:
+  enabled: true
+
+  # Affinity assuming cloud.google.com/gke-accelerator label is always
+  # associated to Nvidia.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: cloud.google.com/gke-accelerator
+            operator: Exists
+
+  extraEnv:
+  - name: "LD_LIBRARY_PATH"
+    value: "/usr/local/nvidia/lib64"
+  # Set DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE to "device-name" for GCP environments
+  # This ensure pod attribute on the metric is set to the pod name utilizing the GPU
+  # Ref: https://github.com/NVIDIA/dcgm-exporter/issues/27#issuecomment-978027181
+  - name: "DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"
+    value: "device-name"
+
+  extraHostVolumes:
+  - hostPath: "/home/kubernetes/bin/nvidia"
+    name: "nvidia-install-dir-host"
+
+  extraVolumeMounts:
+  - mountPath: "/etc/dcgm-exporter/default-counters.csv"
+    name: "exporter-metrics-volume"
+    subPath: "default-counters.csv"
+  - mountPath: "/usr/local/nvidia"
+    name: "nvidia-install-dir-host"
+
+  # privileged mode provides the necessary permissions to access GPU-to-pod mappings
+  securityContext:
+    allowPrivilegeEscalation: true
+    privileged: true

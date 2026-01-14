@@ -1,0 +1,428 @@
+# ============================================================================
+# Union Control Plane Configuration for Self-Hosted Intra-Cluster Deployment
+# ============================================================================
+# This configuration is for deploying Union control plane in the SAME
+# Kubernetes cluster as the Union dataplane (co-located deployment).
+#
+# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
+#   helm install ... -f values.gcp.selfhosted-intracluster.yaml
+#
+# Key differences from standard deployment:
+# - Uses intra-cluster communication (internal Kubernetes networking)
+# - Requires TLS certificates for gRPC/HTTP2 with NGINX
+# - Single-tenant mode with explicit organization configuration
+# - Direct communication between control plane and dataplane services
+# - Includes all GCP-specific configuration (CloudSQL, GCS, GCP service accounts)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Configuration Variables to Replace
+# ----------------------------------------------------------------------------
+# Configure ALL variables below for your self-hosted intra-cluster deployment.
+# This file includes both GCP infrastructure configuration AND intra-cluster
+# specific settings. Replace all empty "" values with your actual configuration.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration
+# ----------------------------------------------------------------------------
+# Configure all global variables for your self-hosted intra-cluster deployment.
+
+global:
+
+  # Region for all resources
+  # Example for GCP: "us-central1", "us-east1", "europe-west1"
+  GCP_REGION: "us-central1"
+
+  # PostgreSQL database endpoint (CloudSQL for GCP)
+  # Example: "10.247.0.3" (Private IP)
+  DB_HOST: ""
+
+  # PostgreSQL database name
+  # Example: "unionai"
+  DB_NAME: ""
+
+  # PostgreSQL username
+  # Example: "unionai"
+  DB_USER: ""
+
+  # GCS bucket for control plane metadata
+  # Example: "union-controlplane-metadata"
+  BUCKET_NAME: ""
+
+  # GCS bucket for artifacts storage
+  # Example: "union-controlplane-artifacts"
+  ARTIFACTS_BUCKET_NAME: ""
+
+  # Name of Kubernetes secret containing the DB password and other service specific secrets.
+  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
+  # Example: "union-controlplane-secrets"
+  # Note: Secret must contain "pass.txt" key
+  KUBERNETES_SECRET_NAME: ""
+
+  # GCP service account for artifacts service (Workload Identity)
+  # Leave empty if artifacts service is disabled
+  # Example: "artifacts@PROJECT_ID.iam.gserviceaccount.com"
+  ARTIFACT_IAM_ROLE_ARN: ""
+
+  # GCP service account for Flyte services (Workload Identity)
+  # Example: "flyteadmin@PROJECT_ID.iam.gserviceaccount.com"
+  # Note: Used by flyteadmin, datacatalog, and cacheservice
+  FLYTEADMIN_IAM_ROLE_ARN: ""
+
+  # Organization name (must match dataplane orgName)
+  # Example: "acme-corp" or "my-organization"
+  UNION_ORG: ""
+
+  # Internal Flyteadmin service endpoint
+  # Example: "flyteadmin.union-cp.svc.cluster.local:81"
+  # Find with: kubectl get svc -n union-cp flyteadmin
+  FLYTEADMIN_ENDPOINT: ""
+
+  # Control plane ingress controller FQDN (for intra-cluster routing)
+  # Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  # Find with: kubectl get svc -n union-cp | grep nginx-controller
+  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+
+  # TLS secret configuration
+  # Example namespace: "union-cp"
+  TLS_SECRET_NAMESPACE: ""
+  # Example name: "controlplane-tls-cert"
+  TLS_SECRET_NAME: ""
+
+  # Dataplane ingress controller URL
+  # Example: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
+  # Find service with: kubectl get svc -n union | grep nginx-controller
+  DATAPLANE_ENDPOINT: ""
+
+  # GCP project ID for GCS and other GCP resources
+  # Example: "my-project-id"
+  GOOGLE_PROJECT_ID: ""
+
+  # GCP Artifact Registry repository prefix for control plane images
+  # Example: "us-central1-docker.pkg.dev/PROJECT_ID/REPOSITORY_NAME"
+  IMAGE_REPOSITORY_PREFIX: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Image Tag Overrides
+# ----------------------------------------------------------------------------
+# Override image tags for union services (executions, artifacts, etc.)
+
+image:
+  # eg tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+  tag: 
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Core Configuration Overrides
+# ----------------------------------------------------------------------------
+# These settings configure intra-cluster communication and single-tenant mode.
+
+configMap:
+  # Flyteadmin endpoint for intra-cluster communication
+  admin:
+    endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+    insecure: true
+
+  # Control plane connection configuration
+  connection:
+    # Use control plane ingress controller for intra-cluster routing
+    # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+
+  # Shared service security configuration
+  sharedService:
+    security:
+      # NOTE: Temporary configuration for single-tenant mode
+      # Subject to removal in the future
+      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+
+  # Union service connection configuration
+  union:
+    connection:
+      # gRPC requires TLS for HTTP/2 with NGINX
+      # Cannot mix HTTP/1.1 and HTTP/2 on same listener without TLS
+      insecure: false
+
+      # Skip SSL verification if using self-signed certificates
+      insecureSkipVerify: true
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Console Configuration
+# ----------------------------------------------------------------------------
+
+console:
+  image:
+    tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+  env:
+    # Single-tenant organization override
+    - name: UNION_ORG_OVERRIDE
+      value: '{{ .Values.global.UNION_ORG }}'
+
+# ----------------------------------------------------------------------------
+# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
+# ----------------------------------------------------------------------------
+# Additional Kubernetes resources to deploy with the control plane.
+
+extraObjects: []
+
+# Example 1: Create a basic Kubernetes secret (requires manual data population)
+# - apiVersion: "v1"
+#   kind: "Secret"
+#   metadata:
+#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+
+# Example 2: Use External Secrets Operator with AWS Secrets Manager
+# Automatically syncs RDS credentials from AWS Secrets Manager
+# Note: GCP_REGION and GCP_MANAGED_DB_SECRET_NAME should be added to globals
+# - apiVersion: "external-secrets.io/v1"
+#   kind: "SecretStore"
+#   metadata:
+#     name: "default"
+#   spec:
+#     provider:
+#       aws:
+#         region: '{{ .Values.global.GCP_REGION }}'
+#         service: "SecretsManager"
+#
+# - apiVersion: "external-secrets.io/v1"
+#   kind: "ExternalSecret"
+#   metadata:
+#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+#   spec:
+#     data:
+#     - remoteRef:
+#         key: '{{ .Values.global.GCP_MANAGED_DB_SECRET_NAME }}'
+#         property: "password"
+#       secretKey: "pass.txt"
+#     refreshInterval: "1h"
+#     secretStoreRef:
+#       kind: "SecretStore"
+#       name: "default"
+#     target:
+#       name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+
+# Example 3: Use cert-manager for TLS certificate management
+# Creates a self-signed certificate for intra-cluster TLS
+# Requires cert-manager and a ClusterIssuer to be pre-installed
+# - apiVersion: "cert-manager.io/v1"
+#   kind: "Certificate"
+#   metadata:
+#     name: "controlplane-selfsigned-tls"
+#   spec:
+#     dnsNames:
+#     - "localhost"
+#     - '{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+#     ipAddresses:
+#     - "127.0.0.1"
+#     issuerRef:
+#       group: "cert-manager.io"
+#       kind: "ClusterIssuer"
+#       name: "selfsigned-issuer"
+#     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Flyte Core Configuration
+# ----------------------------------------------------------------------------
+
+flyte:
+  # Override region to use GCP_REGION (which has GCP value)
+  region: '{{ .Values.global.GCP_REGION }}'
+
+  # Override storage from s3 to gcs
+  storage:
+    type: gcs
+    bucketName: '{{ .Values.global.BUCKET_NAME }}'
+    gcs:
+      projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
+  configmap:
+    adminServer:
+      admin:
+        # Flyteadmin endpoint via control plane ingress
+        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+        insecure: false  # Changed: using TLS with self-signed cert
+
+      connection:
+        # Control plane connection pattern
+        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+
+      sharedService:
+        security:
+          # NOTE: Temporary configuration for single-tenant mode
+          # Subject to removal in the future
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+
+  flyteadmin:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  flytescheduler:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+
+  datacatalog:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/datacatalog"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  flyteconsole:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/flyteconsole"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+
+  cacheservice:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Ingress Configuration
+# ----------------------------------------------------------------------------
+
+ingress:
+  className: controlplane
+  tls:
+    # TLS configuration for intra-cluster HTTPS
+    - hosts:
+        - localhost
+        - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+      secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 7: NGINX Ingress Controller
+# ----------------------------------------------------------------------------
+
+ingress-nginx:
+  enabled: true
+
+  # Consistent service naming
+  fullnameOverride: controlplane-nginx
+
+  controller:
+    service:
+      # ClusterIP for intra-cluster only (no external access)
+      # Change to LoadBalancer or NodePort for external access
+      type: ClusterIP
+      ports:
+        http: 80
+        https: 443
+
+    # Apply TLS certificate to all HTTPS connections
+    extraArgs:
+      # TODO (DIRECTLY CONFIGURE): Set to the values of {{ .Values.global.TLS_SECRET_NAMESPACE }}/{{ .Values.global.TLS_SECRET_NAME }}
+      # nginx-ingress subchart does not support templating here directly.
+      default-ssl-certificate: 'union-cp/controlplane-tls-cert'
+
+    # Admission webhooks configuration
+    admissionWebhooks:
+      enabled: false
+
+      # Optional: Enable with cert-manager
+      # enabled: true
+      # certManager:
+      #   enabled: true
+      #   issuerRef:
+      #     group: "cert-manager.io"
+      #     kind: "ClusterIssuer"
+      #     name: "selfsigned-issuer"
+
+      patch:
+        enabled: false
+
+    ingressClassResource:
+      # Separate ingress class from dataplane
+      name: controlplane
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Service-Specific Configuration
+# ----------------------------------------------------------------------------
+
+services:
+
+  # Artifacts service configuration
+  artifacts:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+    configMap:
+      artifactsConfig:
+        app:
+          artifactBlobStoreConfig:
+            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            stow:
+              kind: google
+              config:
+                projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+            type: stow
+
+  # Dataproxy service configuration
+  dataproxy:
+    configMap:
+      dataproxy:
+        # Connect to dataplane ingress controller
+        secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
+
+  # Executions service configuration
+  executions:
+    configMap:
+      executions:
+        app:
+          adminClient:
+            connection:
+              # Flyteadmin endpoint for executions service
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              insecure: true
+
+# ----------------------------------------------------------------------------
+# SECTION 9: ScyllaDB Configuration
+# ----------------------------------------------------------------------------
+scylla:
+  enabled: true
+  # Datacenter NAME (string, not object)
+  datacenter: dc1
+
+  # Replication factor (must match members)
+  replicationFactor: 3
+
+  # Rack configuration
+  racks:
+    - name: rack1
+      members: 3
+      storage:
+        capacity: 100Gi 
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "1Gi"
+        requests:
+          cpu: "200m"
+          memory: "512Mi"
+
+  developerMode: true
+
+  storageClass:
+    provisioner: pd.csi.storage.gke.io
+    parameters:
+      type: pd-standard
+
+
+scylla-operator:
+  enabled: true
