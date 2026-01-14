@@ -6,7 +6,7 @@ This guide covers deploying Union control plane in the **same Kubernetes cluster
 
 In an intra-cluster deployment, the control plane and dataplane communicate using Kubernetes internal networking rather than external endpoints. This architecture simplifies networking, reduces costs, and provides complete data sovereignty.
 
-**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md) for dataplane-specific configuration.
+**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOSTED_INTRA_CLUSTER_AWS.md) for dataplane-specific configuration.
 
 ## Benefits of Intra-Cluster Deployment
 
