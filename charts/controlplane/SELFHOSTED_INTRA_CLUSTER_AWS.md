@@ -59,6 +59,10 @@ Choose standard hosted deployment when:
    - Control plane services (with S3 access)
    - Artifacts service (with S3 access)
 
+6. **cert-manager**
+   - Used by the database to generate TLS certificate
+   - It can be added as Add-on to your cluster or installed by different methos, as covered in [cert-manager docs](https://cert-manager.io/docs/installation/)
+
 Check out the [deployment page](https://www.union.ai/docs/v1/selfmanaged/deployment/cluster-recommendations/#iam) for an example IAM policy.
 
 ### Required Tools
@@ -115,7 +119,16 @@ kubectl create secret tls controlplane-tls-cert \
 
 See the example #3 in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
-### Step 3: Configure Values File
+### Step 3: Create Database Password Secret
+
+```bash
+# Create secret with database password
+kubectl create secret generic union-controlplane-secrets \
+  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
+  -n union-cp
+```
+
+### Step 4: Configure Values File
 
 Download and configure the intra-cluster values file:
 
@@ -126,14 +139,6 @@ curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/contro
 
 Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
 
-### Step 4: Create Database Password Secret
-
-```bash
-# Create secret with database password
-kubectl create secret generic union-controlplane-secrets \
-  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
-  -n union-cp
-```
 
 ### Step 5: Install Control Plane
 
