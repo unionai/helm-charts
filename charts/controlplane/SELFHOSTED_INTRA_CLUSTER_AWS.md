@@ -6,7 +6,7 @@ This guide covers deploying Union control plane in the **same Kubernetes cluster
 
 In an intra-cluster deployment, the control plane and dataplane communicate using Kubernetes internal networking rather than external endpoints. This architecture simplifies networking, reduces costs, and provides complete data sovereignty.
 
-**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md) for dataplane-specific configuration.
+**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOSTED_INTRA_CLUSTER_AWS.md) for dataplane-specific configuration.
 
 ## Benefits of Intra-Cluster Deployment
 
@@ -43,8 +43,9 @@ Choose standard hosted deployment when:
 
 2. **PostgreSQL database**:
    - Version: PostgreSQL 12+
-   - Can be AWS RDS or self-hosted in the cluster
-   - Required for all control plane services
+   - Can be AWS RDS or self-hosted in the cluster (it's not deployed by the Helm chart)
+   - Required for all control plane services. 
+   - Memory-optimized instances are recommended.
 
 3. **ScyllaDB** (for queue service):
    - Can be deployed via the Helm chart (embedded) or externally managed
@@ -57,6 +58,12 @@ Choose standard hosted deployment when:
 5. **IAM roles** configured with IRSA:
    - Control plane services (with S3 access)
    - Artifacts service (with S3 access)
+
+6. **cert-manager**
+   - Used by the database to generate TLS certificate
+   - It can be added as Add-on to your cluster or installed by different methos, as covered in [cert-manager docs](https://cert-manager.io/docs/installation/)
+
+Check out the [deployment page](https://www.union.ai/docs/v1/selfmanaged/deployment/cluster-recommendations/#iam) for an example IAM policy.
 
 ### Required Tools
 
@@ -76,8 +83,7 @@ Choose standard hosted deployment when:
 #### Install ScyllaDB CRDs (if using embedded ScyllaDB)
 
 ```bash
-cd helm-charts/charts/controlplane
-./scripts/install-scylla-crds.sh
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/refs/heads/main/charts/controlplane/scripts/install-scylla-crds.sh && bash install-scylla-crds.sh
 ```
 
 #### Add Helm Repositories
@@ -111,9 +117,18 @@ kubectl create secret tls controlplane-tls-cert \
 
 **Option B: Using cert-manager (recommended for production)**
 
-See the example in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
+See the example #3 in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
-### Step 3: Configure Values File
+### Step 3: Create Database Password Secret
+
+```bash
+# Create secret with database password
+kubectl create secret generic union-controlplane-secrets \
+  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
+  -n union-cp
+```
+
+### Step 4: Configure Values File
 
 Download and configure the intra-cluster values file:
 
@@ -124,14 +139,6 @@ curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/contro
 
 Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
 
-### Step 4: Create Database Password Secret
-
-```bash
-# Create secret with database password
-kubectl create secret generic union-controlplane-secrets \
-  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
-  -n union-cp
-```
 
 ### Step 5: Install Control Plane
 
