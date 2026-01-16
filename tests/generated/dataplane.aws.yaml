@@ -674,10 +674,10 @@ data:
       enabled: true
       enableTunnelService: true
       tunnel:
-        enableDirectToAppIngress: false
+        enableDirectToAppIngress: true
         deploymentToRestart: union-operator-proxy
       apps:
-        enabled: 'false'
+        enabled: 'true'
       syncClusterConfig:
         enabled: false
       clusterId:
@@ -883,6 +883,133 @@ data:
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
+---
+# Source: dataplane/templates/serving/bootstrap-configmap.yaml
+# We need to copy the default configmap here since knative-operator does not automatically update the
+# address of the `net-kourier-controller` endpoint to use the release namespace. It assumes that the
+# resources are being installed into the `knative-serving` namespace instead.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-operator-serving-envoy-bootstrap
+  namespace: union
+data:
+  envoy-bootstrap.yaml: |
+    dynamic_resources:
+      ads_config:
+        transport_api_version: V3
+        api_type: GRPC
+        rate_limit_settings: {}
+        grpc_services:
+        - envoy_grpc: {cluster_name: xds_cluster}
+      cds_config:
+        resource_api_version: V3
+        ads: {}
+      lds_config:
+        resource_api_version: V3
+        ads: {}
+    node:
+      cluster: kourier-knative
+      id: 3scale-kourier-gateway
+    static_resources:
+      listeners:
+        - name: stats_listener
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 9000
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: stats_server
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                      virtual_hosts:
+                        - name: admin_interface
+                          domains:
+                            - "*"
+                          routes:
+                            - match:
+                                safe_regex:
+                                  regex: '/(certs|stats(/prometheus)?|server_info|clusters|listeners|ready)?'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: GET
+                              route:
+                                cluster: service_stats
+                            - match:
+                                safe_regex:
+                                  regex: '/drain_listeners'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: POST
+                              route:
+                                cluster: service_stats
+      clusters:
+        - name: service_stats
+          connect_timeout: 0.250s
+          type: static
+          load_assignment:
+            cluster_name: service_stats
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 9901
+        - name: xds_cluster
+          # This keepalive is recommended by envoy docs.
+          # https://www.envoyproxy.io/docs/envoy/latest/api-docs/xds_protocol
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options:
+                  connection_keepalive:
+                    interval: 30s
+                    timeout: 5s
+          connect_timeout: 1s
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: "net-kourier-controller"
+                      port_value: 18000
+          type: STRICT_DNS
+    admin:
+      access_log:
+      - name: envoy.access_loggers.stdout
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+      address:
+        socket_address:
+          address: 127.0.0.1
+          port_value: 9901
+    stats_config:
+      stats_tags:
+        - tag_name: name
+          regex: '^.*?\.u/.*?n=(.*?)/.*?u\..*$'
+        - tag_name: domain
+          regex: '^.*?\.u/.*?d=(.*?)/.*?u\..*$'
+        - tag_name: org
+          regex: '^.*?\.u/.*?o=(.*?)/.*?u\..*$'
+        - tag_name: project
+          regex: '^.*?\.u/.*?p=(.*?)/.*?u\..*$'
+        - tag_name: target
+          regex: '^.*?\.u/.*?t=(.*?)/.*?u\..*$'
+        - tag_name: target_namespace
+          regex: '^.*?\.u/.*?tns=(.*?)/.*?u\..*$'
 ---
 # Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -1392,6 +1519,19 @@ rules:
       - /metrics
     verbs:
       - get
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - revisions
+      - configurations
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 kind: ClusterRole
@@ -3088,7 +3228,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "406af0eee1ce6710a187811a571d9736c443e28228db13126bc41e3a57e6495"
+        configChecksum: "ba7b0e5654618bd1b499c974af10c6db179bccde05e71a0a6d40d564519c57f"
         
       labels:
         
@@ -3225,7 +3365,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "406af0eee1ce6710a187811a571d9736c443e28228db13126bc41e3a57e6495"
+        configChecksum: "ba7b0e5654618bd1b499c974af10c6db179bccde05e71a0a6d40d564519c57f"
         
       labels:
         
@@ -3684,6 +3824,175 @@ webhooks:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+---
+# Source: dataplane/templates/serving/knative-serving.yaml
+apiVersion: operator.knative.dev/v1beta1
+kind: KnativeServing
+metadata:
+  name: union-operator-serving
+  namespace: union
+spec:
+  config:
+    deployment:
+      progress-deadline: "30m"
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+      registries-skipping-tag-resolving: test.registry.com
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-fieldref: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+  high-availability:
+    replicas: 2
+  ingress:
+    kourier:
+      enabled: true
+      bootstrap-configmap: "union-operator-serving-envoy-bootstrap"
+      service-type: ClusterIP
+  podDisruptionBudgets:
+  - name: 3scale-kourier-gateway-pdb
+    minAvailable: 50%
+  - name: activator-pdb
+    minAvailable: 50%
+  - name: webhook-pdb
+    minAvailable: 50%
+  registry:
+    override:
+      # TODO(jeev): Wire up Union fork of Envoy
+      3scale-kourier-gateway/kourier-gateway: ghcr.io/unionai/envoy:456fed84d4ad9a9dfb186d117d9362e9dc0f7c1f
+      # TODO(jeev): Wire up Union fork of Kourier
+      net-kourier-controller/controller: ghcr.io/unionai/kourier@sha256:5804c348d15b3959604e3e3ceed216c3a1c7b32cbe254c7d3eb02a35e62ba9c4
+  workloads:
+  - name: 3scale-kourier-gateway
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - 3scale-kourier-gateway
+            topologyKey: topology.kubernetes.io/zone
+    annotations:
+      checksum/bootstrap-config: 6469f6f592eebc9e0c676d8ccc359a05bc799c0988e474b2da942c4cc328f656
+    env:
+    - container: kourier-gateway
+      envVars:
+      - name: UNION_AUTHZ_TENANTAUTHURL
+        value: "https://test-controlplane-host/me"
+      - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
+        value: "https://test-controlplane-host/login"
+      - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
+        value: "https://test-controlplane-host"
+    resources:
+      - container: kourier-gateway
+        limits:
+          cpu: "2"
+          memory: 2Gi
+        requests:
+          cpu: "1"
+          memory: 1Gi
+  - name: activator
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - activator
+            topologyKey: topology.kubernetes.io/zone
+  - name: autoscaler
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - autoscaler
+            topologyKey: topology.kubernetes.io/zone
+  - name: autoscaler-hpa
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - autoscaler-hpa
+            topologyKey: topology.kubernetes.io/zone
+  - name: controller
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - controller
+            topologyKey: topology.kubernetes.io/zone
+  - name: net-kourier-controller
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - net-kourier-controller
+            topologyKey: topology.kubernetes.io/zone
+    env:
+    - container: controller
+      envVars:
+      - name: KOURIER_UNION_AUTHZ_ENABLED
+        value: "true"
+    resources:
+      - container: controller
+        limits:
+          cpu: "1"
+          memory: 1Gi
+        requests:
+          cpu: 500m
+          memory: 500Mi
+  - name: webhook
+    affinity:
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - webhook
+            topologyKey: topology.kubernetes.io/zone
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus/prometheus.yaml
 apiVersion: monitoring.coreos.com/v1
