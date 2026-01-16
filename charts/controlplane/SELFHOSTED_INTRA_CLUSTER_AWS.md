@@ -59,6 +59,8 @@ Choose standard hosted deployment when:
    - Control plane services (with S3 access)
    - Artifacts service (with S3 access)
 
+Check out the [deployment page](https://www.union.ai/docs/v1/selfmanaged/deployment/cluster-recommendations/#iam) for an example IAM policy.
+
 ### Required Tools
 
 - `kubectl` configured to access your cluster
@@ -77,8 +79,7 @@ Choose standard hosted deployment when:
 #### Install ScyllaDB CRDs (if using embedded ScyllaDB)
 
 ```bash
-cd helm-charts/charts/controlplane
-./scripts/install-scylla-crds.sh
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/refs/heads/main/charts/controlplane/scripts/install-scylla-crds.sh && bash install-scylla-crds.sh
 ```
 
 #### Add Helm Repositories
@@ -112,7 +113,7 @@ kubectl create secret tls controlplane-tls-cert \
 
 **Option B: Using cert-manager (recommended for production)**
 
-See the example in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
+See the example #3 in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
 ### Step 3: Configure Values File
 
