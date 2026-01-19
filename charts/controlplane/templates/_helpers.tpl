@@ -1,10 +1,8 @@
 {{- define "unionai.imagePullSecrets" -}}
-{{- if and (hasKey .config "imagePullSecrets") }}
+{{- if and (hasKey .config "imagePullSecrets") .config.imagePullSecrets }}
 {{ toYaml .config.imagePullSecrets }}
-{{- else if and (hasKey .Values "imagePullSecrets") }}
+{{- else if and (hasKey .Values "imagePullSecrets") .Values.imagePullSecrets }}
 {{ toYaml .Values.imagePullSecrets }}
-{{- else }}
-{}
 {{- end }}
 {{- end }}
 

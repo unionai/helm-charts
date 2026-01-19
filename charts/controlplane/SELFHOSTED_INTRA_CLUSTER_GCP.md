@@ -51,8 +51,8 @@ Choose standard hosted deployment when:
    - Required for high-performance message queueing
 
 4. **GCS buckets**:
-   - One for control plane metadata
-   - One for artifacts storage (can be same bucket)
+   - One for control plane metadata (e.g., `<prefix>-cp-flyte`)
+   - One for artifacts storage (e.g., `<prefix>-cp-artifacts`)
 
 5. **GCP service accounts** configured with Workload Identity:
    - Control plane services (with GCS access)
@@ -62,7 +62,7 @@ Choose standard hosted deployment when:
 
 - `kubectl` configured to access your cluster
 - `helm` 3.18+
-- `openssl` or `cert-manager` for TLS certificate generation
+- `openssl` for TLS certificate generation
 
 ### Network Requirements
 
@@ -92,26 +92,51 @@ helm repo update
 
 Since intra-cluster communication uses gRPC over HTTP/2, TLS is required for NGINX ingress.
 
-**Option A: Using OpenSSL (self-signed)**
+#### Control Plane TLS Certificate
 
 ```bash
-# Create a self-signed certificate
+# Create namespace
+kubectl create namespace union-cp
+
+# Create a self-signed certificate for the control plane
 openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout controlplane-tls.key \
   -out controlplane-tls.crt \
-  -subj "/CN=controlplane-nginx-controller.union-cp.svc.cluster.local"
+  -subj "/CN=controlplane-nginx-controller.union-cp.svc.cluster.local" \
+  -addext "subjectAltName=DNS:controlplane-nginx-controller.union-cp.svc.cluster.local"
 
 # Create Kubernetes secret
-kubectl create namespace union-cp
 kubectl create secret tls controlplane-tls-cert \
   --key controlplane-tls.key \
   --cert controlplane-tls.crt \
   -n union-cp
 ```
 
-**Option B: Using cert-manager (recommended for production)**
+#### ScyllaDB Operator Webhook Certificate (if using embedded ScyllaDB)
 
-See the example in `values.gcp.selfhosted-intracluster.yaml` under the `extraObjects` section.
+The ScyllaDB operator requires a TLS certificate for its validating webhook. Since we are not using cert-manager, you must create this certificate manually:
+
+```bash
+# Create namespace with Helm labels (required for Helm to manage it)
+kubectl create namespace scylla-operator
+kubectl label namespace scylla-operator app.kubernetes.io/managed-by=Helm
+kubectl annotate namespace scylla-operator \
+  meta.helm.sh/release-name=unionai-controlplane \
+  meta.helm.sh/release-namespace=union-cp
+
+# Generate certificate for scylla-operator webhook
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /tmp/scylla-webhook.key \
+  -out /tmp/scylla-webhook.crt \
+  -subj "/CN=scylla-operator-webhook.scylla-operator.svc" \
+  -addext "subjectAltName=DNS:scylla-operator-webhook.scylla-operator.svc,DNS:scylla-operator-webhook.scylla-operator.svc.cluster.local"
+
+# Create secret
+kubectl create secret tls scylla-operator-webhook-cert \
+  --key /tmp/scylla-webhook.key \
+  --cert /tmp/scylla-webhook.crt \
+  -n scylla-operator
+```
 
 ### Step 3: Configure Values File
 
@@ -122,9 +147,191 @@ Download and configure the intra-cluster values file:
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.gcp.selfhosted-intracluster.yaml
 ```
 
-Edit `values.gcp.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary GCP and intra-cluster configuration.
+Edit `values.gcp.selfhosted-intracluster.yaml` and configure the following sections:
+
+#### Global Configuration
+
+```yaml
+global:
+  # Your organization name
+  UNION_ORG: "your-org"
+
+  # Control plane host (format: <org>-cp for intra-cluster)
+  UNION_HOST: "your-org-cp"
+
+  # Database configuration (must match your Cloud SQL instance)
+  DB_HOST: "<CLOUD_SQL_PRIVATE_IP>"
+  DB_NAME: "unionai"
+  DB_USER: "unionai"
+
+  # GCS bucket names (must match buckets created by Terraform)
+  BUCKET_NAME: "<prefix>-cp-flyte"
+  ARTIFACTS_BUCKET_NAME: "<prefix>-cp-artifacts"
+
+  # Kubernetes secret name for database password
+  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
+
+  # GCP project ID
+  GOOGLE_PROJECT_ID: "<your-gcp-project-id>"
+
+  # Image repository (contact Union for access)
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
+
+  # TLS configuration
+  TLS_SECRET_NAMESPACE: "union-cp"
+  TLS_SECRET_NAME: "controlplane-tls-cert"
+
+  # GCP service account for Workload Identity
+  FLYTEADMIN_IAM_ROLE_ARN: "flyteadmin@<project-id>.iam.gserviceaccount.com"
+```
+
+#### Image Configuration
+
+Set the image tag for all services:
+
+```yaml
+image:
+  tag: "<image-tag>"  # Contact Union for the current stable tag
+```
+
+#### Image Pull Secrets
+
+Configure image pull secrets if using a private registry:
+
+```yaml
+imagePullSecrets:
+  - name: union-registry-secret
+```
+
+Create the image pull secret:
+
+```bash
+kubectl create secret docker-registry union-registry-secret \
+  --docker-server=registry.unionai.cloud \
+  --docker-username='<username>' \
+  --docker-password='<password>' \
+  -n union-cp
+```
+
+#### Flyte Subchart Configuration
+
+The flyte-core subchart does not render Helm templates in image references, so you must specify explicit values:
+
+```yaml
+flyte:
+  # Database secret name (must be hardcoded, not a template)
+  common:
+    databaseSecret:
+      name: "union-controlplane-secrets"
+
+  # Image configuration for each flyte component
+  flyteadmin:
+    image:
+      repository: registry.unionai.cloud/controlplane/services
+      tag: "<image-tag>"
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
+      annotations:
+        iam.gke.io/gcp-service-account: "flyteadmin@<project-id>.iam.gserviceaccount.com"
+
+  flytescheduler:
+    image:
+      repository: registry.unionai.cloud/controlplane/flytescheduler
+      tag: "<image-tag>"
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
+
+  datacatalog:
+    image:
+      repository: registry.unionai.cloud/controlplane/datacatalog
+      tag: "<image-tag>"
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
+      annotations:
+        iam.gke.io/gcp-service-account: "flyteadmin@<project-id>.iam.gserviceaccount.com"
+
+  flyteconsole:
+    image:
+      repository: registry.unionai.cloud/controlplane/flyteconsole
+      tag: "<image-tag>"
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
+
+  cacheservice:
+    image:
+      repository: registry.unionai.cloud/controlplane/services
+      tag: "<image-tag>"
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
+      annotations:
+        iam.gke.io/gcp-service-account: "flyteadmin@<project-id>.iam.gserviceaccount.com"
+```
+
+#### Disable Unused Subcharts
+
+For GCP deployments using Cloud SQL and GCS:
+
+```yaml
+minio:
+  enabled: false
+
+postgresql:
+  enabled: false
+```
+
+#### ScyllaDB Operator Configuration
+
+Configure the ScyllaDB operator to use your manually created certificate:
+
+```yaml
+scylla-operator:
+  enabled: true
+  webhook:
+    createSelfSignedCertificate: false
+    certificateSecretName: scylla-operator-webhook-cert
+```
 
 ### Step 4: Create Database Password Secret
+
+The control plane services require a Kubernetes secret containing the database password.
+
+**Recommended: Use Terraform to create the secret**
+
+The preferred approach is to use the Union reference Terraform module to create this secret automatically. The module generates a random password for Cloud SQL and creates the corresponding Kubernetes secret with the correct password.
+
+Our reference Terraform module (`infra/terraform/modules/selfmanaged/gcp/controlplane`) includes:
+
+- `provider.tf` - Configures the Kubernetes provider to connect to GKE
+- `k8s_secrets.tf` - Creates the `union-controlplane-secrets` Kubernetes secret with the database password
+
+Example from the Terraform module:
+
+```hcl
+# k8s_secrets.tf
+resource "kubernetes_secret" "db_password" {
+  count = var.gke != null ? 1 : 0
+
+  metadata {
+    name      = "union-controlplane-secrets"
+    namespace = var.k8s_namespace
+  }
+
+  data = {
+    "pass.txt" = random_password.db_password.result
+  }
+
+  depends_on = [kubernetes_namespace.controlplane]
+}
+```
+
+**Alternative: Manual secret creation**
+
+If you are not using the reference Terraform module, create the secret manually:
 
 ```bash
 # Create secret with database password
@@ -133,30 +340,43 @@ kubectl create secret generic union-controlplane-secrets \
   -n union-cp
 ```
 
+**Important**: Ensure the password matches the password configured for your Cloud SQL database user.
+
 ### Step 5: Install Control Plane
 
-Install the control plane using the self-contained intra-cluster values file:
+Install the control plane using the configured values file:
 
 ```bash
 helm upgrade --install unionai-controlplane unionai/controlplane \
   --namespace union-cp \
   --create-namespace \
   --values values.gcp.selfhosted-intracluster.yaml \
-  --timeout 15m \
-  --wait
+  --timeout 15m
 ```
 
-**Important notes:**
+**Note**: Do not use `--wait` on the first installation. The ScyllaDB operator webhook may need to be patched before all resources can be created.
 
-- `values.gcp.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
-- No additional values files are required
-- The file configures single-tenant mode and internal networking for intra-cluster communication
+#### Patch ScyllaDB Webhook (if needed)
+
+If the installation fails with a webhook certificate error, patch the ValidatingWebhookConfiguration with the CA bundle:
+
+```bash
+CA_BUNDLE=$(cat /tmp/scylla-webhook.crt | base64 | tr -d '\n')
+kubectl patch validatingwebhookconfiguration scylla-operator \
+  --type='json' \
+  -p="[{'op': 'add', 'path': '/webhooks/0/clientConfig/caBundle', 'value': '${CA_BUNDLE}'}]"
+```
+
+Then re-run the helm upgrade command.
 
 ### Step 6: Verify Control Plane Installation
 
 ```bash
 # Check pod status
 kubectl get pods -n union-cp
+
+# Expected: All pods should be in Running state
+# Note: ScyllaDB pods (scylla-dc1-rack1-*) may take several minutes to become ready
 
 # Verify services are running
 kubectl get svc -n union-cp
@@ -168,8 +388,6 @@ kubectl logs -n union-cp deploy/flyteadmin --tail=50
 kubectl exec -n union-cp deploy/flyteadmin -- \
   curl -k https://controlplane-nginx-controller.union-cp.svc.cluster.local
 ```
-
-Expected: All pods should be in `Running` state, and internal connectivity should succeed.
 
 ### Step 7: Deploy Dataplane
 
@@ -293,6 +511,24 @@ kubectl top nodes
 kubectl get secret -n union-cp
 ```
 
+### Image pull errors
+
+If pods show `ImagePullBackOff` or `ErrImagePull`:
+
+1. Verify image pull secret exists:
+   ```bash
+   kubectl get secret union-registry-secret -n union-cp
+   ```
+
+2. Check the secret is correctly configured:
+   ```bash
+   kubectl get secret union-registry-secret -n union-cp -o jsonpath='{.data.\.dockerconfigjson}' | base64 -d
+   ```
+
+3. Ensure the `imagePullSecrets` is configured in the values file and for flyte subcharts.
+
+4. Verify image repositories are set correctly (not pointing to AWS ECR for GCP deployments).
+
 ### TLS/Certificate errors
 
 ```bash
@@ -306,6 +542,27 @@ kubectl get secret controlplane-tls-cert -n union-cp -o jsonpath='{.data.tls\.cr
 kubectl logs -n union-cp deploy/controlplane-nginx-controller
 ```
 
+### ScyllaDB webhook errors
+
+If you see errors like `failed calling webhook "webhook.scylla.scylladb.com"`:
+
+1. Ensure the scylla-operator namespace exists with Helm labels:
+   ```bash
+   kubectl get ns scylla-operator -o yaml
+   ```
+
+2. Verify the webhook certificate secret exists:
+   ```bash
+   kubectl get secret scylla-operator-webhook-cert -n scylla-operator
+   ```
+
+3. Patch the webhook with the CA bundle (see Step 5).
+
+4. If the webhook configuration doesn't exist yet, delete any stale webhook and retry:
+   ```bash
+   kubectl delete validatingwebhookconfiguration scylla-operator
+   ```
+
 ### Database connection failures
 
 - Verify database credentials in the secret:
@@ -314,12 +571,30 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
   kubectl get secret union-controlplane-secrets -n union-cp -o jsonpath='{.data.pass\.txt}' | base64 -d
   ```
 
+- Ensure the password is not a placeholder value like `YOUR_DB_PASSWORD`.
+
 - Check network connectivity to PostgreSQL:
 
   ```bash
   kubectl run -n union-cp test-db --image=postgres:14 --rm -it -- \
     psql -h <DB_HOST> -U <DB_USER> -d <DB_NAME>
   ```
+
+### GCS bucket access errors
+
+If pods fail with `storage.buckets.create` or similar permission errors:
+
+1. Verify the bucket names in your values file match the actual GCS buckets:
+   ```bash
+   gsutil ls | grep <prefix>
+   ```
+
+2. Check that Workload Identity is configured correctly:
+   ```bash
+   kubectl get sa flyteadmin -n union-cp -o yaml | grep iam.gke.io/gcp-service-account
+   ```
+
+3. Verify the GCP service account has the required IAM permissions on the buckets.
 
 ### Dataplane cannot connect to control plane
 
