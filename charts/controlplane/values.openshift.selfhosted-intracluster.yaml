@@ -1,0 +1,594 @@
+# ============================================================================
+# Union Control Plane Configuration for OpenShift Self-Hosted Intra-Cluster Deployment
+# ============================================================================
+# This configuration is for deploying Union control plane in the SAME
+# OpenShift cluster as the Union dataplane (co-located deployment).
+#
+# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
+#   helm install ... -f values.openshift.selfhosted-intracluster.yaml
+#
+# Key features of this OpenShift deployment:
+# - In-cluster PostgreSQL database (via Bitnami chart)
+# - In-cluster MinIO for S3-compatible object storage (via Bitnami chart)
+# - Uses intra-cluster communication (internal Kubernetes networking)
+# - Requires TLS certificates for gRPC/HTTP2 with NGINX
+# - Single-tenant mode with explicit organization configuration
+# - Direct communication between control plane and dataplane services
+# - OpenShift-compatible security contexts and storage classes
+# - Optional OpenShift Routes alongside Ingress resources
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Configuration Variables to Replace
+# ----------------------------------------------------------------------------
+# Configure ALL variables below for your self-hosted intra-cluster deployment.
+# This file includes both in-cluster infrastructure configuration (PostgreSQL,
+# MinIO) AND intra-cluster specific settings. Replace all empty "" values with
+# your actual configuration.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration
+# ----------------------------------------------------------------------------
+# Configure all global variables for your OpenShift self-hosted deployment.
+
+global:
+
+  # PostgreSQL database name
+  # Example: "unionai" or "union_controlplane"
+  DB_NAME: "unionai"
+
+  # PostgreSQL username
+  # Example: "unionai" or "admin"
+  DB_USER: "unionai"
+
+  # PostgreSQL host (existing PostgreSQL service)
+  # Example: "postgresql.databases.svc.cluster.local" or external hostname
+  # Set this to your existing PostgreSQL service endpoint
+  DB_HOST: ""
+
+  # PostgreSQL port (default: 5432)
+  DB_PORT: 5432
+
+  # S3-compatible storage bucket for control plane metadata
+  # Example: "union-controlplane-metadata"
+  BUCKET_NAME: "union-controlplane-metadata"
+
+  # S3-compatible storage bucket for artifacts storage
+  # Example: "union-controlplane-artifacts"
+  ARTIFACTS_BUCKET_NAME: "union-controlplane-artifacts"
+
+  # S3-compatible storage endpoint (MinIO, S3, etc.)
+  # Example: "minio.storage.svc.cluster.local:9000" or external endpoint
+  # Set this to your existing storage service endpoint
+  STORAGE_ENDPOINT: "minio.storage.svc.cluster.local:9000"
+
+  # S3-compatible storage access key
+  # Example: "minio-admin"
+  STORAGE_ACCESS_KEY: "minio-admin"
+
+  # S3-compatible storage secret key
+  # Example: "minio-password"
+  STORAGE_SECRET_KEY: "minio-password"
+
+  # Name of Kubernetes secret containing the DB password and other service specific secrets.
+  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
+  # Example: "union-controlplane-secrets"
+  # Note: Secret must contain "pass.txt" key
+  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
+
+  # Organization name (must match dataplane orgName)
+  # Example: "acme-corp" or "my-organization"
+  UNION_ORG: ""
+
+  # Internal Flyteadmin service endpoint
+  # Example: "flyteadmin.union-cp.svc.cluster.local:81"
+  # Find with: kubectl get svc -n union-cp flyteadmin
+  FLYTEADMIN_ENDPOINT: ""
+
+  # Control plane ingress controller FQDN (for intra-cluster routing)
+  # Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  # Find with: kubectl get svc -n union-cp | grep nginx-controller
+  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+
+  # TLS secret configuration
+  # Example namespace: "union-cp"
+  TLS_SECRET_NAMESPACE: ""
+  # Example name: "controlplane-tls-cert"
+  TLS_SECRET_NAME: ""
+
+  # Dataplane ingress controller URL
+  # Example: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
+  # Find service with: kubectl get svc -n union | grep nginx-controller
+  DATAPLANE_ENDPOINT: ""
+
+  # OpenShift-specific: Storage class for persistent volumes
+  # Example: "ocs-storagecluster-ceph-rbd" or "gp2" or leave empty for default
+  STORAGE_CLASS: ""
+
+  # OpenShift-specific: Enable Routes (true) or use only Ingress (false)
+  # Routes are the preferred OpenShift way to expose services
+  ENABLE_ROUTES: true
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Configuration Overrides
+# ----------------------------------------------------------------------------
+# These settings configure intra-cluster communication and single-tenant mode.
+
+configMap:
+  # Flyteadmin endpoint for intra-cluster communication
+  admin:
+    endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+    insecure: true
+
+  # Control plane connection configuration
+  connection:
+    # Use control plane ingress controller for intra-cluster routing
+    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+
+  # Shared service security configuration
+  sharedService:
+    security:
+      # NOTE: Temporary configuration for single-tenant mode
+      # Subject to removal in the future
+      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+
+  # Union service connection configuration
+  union:
+    connection:
+      # gRPC requires TLS for HTTP/2 with NGINX
+      # Cannot mix HTTP/1.1 and HTTP/2 on same listener without TLS
+      insecure: false
+
+      # Skip SSL verification if using self-signed certificates
+      insecureSkipVerify: true
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Console Configuration
+# ----------------------------------------------------------------------------
+
+console:
+  env:
+    # Single-tenant organization override
+    - name: UNION_ORG_OVERRIDE
+      value: '{{ .Values.global.UNION_ORG }}'
+
+# ----------------------------------------------------------------------------
+# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
+# ----------------------------------------------------------------------------
+# Additional Kubernetes resources to deploy with the control plane.
+
+extraObjects: []
+
+# Example 1: Create a basic Kubernetes secret for database password
+# - apiVersion: "v1"
+#   kind: "Secret"
+#   metadata:
+#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+#   type: "Opaque"
+#   stringData:
+#     pass.txt: "YOUR_DB_PASSWORD_HERE"
+
+# Example 2: Use External Secrets Operator (if available on OpenShift)
+# - apiVersion: "external-secrets.io/v1"
+#   kind: "SecretStore"
+#   metadata:
+#     name: "default"
+#   spec:
+#     provider:
+#       # Configure your secrets backend (Vault, etc.)
+#       vault:
+#         server: "https://vault.example.com"
+#         path: "secret"
+#         version: "v2"
+
+# Example 3: Use cert-manager for TLS certificate management
+# Creates a self-signed certificate for intra-cluster TLS
+# Requires cert-manager and a ClusterIssuer to be pre-installed
+# - apiVersion: "cert-manager.io/v1"
+#   kind: "Certificate"
+#   metadata:
+#     name: "controlplane-selfsigned-tls"
+#   spec:
+#     dnsNames:
+#     - "localhost"
+#     - '{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+#     ipAddresses:
+#     - "127.0.0.1"
+#     issuerRef:
+#       group: "cert-manager.io"
+#       kind: "ClusterIssuer"
+#       name: "selfsigned-issuer"
+#     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
+
+# Example 4: Create OpenShift Route for external access (alternative to Ingress)
+# - apiVersion: "route.openshift.io/v1"
+#   kind: "Route"
+#   metadata:
+#     name: "controlplane-console"
+#   spec:
+#     host: "union-console.apps.your-cluster.example.com"
+#     to:
+#       kind: "Service"
+#       name: "console"
+#       weight: 100
+#     port:
+#       targetPort: "http"
+#     tls:
+#       termination: "edge"
+#       insecureEdgeTerminationPolicy: "Redirect"
+#     wildcardPolicy: "None"
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Flyte Core Configuration
+# ----------------------------------------------------------------------------
+
+flyte:
+  configmap:
+    adminServer:
+      admin:
+        # Flyteadmin endpoint via control plane ingress
+        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+        insecure: true
+
+      connection:
+        # Control plane connection pattern
+        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+
+      sharedService:
+        security:
+          # NOTE: Temporary configuration for single-tenant mode
+          # Subject to removal in the future
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+
+  # Database configuration pointing to existing PostgreSQL
+  db:
+    datacatalog:
+      database:
+        host: '{{ .Values.global.DB_HOST }}'
+        port: '{{ .Values.global.DB_PORT | default 5432 }}'
+        dbname: datacatalog
+        username: '{{ .Values.global.DB_USER }}'
+        passwordPath: /etc/db/pass.txt
+
+  flyteadmin:
+    # No service account annotations needed (no IAM roles for OpenShift)
+    serviceAccount:
+      create: true
+
+  datacatalog:
+    # No service account annotations needed
+    serviceAccount:
+      create: true
+
+  cacheservice:
+    # No service account annotations needed
+    serviceAccount:
+      create: true
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Ingress Configuration
+# ----------------------------------------------------------------------------
+
+ingress:
+  className: controlplane
+  tls:
+    # TLS configuration for intra-cluster HTTPS
+    - hosts:
+        - localhost
+        - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+      secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 7: NGINX Ingress Controller
+# ----------------------------------------------------------------------------
+
+ingress-nginx:
+  enabled: true
+
+  # Consistent service naming
+  fullnameOverride: controlplane-nginx
+
+  controller:
+    service:
+      # ClusterIP for intra-cluster only (no external access)
+      # Change to LoadBalancer or NodePort for external access
+      type: ClusterIP
+      ports:
+        http: 80
+        https: 443
+
+    # Apply TLS certificate to all HTTPS connections
+    extraArgs:
+      # TODO (DIRECTLY CONFIGURE): Set to the values of {{ .Values.global.TLS_SECRET_NAMESPACE }}/{{ .Values.global.TLS_SECRET_NAME }}
+      # nginx-ingress subchart does not support templating here directly.
+      default-ssl-certificate: '<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>'
+
+    # Admission webhooks configuration
+    admissionWebhooks:
+      enabled: false
+
+      # Optional: Enable with cert-manager
+      # enabled: true
+      # certManager:
+      #   enabled: true
+      #   issuerRef:
+      #     group: "cert-manager.io"
+      #     kind: "ClusterIssuer"
+      #     name: "selfsigned-issuer"
+
+      patch:
+        enabled: false
+
+    ingressClassResource:
+      # Separate ingress class from dataplane
+      name: controlplane
+
+    # OpenShift-specific: Allow running as non-root
+    containerSecurityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      # OpenShift will assign a random UID
+      capabilities:
+        drop:
+          - ALL
+        add:
+          - NET_BIND_SERVICE
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Service-Specific Configuration
+# ----------------------------------------------------------------------------
+
+services:
+
+  # Artifacts service configuration
+  artifacts:
+    # No service account annotations needed (no IAM roles)
+    serviceAccount:
+      create: true
+
+    # Configure to use existing S3-compatible storage
+    configMap:
+      artifacts:
+        storage:
+          connection:
+            endpoint: 'http://{{ .Values.global.STORAGE_ENDPOINT }}'
+            # S3-compatible API (MinIO, S3, etc.)
+            auth-type: "accesskey"
+            region: "us-east-1"  # Region for S3-compatible storage
+            access-key: '{{ .Values.global.STORAGE_ACCESS_KEY }}'
+            secret-key: '{{ .Values.global.STORAGE_SECRET_KEY }}'
+          type: "s3"
+          container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+
+  # Dataproxy service configuration
+  dataproxy:
+    configMap:
+      dataproxy:
+        # Connect to dataplane ingress controller
+        secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
+
+  # Executions service configuration
+  executions:
+    configMap:
+      executions:
+        app:
+          adminClient:
+            connection:
+              # Flyteadmin endpoint for executions service
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              insecure: true
+
+# ----------------------------------------------------------------------------
+# SECTION 9: PostgreSQL Configuration
+# ----------------------------------------------------------------------------
+# IMPORTANT: Set to false if you have existing PostgreSQL installation.
+# If enabled=true, deploys PostgreSQL using Bitnami chart.
+# If enabled=false, configure global.DB_HOST to point to your existing PostgreSQL.
+
+postgresql:
+  enabled: false  # Set to true to deploy PostgreSQL via this chart
+
+  # Global PostgreSQL configuration
+  global:
+    postgresql:
+      auth:
+        username: unionai
+        password: "CHANGE_ME_IN_PRODUCTION"  # Override via --set or secret
+        database: unionai
+        existingSecret: ""  # Set to use existing secret instead
+
+  # PostgreSQL primary configuration
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClass: '{{ .Values.global.STORAGE_CLASS }}'
+
+    # OpenShift-compatible security context
+    containerSecurityContext:
+      enabled: true
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+
+    podSecurityContext:
+      enabled: true
+      fsGroup: null  # Let OpenShift assign
+
+    # Resource limits
+    resources:
+      limits:
+        cpu: 2000m
+        memory: 4Gi
+      requests:
+        cpu: 500m
+        memory: 2Gi
+
+    # Additional databases to create
+    initdb:
+      scripts:
+        create_databases.sql: |
+          -- Create databases for all Union services
+          CREATE DATABASE flyteadmin;
+          CREATE DATABASE datacatalog;
+          CREATE DATABASE cacheservice;
+
+          -- Grant privileges
+          GRANT ALL PRIVILEGES ON DATABASE flyteadmin TO unionai;
+          GRANT ALL PRIVILEGES ON DATABASE datacatalog TO unionai;
+          GRANT ALL PRIVILEGES ON DATABASE cacheservice TO unionai;
+
+  # PostgreSQL read replicas (optional)
+  readReplicas:
+    replicaCount: 0  # Set to 1+ for HA
+
+  # Metrics exporter (optional)
+  metrics:
+    enabled: false
+    serviceMonitor:
+      enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 10: MinIO Configuration
+# ----------------------------------------------------------------------------
+# IMPORTANT: Set to false if you have existing MinIO installation.
+# If enabled=true, deploys MinIO using Bitnami chart.
+# If enabled=false, configure global.MINIO_ENDPOINT to point to your existing MinIO.
+
+minio:
+  enabled: false  # Set to true to deploy MinIO via this chart
+
+  # MinIO mode: standalone or distributed
+  mode: standalone  # Use "distributed" for HA with 4+ nodes
+
+  # Authentication
+  auth:
+    rootUser: "minio-root-user"
+    rootPassword: "CHANGE_ME_IN_PRODUCTION"  # Override via --set or secret
+    existingSecret: ""  # Set to use existing secret instead
+
+  # Default buckets to create
+  defaultBuckets: "{{ .Values.global.BUCKET_NAME }},{{ .Values.global.ARTIFACTS_BUCKET_NAME }}"
+
+  # Persistence configuration
+  persistence:
+    enabled: true
+    size: 500Gi
+    storageClass: '{{ .Values.global.STORAGE_CLASS }}'
+
+  # OpenShift-compatible security context
+  containerSecurityContext:
+    enabled: true
+    runAsNonRoot: true
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+
+  podSecurityContext:
+    enabled: true
+    fsGroup: null  # Let OpenShift assign
+
+  # Service configuration
+  service:
+    type: ClusterIP
+    ports:
+      api: 9000
+      console: 9001
+
+  # Resource limits
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 4Gi
+    requests:
+      cpu: 500m
+      memory: 2Gi
+
+  # Ingress for MinIO console (optional, for web UI access)
+  ingress:
+    enabled: false
+    ingressClassName: controlplane
+    hostname: minio-console.local
+    tls: false
+
+  # Metrics exporter (optional)
+  metrics:
+    serviceMonitor:
+      enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 11: ScyllaDB Configuration (for Queue Service)
+# ----------------------------------------------------------------------------
+# ScyllaDB is used exclusively for the queue service.
+
+scylla:
+  enabled: true
+  fullnameOverride: scylla
+
+  # Datacenter and rack configuration
+  datacenter: dc1
+  racks:
+    - name: rack1
+      members: 3
+      storage:
+        capacity: 100Gi
+        storageClassName: '{{ .Values.global.STORAGE_CLASS }}'
+
+      # OpenShift-compatible configuration
+      resources:
+        limits:
+          cpu: 2
+          memory: 4Gi
+        requests:
+          cpu: 500m
+          memory: 2Gi
+
+  # ScyllaDB image
+  scyllaImage:
+    tag: 2025.1.5
+
+  # Development mode (disable for production)
+  developerMode: true
+
+# ScyllaDB Operator
+scylla-operator:
+  enabled: true
+
+# ----------------------------------------------------------------------------
+# SECTION 12: OpenShift-Specific Configuration
+# ----------------------------------------------------------------------------
+
+# OpenShift security context constraints
+# These are applied at the pod level for all Union services
+securityContext:
+  # Let OpenShift assign UIDs/GIDs dynamically
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+# OpenShift Routes (optional, requires .Values.global.ENABLE_ROUTES = true)
+# Routes provide native OpenShift ingress with automatic TLS
+routes:
+  enabled: '{{ .Values.global.ENABLE_ROUTES }}'
+
+  # Console route
+  console:
+    enabled: true
+    host: ""  # Set to your desired hostname, e.g., "union-console.apps.cluster.example.com"
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
+
+  # Admin API route
+  admin:
+    enabled: true
+    host: ""  # Set to your desired hostname
+    tls:
+      termination: edge
+      insecureEdgeTerminationPolicy: Redirect
