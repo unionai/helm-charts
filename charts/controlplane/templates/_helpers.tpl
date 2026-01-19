@@ -8,6 +8,21 @@
 {{- end }}
 {{- end }}
 
+{{/*
+Validate that required imagePullSecrets exist in the cluster.
+This check is skipped during helm template/dry-run (when lookup returns empty).
+*/}}
+{{- define "unionai.validateImagePullSecrets" -}}
+{{- range .Values.imagePullSecrets }}
+{{- $secret := lookup "v1" "Secret" $.Release.Namespace .name }}
+{{- if not $secret }}
+{{- if $.Capabilities.APIVersions.Has "v1" }}
+{{- fail (printf "Required imagePullSecret '%s' not found in namespace '%s'. Create it with:\n  kubectl create secret docker-registry %s \\\n    --docker-server=registry.unionai.cloud \\\n    --docker-username='<username>' \\\n    --docker-password='<password>' \\\n    -n %s" .name $.Release.Namespace .name $.Release.Namespace) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
+
 {{- define "unionai.resources" -}}
 {{- if and (hasKey .config "resources") }}
 {{ toYaml .config.resources }}
