@@ -96,7 +96,18 @@ global:
   DATAPLANE_ENDPOINT: ""
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Core Configuration Overrides
+# SECTION 2: Image Tag Overrides
+# ----------------------------------------------------------------------------
+# Override image tags for union services (executions, artifacts, etc.)
+
+image:
+  tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+
+imagePullSecrets:
+  - name: harbor-secret
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Core Configuration Overrides
 # ----------------------------------------------------------------------------
 # These settings configure intra-cluster communication and single-tenant mode.
 
@@ -129,17 +140,20 @@ configMap:
       insecureSkipVerify: true
 
 # ----------------------------------------------------------------------------
-# SECTION 3: Console Configuration
+# SECTION 4: Console Configuration
 # ----------------------------------------------------------------------------
 
 console:
+  image:
+    repository: "registry.unionai.cloud/controlplane/unionconsole"
+    tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
   env:
     # Single-tenant organization override
     - name: UNION_ORG_OVERRIDE
       value: '{{ .Values.global.UNION_ORG }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
+# SECTION 5: Extra Kubernetes Objects (OPTIONAL)
 # ----------------------------------------------------------------------------
 # Additional Kubernetes resources to deploy with the control plane.
 
@@ -201,7 +215,7 @@ extraObjects: []
 #     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 5: Flyte Core Configuration
+# SECTION 6: Flyte Core Configuration
 # ----------------------------------------------------------------------------
 
 flyte:
@@ -223,22 +237,57 @@ flyte:
           singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
 
   flyteadmin:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "registry.unionai.cloud/controlplane/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: harbor-secret
+
+  flytescheduler:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "registry.unionai.cloud/controlplane/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    serviceAccount:
+      imagePullSecrets:
+        - name: harbor-secret
 
   datacatalog:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "registry.unionai.cloud/controlplane/datacatalog"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: harbor-secret
+
+  flyteconsole:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "registry.unionai.cloud/controlplane/flyteconsole"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    imagePullSecrets:
+      - name: harbor-secret
 
   cacheservice:
+    image:
+      # flyte-core subchart doesn't render templates, must use hardcoded repository
+      repository: "registry.unionai.cloud/controlplane/services"
+      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: harbor-secret
 
 # ----------------------------------------------------------------------------
-# SECTION 6: Ingress Configuration
+# SECTION 7: Ingress Configuration
 # ----------------------------------------------------------------------------
 
 ingress:
@@ -251,7 +300,7 @@ ingress:
       secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 7: NGINX Ingress Controller
+# SECTION 8: NGINX Ingress Controller
 # ----------------------------------------------------------------------------
 
 ingress-nginx:
@@ -296,7 +345,7 @@ ingress-nginx:
       name: controlplane
 
 # ----------------------------------------------------------------------------
-# SECTION 8: Service-Specific Configuration
+# SECTION 9: Service-Specific Configuration
 # ----------------------------------------------------------------------------
 
 services:

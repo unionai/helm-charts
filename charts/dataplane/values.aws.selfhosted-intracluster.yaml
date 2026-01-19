@@ -122,6 +122,21 @@ storage:
   enableMultiContainer: true
 
 # ----------------------------------------------------------------------------
+# SECTION 3.5: Image Configuration
+# ----------------------------------------------------------------------------
+# Override image repositories to use Harbor registry
+# All images hosted in registry.unionai.cloud to avoid pulling from external registries
+
+image:
+  union:
+    repository: "registry.unionai.cloud/dataplane/unionoperator"
+    # tag will be set from Chart.AppVersion or can be overridden
+
+# Image pull secrets for Harbor registry
+imagePullSecrets:
+  - name: harbor-secret
+
+# ----------------------------------------------------------------------------
 # SECTION 4: IAM Roles (REQUIRED for AWS)
 # ----------------------------------------------------------------------------
 # Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
@@ -142,6 +157,8 @@ userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 # the control plane using intra-cluster communication.
 
 clusterresourcesync:
+  imagePullSecrets:
+    - name: harbor-secret
   config:
     union:
       connection:
@@ -236,6 +253,8 @@ config:
 # Configure how workflow tasks are executed.
 
 executor:
+  imagePullSecrets:
+    - name: harbor-secret
   config:
     unionAuth:
       # Disable API key injection (not needed for intra-cluster communication)
@@ -290,6 +309,8 @@ ingress-nginx:
 # ----------------------------------------------------------------------------
 
 operator:
+  imagePullSecrets:
+    - name: harbor-secret
   # Disable Cloudflare tunnel (not needed for intra-cluster deployment)
   enableTunnelService: false
 
@@ -299,7 +320,28 @@ operator:
 
 # Prometheus for metrics collection and monitoring
 prometheus:
+  # Global imagePullSecrets for all prometheus components
+  global:
+    # Disable global imageRegistry to prevent quay.io prefix
+    imageRegistry: ""
+    imagePullSecrets:
+      - name: harbor-secret
+
   prometheusOperator:
+    # Override prometheus-operator image to use Harbor
+    # Split registry and repository to match chart expectations
+    image:
+      registry: registry.unionai.cloud
+      repository: dataplane/prometheus-operator
+      tag: v0.82.2
+
+    # Override prometheus-config-reloader image to use Harbor
+    prometheusConfigReloader:
+      image:
+        registry: registry.unionai.cloud
+        repository: dataplane/prometheus-config-reloader
+        tag: v0.82.2
+
     admissionWebhooks:
       # Disable admission webhooks by default
       # Enable if you have cert-manager installed
@@ -316,6 +358,14 @@ prometheus:
 
       patch:
         enabled: false
+
+  # Override prometheus server image to use Harbor
+  prometheus:
+    prometheusSpec:
+      image:
+        registry: registry.unionai.cloud
+        repository: dataplane/prometheus
+        tag: v3.4.1
 
 # ----------------------------------------------------------------------------
 # Secrets Configuration
@@ -342,11 +392,19 @@ serving:
 # FluentBit collects and forwards logs to the control plane.
 
 fluentbit:
+  # Override fluent-bit image to use Harbor
+  image:
+    repository: registry.unionai.cloud/dataplane/fluent-bit
+    tag: 3.2.8
+
+  # Image pull secrets for Harbor
+  imagePullSecrets:
+    - name: harbor-secret
+
   serviceAccount:
     name: fluentbit-system
     # Annotations may be required for IRSA
     annotations: {}
-<<<<<<< Updated upstream
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Task Level Monitoring
@@ -498,3 +556,23 @@ dcgm-exporter:
   #
   #    tolerations to ensure it only runs on GPU nodes.
   # tolerations: []
+
+
+# ----------------------------------------------------------------------------
+# Additional Component Image Pull Secrets
+# ----------------------------------------------------------------------------
+
+flytepropeller:
+  serviceAccount:
+    imagePullSecrets:
+      - name: harbor-secret
+
+flytepropellerwebhook:
+  serviceAccount:
+    imagePullSecrets:
+      - name: harbor-secret
+
+proxy:
+  imagePullSecrets:
+    - name: harbor-secret
+

@@ -1,0 +1,108 @@
+# ============================================================================
+# Union Dataplane Configuration for Union-backed Registry
+# ============================================================================
+# This file contains ONLY registry and imagePullSecrets configuration.
+# Use this in combination with your infrastructure-specific values file.
+#
+# Usage:
+#   helm upgrade --install unionai-dataplane ./charts/dataplane \
+#     --namespace union \
+#     --create-namespace \
+#     -f charts/dataplane/values.gcp.selfhosted-intracluster.yaml \
+#     -f charts/dataplane/values.registry.yaml \
+#     -f values.gcp.selfhosted-nav-2.yaml \
+#     --timeout 10m \
+#     --wait
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Union Operator Image Configuration
+# ----------------------------------------------------------------------------
+
+image:
+  union:
+    repository: "registry.unionai.cloud/dataplane/unionoperator"
+    # tag will be set from Chart.AppVersion or can be overridden
+
+# Image pull secrets for Harbor registry
+imagePullSecrets:
+  - name: harbor-secret
+
+# ----------------------------------------------------------------------------
+# Component-Level Image Pull Secrets
+# ----------------------------------------------------------------------------
+
+operator:
+  imagePullSecrets:
+  - name: harbor-secret
+
+executor:
+  imagePullSecrets:
+    - name: harbor-secret
+
+clusterresourcesync:
+  imagePullSecrets:
+    - name: harbor-secret
+
+flytepropeller:
+  serviceAccount:
+    imagePullSecrets:
+      - name: harbor-secret
+
+flytepropellerwebhook:
+  serviceAccount:
+    imagePullSecrets:
+      - name: harbor-secret
+
+proxy:
+  imagePullSecrets:
+    - name: harbor-secret
+
+# ----------------------------------------------------------------------------
+# Prometheus Configuration
+# ----------------------------------------------------------------------------
+
+prometheus:
+  # Global imagePullSecrets for all prometheus components
+  global:
+    # Disable global imageRegistry to prevent quay.io prefix
+    imageRegistry: ""
+    imagePullSecrets:
+      - name: harbor-secret
+
+  prometheusOperator:
+    # Override prometheus-operator image to use Harbor
+    # Split registry and repository to match chart expectations
+    image:
+      registry: registry.unionai.cloud
+      repository: dataplane/prometheus-operator
+      tag: v0.82.2
+
+    # Override prometheus-config-reloader image to use Harbor
+    prometheusConfigReloader:
+      image:
+        registry: registry.unionai.cloud
+        repository: dataplane/prometheus-config-reloader
+        tag: v0.82.2
+
+  # Override prometheus server image to use Harbor
+  prometheus:
+    prometheusSpec:
+      image:
+        registry: registry.unionai.cloud
+        repository: dataplane/prometheus
+        tag: v3.4.1
+
+# ----------------------------------------------------------------------------
+# FluentBit Configuration
+# ----------------------------------------------------------------------------
+
+fluentbit:
+  # Override fluent-bit image to use Harbor
+  image:
+    repository: registry.unionai.cloud/dataplane/fluent-bit
+    tag: 3.2.8
+
+  # Image pull secrets for Harbor
+  imagePullSecrets:
+    - name: harbor-secret

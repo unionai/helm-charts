@@ -88,7 +88,41 @@ helm repo add flyte https://helm.flyte.org
 helm repo update
 ```
 
-### Step 2: Generate TLS Certificates
+### Step 2: Create Harbor Image Pull Secret
+
+Union hosts control plane images in a private Harbor registry. You will receive Harbor credentials (username and password) from the Union team for your organization.
+
+Create the Harbor secret in the `union-cp` namespace:
+
+```bash
+# Create namespace if it doesn't exist
+kubectl create namespace union-cp
+
+# Create Harbor image pull secret
+# Replace <HARBOR_USERNAME> and <HARBOR_PASSWORD> with credentials provided by Union
+kubectl create secret docker-registry harbor-secret \
+  --docker-server="registry.unionai.cloud" \
+  --docker-username="<HARBOR_USERNAME>" \
+  --docker-password="<HARBOR_PASSWORD>" \
+  -n union-cp
+```
+
+**Example** (for a customer named "acme-corp"):
+```bash
+kubectl create secret docker-registry harbor-secret \
+  --docker-server="registry.unionai.cloud" \
+  --docker-username="robot\$acme-corp" \
+  --docker-password="LkkciLfd8fUCsaEKrN4x5VeOxh8RNIvn" \
+  -n union-cp
+```
+
+**Important notes:**
+- The Harbor username typically follows the format `robot$<org-name>`
+- Note the backslash escape (`\$`) before the `$` character in the username
+- This secret allows Kubernetes to pull control plane images from Union's private registry
+- Contact Union support if you haven't received your Harbor credentials
+
+### Step 3: Generate TLS Certificates
 
 Since intra-cluster communication uses gRPC over HTTP/2, TLS is required for NGINX ingress.
 
@@ -113,18 +147,23 @@ kubectl create secret tls controlplane-tls-cert \
 
 See the example in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
-### Step 3: Configure Values File
+### Step 4: Download Values Files
 
-Download and configure the intra-cluster values file:
+Download the required values files from the Union Helm charts repository:
 
 ```bash
-# Download the self-contained intra-cluster configuration file
+# Download AWS infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.selfhosted-intracluster.yaml
+
+# Download registry configuration for Harbor
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.registry.yaml
 ```
 
-Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
+Create your environment-specific overrides file `values.aws.selfhosted-customer.yaml` with your configuration (see example below).
 
-### Step 4: Create Database Password Secret
+### Step 5: Create Database Password Secret
+
+The control plane uses a Kubernetes secret named `union-controlplane-secrets` to store the PostgreSQL database password and other service-specific secrets.
 
 ```bash
 # Create secret with database password
@@ -133,26 +172,54 @@ kubectl create secret generic union-controlplane-secrets \
   -n union-cp
 ```
 
-### Step 5: Install Control Plane
+**Important notes:**
+- The secret name `union-controlplane-secrets` is fixed and should not be changed
+- This is the same name configured in `global.KUBERNETES_SECRET_NAME`
+- The secret must contain a key named `pass.txt` with the database password
 
-Install the control plane using the self-contained intra-cluster values file:
+### Step 6: Install Control Plane
+
+Install the control plane using layered values files:
 
 ```bash
 helm upgrade --install unionai-controlplane unionai/controlplane \
   --namespace union-cp \
   --create-namespace \
-  --values values.aws.selfhosted-intracluster.yaml \
+  -f values.aws.selfhosted-intracluster.yaml \
+  -f values.registry.yaml \
+  -f values.aws.selfhosted-customer.yaml \
   --timeout 15m \
   --wait
 ```
 
+**Values file layers (applied in order):**
+
+1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (DB, storage, networking)
+2. **`values.registry.yaml`** - Harbor registry and image pull secrets
+3. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+
+**Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**
+
+```yaml
+global:
+  AWS_REGION: "us-east-1"
+  DB_HOST: "my-rds-instance.abcdef.us-east-1.rds.amazonaws.com"
+  DB_NAME: "unionai"
+  DB_USER: "unionai"
+  BUCKET_NAME: "my-company-cp-flyte"
+  ARTIFACTS_BUCKET_NAME: "my-company-cp-artifacts"
+  ARTIFACT_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-artifacts"
+  FLYTEADMIN_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  UNION_ORG: "my-company"
+```
+
 **Important notes:**
 
-- `values.aws.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
-- No additional values files are required
-- The file configures single-tenant mode and internal networking for intra-cluster communication
+- Uses **published chart** (`unionai/controlplane`) from Helm repository
+- Layered approach separates infrastructure config, registry config, and customer overrides
+- Easier to maintain and update - change images in one file, infrastructure in another
 
-### Step 6: Verify Control Plane Installation
+### Step 7: Verify Control Plane Installation
 
 ```bash
 # Check pod status
@@ -171,11 +238,11 @@ kubectl exec -n union-cp deploy/flyteadmin -- \
 
 Expected: All pods should be in `Running` state, and internal connectivity should succeed.
 
-### Step 7: Deploy Dataplane
+### Step 8: Deploy Dataplane
 
 After the control plane is running, deploy the dataplane following the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md).
 
-The dataplane will connect to the control plane using the service endpoints configured in Step 3.
+The dataplane will connect to the control plane using the service endpoints configured in your customer overrides file.
 
 ## Key Configuration Details
 
