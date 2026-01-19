@@ -94,6 +94,18 @@ Since intra-cluster communication uses gRPC over HTTP/2, TLS is required for NGI
 
 #### Control Plane TLS Certificate
 
+> You can create the objects below by using the reference Terraform module, and
+> set `create_controlplane_certificate = true`.
+>
+>    ```
+>    module "controlplane" {
+>      ...
+>      ...
+>
+>      create_controlplane_certificate = true
+>    }
+>    ```
+
 ```bash
 # Create namespace
 kubectl create namespace union-cp
@@ -340,7 +352,8 @@ kubectl create secret generic union-controlplane-secrets \
   -n union-cp
 ```
 
-**Important**: Ensure the password matches the password configured for your Cloud SQL database user.
+**Important**: Ensure the password matches the password configured for your
+Cloud SQL database user.
 
 ### Step 5: Install Control Plane
 
@@ -354,11 +367,13 @@ helm upgrade --install unionai-controlplane unionai/controlplane \
   --timeout 15m
 ```
 
-**Note**: Do not use `--wait` on the first installation. The ScyllaDB operator webhook may need to be patched before all resources can be created.
+**Note**: Do not use `--wait` on the first installation. The ScyllaDB operator
+webhook may need to be patched before all resources can be created.
 
 #### Patch ScyllaDB Webhook (if needed)
 
-If the installation fails with a webhook certificate error, patch the ValidatingWebhookConfiguration with the CA bundle:
+If the installation fails with a webhook certificate error, patch the
+ValidatingWebhookConfiguration with the CA bundle:
 
 ```bash
 CA_BUNDLE=$(cat /tmp/scylla-webhook.crt | base64 | tr -d '\n')
@@ -391,15 +406,20 @@ kubectl exec -n union-cp deploy/flyteadmin -- \
 
 ### Step 7: Deploy Dataplane
 
-After the control plane is running, deploy the dataplane following the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md).
+After the control plane is running, deploy the dataplane following the
+[Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md).
 
-The dataplane will connect to the control plane using the service endpoints configured in Step 3.
+The dataplane will connect to the control plane using the service endpoints
+configured in Step 3.
 
 ## Key Configuration Details
 
 ### Single-Tenant Mode
 
-Intra-cluster deployments uses an experimental single-tenant mode with an explicit organization. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
+Intra-cluster deployments uses an experimental single-tenant mode with an
+explicit organization. Refer to
+[values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml)
+for example configuration.
 
 ```yaml
 global:
@@ -412,7 +432,9 @@ global:
 
 ### TLS Requirements
 
-gRPC requires TLS for HTTP/2 with NGINX. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
+gRPC requires TLS for HTTP/2 with NGINX. Refer to
+[values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml)
+for example configuration.
 
 ```yaml
 global:
