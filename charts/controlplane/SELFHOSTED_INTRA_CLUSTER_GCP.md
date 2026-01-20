@@ -106,6 +106,8 @@ Since intra-cluster communication uses gRPC over HTTP/2, TLS is required for NGI
 >    }
 >    ```
 
+**Or you can create them manually:**
+
 ```bash
 # Create namespace
 kubectl create namespace union-cp
@@ -127,6 +129,10 @@ kubectl create secret tls controlplane-tls-cert \
 #### ScyllaDB Operator Webhook Certificate (if using embedded ScyllaDB)
 
 The ScyllaDB operator requires a TLS certificate for its validating webhook. Since we are not using cert-manager, you must create this certificate manually:
+
+> The Union reference Terraform creates this automatically.
+
+** Or you can create manually: **
 
 ```bash
 # Create namespace with Helm labels (required for Helm to manage it)
