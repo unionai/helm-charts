@@ -4,7 +4,7 @@
 {{- else if and (hasKey .Values "imagePullSecrets") }}
 {{ toYaml .Values.imagePullSecrets }}
 {{- else }}
-[]  {{/* CHANGE: Use brackets [] instead of braces {} */}}
+[]
 {{- end }}
 {{- end }}
 
