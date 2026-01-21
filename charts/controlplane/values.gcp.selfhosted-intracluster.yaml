@@ -55,10 +55,9 @@ global:
   ARTIFACTS_BUCKET_NAME: ""
 
   # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
-  # Example: "union-controlplane-secrets"
+  # This name is fixed and should not be changed (see values.yaml fix)
   # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: ""
+  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
 
   # GCP service account for artifacts service (Workload Identity)
   # Leave empty if artifacts service is disabled
@@ -75,33 +74,34 @@ global:
   UNION_ORG: ""
 
   # Internal Flyteadmin service endpoint
-  # Example: "flyteadmin.union-cp.svc.cluster.local:81"
-  # Find with: kubectl get svc -n union-cp flyteadmin
-  FLYTEADMIN_ENDPOINT: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or service name
+  FLYTEADMIN_ENDPOINT: "flyteadmin.union-cp.svc.cluster.local:81"
 
   # Control plane ingress controller FQDN (for intra-cluster routing)
-  # Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
-  # Find with: kubectl get svc -n union-cp | grep nginx-controller
-  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or service name
+  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
 
   # TLS secret configuration
-  # Example namespace: "union-cp"
-  TLS_SECRET_NAMESPACE: ""
-  # Example name: "controlplane-tls-cert"
-  TLS_SECRET_NAME: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or secret name
+  TLS_SECRET_NAMESPACE: "union-cp"
+  TLS_SECRET_NAME: "controlplane-tls-cert"
 
   # Dataplane ingress controller URL
-  # Example: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
-  # Find service with: kubectl get svc -n union | grep nginx-controller
-  DATAPLANE_ENDPOINT: ""
+  # Default assumes standard naming in union namespace
+  # Override if using different namespace or service name
+  DATAPLANE_ENDPOINT: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
 
   # GCP project ID for GCS and other GCP resources
   # Example: "my-project-id"
   GOOGLE_PROJECT_ID: ""
 
-  # GCP Artifact Registry repository prefix for control plane images
-  # Example: "us-central1-docker.pkg.dev/PROJECT_ID/REPOSITORY_NAME"
-  IMAGE_REPOSITORY_PREFIX: ""
+  # Union registry repository prefix for control plane images
+  # For self-hosted intra-cluster deployments, this uses Union's private registry
+  # Example: "registry.unionai.cloud/controlplane"
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Image Tag Overrides
@@ -109,8 +109,10 @@ global:
 # Override image tags for union services (executions, artifacts, etc.)
 
 image:
-  # eg tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
-  tag: 
+  tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+
+imagePullSecrets:
+  - name: union-registry-secret
 
 # ----------------------------------------------------------------------------
 # SECTION 3: Core Configuration Overrides
@@ -152,6 +154,7 @@ configMap:
 
 console:
   image:
+    repository: "registry.unionai.cloud/controlplane/unionconsole"
     tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
   env:
     # Single-tenant organization override
@@ -257,41 +260,52 @@ flyte:
   flyteadmin:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      repository: "registry.unionai.cloud/controlplane/services"
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: union-registry-secret
 
   flytescheduler:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      repository: "registry.unionai.cloud/controlplane/services"
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
 
   datacatalog:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/datacatalog"
+      repository: "registry.unionai.cloud/controlplane/datacatalog"
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: union-registry-secret
 
   flyteconsole:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/flyteconsole"
+      repository: "registry.unionai.cloud/controlplane/flyteconsole"
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
+    imagePullSecrets:
+      - name: union-registry-secret
 
   cacheservice:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "us-central1-docker.pkg.dev/nav-selfhosted-validate/union/services"
+      repository: "registry.unionai.cloud/controlplane/services"
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+      imagePullSecrets:
+        - name: union-registry-secret
 
 # ----------------------------------------------------------------------------
 # SECTION 6: Ingress Configuration

@@ -51,35 +51,58 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
-### Step 2: Configure Values File
+### Step 2: Download Values File
 
-Download and configure the self-contained intra-cluster values file:
+Download the intra-cluster configuration file from the Union Helm charts repository:
 
 ```bash
-# Download the self-contained intra-cluster configuration file
+# Download GCP infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.gcp.selfhosted-intracluster.yaml
 ```
 
-Edit `values.gcp.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary GCP and intra-cluster configuration.
+Create your environment-specific overrides file `values.gcp.selfhosted-customer.yaml` with your configuration (see example below).
 
 ### Step 3: Install Dataplane
 
-Install the dataplane using the self-contained intra-cluster values file:
+Install the dataplane using the configuration file:
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
-  --values values.gcp.selfhosted-intracluster.yaml \
+  -f values.gcp.selfhosted-intracluster.yaml \
+  -f values.gcp.selfhosted-customer.yaml \
   --timeout 10m \
   --wait
 ```
 
+**Values file layers (applied in order):**
+
+1. **`values.gcp.selfhosted-intracluster.yaml`** - GCP infrastructure defaults (storage, networking, intra-cluster communication)
+2. **`values.gcp.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+
+**Example customer overrides file (`values.gcp.selfhosted-customer.yaml`):**
+
+```yaml
+global:
+  CLUSTER_NAME: "prod-us-central1"
+  ORG_NAME: "my-company"
+  METADATA_BUCKET: "my-company-dp-metadata"
+  FAST_REGISTRATION_BUCKET: "my-company-dp-metadata"
+  GCP_REGION: "us-central1"
+  GOOGLE_PROJECT_ID: "my-gcp-project"
+  BACKEND_IAM_ROLE_ARN: "union-backend@my-project.iam.gserviceaccount.com"
+  WORKER_IAM_ROLE_ARN: "union-worker@my-project.iam.gserviceaccount.com"
+  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
+  CACHESERVICE_ENDPOINT: "cacheservice.union-cp.svc.cluster.local:89"
+```
+
 **Important notes:**
 
-- `values.gcp.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
-- No additional values files are required
-- The file disables external authentication and enables internal service discovery for intra-cluster communication
+- Uses **published chart** (`unionai/dataplane`) from Helm repository
+- Images are pulled from Union's public registry
+- Layered approach separates infrastructure config and customer overrides
 
 ### Step 4: Verify Intra-Cluster Communication
 
