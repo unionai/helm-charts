@@ -88,28 +88,28 @@ helm repo add flyte https://helm.flyte.org
 helm repo update
 ```
 
-### Step 2: Create Harbor Image Pull Secret
+### Step 2: Create Registry Image Pull Secret
 
-Union hosts control plane images in a private Harbor registry. You will receive Harbor credentials (username and password) from the Union team for your organization.
+Union hosts control plane images in a private registry. You will receive registry credentials (username and password) from the Union team for your organization.
 
-Create the Harbor secret in the `union-cp` namespace:
+Create the registry secret in the `union-cp` namespace:
 
 ```bash
 # Create namespace if it doesn't exist
 kubectl create namespace union-cp
 
-# Create Harbor image pull secret
-# Replace <HARBOR_USERNAME> and <HARBOR_PASSWORD> with credentials provided by Union
-kubectl create secret docker-registry harbor-secret \
+# Create registry image pull secret
+# Replace <REGISTRY_USERNAME> and <REGISTRY_PASSWORD> with credentials provided by Union
+kubectl create secret docker-registry union-registry-secret \
   --docker-server="registry.unionai.cloud" \
-  --docker-username="<HARBOR_USERNAME>" \
-  --docker-password="<HARBOR_PASSWORD>" \
+  --docker-username="<REGISTRY_USERNAME>" \
+  --docker-password="<REGISTRY_PASSWORD>" \
   -n union-cp
 ```
 
 **Example** (for a customer named "acme-corp"):
 ```bash
-kubectl create secret docker-registry harbor-secret \
+kubectl create secret docker-registry union-registry-secret \
   --docker-server="registry.unionai.cloud" \
   --docker-username="robot\$acme-corp" \
   --docker-password="LkkciLfd8fUCsaEKrN4x5VeOxh8RNIvn" \
@@ -117,10 +117,10 @@ kubectl create secret docker-registry harbor-secret \
 ```
 
 **Important notes:**
-- The Harbor username typically follows the format `robot$<org-name>`
+- The registry username typically follows the format `robot$<org-name>`
 - Note the backslash escape (`\$`) before the `$` character in the username
 - This secret allows Kubernetes to pull control plane images from Union's private registry
-- Contact Union support if you haven't received your Harbor credentials
+- Contact Union support if you haven't received your registry credentials
 
 ### Step 3: Generate TLS Certificates
 
@@ -155,7 +155,7 @@ Download the required values files from the Union Helm charts repository:
 # Download AWS infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.selfhosted-intracluster.yaml
 
-# Download registry configuration for Harbor
+# Download registry configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.registry.yaml
 ```
 
@@ -195,7 +195,7 @@ helm upgrade --install unionai-controlplane unionai/controlplane \
 **Values file layers (applied in order):**
 
 1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (DB, storage, networking)
-2. **`values.registry.yaml`** - Harbor registry and image pull secrets
+2. **`values.registry.yaml`** - Registry configuration and image pull secrets
 3. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
 
 **Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**

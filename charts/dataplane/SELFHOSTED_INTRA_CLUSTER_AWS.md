@@ -51,28 +51,28 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
-### Step 2: Create Harbor Image Pull Secret
+### Step 2: Create Registry Image Pull Secret
 
-Union hosts dataplane images in a private Harbor registry. You will receive Harbor credentials (username and password) from the Union team for your organization.
+Union hosts dataplane images in a private registry. You will receive registry credentials (username and password) from the Union team for your organization.
 
-Create the Harbor secret in the `union` namespace:
+Create the registry secret in the `union` namespace:
 
 ```bash
 # Create namespace if it doesn't exist
 kubectl create namespace union
 
-# Create Harbor image pull secret
-# Replace <HARBOR_USERNAME> and <HARBOR_PASSWORD> with credentials provided by Union
-kubectl create secret docker-registry harbor-secret \
+# Create registry image pull secret
+# Replace <REGISTRY_USERNAME> and <REGISTRY_PASSWORD> with credentials provided by Union
+kubectl create secret docker-registry union-registry-secret \
   --docker-server="registry.unionai.cloud" \
-  --docker-username="<HARBOR_USERNAME>" \
-  --docker-password="<HARBOR_PASSWORD>" \
+  --docker-username="<REGISTRY_USERNAME>" \
+  --docker-password="<REGISTRY_PASSWORD>" \
   -n union
 ```
 
 **Example** (for a customer named "acme-corp"):
 ```bash
-kubectl create secret docker-registry harbor-secret \
+kubectl create secret docker-registry union-registry-secret \
   --docker-server="registry.unionai.cloud" \
   --docker-username="robot\$acme-corp" \
   --docker-password="LkkciLfd8fUCsaEKrN4x5VeOxh8RNIvn" \
@@ -80,10 +80,10 @@ kubectl create secret docker-registry harbor-secret \
 ```
 
 **Important notes:**
-- The Harbor username typically follows the format `robot$<org-name>`
+- The registry username typically follows the format `robot$<org-name>`
 - Note the backslash escape (`\$`) before the `$` character in the username
 - This secret allows Kubernetes to pull dataplane images from Union's private registry
-- Contact Union support if you haven't received your Harbor credentials
+- Contact Union support if you haven't received your registry credentials
 
 ### Step 3: Download Values Files
 
@@ -93,7 +93,7 @@ Download the required values files from the Union Helm charts repository:
 # Download AWS infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.selfhosted-intracluster.yaml
 
-# Download registry configuration for Harbor
+# Download registry configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.registry.yaml
 ```
 
@@ -117,7 +117,7 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
 **Values file layers (applied in order):**
 
 1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (storage, networking, intra-cluster communication)
-2. **`values.registry.yaml`** - Harbor registry and image pull secrets
+2. **`values.registry.yaml`** - Registry configuration and image pull secrets
 3. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
 
 **Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**
