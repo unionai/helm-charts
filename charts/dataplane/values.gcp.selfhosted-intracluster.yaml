@@ -141,17 +141,13 @@ storage:
 # ----------------------------------------------------------------------------
 # SECTION 4: Image Configuration
 # ----------------------------------------------------------------------------
-# Override image repositories to use Union registry
-# All images hosted in registry.unionai.cloud to avoid pulling from external registries
+# Image configuration for Union dataplane components
+# Images are pulled from Union's public ECR registry
 
 image:
   union:
-    repository: "registry.unionai.cloud/dataplane/unionoperator"
+    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
     # tag will be set from Chart.AppVersion or can be overridden
-
-# Image pull secrets for Union registry
-imagePullSecrets:
-  - name: union-registry-secret
 
 # ----------------------------------------------------------------------------
 # SECTION 5: Workload Identity (REQUIRED for GCP)
@@ -174,8 +170,6 @@ userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 # the control plane using intra-cluster communication.
 
 clusterresourcesync:
-  imagePullSecrets:
-    - name: union-registry-secret
   config:
     union:
       connection:
@@ -284,8 +278,6 @@ config:
 # Configure how workflow tasks are executed.
 
 executor:
-  imagePullSecrets:
-    - name: union-registry-secret
   config:
     unionAuth:
       # Disable API key injection (not needed for intra-cluster communication)
@@ -340,9 +332,6 @@ ingress-nginx:
 # ----------------------------------------------------------------------------
 
 operator:
-  # Override imagePullSecrets (base has {} but we need [])
-  imagePullSecrets:
-  - name: union-registry-secret
   # Disable Cloudflare tunnel (not needed for intra-cluster deployment)
   enableTunnelService: false
 
@@ -352,28 +341,7 @@ operator:
 
 # Prometheus for metrics collection and monitoring
 prometheus:
-  # Global imagePullSecrets for all prometheus components
-  global:
-    # Disable global imageRegistry to prevent quay.io prefix
-    imageRegistry: ""
-    imagePullSecrets:
-      - name: union-registry-secret
-
   prometheusOperator:
-    # Override prometheus-operator image to use Union
-    # Split registry and repository to match chart expectations
-    image:
-      registry: registry.unionai.cloud
-      repository: dataplane/prometheus-operator
-      tag: v0.82.2
-
-    # Override prometheus-config-reloader image to use Union
-    prometheusConfigReloader:
-      image:
-        registry: registry.unionai.cloud
-        repository: dataplane/prometheus-config-reloader
-        tag: v0.82.2
-
     admissionWebhooks:
       # Disable admission webhooks by default
       # Enable if you have cert-manager installed
@@ -390,14 +358,6 @@ prometheus:
 
       patch:
         enabled: true
-
-  # Override prometheus server image to use Union
-  prometheus:
-    prometheusSpec:
-      image:
-        registry: registry.unionai.cloud
-        repository: dataplane/prometheus
-        tag: v3.4.1
 
 # ----------------------------------------------------------------------------
 # Secrets Configuration
@@ -424,18 +384,9 @@ serving:
 # FluentBit collects and forwards logs to the control plane.
 
 fluentbit:
-  # Override fluent-bit image to use Union
-  image:
-    repository: registry.unionai.cloud/dataplane/fluent-bit
-    tag: 3.2.8
-
-  # Image pull secrets for Union
-  imagePullSecrets:
-    - name: union-registry-secret
-
   serviceAccount:
     name: fluentbit-system
-    # Annotations may be required for IRSA
+    # Annotations may be required for Workload Identity
     annotations: {}
 
 # ----------------------------------------------------------------------------
@@ -451,16 +402,6 @@ opencost:
 #            components.
 # ----------------------------------------------------------------------------
 flytepropeller:
-  serviceAccount:
-    imagePullSecrets:
-      - name: union-registry-secret
   priorityClassName: ""
 
-flytepropellerwebhook:
-  serviceAccount:
-    imagePullSecrets:
-      - name: union-registry-secret
-
-proxy:
-  imagePullSecrets:
-    - name: union-registry-secret
+flytepropellerwebhook: {}

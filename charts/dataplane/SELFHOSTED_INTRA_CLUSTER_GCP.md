@@ -51,64 +51,26 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
-### Step 2: Create Registry Image Pull Secret
+### Step 2: Download Values File
 
-Union hosts dataplane images in a private registry. You will receive registry credentials (username and password) from the Union team for your organization.
-
-Create the registry secret in the `union` namespace:
-
-```bash
-# Create namespace if it doesn't exist
-kubectl create namespace union
-
-# Create registry image pull secret
-# Replace <REGISTRY_USERNAME> and <REGISTRY_PASSWORD> with credentials provided by Union
-kubectl create secret docker-registry union-registry-secret \
-  --docker-server="registry.unionai.cloud" \
-  --docker-username="<REGISTRY_USERNAME>" \
-  --docker-password="<REGISTRY_PASSWORD>" \
-  -n union
-```
-
-**Example** (for a customer named "acme-corp"):
-```bash
-kubectl create secret docker-registry union-registry-secret \
-  --docker-server="registry.unionai.cloud" \
-  --docker-username="robot\$acme-corp" \
-  --docker-password="LkkciLfd8fUCsaEKrN4x5VeOxh8RNIvn" \
-  -n union
-```
-
-**Important notes:**
-- The registry username typically follows the format `robot$<org-name>`
-- Note the backslash escape (`\$`) before the `$` character in the username
-- This secret allows Kubernetes to pull dataplane images from Union's private registry
-- Contact Union support if you haven't received your registry credentials
-
-### Step 3: Download Values Files
-
-Download the required values files from the Union Helm charts repository:
+Download the intra-cluster configuration file from the Union Helm charts repository:
 
 ```bash
 # Download GCP infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.gcp.selfhosted-intracluster.yaml
-
-# Download registry configuration
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.registry.yaml
 ```
 
 Create your environment-specific overrides file `values.gcp.selfhosted-customer.yaml` with your configuration (see example below).
 
-### Step 4: Install Dataplane
+### Step 3: Install Dataplane
 
-Install the dataplane using layered values files:
+Install the dataplane using the configuration file:
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
   -f values.gcp.selfhosted-intracluster.yaml \
-  -f values.registry.yaml \
   -f values.gcp.selfhosted-customer.yaml \
   --timeout 10m \
   --wait
@@ -117,8 +79,7 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
 **Values file layers (applied in order):**
 
 1. **`values.gcp.selfhosted-intracluster.yaml`** - GCP infrastructure defaults (storage, networking, intra-cluster communication)
-2. **`values.registry.yaml`** - Registry configuration and image pull secrets
-3. **`values.gcp.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+2. **`values.gcp.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
 
 **Example customer overrides file (`values.gcp.selfhosted-customer.yaml`):**
 
@@ -140,10 +101,10 @@ global:
 **Important notes:**
 
 - Uses **published chart** (`unionai/dataplane`) from Helm repository
-- Layered approach separates infrastructure config, registry config, and customer overrides
-- Easier to maintain and update - change images in one file, infrastructure in another
+- Images are pulled from Union's public registry
+- Layered approach separates infrastructure config and customer overrides
 
-### Step 5: Verify Intra-Cluster Communication
+### Step 4: Verify Intra-Cluster Communication
 
 ```bash
 # Check that dataplane pods are running
