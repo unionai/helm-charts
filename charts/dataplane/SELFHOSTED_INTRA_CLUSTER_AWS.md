@@ -51,35 +51,57 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
-### Step 2: Configure Values File
+### Step 2: Download Values File
 
-Download and configure the self-contained intra-cluster values file:
+Download the intra-cluster configuration file from the Union Helm charts repository:
 
 ```bash
-# Download the self-contained intra-cluster configuration file
+# Download AWS infrastructure configuration
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.selfhosted-intracluster.yaml
 ```
 
-Edit `values.aws.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary AWS and intra-cluster configuration.
+Create your environment-specific overrides file `values.aws.selfhosted-customer.yaml` with your configuration (see example below).
 
 ### Step 3: Install Dataplane
 
-Install the dataplane using the self-contained intra-cluster values file:
+Install the dataplane using the configuration file:
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
-  --values values.aws.selfhosted-intracluster.yaml \
+  -f values.aws.selfhosted-intracluster.yaml \
+  -f values.aws.selfhosted-customer.yaml \
   --timeout 10m \
   --wait
 ```
 
+**Values file layers (applied in order):**
+
+1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (storage, networking, intra-cluster communication)
+2. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+
+**Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**
+
+```yaml
+global:
+  CLUSTER_NAME: "prod-us-east-1"
+  ORG_NAME: "my-company"
+  METADATA_BUCKET: "my-company-dp-metadata"
+  FAST_REGISTRATION_BUCKET: "my-company-dp-metadata"
+  AWS_REGION: "us-east-1"
+  BACKEND_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-backend"
+  WORKER_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-worker"
+  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
+  CACHESERVICE_ENDPOINT: "cacheservice.union-cp.svc.cluster.local:89"
+```
+
 **Important notes:**
 
-- `values.aws.selfhosted-intracluster.yaml` is self-contained and includes all necessary configuration
-- No additional values files are required
-- The file disables external authentication and enables internal service discovery for intra-cluster communication
+- Uses **published chart** (`unionai/dataplane`) from Helm repository
+- Images are pulled from Union's public registry
+- Layered approach separates infrastructure config and customer overrides
 
 ### Step 4: Verify Intra-Cluster Communication
 
