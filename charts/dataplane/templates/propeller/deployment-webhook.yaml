@@ -1,12 +1,5 @@
-# Create an empty secret that the first propeller pod will populate
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-pod-webhook
-  namespace: {{ .Release.Namespace }}
-type: Opaque
----
-# Create the actual deployment
+{{- if .Values.flytepropellerwebhook.webhook.enabled }}
+# Webhook deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,26 +31,6 @@ spec:
       {{- if .Values.flytepropellerwebhook.priorityClassName }}
       priorityClassName: {{ .Values.flytepropellerwebhook.priorityClassName }}
       {{- end }}
-      initContainers:
-        - name: generate-secrets
-          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
-          imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
-          command:
-            - flytepropeller
-          args:
-            - webhook
-            - init-certs
-            - --config
-            - /etc/flyte/config/*.yaml
-          env:
-            {{- include "global.podEnvVars" . | nindent 10 }}
-            {{- with .Values.flytepropellerwebhook.podEnv -}}
-            {{- toYaml . | nindent 10 }}
-            {{- end }}
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/flyte/config
-          resources: {{- toYaml .Values.flytepropellerwebhook.resources | nindent 12 }}
       containers:
         - name: webhook
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -97,9 +70,11 @@ spec:
             name: flyte-propeller-config
         - name: webhook-certs
           secret:
-            secretName: flyte-pod-webhook
+            secretName: {{ include "flytepropellerwebhook.secretName" . }}
       {{- with .Values.flytepropellerwebhook.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
       {{- include "flytepropellerwebhook.scheduling" . | nindent 6 }}
       {{- include "additionalPodSpec" . | nindent 6 }}
+
+{{- end }}
