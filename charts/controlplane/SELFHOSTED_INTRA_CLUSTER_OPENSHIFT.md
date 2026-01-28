@@ -29,7 +29,7 @@
    - Go to `<helm>/charts/controlplane`
    - Clone sample~values-openshift.yaml:
 
-     ```zsh
+     ```shell
      cp sample~values-openshift.yaml values-controlplane.yaml
      ```
 
@@ -39,9 +39,21 @@
    - Make your cluster context default `kubectl cluster-info` points to it
    - Run `openshift_policies.sh` to configure the necessary policies for OpenShift
 
-4. Install the Control Plane:
+4. Create a pull secret to enable downloading the control plane's private images:
 
-   ```zsh
+   ```shell
+   kubectl create secret docker-registry union-registry-secret \
+        --docker-server='registry.unionai.cloud' \
+        --docker-username='<username>' \
+        --docker-password='<password>' \
+        -n union-cp
+   ```
+
+   Registry account (username, password) provided by Union.
+
+5. Install the Control Plane:
+
+   ```shell
    helm upgrade --install unionai-controlplane . \
         --namespace union-cp \
         --create-namespace \
