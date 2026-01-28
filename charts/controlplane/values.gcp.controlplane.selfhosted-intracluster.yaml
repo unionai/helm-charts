@@ -267,7 +267,10 @@ flyte:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
       imagePullSecrets:
         - name: union-registry-secret
-
+    service:
+      type: LoadBalancer
+      annotations:
+        networking.gke.io/load-balancer-type: "Internal"
   flytescheduler:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
@@ -306,6 +309,10 @@ flyte:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
       imagePullSecrets:
         - name: union-registry-secret
+    service:
+      type: LoadBalancer
+      annotations:
+        networking.gke.io/load-balancer-type: "Internal"
 
 # ----------------------------------------------------------------------------
 # SECTION 6: Ingress Configuration
@@ -332,9 +339,11 @@ ingress-nginx:
 
   controller:
     service:
-      # ClusterIP for intra-cluster only (no external access)
-      # Change to LoadBalancer or NodePort for external access
-      type: ClusterIP
+      # Load balancer for access to API and UI
+      # Change to ClusterIP if no external cluster access needed
+      type: LoadBalancer
+      annotations:
+        networking.gke.io/load-balancer-type: "Internal"
       ports:
         http: 80
         https: 443
@@ -405,6 +414,17 @@ services:
               endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
               insecure: true
 
+
+  # Queue service configuration
+  queue:
+    service:
+      type: LoadBalancer
+      annotations:
+        networking.gke.io/load-balancer-type: "Internal"
+      grpcport: 80
+      httpport: 81
+      debugport: 82
+
 # ----------------------------------------------------------------------------
 # SECTION 9: ScyllaDB Configuration
 # ----------------------------------------------------------------------------
@@ -436,7 +456,6 @@ scylla:
     provisioner: pd.csi.storage.gke.io
     parameters:
       type: pd-standard
-
 
 scylla-operator:
   enabled: true
