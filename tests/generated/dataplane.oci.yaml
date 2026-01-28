@@ -384,6 +384,46 @@ data:
         bucket bucket
         endpoint https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
 ---
+# Source: dataplane/templates/imagebuilder/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : union-operator-buildkit
+data:
+  buildkitd.toml: |
+    debug = false
+
+    [log]
+      format = "text"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = 0
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
+---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -584,6 +624,12 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      imageBuilder:
+        enabled: true
+        executionNamespaceLabels:
+          union.ai/namespace-type: flyte
+        referenceConfigmapName: union-operator
+        targetConfigMapName: "build-image-config"
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
@@ -638,6 +684,9 @@ data:
           disable_ssl: false
           endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
           region: us-ashburn-1
+  image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  image-builder.default-repository: ""
+  image-builder.authentication-type: "noop"
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -1954,6 +2003,27 @@ spec:
   sessionAffinity: None
   type: "ClusterIP"
 ---
+# Source: dataplane/templates/imagebuilder/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1234
+      targetPort: tcp
+      protocol: TCP
+      name: tcp
+  selector:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
 kind: Service
@@ -2552,6 +2622,118 @@ spec:
           operator: Equal
           value: worker
 ---
+# Source: dataplane/templates/imagebuilder/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: imagebuilder-buildkit
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: imagebuilder-buildkit
+        app.kubernetes.io/instance: release-name
+    spec:
+      containers:
+        - name: "buildkit"
+          image: "moby/buildkit:latest"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: when_required
+          volumeMounts:
+            - mountPath: /etc/buildkit
+              name: buildkit-config
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run//buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+          ports:
+            - name: tcp
+              containerPort: 1234
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 1
+              ephemeral-storage: 20Gi
+              memory: 1Gi
+      volumes:
+      - configMap:
+          name: union-operator-buildkit
+        name: buildkit-config
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: imagebuilder-buildkit
+                app.kubernetes.io/instance: release-name
+            topologyKey: "kubernetes.io/hostname"
+---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -2671,7 +2853,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "10d6190ed65b9aa42b5279161726b4a26a04cc09cc8ff3d574787f9cdd6df91"
+        configChecksum: "7ad1a4247ad4ef4f738bef68089f37d38358a4b364baad6d188c2a6aa0c7ea3"
         
       labels:
         
@@ -2818,7 +3000,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "10d6190ed65b9aa42b5279161726b4a26a04cc09cc8ff3d574787f9cdd6df91"
+        configChecksum: "7ad1a4247ad4ef4f738bef68089f37d38358a4b364baad6d188c2a6aa0c7ea3"
         
       labels:
         
