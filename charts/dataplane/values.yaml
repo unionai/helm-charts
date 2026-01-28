@@ -1149,6 +1149,9 @@ ingress:
 
 
 # -- Prometheus configuration
+# This section configures kube-prometheus-stack for monitoring the Union dataplane.
+# By default, most Kubernetes component monitoring is disabled to reduce resource usage.
+# Enable specific components as needed for your observability requirements.
 prometheus:
   enabled: true
   additionalPrometheusRulesMap: { }
@@ -1161,12 +1164,69 @@ prometheus:
   nameOverride: ""
   fullnameOverride: "union-operator"
   namespaceOverride: ""
+
+  # ----------------------------------------------------------------------------
+  # Kubernetes API Server Metrics
+  # ----------------------------------------------------------------------------
+  # Enable kubeApiServer to collect metrics from the Kubernetes API server.
+  # This provides insights into API request latencies, error rates, and throughput.
+  # Note: Requires appropriate RBAC permissions and network access to the API server.
   kubeApiServer:
     enabled: false
+    # -- Uncomment to enable API server metrics collection
+    # enabled: true
+    #
+    # -- Service configuration for scraping API server metrics
+    # service:
+    #   enabled: true
+    #   port: 443
+    #   targetPort: 443
+    #
+    # -- ServiceMonitor configuration
+    # serviceMonitor:
+    #   enabled: true
+    #   interval: 30s
+    #   # -- Metric relabeling to reduce cardinality (recommended for production)
+    #   metricRelabelings:
+    #     # Keep only essential API server metrics to reduce storage
+    #     - sourceLabels: ["__name__"]
+    #       regex: "apiserver_request_total|apiserver_request_duration_seconds_bucket|apiserver_current_inflight_requests|apiserver_response_sizes_bucket|apiserver_watch_events_total|apiserver_admission_webhook_admission_duration_seconds_bucket|rest_client_requests_total|rest_client_request_duration_seconds_bucket"
+    #       action: keep
+    #   # -- Relabeling configs to apply before scraping
+    #   relabelings: []
+    #
+    # -- TLS configuration for API server connection
+    # tlsConfig:
+    #   serverName: kubernetes
+    #   insecureSkipVerify: false
+
   nodeExporter:
     enabled: false
+    # -- Uncomment to enable node-level metrics
+    # enabled: true
+
+  # ----------------------------------------------------------------------------
+  # Default Alerting and Recording Rules
+  # ----------------------------------------------------------------------------
+  # Configure which Prometheus alerting and recording rules to enable.
+  # These rules provide pre-built alerts for common Kubernetes issues.
+  # See: https://github.com/prometheus-operator/kube-prometheus/tree/main/manifests
   defaultRules:
     create: false
+    # -- Uncomment to enable default rules with selective rule groups
+    # create: true
+    #
+    # -- Labels to add to all default rules
+    # labels:
+    #   role: alert-rules
+    #
+    # -- Annotations to add to all default rules
+    # annotations: {}
+    #
+    # -- Disable specific rules by name
+    # disabled:
+    #   KubeAPIDown: true
+    #   KubeAPITerminatedRequests: true
     rules:
       alertmanager: false
       etcd: false
@@ -1179,10 +1239,25 @@ prometheus:
       k8sContainerResource: false
       k8sContainerMemoryWorkingSetBytes: false
       k8sPodOwner: false
+      # -- API Server availability alerts (e.g., KubeAPIDown, KubeAPITerminatedRequests)
       kubeApiserverAvailability: false
+      # -- Uncomment to enable: Alerts when API server error budget is being consumed too quickly
+      # kubeApiserverAvailability: true
+      #
+      # -- API Server burn rate alerts for SLO monitoring
       kubeApiserverBurnrate: false
+      # -- Uncomment to enable: Multi-window burn rate alerts for API server SLOs
+      # kubeApiserverBurnrate: true
+      #
+      # -- API Server latency histogram recording rules
       kubeApiserverHistogram: false
+      # -- Uncomment to enable: Recording rules for API latency percentiles
+      # kubeApiserverHistogram: true
+      #
+      # -- API Server SLO (Service Level Objective) rules
       kubeApiserverSlos: false
+      # -- Uncomment to enable: SLO-based alerting for API server performance
+      # kubeApiserverSlos: true
       kubeControllerManager: false
       kubelet: false
       kubeProxy: false
@@ -1202,21 +1277,127 @@ prometheus:
       prometheus: false
       prometheusOperator: false
       windows: false
+
   crds:
     enabled: true
+
+  # ----------------------------------------------------------------------------
+  # Grafana Configuration
+  # ----------------------------------------------------------------------------
+  # Grafana provides visualization dashboards for Prometheus metrics.
+  # Enable this section to deploy Grafana with pre-built Kubernetes dashboards.
   grafana:
     enabled: false
-    ingress:
-      enabled: false
-    dashboardsConfigMaps: { }
-    # default: ""
+    # -- Uncomment to enable Grafana deployment
+    # enabled: true
+    #
+    # -- Default admin credentials (change in production!)
     adminUser: admin
     adminPassword: union-dataplane
-    additionalDataSources: [ ]
+    #
+    # -- Use existing secret for admin credentials (recommended for production)
     admin:
       existingSecret: ""
       userKey: admin-user
       passwordKey: admin-password
+    #
+    # -- Ingress configuration for external Grafana access
+    ingress:
+      enabled: false
+      # -- Uncomment to enable ingress
+      # enabled: true
+      # ingressClassName: nginx
+      # annotations:
+      #   kubernetes.io/tls-acme: "true"
+      # hosts:
+      #   - grafana.example.com
+      # tls:
+      #   - secretName: grafana-tls
+      #     hosts:
+      #       - grafana.example.com
+    #
+    # -- Default dashboards configuration
+    # By default, kube-prometheus-stack includes dashboards for various components.
+    # Dashboards are controlled by the defaultDashboardsEnabled setting.
+    # defaultDashboardsEnabled: true
+    #
+    # -- Enable timezone selection in dashboards
+    # defaultDashboardsTimezone: utc
+    #
+    # -- Enable editing of provisioned dashboards in the UI
+    # defaultDashboardsEditable: true
+    #
+
+    # kube-prometheus-stack comes with default dashboards configured with "defaultDashboardsEnabled: true".
+    # Ref: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/templates/grafana/dashboards-1.14
+
+    # -- Custom dashboards can be configured with additional ConfigMaps
+    # Format: <configmap-name>: <folder-name>
+    dashboardsConfigMaps: { }
+    # -- Example: Mount a ConfigMap named "custom-dashboards" to the "Custom" folder
+    # custom-dashboards: "Custom"
+
+    # -- Referencing prebuilt Dashboards
+    #
+    # -- Dashboard providers configuration
+    # dashboardProviders:
+    #   dashboardproviders.yaml:
+    #     apiVersion: 1
+    #     providers:
+    #       - name: 'dotdc-kubernetes-dashboards'
+    #         orgId: 1
+    #         folder: 'Kubernetes'
+    #         type: file
+    #         disableDeletion: false
+    #         editable: true
+    #         options:
+    #           path: /var/lib/grafana/dashboards/dotdc-kubernetes-dashboards
+    #
+    # -- Pre-built dashboards from grafana.com
+    # dashboards:
+    #   dotdc-kubernetes-dashboards:
+    #     k8s-system-api-server:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-api-server.json
+    #       token: ''
+    #     k8s-system-coredns:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-coredns.json
+    #       token: ''
+    #     k8s-views-global:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-global.json
+    #       token: ''
+    #     k8s-views-namespaces:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-namespaces.json
+    #       token: ''
+    #     k8s-views-nodes:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-nodes.json
+    #       token: ''
+    #     k8s-views-pods:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-pods.json
+    #       token: ''
+    #
+    # -- Sidecar configuration for automatic dashboard discovery
+    # sidecar:
+    #   dashboards:
+    #     enabled: true
+    #     label: grafana_dashboard
+    #     labelValue: "1"
+    #     # Folder annotation to organize dashboards
+    #     folderAnnotation: grafana_folder
+    #     # Search all namespaces for dashboards
+    #     searchNamespace: ALL
+    #   datasources:
+    #     enabled: true
+    #     label: grafana_datasource
+    #     labelValue: "1"
+    #
+    # -- Additional data sources (e.g., Loki for logs)
+    additionalDataSources: [ ]
+    # -- Example: Add Loki as a data source
+    # - name: Loki
+    #   type: loki
+    #   url: http://loki-gateway.monitoring.svc.cluster.local
+    #   access: proxy
+    #   isDefault: false
   prometheus:
     enabled: true
     service:
