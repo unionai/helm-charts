@@ -11,6 +11,7 @@
   - Host name or IP address (resolvable and accessible from within the cluster)
   - User for Union access, i.e., `unionai`
   - User is administrator on the server (Union will create/maintain multiple databases)
+  - Server accepts connections without SSL originated at the cluster
 
 - ScyllaDB server
   - Account for Union access, i.e., `unionai`
@@ -46,9 +47,9 @@ For all the requirements, a few things to keep in mind:
 
 ### Temporary Workarounds
 
-- ScyllaDB without authentication
 - Postgresl without SSL enforcement
 - Helm chart provided directly (instead of using the official Helm repository)
+- Secret passed via the Helm chart (landing in a config map instead of a secret)
 
 ## Installation Steps
 
@@ -79,7 +80,23 @@ For all the requirements, a few things to keep in mind:
 
    Registry account (username, password) provided by Union.
 
-5. Install the Control Plane:
+5. Create `unionai` database
+
+6. Store the Postgres password for the user specified in the YAML
+
+   ```shell
+   kubectl patch secret union-controlplane-secrets \
+        -p '{"stringData":{"pass.txt":"<your-password>"}}'
+   ```
+
+7. Store the ScyllaDB password for the user specified in the YAML
+
+   ```shell
+   kubectl patch secret union-controlplane-secrets \
+        -p '{"stringData":{"scylla.txt":"<your-password>"}}'
+   ```
+
+8. Install the Control Plane:
 
    ```shell
    helm upgrade --install unionai-controlplane . \

@@ -25,12 +25,16 @@ echo "Granting anyuid SCC to service accounts..."
 oc adm policy add-scc-to-user anyuid -z default -n "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-user anyuid -z flyteadmin -n "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-user anyuid -z cacheservice -n "$NAMESPACE" 2>/dev/null || true
+oc adm policy add-scc-to-user anyuid -z controlplane-nginx -n "$NAMESPACE" 2>/dev/null || true
+oc adm policy add-scc-to-user anyuid -z unionconsole -n "$NAMESPACE" 2>/dev/null || true
 
 # 3. Grant privileged SCC for pods that require seLinuxOptions type "spc_t"
 echo "Granting privileged SCC to service accounts for seLinuxOptions..."
 oc adm policy add-scc-to-user privileged -z default -n "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-user privileged -z flyteadmin -n "$NAMESPACE" 2>/dev/null || true
 oc adm policy add-scc-to-user privileged -z cacheservice -n "$NAMESPACE" 2>/dev/null || true
+oc adm policy add-scc-to-user privileged -z controlplane-nginx -n union-cp 2>/dev/null || true
+oc adm policy add-scc-to-user privileged -z unionconsole -n union-cp 2>/dev/null || true
 
 # # 4. Handle ServiceAccount imagePullSecrets field manager conflicts
 # #    The OpenShift "image-registry-pull-secrets_service-account-controller" owns .imagePullSecrets
