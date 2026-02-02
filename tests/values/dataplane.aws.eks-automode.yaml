@@ -1,89 +1,15 @@
-# ============================================================================
-# Union Dataplane Configuration for AWS
-# ============================================================================
-# This file provides a production-ready template for deploying Union dataplane
-# on AWS EKS. Replace the placeholder values below with your actual configuration.
-#
-# For more details, see: https://docs.union.ai/deployment/
-# ============================================================================
-
-# Before deployment, replace these placeholders in the globals section below.
-# The globals section makes these values accessible to both the chart and
-# future subcharts, ensuring consistent configuration across all components.
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# These values are accessible to both the chart and all potential subcharts.
-
+# Intended to match and test charts/dataplane/values.aws.eks-automode.yaml
 global:
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+  CLUSTER_NAME: "test-cluster-name"
+  ORG_NAME: "test-org-name"
+  CLIENT_ID: "test-client-id"
+  METADATA_BUCKET: "test-metadata-bucket"
+  FAST_REGISTRATION_BUCKET: "test-fast-registration-bucket"
+  AWS_REGION: "test-region"
+  BACKEND_IAM_ROLE_ARN: "test-backend-iam-role-arn"
+  WORKER_IAM_ROLE_ARN: "test-worker-iam-role-arn"
 
-  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-  #    Format: "hostname" (no protocol prefix for standard BYOC)
-  #    Example: "mycompany.unionai.cloud" or "union.example.com"
-  #    Source: Provided by Union team for BYOC deployments
-  UNION_CONTROL_PLANE_HOST: ""
-
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-us-east-1" or "staging-cluster"
-  #    Note: Must be unique within your organization
-  CLUSTER_NAME: ""
-
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
-  ORG_NAME: ""
-
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
-  CLIENT_ID: ""
-
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-metadata-bucket"
-  #    Note: Bucket must exist before deployment
-  METADATA_BUCKET: ""
-
-  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-fast-registration-bucket"
-  #    Note: Can be same as metadata bucket or separate
-  FAST_REGISTRATION_BUCKET: ""
-
-  # 1. AWS_REGION - AWS region for S3 buckets
-  #    Format: AWS region code
-  #    Example: "us-east-1", "us-west-2", "eu-west-1"
-  AWS_REGION: ""
-
-  # 2. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
-  #    Permissions: S3 access, ECR (if private images)
-  BACKEND_IAM_ROLE_ARN: ""
-
-  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
-  #    Permissions: S3 access, AWS services used by workflows
-  WORKER_IAM_ROLE_ARN: ""
-
-  # ----------------------------------------------------------------------------
-  # Note: For self-hosted intra-cluster deployments (control plane and dataplane
-  # in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
-  # That file is self-contained and includes all necessary configuration.
-  # ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 2: Core Identity Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# These values reference the globals defined above.
-
-# Cloud provider identifier (do not change for AWS)
 provider: aws
 
 # ----------------------------------------------------------------------------
@@ -126,7 +52,7 @@ secrets:
     clientId: '{{ .Values.global.CLIENT_ID }}'
 
     # Client secret for dataplane authentication (keep this secure!)
-    clientSecret: ""
+    clientSecret: "test-not-real-secret"
 
     # Whether to create the Kubernetes secret
     # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
@@ -152,7 +78,7 @@ dcgm-exporter:
   enabled: true
 
   # Configure AWS specific affinity
-  # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
+  # Reference: http://github.com/aws-observability/helm-charts/blob/main/charts/amazon-cloudwatch-observability/values.yaml#L1413-L1545
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -290,4 +216,154 @@ dcgm-exporter:
   # -- It's common practice to taint accelerator nodes to ensure non accelerator workloads
   #
   #    tolerations to ensure it only runs on GPU nodes.
-  # tolerations: []
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
+      effect: NoSchedule
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Union/Flyte Kubernetes specific Configuration
+# ----------------------------------------------------------------------------
+
+config:
+  k8s:
+    plugins:
+      k8s:
+        # AWS EKS Auto Mode Accelerator Configuration
+
+        # This configuration maps specific GPU types to EKS Auto Mode compatible
+        # eks.amazonaws.com/instance-gpu-name.
+        #
+        # flyte-sdk hardcodess certain common NVIDIA GPU types to specific names. This mapping is use
+        # https://github.com/flyteorg/flyte-sdk/blob/f85f2f2733dcb6cf235bad0b34d4aa0482a5835d/src/flyte/_internal/runtime/resources_serde.py#L7-L25https://github.com/flyteorg/flyte-sdk/blob/4a440fd468044b85e26141ca9c73ff91eb2ff04c/src/flyte/_internal/runtime/resources_serde.py#L7-L25
+        # The following block unmaps these GPU types to the corresponding EKS Auto Mode compatible names.
+        accelerator-devices:
+          # Flyte uppercases the GPU type names, so we need to map them to the lowercase names used by EKS Auto Mode.
+          - NVIDIA-TESLA-T4: t4
+          - NVIDIA-TESLA-V100: v100
+          - NVIDIA-TESLA-A100: a100
+          - NVIDIA-A10G: a10g
+          - NVIDIA-TESLA-K80: k80
+          - NVIDIA-H100: h100
+          - NVIDIA-L4: l4
+          - NVIDIA-L40S: l40s
+        accelerator-device-classes:
+          - NVIDIA_GPU:
+              resource-name: nvidia.com/gpu
+              device-node-label: eks.amazonaws.com/instance-gpu-name
+              pod-template:
+                template:
+                  spec:
+                    affinity:
+                      nodeAffinity:
+                        requiredDuringSchedulingIgnoredDuringExecution:
+                          nodeSelectorTerms:
+                            - matchExpressions:
+                                - key: eks.amazonaws.com/instance-gpu-manufacturer
+                                  operator: In
+                                  values:
+                                    - nvidia
+
+# ----------------------------------------------------------------------------
+# SECTION 9: Optional Config
+# ----------------------------------------------------------------------------
+
+# AWS EKS Auto Mode allows creating Nodepools through Kubernetes manifests.
+# This section shows an example of creating a simple GPU accelerated nodepool.
+#
+extraObjects:
+  # Example of a T4 specific node pool for GPU workloads. Adjust the instance types and labels as needed.
+  - apiVersion: karpenter.sh/v1
+    kind: NodePool
+    metadata:
+      name: gpu-t4
+    spec:
+      template:
+        metadata:
+          labels:
+            # It's best practice to label nvidia accelerated nodepools to assist
+            # Nvidia specific daemonsets targeting.
+            nvidia.com/gpu: "true"
+        spec:
+          # Reference to the default eks.amazonaws.com NodeClass
+          nodeClassRef:
+            group: eks.amazonaws.com
+            kind: NodeClass
+            name: default
+
+          # Ensure pods that don't require nvidia GPUs are not scheduled on these nodes by tainting them.
+          taints:
+            - key: nvidia.com/gpu
+              value: "true"
+              effect: NoSchedule
+
+          # Instance requirements for g4dn family (NVIDIA T4 GPUs)
+          # EKS Auto Mode automatically handles driver installation and readiness
+          requirements:
+            # Instance family - g4dn uses NVIDIA T4 GPUs
+            - key: eks.amazonaws.com/instance-family
+              operator: In
+              values:
+                - g4dn
+
+            # Use on-demand instances for GPU reliability
+            # Comment this out if you want to allow spot instances
+            - key: karpenter.sh/capacity-type
+              operator: In
+              values:
+                - on-demand
+
+            - key: kubernetes.io/arch
+              operator: In
+              values:
+                - amd64
+
+            # Ensure nodes have GPUs
+            - key: eks.amazonaws.com/instance-gpu-count
+              operator: Gt
+              values:
+                - "0"
+
+            # Ensure GPU type is T4
+            - key: eks.amazonaws.com/instance-gpu-name
+              operator: In
+              values:
+                - t4
+
+      # Resource limits for this node pool
+      # Adjust based on your budget and workload needs
+      limits:
+        cpu: "1000"           # Max total CPUs across all nodes in this pool
+        memory: 4000Gi        # Max total memory across all nodes
+        nvidia.com/gpu: "50"  # Max total GPUs (adjust as needed)
+
+      # Disruption settings for node lifecycle management
+      # Ref: https://karpenter.sh/docs/concepts/disruption/
+      disruption:
+        # Assume this nodepool is targetted exclusively for Union ephemeral workloads.
+        # This means that we can assume that there will be no long-running workloads
+        # on these nodes, and we can safely evict all pods when scaling down.
+        consolidationPolicy: WhenEmpty
+
+        # Wait 10 minutes to see if a new run will schedule before consolidating the node.
+        consolidateAfter: 10m
+
+        # Allow gradual rollouts and consolidation
+        budgets:
+          # Allow or more aggressive disruption budget for nodepools running Union workloads.
+          # Our consolidation policy is "WhenEmpty", so we can allow up to 50% of the nodes
+          # to be disrupted at a time.
+          - nodes: "50%"
+            reasons:
+              - Underutilized
+              - Empty
+          # Don't allow any disruption if the node is not empty to avoid evicting non-Union workloads.
+          # Assume each Union workload is short-lived and can be safely evicted when scaling down,
+          # so we can allow 100% disruption for empty nodes.
+          - nodes: "0"
+            reasons:
+              - Drifted
+
+      # Priority weight (lower = less preferred)
+      # GPU nodes are more expensive, so prefer general-purpose nodes first
+      weight: 10

@@ -31,7 +31,8 @@ spec:
         {{- include "global.podAnnotations" . | nindent 8 }}
     spec:
       {{- with .Values.flytepropellerwebhook.securityContext }}
-      securityContext: {{ tpl (toYaml .) $ | nindent 8 }}
+      securityContext:
+        {{- tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
       serviceAccountName: flytepropeller-webhook-system
       {{- if .Values.flytepropellerwebhook.priorityClassName }}
@@ -53,13 +54,10 @@ spec:
             {{- with .Values.flytepropellerwebhook.podEnv -}}
             {{- toYaml . | nindent 10 }}
             {{- end }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+          resources: {{- toYaml .Values.flytepropellerwebhook.resources | nindent 12 }}
       containers:
         - name: webhook
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -78,12 +76,8 @@ spec:
             {{- end }}
             {{- end }}
           ports:
-            - containerPort: 9443
+            - containerPort: {{ .Values.flytepropellerwebhook.service.targetPort }}
             - containerPort: {{ index .Values.config.core.propeller "prof-port" }}
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           {{- with .Values.flytepropellerwebhook.resources }}
           resources: {{- toYaml . | nindent 12 }}
           {{- end }}
@@ -94,6 +88,9 @@ spec:
             - name: webhook-certs
               mountPath: /etc/webhook/certs
               readOnly: true
+          {{- with .Values.flytepropellerwebhook.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
       volumes:
         - name: config-volume
           configMap:
@@ -101,5 +98,8 @@ spec:
         - name: webhook-certs
           secret:
             secretName: flyte-pod-webhook
+      {{- with .Values.flytepropellerwebhook.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
       {{- include "flytepropellerwebhook.scheduling" . | nindent 6 }}
       {{- include "additionalPodSpec" . | nindent 6 }}

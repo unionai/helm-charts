@@ -20,9 +20,11 @@ spec:
         {{- end }}
         {{- include "global.podAnnotations" . | nindent 8 }}
       labels:
-        {{ include "operator.podLabels" . | nindent 8 }}
+        {{- include "operator.podLabels" . | nindent 8 }}
     spec:
-      priorityClassName: {{ .Values.operator.priorityClassName }}
+      {{- with .Values.operator.priorityClassName }}
+      priorityClassName: {{ . }}
+      {{- end }}
       {{- with .Values.operator.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -39,6 +41,9 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
         {{- end }}
+      {{- with .Values.operator.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
       containers:
         - name: operator
           securityContext:
@@ -55,6 +60,9 @@ spec:
             - mountPath: /etc/union/secret
               name: secret-volume
             {{- end }}
+          {{- with .Values.operator.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
           env:
             {{- include "global.podEnvVars" . | nindent 10 }}
             {{- with .Values.operator.podEnv }}

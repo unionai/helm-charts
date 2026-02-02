@@ -1,4 +1,4 @@
-# Self-Hosted Intra-Cluster Deployment Guide (AWS)
+# Self-Hosted Intra-Cluster Deployment Guide (GCP)
 
 This guide covers deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane (co-located deployment). This is ideal for fully self-hosted Union deployments where both control plane and dataplane run in your infrastructure.
 
@@ -6,7 +6,7 @@ This guide covers deploying Union control plane in the **same Kubernetes cluster
 
 In an intra-cluster deployment, the control plane and dataplane communicate using Kubernetes internal networking rather than external endpoints. This architecture simplifies networking, reduces costs, and provides complete data sovereignty.
 
-**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md) for dataplane-specific configuration.
+**Important**: This guide assumes you will also deploy the dataplane in the same cluster. See the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md) for dataplane-specific configuration.
 
 ## Benefits of Intra-Cluster Deployment
 
@@ -39,24 +39,24 @@ Choose standard hosted deployment when:
 
 1. **Kubernetes cluster** (>= 1.28.0) with sufficient resources for both control plane and dataplane
    - Recommended: At least 6 nodes with 8 CPU / 16GB RAM each
-   - Storage: Ability to create Persisten Volumes for Prometheus and ScyllaDB (if embedded)
+   - Storage: Ability to create Persistent Volumes for Prometheus and ScyllaDB (if embedded)
 
 2. **PostgreSQL database**:
    - Version: PostgreSQL 12+
-   - Can be AWS RDS or self-hosted in the cluster
+   - Can be Cloud SQL or self-hosted in the cluster
    - Required for all control plane services
 
 3. **ScyllaDB** (for queue service):
    - Can be deployed via the Helm chart (embedded) or externally managed
    - Required for high-performance message queueing
 
-4. **S3 buckets**:
+4. **GCS buckets**:
    - One for control plane metadata
    - One for artifacts storage (can be same bucket)
 
-5. **IAM roles** configured with IRSA:
-   - Control plane services (with S3 access)
-   - Artifacts service (with S3 access)
+5. **GCP service accounts** configured with Workload Identity:
+   - Control plane services (with GCS access)
+   - Artifacts service (with GCS access)
 
 ### Required Tools
 
@@ -145,21 +145,18 @@ kubectl create secret tls controlplane-tls-cert \
 
 **Option B: Using cert-manager (recommended for production)**
 
-See the example in `values.aws.selfhosted-intracluster.yaml` under the `extraObjects` section.
+See the example in `values.gcp.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
-### Step 4: Download Values Files
+### Step 4: Configure Values File
 
-Download the required values files from the Union Helm charts repository:
+Download and configure the intra-cluster values file:
 
 ```bash
-# Download AWS infrastructure configuration
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.selfhosted-intracluster.yaml
-
-# Download registry configuration
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.registry.yaml
+# Download the self-contained intra-cluster configuration file
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.gcp.selfhosted-intracluster.yaml
 ```
 
-Create your environment-specific overrides file `values.aws.selfhosted-customer.yaml` with your configuration (see example below).
+Edit `values.gcp.selfhosted-intracluster.yaml` by setting all `global` values and replace all empty `""` values. This file is self-contained and includes all necessary GCP and intra-cluster configuration.
 
 ### Step 5: Create Database Password Secret
 
@@ -177,7 +174,21 @@ kubectl create secret generic union-controlplane-secrets \
 - This is the same name configured in `global.KUBERNETES_SECRET_NAME`
 - The secret must contain a key named `pass.txt` with the database password
 
-### Step 6: Install Control Plane
+### Step 6: Download Values Files
+
+Download the required values files from the Union Helm charts repository:
+
+```bash
+# Download GCP infrastructure configuration
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.gcp.selfhosted-intracluster.yaml
+
+# Download registry configuration
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.registry.yaml
+```
+
+Create your environment-specific overrides file `values.gcp.selfhosted-customer.yaml` with your configuration (see example below).
+
+### Step 7: Install Control Plane
 
 Install the control plane using layered values files:
 
@@ -185,32 +196,33 @@ Install the control plane using layered values files:
 helm upgrade --install unionai-controlplane unionai/controlplane \
   --namespace union-cp \
   --create-namespace \
-  -f values.aws.selfhosted-intracluster.yaml \
+  -f values.gcp.selfhosted-intracluster.yaml \
   -f values.registry.yaml \
-  -f values.aws.selfhosted-customer.yaml \
+  -f values.gcp.selfhosted-customer.yaml \
   --timeout 15m \
   --wait
 ```
 
 **Values file layers (applied in order):**
 
-1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (DB, storage, networking)
+1. **`values.gcp.selfhosted-intracluster.yaml`** - GCP infrastructure defaults (DB, storage, networking)
 2. **`values.registry.yaml`** - Registry configuration and image pull secrets
-3. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+3. **`values.gcp.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
 
-**Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**
+**Example customer overrides file (`values.gcp.selfhosted-customer.yaml`):**
 
 ```yaml
 global:
-  AWS_REGION: "us-east-1"
-  DB_HOST: "my-rds-instance.abcdef.us-east-1.rds.amazonaws.com"
+  GCP_REGION: "us-central1"
+  DB_HOST: "10.247.0.3"
   DB_NAME: "unionai"
   DB_USER: "unionai"
   BUCKET_NAME: "my-company-cp-flyte"
   ARTIFACTS_BUCKET_NAME: "my-company-cp-artifacts"
-  ARTIFACT_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-artifacts"
-  FLYTEADMIN_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  ARTIFACT_IAM_ROLE_ARN: "artifacts@my-project.iam.gserviceaccount.com"
+  FLYTEADMIN_IAM_ROLE_ARN: "flyteadmin@my-project.iam.gserviceaccount.com"
   UNION_ORG: "my-company"
+  GOOGLE_PROJECT_ID: "my-gcp-project"
 ```
 
 **Important notes:**
@@ -219,7 +231,7 @@ global:
 - Layered approach separates infrastructure config, registry config, and customer overrides
 - Easier to maintain and update - change images in one file, infrastructure in another
 
-### Step 7: Verify Control Plane Installation
+### Step 8: Verify Control Plane Installation
 
 ```bash
 # Check pod status
@@ -240,28 +252,28 @@ Expected: All pods should be in `Running` state, and internal connectivity shoul
 
 ### Step 8: Deploy Dataplane
 
-After the control plane is running, deploy the dataplane following the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md).
+After the control plane is running, deploy the dataplane following the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md).
 
-The dataplane will connect to the control plane using the service endpoints configured in your customer overrides file.
+The dataplane will connect to the control plane using the service endpoints configured in Step 4.
 
 ## Key Configuration Details
 
 ### Single-Tenant Mode
 
-Intra-cluster deployments uses an experimental single-tenant mode with an explicit organization. Refer to [values.aws.selfhosted-intracluster.yaml](./values.aws.selfhosted-intracluster.yaml) for example configuration.
+Intra-cluster deployments uses an experimental single-tenant mode with an explicit organization. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
 
 ```yaml
 global:
   # Update here to your organization designation
   UNION_ORG: ""
 
-  # There are references to .Values.globa.UNION_ORG where the
+  # There are references to .Values.global.UNION_ORG where the
   # override is configured.
 ```
 
 ### TLS Requirements
 
-gRPC requires TLS for HTTP/2 with NGINX. Refer to [values.aws.selfhosted-intracluster.yaml](./values.aws.selfhosted-intracluster.yaml) for example configuration.
+gRPC requires TLS for HTTP/2 with NGINX. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
 
 ```yaml
 global:
@@ -288,7 +300,7 @@ Control plane services discover each other via Kubernetes DNS:
 
 ```mermaid
 graph TB
-    subgraph cluster["Kubernetes Cluster"]
+    subgraph cluster["Kubernetes Cluster (GKE)"]
         subgraph cp["Namespace: union-cp (Control Plane)"]
             cpingress["NGINX Ingress<br/>(TLS/HTTP2)<br/>ClusterIP"]
             flyteadmin["Flyteadmin<br/>Service"]
@@ -312,8 +324,8 @@ graph TB
         end
 
         subgraph external["External Resources"]
-            rds["PostgreSQL<br/>(RDS)"]
-            s3["S3 Buckets<br/>(Metadata & Artifacts)"]
+            cloudsql["PostgreSQL<br/>(Cloud SQL)"]
+            gcs["GCS Buckets<br/>(Metadata & Artifacts)"]
         end
 
         %% Intra-cluster communication
@@ -321,11 +333,11 @@ graph TB
         cpingress -.->|"Internal DNS<br/>dns:///dataplane-nginx-controller<br/>.union.svc.cluster.local"| dpingress
 
         %% External connections
-        flyteadmin --> rds
-        identity --> rds
-        executions --> rds
-        flyteadmin --> s3
-        operator --> s3
+        flyteadmin --> cloudsql
+        identity --> cloudsql
+        executions --> cloudsql
+        flyteadmin --> gcs
+        operator --> gcs
     end
 
     classDef cpStyle fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
@@ -334,14 +346,14 @@ graph TB
 
     class cpingress,flyteadmin,identity,executions cpStyle
     class dpingress,operator,propeller,clusterresource dpStyle
-    class rds,s3 externalStyle
+    class cloudsql,gcs externalStyle
 ```
 
 **Key Points:**
 
 - **Blue (Control Plane)**: Services in `union-cp` namespace
 - **Orange (Dataplane)**: Services in `union` namespace
-- **Gray (External)**: AWS-managed resources (RDS, S3)
+- **Gray (External)**: GCP-managed resources (Cloud SQL, GCS)
 - **Dotted Lines**: Intra-cluster communication via Kubernetes DNS
 - **Solid Lines**: Service dependencies within namespaces
 
@@ -410,14 +422,36 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
   kubectl get networkpolicies -n union
   ```
 
+### Workload Identity issues
+
+- Verify service account annotations:
+
+  ```bash
+  kubectl get sa -n union-cp -o yaml | grep iam.gke.io/gcp-service-account
+  ```
+
+- Check IAM bindings:
+
+  ```bash
+  gcloud iam service-accounts get-iam-policy <SERVICE_ACCOUNT_EMAIL>
+  ```
+
+- Verify pod can authenticate:
+
+  ```bash
+  kubectl exec -n union-cp deploy/flyteadmin -- \
+    curl -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+  ```
+
 ## Reference Configuration Files
 
-- [values.aws.yaml](values.aws.yaml) - Standard AWS configuration (for hosted control plane deployments)
-- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
+- [values.gcp.yaml](values.gcp.yaml) - Standard GCP configuration (for hosted control plane deployments)
+- [values.gcp.selfhosted-intracluster.yaml](values.gcp.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
 
 ## Next Steps
 
-1. **Deploy Dataplane**: Follow the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md)
+1. **Deploy Dataplane**: Follow the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md)
 2. **Configure Users**: Set up user authentication and RBAC
 3. **Test Workflows**: Run a test workflow to verify the complete stack
 4. **Set Up Monitoring**: Configure Prometheus and Grafana for observability
@@ -426,6 +460,7 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
 
 - [Main Installation Guide](README.md) - Standard control plane deployment
 - [Dataplane Installation Guide](../dataplane/README.md) - Dataplane setup
-- [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_AWS.md) - Dataplane intra-cluster setup
+- [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md) - Dataplane intra-cluster setup
 - [Union Documentation](https://docs.union.ai) - Full documentation
 - [ScyllaDB Operator Documentation](https://operator.docs.scylladb.com/)
+- [GKE Workload Identity Documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)

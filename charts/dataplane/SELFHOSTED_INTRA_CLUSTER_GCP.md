@@ -1,8 +1,8 @@
-# Self-Hosted Intra-Cluster Deployment Guide (AWS)
+# Self-Hosted Intra-Cluster Deployment Guide (GCP)
 
 This guide covers deploying Union dataplane in the **same Kubernetes cluster** as your Union control plane (co-located deployment). This is ideal for fully self-hosted Union deployments where both control plane and dataplane run in your infrastructure.
 
-**Important**: This guide covers dataplane-specific configuration. For control plane setup in the same cluster, see the [Control Plane Intra-Cluster Guide](../controlplane/SELFHOSTED_INTRA_CLUSTER_AWS.md).
+**Important**: This guide covers dataplane-specific configuration. For control plane setup in the same cluster, see the [Control Plane Intra-Cluster Guide](../controlplane/SELFHOSTED_INTRA_CLUSTER_GCP.md).
 
 ## Benefits of Intra-Cluster Deployment
 
@@ -35,11 +35,11 @@ In addition to the standard prerequisites, you need:
 
 1. **Kubernetes cluster** (>= 1.28.0) with sufficient resources for both control plane and dataplane
 2. **Union control plane** deployed in the same cluster:
-   - **If not yet deployed**: Follow the [Control Plane Intra-Cluster Guide](../controlplane/SELFHOSTED_INTRA_CLUSTER_AWS.md) first
+   - **If not yet deployed**: Follow the [Control Plane Intra-Cluster Guide](../controlplane/SELFHOSTED_INTRA_CLUSTER_GCP.md) first
    - **If already running**: Note the namespace (typically `union-cp`) and service endpoints
 3. **Network connectivity** between dataplane and control plane namespaces (verify network policies)
-4. **S3 buckets** for metadata storage (same as standard deployment)
-5. **IAM roles** configured with IRSA (same as standard deployment)
+4. **GCS buckets** for metadata storage (same as standard deployment)
+5. **GCP service accounts** configured with Workload Identity (same as standard deployment)
 
 ## Installation Steps
 
@@ -56,11 +56,11 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
 Download the intra-cluster configuration file from the Union Helm charts repository:
 
 ```bash
-# Download AWS infrastructure configuration
-curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.selfhosted-intracluster.yaml
+# Download GCP infrastructure configuration
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.gcp.selfhosted-intracluster.yaml
 ```
 
-Create your environment-specific overrides file `values.aws.selfhosted-customer.yaml` with your configuration (see example below).
+Create your environment-specific overrides file `values.gcp.selfhosted-customer.yaml` with your configuration (see example below).
 
 ### Step 3: Install Dataplane
 
@@ -70,28 +70,29 @@ Install the dataplane using the configuration file:
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
-  -f values.aws.selfhosted-intracluster.yaml \
-  -f values.aws.selfhosted-customer.yaml \
+  -f values.gcp.selfhosted-intracluster.yaml \
+  -f values.gcp.selfhosted-customer.yaml \
   --timeout 10m \
   --wait
 ```
 
 **Values file layers (applied in order):**
 
-1. **`values.aws.selfhosted-intracluster.yaml`** - AWS infrastructure defaults (storage, networking, intra-cluster communication)
-2. **`values.aws.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
+1. **`values.gcp.selfhosted-intracluster.yaml`** - GCP infrastructure defaults (storage, networking, intra-cluster communication)
+2. **`values.gcp.selfhosted-customer.yaml`** - Your environment-specific overrides (see example below)
 
-**Example customer overrides file (`values.aws.selfhosted-customer.yaml`):**
+**Example customer overrides file (`values.gcp.selfhosted-customer.yaml`):**
 
 ```yaml
 global:
-  CLUSTER_NAME: "prod-us-east-1"
+  CLUSTER_NAME: "prod-us-central1"
   ORG_NAME: "my-company"
   METADATA_BUCKET: "my-company-dp-metadata"
   FAST_REGISTRATION_BUCKET: "my-company-dp-metadata"
-  AWS_REGION: "us-east-1"
-  BACKEND_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-backend"
-  WORKER_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/union-worker"
+  GCP_REGION: "us-central1"
+  GOOGLE_PROJECT_ID: "my-gcp-project"
+  BACKEND_IAM_ROLE_ARN: "union-backend@my-project.iam.gserviceaccount.com"
+  WORKER_IAM_ROLE_ARN: "union-worker@my-project.iam.gserviceaccount.com"
   CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
   QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
   CACHESERVICE_ENDPOINT: "cacheservice.union-cp.svc.cluster.local:89"
@@ -159,7 +160,7 @@ kubectl get svc --all-namespaces | grep nginx-controller
 
 ### Certificate verification errors
 
-- If using self-signed certificates, ensure `insecureSkipVerify: true` is set in `values.aws.selfhosted-intracluster.yaml`
+- If using self-signed certificates, ensure `insecureSkipVerify: true` is set in `values.gcp.selfhosted-intracluster.yaml`
 - Check the `_U_INSECURE_SKIP_VERIFY` environment variable in task pods
 - Verify control plane is using self-signed certs: `kubectl get secret -n union-cp`
 
@@ -169,13 +170,63 @@ kubectl get svc --all-namespaces | grep nginx-controller
 - Check that `secrets.admin.create: false` is set (no OAuth credentials needed)
 - Ensure control plane is configured to accept unauthenticated intra-cluster requests
 
+### Workload Identity issues
+
+- Verify service account annotations:
+
+  ```bash
+  kubectl get sa -n union -o yaml | grep iam.gke.io/gcp-service-account
+  ```
+
+- Check IAM bindings for backend and worker service accounts:
+
+  ```bash
+  gcloud iam service-accounts get-iam-policy <BACKEND_SERVICE_ACCOUNT_EMAIL>
+  gcloud iam service-accounts get-iam-policy <WORKER_SERVICE_ACCOUNT_EMAIL>
+  ```
+
+- Verify pod can authenticate:
+
+  ```bash
+  kubectl exec -n union deploy/unionai-dataplane-operator -- \
+    curl -H "Metadata-Flavor: Google" \
+    http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/email
+  ```
+
+- Check GCS bucket permissions:
+
+  ```bash
+  # From within a dataplane pod
+  kubectl exec -n union deploy/unionai-dataplane-operator -- \
+    gsutil ls gs://<METADATA_BUCKET>/
+  ```
+
+### GCS access issues
+
+- Verify bucket exists:
+
+  ```bash
+  gsutil ls -b gs://<METADATA_BUCKET>
+  ```
+
+- Check bucket IAM permissions:
+
+  ```bash
+  gsutil iam get gs://<METADATA_BUCKET>
+  ```
+
+- Ensure service accounts have proper roles:
+  - Backend service account needs `roles/storage.objectAdmin` or similar
+  - Worker service account needs read/write access to metadata bucket
+
 ## Reference Configuration Files
 
-- [values.aws.yaml](values.aws.yaml) - Standard AWS configuration (for hosted control plane deployments)
-- [values.aws.selfhosted-intracluster.yaml](values.aws.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
+- [values.gcp.yaml](values.gcp.yaml) - Standard GCP configuration (for hosted control plane deployments)
+- [values.gcp.selfhosted-intracluster.yaml](values.gcp.selfhosted-intracluster.yaml) - Self-contained intra-cluster configuration
 
 ## Additional Resources
 
 - [Main Installation Guide](README.md) - Standard BYOC deployment
 - [Control Plane Installation Guide](../controlplane/README.md) - Control plane setup
 - [Union Documentation](https://docs.union.ai) - Full documentation
+- [GKE Workload Identity Documentation](https://cloud.google.com/kubernetes-engine/docs/how-to/workload-identity)

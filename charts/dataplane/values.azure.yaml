@@ -1,0 +1,299 @@
+# ============================================================================
+# Union Dataplane Configuration for Azure
+# ============================================================================
+# This file provides a production-ready template for deploying Union dataplane
+# on Azure AKS. Replace the placeholder values below with your actual configuration.
+#
+# For more details, see: https://docs.union.ai/deployment/
+# ============================================================================
+
+# Before deployment, replace these placeholders in the globals section below.
+# The globals section makes these values accessible to both the chart and
+# future subcharts, ensuring consistent configuration across all components.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values are accessible to both the chart and all potential subcharts.
+
+global:
+
+  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
+  #    Format: "hostname" (no protocol prefix for standard BYOC)
+  #    Example: "mycompany.unionai.cloud" or "union.example.com"
+  #    Source: Provided by Union team for BYOC deployments
+  UNION_CONTROL_PLANE_HOST: ""
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-eastus" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 4. CLIENT_ID - Client ID for dataplane authentication
+  #    Format: String provided by Union team
+  #    Example: "dataplane-prod-client"
+  #    Source: Provided by Union team
+  CLIENT_ID: ""
+
+  # 5. METADATA_CONTAINER - Azure Blob container for workflow metadata
+  #    Format: Valid Azure Blob container name
+  #    Example: "union-metadata"
+  #    Note: Container must exist before deployment
+  METADATA_CONTAINER: ""
+
+  # 6. AZURE_STORAGE_ACCOUNT - Azure Storage Account name
+  #    Format: 3-24 lowercase alphanumeric characters
+  #    Example: "unionstorageaccount"
+  #    Note: Storage account must exist before deployment
+  AZURE_STORAGE_ACCOUNT: ""
+
+  # 7. AZURE_SUBSCRIPTION_ID - Azure Subscription ID
+  #    Format: GUID
+  #    Example: "12345678-1234-1234-1234-123456789abc"
+  #    Source: Azure Portal > Subscriptions
+  AZURE_SUBSCRIPTION_ID: ""
+
+  # 8. AZURE_TENANT_ID - Azure AD Tenant ID
+  #    Format: GUID
+  #    Example: "87654321-4321-4321-4321-cba987654321"
+  #    Source: Azure Portal > Azure Active Directory > Overview
+  AZURE_TENANT_ID: ""
+
+  # 9. AZURE_RESOURCE_GROUP - Azure Resource Group name
+  #    Format: Valid Azure resource group name
+  #    Example: "rg-union-prod-eastus"
+  #    Note: Resource group containing Union resources
+  AZURE_RESOURCE_GROUP: ""
+
+  # 10. AZURE_BACKEND_CLIENT_ID - Managed Identity for Union backend services
+  #     Format: GUID (Client ID of User-Assigned Managed Identity)
+  #     Example: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+  #     Permissions: Storage Blob Data Contributor on storage account
+  AZURE_BACKEND_CLIENT_ID: ""
+
+  # 11. AZURE_WORKER_CLIENT_ID - Managed Identity for workflow execution pods
+  #     Format: GUID (Client ID of User-Assigned Managed Identity)
+  #     Example: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj"
+  #     Permissions: Storage Blob Data Contributor, Azure services used by workflows
+  AZURE_WORKER_CLIENT_ID: ""
+
+  # 12. AZURE_KEY_VAULT_URI - Azure Key Vault URI for secrets management
+  #     Format: Full Key Vault URI
+  #     Example: "https://kv-myorg-prod.vault.azure.net/"
+  #     Note: Key Vault must exist with appropriate access policies
+  AZURE_KEY_VAULT_URI: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Note: clusterName, orgName, and host are inherited from the base values.yaml
+# and reference the globals defined above.
+
+# Cloud provider identifier (do not change for Azure)
+provider: azure
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Object Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Configure Azure Blob Storage for workflow metadata and fast registration.
+# Storage account and containers must be created before deployment.
+
+storage:
+  provider: custom
+  bucketName: '{{ .Values.global.METADATA_CONTAINER }}'
+  enableMultiContainer: true
+
+  # Custom storage configuration using stow with Azure backend
+  custom:
+    container: '{{ .Values.global.METADATA_CONTAINER }}'
+    type: stow
+    stow:
+      kind: azure
+      config:
+        # Storage account name
+        account: '{{ .Values.global.AZURE_STORAGE_ACCOUNT }}'
+        # Leave key empty to use Workload Identity / Managed Identity authentication
+        # For key-based auth, provide the storage account access key
+        # key: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 4: Workload Identity (REQUIRED for Azure)
+# ----------------------------------------------------------------------------
+# Configure Azure Workload Identity for secure Azure access.
+# Managed Identities must be created with federated credentials for service accounts.
+
+# Workload Identity annotation for Union backend services (operator, propeller, etc.)
+additionalServiceAccountAnnotations:
+  azure.workload.identity/client-id: "{{ .Values.global.AZURE_BACKEND_CLIENT_ID }}"
+
+# Workload Identity annotation for workflow execution pods
+userRoleAnnotationKey: azure.workload.identity/client-id
+userRoleAnnotationValue: "{{ .Values.global.AZURE_WORKER_CLIENT_ID }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Authentication Secrets (REQUIRED)
+# ----------------------------------------------------------------------------
+# Client credentials for authenticating with the Union control plane.
+# These will be provided by the Union team for managed control planes.
+
+secrets:
+  admin:
+    # Client ID for dataplane authentication
+    clientId: '{{ .Values.global.CLIENT_ID }}'
+
+    # Client secret for dataplane authentication (keep this secure!)
+    clientSecret: ""
+
+    # Whether to create the Kubernetes secret
+    # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
+    create: true
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Logging Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# FluentBit collects and forwards logs to Azure Blob Storage.
+
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    # Annotations may be required for Workload Identity
+    annotations: {}
+
+# ----------------------------------------------------------------------------
+# SECTION 7: Workload Identity Pod Labels (REQUIRED)
+# ----------------------------------------------------------------------------
+# Pod labels required for Azure Workload Identity webhook injection.
+
+additionalPodLabels:
+  # Enable workload identity by default
+  azure.workload.identity/use: "true"
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Azure-Specific Configuration
+# ----------------------------------------------------------------------------
+# Configuration for Azure services including Key Vault, Log Analytics, and scheduling.
+
+# Namespace configuration
+namespace_config:
+  namespace_mapping:
+    template: '{{`{{ domain }}`}}'
+config:
+#--------------------------------------------------------------
+  ## Optional integration with Azure Key Vault secrets manager
+  # core:
+  #   webhook:
+  #     embeddedSecretManagerConfig:
+  #       enabled: true
+  #       type: Azure
+  #       azureConfig:
+  #         vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+  #     secretManagerTypes:
+  #       - Azure
+  #       - Embedded
+#-------------------------------------------------------------
+  # Operator configuration with Azure Blob Storage metadata path
+  operator:
+    clusterData:
+      # Azure Blob Storage path format (ABFS protocol for Data Lake Storage Gen2)
+      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
+    org:
+      namespaceTemplate: '{{`{{ domain }}`}}'
+
+  # Proxy configuration with Azure Log Analytics and secret manager
+  proxy:
+    persistedLogs:
+      sourceType: AzureLogAnalytics
+      azureLogAnalytics:
+        logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
+    smConfig:
+      enabled: true
+      type: Azure
+      azureConfig:
+        vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+
+  # Task logs configuration with Azure Log Analytics templates
+  task_logs:
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        stackdriver-enabled: false
+        azure-log-templates:
+          - displayName: Azure Logs
+            templateUris:
+              - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%2FresourceGroups%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            stackdriver-enabled: false
+            azure-log-templates:
+              - displayName: Azure Logs
+                templateUris:
+                  - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%%2Fsubscriptions%%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%%2FresourceGroups%%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          stackdriver-enabled: false
+          azure-log-templates:
+            - displayName: Azure Logs
+              templateUris:
+                - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%2FresourceGroups%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+
+  # Kubernetes plugin configuration for worker pods
+  k8s:
+    plugins:
+      k8s:
+        # Workload Identity label for worker pods
+        default-labels:
+          - azure.workload.identity/use: "true"
+
+        # Storage account environment variable for SDK access
+        default-env-vars:
+          - AZURE_STORAGE_ACCOUNT_NAME: "{{ .Values.global.AZURE_STORAGE_ACCOUNT }}"
+
+        # Azure Spot VM configuration for interruptible workloads
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+            - spot
+
+        interruptible-tolerations:
+          - effect: NoSchedule
+            key: kubernetes.azure.com/scalesetpriority
+            operator: Equal
+            value: spot
+
+        # Non-interruptible workloads avoid spot VMs
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
+
+# ----------------------------------------------------------------------------
+# SECTION 9: Task Level Monitoring
+# ----------------------------------------------------------------------------
+
+# DCGM Exporter
+dcgm-exporter:
+  enabled: true
+
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.azure.com/accelerator
+            operator: In
+            values:
+            - "nvidia"

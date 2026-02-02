@@ -35,6 +35,35 @@ kind: Namespace
 metadata:
   name: union-health-monitoring-production
 ---
+# Source: dataplane/charts/dcgm-exporter/templates/serviceaccount.yaml
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-dcgm-exporter
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: false
+---
 # Source: dataplane/charts/fluentbit/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -126,6 +155,8 @@ kind: ServiceAccount
 metadata:
   name: clustersync-system
   namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: v1
@@ -135,6 +166,8 @@ metadata:
   namespace: union
   labels:
     app: executor
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -146,6 +179,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -157,6 +192,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 apiVersion: v1
@@ -164,6 +201,8 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-webhook-system
   namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
@@ -171,6 +210,20 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-system
   namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
+---
+# Source: dataplane/templates/common/auth-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: union-secret-auth
+  namespace: union
+type: Opaque
+data:
+  # TODO(rob): update or configure operator to use client_secret like all the other components.
+  app_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
+  client_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -179,7 +232,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name:
+  cluster_name: dGVzdC1jbHVzdGVyLW5hbWU=
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -189,6 +242,100 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
 type: Opaque
+---
+# Source: dataplane/charts/dcgm-exporter/templates/metrics-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: exporter-metrics-config-map
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  metrics: |
+    # Format
+    # If line starts with a '#' it is considered a comment
+    # DCGM FIELD, Prometheus metric type, help message
+    
+    # Clocks
+    DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
+    DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
+    
+    # Temperature
+    DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
+    DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
+    
+    # Power
+    DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
+    DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
+    
+    # PCIE
+    # DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
+    # DCGM_FI_PROF_PCIE_RX_BYTES,  counter, Total number of bytes received through PCIe RX via NVML.
+    DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
+    
+    # Utilization (the sample period varies depending on the product)
+    DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
+    DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
+    DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
+    DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
+    
+    # Errors and violations
+    DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
+    # DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in ns).
+    # DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in ns).
+    # DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in ns).
+    # DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in ns).
+    # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
+    # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
+    
+    # Memory usage
+    DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
+    DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+    
+    # ECC
+    # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
+    # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Total number of double-bit volatile ECC errors.
+    # DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Total number of single-bit persistent ECC errors.
+    # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
+    
+    # Retired pages
+    # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
+    # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
+    # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
+    
+    # NVLink
+    # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
+    # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
+    # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
+    # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
+    DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
+    # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
+    
+    # VGPU License status
+    DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
+    
+    # Remapped rows
+    DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
+    DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
+    DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+    
+    # DCP metrics
+    DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
+    DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
+    DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
+    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
+    DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
+    # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
+    # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
+    # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
+    DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
+    DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -204,7 +351,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: ''
+      clusterName: 'test-cluster-name'
       customData:
       - production:
         - projectQuotaCpu:
@@ -216,7 +363,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-iam-role-arn'
       - staging:
         - projectQuotaCpu:
             value: "4096"
@@ -227,7 +374,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-iam-role-arn'
       - development:
         - projectQuotaCpu:
             value: "4096"
@@ -238,7 +385,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+            value: 'test-worker-iam-role-arn'
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
@@ -248,18 +395,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///
+        host: dns:///test-controlplane-host
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test-controlplane-host
       insecure: false
     event:
       capacity: 1000
@@ -369,8 +515,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-east-1
-        bucket
+        region test-region
+        bucket test-metadata-bucket
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -408,10 +554,10 @@ data:
         - fast-task
   config.yaml: |
     executor:
-      cluster: ''
+      cluster: 'test-cluster-name'
       evaluatorCount: 64
       maxActions: 2000
-      organization: ''
+      organization: 'test-org-name'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -426,24 +572,23 @@ data:
           memory: 2Ti
     union:
       connection:
-        host: dns:///
+        host: dns:///test-controlplane-host
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test-controlplane-host
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///test-controlplane-host
+      endpoint: dns:///test-controlplane-host
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -477,6 +622,31 @@ data:
           deckFilename: report.html
       k8s:
         disable-inject-owner-references: true
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
@@ -485,18 +655,12 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+      container: "test-metadata-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: test-region
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -517,18 +681,42 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
   config.yaml: |
     union:
       connection:
-        host: dns:///
+        host: dns:///test-controlplane-host
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
     sharedService:
@@ -539,7 +727,7 @@ data:
       type: noop
     operator:
       enabled: true
-      enableTunnelService: false
+      enableTunnelService: true
       tunnel:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
@@ -548,20 +736,20 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: ''
+        organization: 'test-org-name'
       clusterData:
-        appId: 'dataplane-operator'
-        bucketName: ''
-        bucketRegion: 'us-east-1'
-        cloudHostName: ''
+        appId: 'test-client-id'
+        bucketName: 'test-metadata-bucket'
+        bucketRegion: 'test-region'
+        cloudHostName: 'test-controlplane-host'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://'
-        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+        metadataBucketPrefix: 's3://test-metadata-bucket'
+        userRole: 'test-worker-iam-role-arn'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
       billableUsageCollector:
-        enabled: false
+        enabled: true
       dependenciesHeartbeat:
         prometheus:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
@@ -593,18 +781,12 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+      container: "test-metadata-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: test-region
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -612,17 +794,11 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+      container: "test-fast-registration-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: test-region
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -633,9 +809,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///test-controlplane-host
       insecure: false
     event:
       capacity: 1000
@@ -643,8 +819,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///test-controlplane-host
+      endpoint: dns:///test-controlplane-host
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -688,7 +864,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://'
+      rawoutput-prefix: 's3://test-metadata-bucket'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -728,6 +904,31 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
         default-cpus: 100m
         default-env-vars: []
         default-memory: 100Mi
@@ -756,18 +957,12 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
+      container: "test-metadata-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: test-region
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -1580,6 +1775,25 @@ subjects:
     name: flytepropeller-system
     namespace: union
 ---
+# Source: dataplane/charts/dcgm-exporter/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: dcgm-exporter-read-cm
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["exporter-metrics-config-map"]
+  verbs: ["get"]
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -1626,6 +1840,28 @@ rules:
       - create
       - update
 ---
+# Source: dataplane/charts/dcgm-exporter/templates/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-dcgm-exporter
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+subjects:
+- kind: ServiceAccount
+  name: release-name-dcgm-exporter
+  namespace: union
+roleRef:
+  kind: Role
+  name: dcgm-exporter-read-cm
+  apiGroup: rbac.authorization.k8s.io
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1664,6 +1900,46 @@ subjects:
   - kind: ServiceAccount
     name: operator-system
     namespace: union
+---
+# Source: dataplane/charts/dcgm-exporter/templates/service.yaml
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-dcgm-exporter
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  internalTrafficPolicy: Cluster
+  ports:
+  - name: "metrics"
+    port: 9400
+    targetPort: 9400
+    protocol: TCP
+  selector:
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
@@ -2053,6 +2329,259 @@ spec:
   selector:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/charts/dcgm-exporter/templates/daemonset.yaml
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: release-name-dcgm-exporter
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: dcgm-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dcgm-exporter
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: dcgm-exporter
+    spec:
+      priorityClassName: system-node-critical
+      hostPID: false
+      serviceAccountName: release-name-dcgm-exporter
+      automountServiceAccountToken: false
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                - g3.4xlarge
+                - g3.8xlarge
+                - g3.16xlarge
+                - g3s.xlarge
+                - g4ad.2xlarge
+                - g4ad.4xlarge
+                - g4ad.8xlarge
+                - g4ad.16xlarge
+                - g4ad.xlarge
+                - g4dn.2xlarge
+                - g4dn.4xlarge
+                - g4dn.8xlarge
+                - g4dn.12xlarge
+                - g4dn.16xlarge
+                - g4dn.metal
+                - g4dn.xlarge
+                - g5.2xlarge
+                - g5.4xlarge
+                - g5.8xlarge
+                - g5.12xlarge
+                - g5.16xlarge
+                - g5.24xlarge
+                - g5.48xlarge
+                - g5.xlarge
+                - g5g.2xlarge
+                - g5g.4xlarge
+                - g5g.8xlarge
+                - g5g.16xlarge
+                - g5g.metal
+                - g5g.xlarge
+                - g6.2xlarge
+                - g6.4xlarge
+                - g6.8xlarge
+                - g6.12xlarge
+                - g6.16xlarge
+                - g6.24xlarge
+                - g6.48xlarge
+                - g6.xlarge
+                - g6e.2xlarge
+                - g6e.4xlarge
+                - g6e.8xlarge
+                - g6e.12xlarge
+                - g6e.16xlarge
+                - g6e.24xlarge
+                - g6e.48xlarge
+                - g6e.xlarge
+                - gr6.4xlarge
+                - gr6.8xlarge
+                - p2.8xlarge
+                - p2.16xlarge
+                - p2.xlarge
+                - p3.2xlarge
+                - p3.8xlarge
+                - p3.16xlarge
+                - p3dn.24xlarge
+                - p4d.24xlarge
+                - p4de.24xlarge
+                - p5.48xlarge
+                - p5e.48xlarge
+                - p5en.48xlarge
+                - ml.g3.4xlarge
+                - ml.g3.8xlarge
+                - ml.g3.16xlarge
+                - ml.g3s.xlarge
+                - ml.g4ad.2xlarge
+                - ml.g4ad.4xlarge
+                - ml.g4ad.8xlarge
+                - ml.g4ad.16xlarge
+                - ml.g4ad.xlarge
+                - ml.g4dn.2xlarge
+                - ml.g4dn.4xlarge
+                - ml.g4dn.8xlarge
+                - ml.g4dn.12xlarge
+                - ml.g4dn.16xlarge
+                - ml.g4dn.metal
+                - ml.g4dn.xlarge
+                - ml.g5.2xlarge
+                - ml.g5.4xlarge
+                - ml.g5.8xlarge
+                - ml.g5.12xlarge
+                - ml.g5.16xlarge
+                - ml.g5.24xlarge
+                - ml.g5.48xlarge
+                - ml.g5.xlarge
+                - ml.g5g.2xlarge
+                - ml.g5g.4xlarge
+                - ml.g5g.8xlarge
+                - ml.g5g.16xlarge
+                - ml.g5g.metal
+                - ml.g5g.xlarge
+                - ml.g6.2xlarge
+                - ml.g6.4xlarge
+                - ml.g6.8xlarge
+                - ml.g6.12xlarge
+                - ml.g6.16xlarge
+                - ml.g6.24xlarge
+                - ml.g6.48xlarge
+                - ml.g6.xlarge
+                - ml.g6e.2xlarge
+                - ml.g6e.4xlarge
+                - ml.g6e.8xlarge
+                - ml.g6e.12xlarge
+                - ml.g6e.16xlarge
+                - ml.g6e.24xlarge
+                - ml.g6e.48xlarge
+                - ml.g6e.xlarge
+                - ml.gr6.4xlarge
+                - ml.gr6.8xlarge
+                - ml.p2.8xlarge
+                - ml.p2.16xlarge
+                - ml.p2.xlarge
+                - ml.p3.2xlarge
+                - ml.p3.8xlarge
+                - ml.p3.16xlarge
+                - ml.p3dn.24xlarge
+                - ml.p4d.24xlarge
+                - ml.p4de.24xlarge
+                - ml.p5.48xlarge
+                - ml.p5e.48xlarge
+                - ml.p5en.48xlarge
+              - key: eks.amazonaws.com/compute-type
+                operator: NotIn
+                values:
+                - fargate
+      tolerations:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        operator: Exists
+      volumes:
+      - name: "pod-gpu-resources"
+        hostPath:
+          path: /var/lib/kubelet/pod-resources
+      - configMap:
+          items:
+          - key: metrics
+            path: default-counters.csv
+          name: exporter-metrics-config-map
+        name: exporter-metrics-volume
+      containers:
+      - name: exporter
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            add:
+            - SYS_ADMIN
+            drop:
+            - ALL
+          runAsNonRoot: false
+          runAsUser: 0
+        image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04"
+        imagePullPolicy: "IfNotPresent"
+        args:
+        - -f
+        - /etc/dcgm-exporter/default-counters.csv
+        env:
+        - name: "DCGM_EXPORTER_KUBERNETES"
+          value: "true"
+        - name: "DCGM_EXPORTER_LISTEN"
+          value: ":9400"
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
+          value: uid
+        ports:
+        - name: "metrics"
+          containerPort: 9400
+        volumeMounts:
+        - name: "pod-gpu-resources"
+          readOnly: true
+          mountPath: "/var/lib/kubelet/pod-resources"
+        - mountPath: /etc/dcgm-exporter/default-counters.csv
+          name: exporter-metrics-volume
+          subPath: default-counters.csv
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 9400
+            scheme: HTTP
+          initialDelaySeconds: 45
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 9400
+            scheme: HTTP
+          initialDelaySeconds: 45
+        resources:
+          limits:
+            cpu: 200m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 128Mi
 ---
 # Source: dataplane/charts/fluentbit/templates/daemonset.yaml
 apiVersion: apps/v1
@@ -2448,7 +2977,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9d5c84e671915a23d2ca391d12072f2c78cba02fc7161c7f40510ac4fbbe2f2"
+        configChecksum: "27f7949ac977a5fdecc79fefa89b5d0b4a7e818621ad1016865da18375ad857"
         
       labels:
         
@@ -2507,6 +3036,8 @@ spec:
               cpu: 500m
               memory: 100Mi
           volumeMounts:
+            - name: auth
+              mountPath: /etc/union/secret
             - name: resource-templates
               mountPath: /etc/flyte/clusterresource/templates
             - name: config-volume
@@ -2521,6 +3052,9 @@ spec:
         - configMap:
             name: flyte-clusterresourcesync-config
           name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
 ---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
@@ -2538,7 +3072,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "96ffb81823f1eb65ca38f2c2bbc68bab1c57929a3845f1d963b691840058e28"
+        configChecksum: "ae2a636d8f465bfd20e6ed88144038d6ed34068d4f03192c150acadd49d9565"
       labels:
         
         app: executor
@@ -2550,6 +3084,12 @@ spec:
         - name: config-volume
           configMap:
             name: executor
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: executor
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
@@ -2608,6 +3148,10 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
 ---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
@@ -2629,7 +3173,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "da90060f471c26b20d0edc2955deceb6987552bf6782d72635af6182dab8d36"
+        configChecksum: "1c734cb1d61c891f56db51d5452490b8c8835c6d7bcb65a7dff7f0aff06b032"
         
       labels:
         
@@ -2646,6 +3190,9 @@ spec:
                 name: union-operator
             - configMap:
                 name: flyte-clusterresourcesync-config
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       serviceAccountName: proxy-system
       securityContext:
         {}
@@ -2666,6 +3213,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           args:
             - operator
             - proxy
@@ -2716,6 +3265,32 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
+        - name: "tunnel"
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: union-secret-auth
+                  key: tunnel_token
+                  optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
 ---
 # Source: dataplane/templates/operator/deployment.yaml
 apiVersion: apps/v1
@@ -2735,7 +3310,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "da90060f471c26b20d0edc2955deceb6987552bf6782d72635af6182dab8d36"
+        configChecksum: "1c734cb1d61c891f56db51d5452490b8c8835c6d7bcb65a7dff7f0aff06b032"
         
       labels:
         
@@ -2751,6 +3326,9 @@ spec:
         - name: config-volume
           configMap:
             name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: operator
           securityContext:
@@ -2768,6 +3346,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           env:
           - name: POD_NAME
             valueFrom:
@@ -2847,7 +3427,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
+        configChecksum: "4f1c55f0d46ee08cbd64025267a0f6f989212ded430991d167deeaea4ba8f39"
         
     spec:
       securityContext:
@@ -3002,7 +3582,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
+        configChecksum: "4f1c55f0d46ee08cbd64025267a0f6f989212ded430991d167deeaea4ba8f39"
         
       labels:
         
@@ -3019,7 +3599,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - ''
+            - 'test-cluster-name'
           env:
           - name: POD_NAME
             valueFrom:
@@ -3067,111 +3647,46 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+            - name: auth
+              mountPath: /etc/union/secret
       serviceAccountName: flytepropeller-system
       volumes:
         - configMap:
             name: flyte-propeller-config
           name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
 ---
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  ingressClassName: "nginx"
-  rules:
-    - http:
-        paths:
-          - path: /api/v1/dataproxy/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /prometheus/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-prometheus
-                port:
-                  number: 80
-          - path: /clickhouse/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /dataplane/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /resourcequota/v1/project_quota
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /spark-history-server/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /secrets/api/v1
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /data_plane_object_store/api/v1/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.actor.ActorEnvironmentService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.logs.dataplane.LogsService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.objectstore.v1.ObjectStoreService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.imagebuilder.dataplane.ImageService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-      host: "ingress-nginx-internal.ingress-nginx.svc.cluster.local"
+# Source: dataplane/charts/dcgm-exporter/templates/tls-secret.yaml
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+# Source: dataplane/charts/dcgm-exporter/templates/web-config-configmap.yaml
+# Copyright (c) 2024, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
@@ -3213,6 +3728,63 @@ webhooks:
     timeoutSeconds: 10
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
+---
+# Source: dataplane/templates/common/extra-manifests.yaml
+apiVersion: karpenter.sh/v1
+kind: NodePool
+metadata:
+  name: gpu-t4
+spec:
+  disruption:
+    budgets:
+    - nodes: 50%
+      reasons:
+      - Underutilized
+      - Empty
+    - nodes: "0"
+      reasons:
+      - Drifted
+    consolidateAfter: 10m
+    consolidationPolicy: WhenEmpty
+  limits:
+    cpu: "1000"
+    memory: 4000Gi
+    nvidia.com/gpu: "50"
+  template:
+    metadata:
+      labels:
+        nvidia.com/gpu: "true"
+    spec:
+      nodeClassRef:
+        group: eks.amazonaws.com
+        kind: NodeClass
+        name: default
+      requirements:
+      - key: eks.amazonaws.com/instance-family
+        operator: In
+        values:
+        - g4dn
+      - key: karpenter.sh/capacity-type
+        operator: In
+        values:
+        - on-demand
+      - key: kubernetes.io/arch
+        operator: In
+        values:
+        - amd64
+      - key: eks.amazonaws.com/instance-gpu-count
+        operator: Gt
+        values:
+        - "0"
+      - key: eks.amazonaws.com/instance-gpu-name
+        operator: In
+        values:
+        - t4
+      taints:
+      - effect: NoSchedule
+        key: nvidia.com/gpu
+        value: "true"
+  weight: 10
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus/prometheus.yaml
 apiVersion: monitoring.coreos.com/v1
@@ -4008,6 +4580,54 @@ spec:
         - record: node_type:uptime_hours:sum15m
           expr: |
             sum_over_time(node_type:uptime_hours:sum[15m:15s])
+---
+# Source: dataplane/charts/dcgm-exporter/templates/service-monitor.yaml
+# Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: release-name-dcgm-exporter
+  namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dcgm-exporter
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: dcgm-exporter
+  namespaceSelector:
+    matchNames:
+    - "union"
+  endpoints:
+  - port: "metrics"
+    path: "/metrics"
+    interval: "15s"
+    honorLabels: true
+    relabelings:
+      
+      []
+    metricRelabelings:
+      
+      []
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/servicemonitor.yaml
 apiVersion: monitoring.coreos.com/v1

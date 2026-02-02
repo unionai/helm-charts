@@ -172,6 +172,18 @@ metadata:
   name: flytepropeller-system
   namespace: union
 ---
+# Source: dataplane/templates/common/auth-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: union-secret-auth
+  namespace: union
+type: Opaque
+data:
+  # TODO(rob): update or configure operator to use client_secret like all the other components.
+  app_secret: dGVzdC1zZWNyZXQ=
+  client_secret: dGVzdC1zZWNyZXQ=
+---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
 kind: Secret
@@ -179,7 +191,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name:
+  cluster_name: dW5pb24tdGVzdA==
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -204,7 +216,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: ''
+      clusterName: 'union-test'
       customData:
       - production:
         - projectQuotaCpu:
@@ -248,18 +260,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///
+        host: dns:///union.test.union.ai
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///union.test.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -370,7 +381,7 @@ data:
         static_file_path true
         json_date_key false
         region us-east-1
-        bucket
+        bucket test-bucket
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -408,10 +419,10 @@ data:
         - fast-task
   config.yaml: |
     executor:
-      cluster: ''
+      cluster: 'union-test'
       evaluatorCount: 64
       maxActions: 2000
-      organization: ''
+      organization: 'union'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -426,24 +437,23 @@ data:
           memory: 2Ti
     union:
       connection:
-        host: dns:///
+        host: dns:///union.test.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///union.test.union.ai
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///union.test.union.ai
+      endpoint: dns:///union.test.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -485,17 +495,11 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+      container: "test-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -523,12 +527,11 @@ data:
   config.yaml: |
     union:
       connection:
-        host: dns:///
+        host: dns:///union.test.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
+        clientId: 'test-client'
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
         tokenRefreshWindow: 5m
         type: ClientSecret
     sharedService:
@@ -539,7 +542,7 @@ data:
       type: noop
     operator:
       enabled: true
-      enableTunnelService: false
+      enableTunnelService: true
       tunnel:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
@@ -548,20 +551,20 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: ''
+        organization: 'union'
       clusterData:
-        appId: 'dataplane-operator'
-        bucketName: ''
+        appId: 'test-client'
+        bucketName: 'test-bucket'
         bucketRegion: 'us-east-1'
-        cloudHostName: ''
+        cloudHostName: 'union.test.union.ai'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://'
+        metadataBucketPrefix: 's3://test-bucket'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
       billableUsageCollector:
-        enabled: false
+        enabled: true
       dependenciesHeartbeat:
         prometheus:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
@@ -593,17 +596,11 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+      container: "test-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -613,16 +610,10 @@ data:
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
       container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-1
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -633,9 +624,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'dataplane-operator'
+      clientId: 'test-client'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
+      endpoint: dns:///union.test.union.ai
       insecure: false
     event:
       capacity: 1000
@@ -643,8 +634,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
+      cache-endpoint: dns:///union.test.union.ai
+      endpoint: dns:///union.test.union.ai
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -688,7 +679,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://'
+      rawoutput-prefix: 's3://test-bucket'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -756,17 +747,11 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
+      container: "test-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -2448,10 +2433,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9d5c84e671915a23d2ca391d12072f2c78cba02fc7161c7f40510ac4fbbe2f2"
+        configChecksum: "5900e571cedc38b2acdfbc62907d8294af97f998bd0faef876d40a7d6529b05"
         
       labels:
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app.kubernetes.io/name: clusterresourcesync
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2507,6 +2494,8 @@ spec:
               cpu: 500m
               memory: 100Mi
           volumeMounts:
+            - name: auth
+              mountPath: /etc/union/secret
             - name: resource-templates
               mountPath: /etc/flyte/clusterresource/templates
             - name: config-volume
@@ -2521,6 +2510,9 @@ spec:
         - configMap:
             name: flyte-clusterresourcesync-config
           name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
 ---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
@@ -2538,9 +2530,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "96ffb81823f1eb65ca38f2c2bbc68bab1c57929a3845f1d963b691840058e28"
+        configChecksum: "849332d30b5230415676a3d531adfcd00b214a274a2426394defd9ddbffd0dd"
       labels:
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app: executor
     spec:
       securityContext:
@@ -2550,6 +2544,12 @@ spec:
         - name: config-volume
           configMap:
             name: executor
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: executor
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
@@ -2608,6 +2608,10 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
 ---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
@@ -2629,10 +2633,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "da90060f471c26b20d0edc2955deceb6987552bf6782d72635af6182dab8d36"
+        configChecksum: "4f2e95c4ff1167d47c259478ce9b34ccc69903ff5a14feeeb8e01b198e03845"
         
       labels:
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2646,6 +2652,9 @@ spec:
                 name: union-operator
             - configMap:
                 name: flyte-clusterresourcesync-config
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       serviceAccountName: proxy-system
       securityContext:
         {}
@@ -2666,6 +2675,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           args:
             - operator
             - proxy
@@ -2716,6 +2727,32 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
+        - name: "tunnel"
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: union-secret-auth
+                  key: tunnel_token
+                  optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
 ---
 # Source: dataplane/templates/operator/deployment.yaml
 apiVersion: apps/v1
@@ -2735,10 +2772,12 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "da90060f471c26b20d0edc2955deceb6987552bf6782d72635af6182dab8d36"
+        configChecksum: "4f2e95c4ff1167d47c259478ce9b34ccc69903ff5a14feeeb8e01b198e03845"
         
       labels:
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2751,6 +2790,9 @@ spec:
         - name: config-volume
           configMap:
             name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: operator
           securityContext:
@@ -2768,6 +2810,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           env:
           - name: POD_NAME
             valueFrom:
@@ -2842,12 +2886,14 @@ spec:
     metadata:
       labels:
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
+        configChecksum: "946f98493c5f98872a60da03183f0aa73c7b7119d809d7b94ed73325d18f5f7"
         
     spec:
       securityContext:
@@ -3002,11 +3048,13 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
+        configChecksum: "946f98493c5f98872a60da03183f0aa73c7b7119d809d7b94ed73325d18f5f7"
         
       labels:
         
         
+        azure.workload.identity/use: "true"
+        custom-label: custom-value
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -3019,7 +3067,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - ''
+            - union-test
           env:
           - name: POD_NAME
             valueFrom:
@@ -3067,111 +3115,16 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+            - name: auth
+              mountPath: /etc/union/secret
       serviceAccountName: flytepropeller-system
       volumes:
         - configMap:
             name: flyte-propeller-config
           name: config-volume
----
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  ingressClassName: "nginx"
-  rules:
-    - http:
-        paths:
-          - path: /api/v1/dataproxy/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /prometheus/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-prometheus
-                port:
-                  number: 80
-          - path: /clickhouse/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /dataplane/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /resourcequota/v1/project_quota
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /spark-history-server/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /secrets/api/v1
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /data_plane_object_store/api/v1/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.actor.ActorEnvironmentService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.logs.dataplane.LogsService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.objectstore.v1.ObjectStoreService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.imagebuilder.dataplane.ImageService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-      host: "ingress-nginx-internal.ingress-nginx.svc.cluster.local"
+        - name: auth
+          secret:
+            secretName: union-secret-auth
 ---
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1

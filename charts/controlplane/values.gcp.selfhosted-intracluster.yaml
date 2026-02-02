@@ -5,21 +5,21 @@
 # Kubernetes cluster as the Union dataplane (co-located deployment).
 #
 # IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
-#   helm install ... -f values.aws.selfhosted-intracluster.yaml
+#   helm install ... -f values.gcp.selfhosted-intracluster.yaml
 #
 # Key differences from standard deployment:
 # - Uses intra-cluster communication (internal Kubernetes networking)
 # - Requires TLS certificates for gRPC/HTTP2 with NGINX
 # - Single-tenant mode with explicit organization configuration
 # - Direct communication between control plane and dataplane services
-# - Includes all AWS-specific configuration (RDS, S3, IAM roles)
+# - Includes all GCP-specific configuration (CloudSQL, GCS, GCP service accounts)
 # ============================================================================
 
 # ----------------------------------------------------------------------------
 # Configuration Variables to Replace
 # ----------------------------------------------------------------------------
 # Configure ALL variables below for your self-hosted intra-cluster deployment.
-# This file includes both AWS infrastructure configuration AND intra-cluster
+# This file includes both GCP infrastructure configuration AND intra-cluster
 # specific settings. Replace all empty "" values with your actual configuration.
 # ----------------------------------------------------------------------------
 
@@ -30,43 +30,42 @@
 
 global:
 
-  # AWS region for all resources
-  # Example: "us-west-2", "us-east-1", "eu-west-1"
-  AWS_REGION: ""
+  # Region for all resources
+  # Example for GCP: "us-central1", "us-east1", "europe-west1"
+  GCP_REGION: "us-central1"
 
-  # PostgreSQL RDS endpoint
-  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
+  # PostgreSQL database endpoint (CloudSQL for GCP)
+  # Example: "10.247.0.3" (Private IP)
   DB_HOST: ""
 
   # PostgreSQL database name
-  # Example: "unionai" or "union_controlplane"
+  # Example: "unionai"
   DB_NAME: ""
 
   # PostgreSQL username
-  # Example: "unionai" or "admin"
+  # Example: "unionai"
   DB_USER: ""
 
-  # S3 bucket for control plane metadata
+  # GCS bucket for control plane metadata
   # Example: "union-controlplane-metadata"
   BUCKET_NAME: ""
 
-  # S3 bucket for artifacts storage
+  # GCS bucket for artifacts storage
   # Example: "union-controlplane-artifacts"
   ARTIFACTS_BUCKET_NAME: ""
 
   # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
-  # Example: "union-controlplane-secrets"
+  # This name is fixed and should not be changed (see values.yaml fix)
   # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: ""
+  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
 
-  # IAM role ARN for artifacts service (IRSA)
+  # GCP service account for artifacts service (Workload Identity)
   # Leave empty if artifacts service is disabled
-  # Example: "arn:aws:iam::123456789012:role/union-artifacts-role"
+  # Example: "artifacts@PROJECT_ID.iam.gserviceaccount.com"
   ARTIFACT_IAM_ROLE_ARN: ""
 
-  # IAM role ARN for Flyte services (IRSA)
-  # Example: "arn:aws:iam::123456789012:role/union-flyteadmin-role"
+  # GCP service account for Flyte services (Workload Identity)
+  # Example: "flyteadmin@PROJECT_ID.iam.gserviceaccount.com"
   # Note: Used by flyteadmin, datacatalog, and cacheservice
   FLYTEADMIN_IAM_ROLE_ARN: ""
 
@@ -75,25 +74,34 @@ global:
   UNION_ORG: ""
 
   # Internal Flyteadmin service endpoint
-  # Example: "flyteadmin.union-cp.svc.cluster.local:81"
-  # Find with: kubectl get svc -n union-cp flyteadmin
-  FLYTEADMIN_ENDPOINT: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or service name
+  FLYTEADMIN_ENDPOINT: "flyteadmin.union-cp.svc.cluster.local:81"
 
   # Control plane ingress controller FQDN (for intra-cluster routing)
-  # Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
-  # Find with: kubectl get svc -n union-cp | grep nginx-controller
-  CONTROLPLANE_INTRA_CLUSTER_HOST: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or service name
+  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
 
   # TLS secret configuration
-  # Example namespace: "union-cp"
-  TLS_SECRET_NAMESPACE: ""
-  # Example name: "controlplane-tls-cert"
-  TLS_SECRET_NAME: ""
+  # Default assumes standard naming in union-cp namespace
+  # Override if using different namespace or secret name
+  TLS_SECRET_NAMESPACE: "union-cp"
+  TLS_SECRET_NAME: "controlplane-tls-cert"
 
   # Dataplane ingress controller URL
-  # Example: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
-  # Find service with: kubectl get svc -n union | grep nginx-controller
-  DATAPLANE_ENDPOINT: ""
+  # Default assumes standard naming in union namespace
+  # Override if using different namespace or service name
+  DATAPLANE_ENDPOINT: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
+
+  # GCP project ID for GCS and other GCP resources
+  # Example: "my-project-id"
+  GOOGLE_PROJECT_ID: ""
+
+  # Union registry repository prefix for control plane images
+  # For self-hosted intra-cluster deployments, this uses Union's private registry
+  # Example: "registry.unionai.cloud/controlplane"
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Image Tag Overrides
@@ -120,7 +128,8 @@ configMap:
   # Control plane connection configuration
   connection:
     # Use control plane ingress controller for intra-cluster routing
-    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+    # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
 
   # Shared service security configuration
   sharedService:
@@ -140,7 +149,7 @@ configMap:
       insecureSkipVerify: true
 
 # ----------------------------------------------------------------------------
-# SECTION 4: Console Configuration
+# SECTION 3: Console Configuration
 # ----------------------------------------------------------------------------
 
 console:
@@ -153,7 +162,7 @@ console:
       value: '{{ .Values.global.UNION_ORG }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 5: Extra Kubernetes Objects (OPTIONAL)
+# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
 # ----------------------------------------------------------------------------
 # Additional Kubernetes resources to deploy with the control plane.
 
@@ -167,7 +176,7 @@ extraObjects: []
 
 # Example 2: Use External Secrets Operator with AWS Secrets Manager
 # Automatically syncs RDS credentials from AWS Secrets Manager
-# Note: AWS_REGION and AWS_MANAGED_DB_SECRET_NAME should be added to globals
+# Note: GCP_REGION and GCP_MANAGED_DB_SECRET_NAME should be added to globals
 # - apiVersion: "external-secrets.io/v1"
 #   kind: "SecretStore"
 #   metadata:
@@ -175,7 +184,7 @@ extraObjects: []
 #   spec:
 #     provider:
 #       aws:
-#         region: '{{ .Values.global.AWS_REGION }}'
+#         region: '{{ .Values.global.GCP_REGION }}'
 #         service: "SecretsManager"
 #
 # - apiVersion: "external-secrets.io/v1"
@@ -185,7 +194,7 @@ extraObjects: []
 #   spec:
 #     data:
 #     - remoteRef:
-#         key: '{{ .Values.global.AWS_MANAGED_DB_SECRET_NAME }}'
+#         key: '{{ .Values.global.GCP_MANAGED_DB_SECRET_NAME }}'
 #         property: "password"
 #       secretKey: "pass.txt"
 #     refreshInterval: "1h"
@@ -215,20 +224,32 @@ extraObjects: []
 #     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
 
 # ----------------------------------------------------------------------------
-# SECTION 6: Flyte Core Configuration
+# SECTION 5: Flyte Core Configuration
 # ----------------------------------------------------------------------------
 
 flyte:
+  # Override region to use GCP_REGION (which has GCP value)
+  region: '{{ .Values.global.GCP_REGION }}'
+
+  # Override storage from s3 to gcs
+  storage:
+    type: gcs
+    bucketName: '{{ .Values.global.BUCKET_NAME }}'
+    gcs:
+      projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
   configmap:
     adminServer:
       admin:
         # Flyteadmin endpoint via control plane ingress
-        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
-        insecure: true
+        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+        insecure: false  # Changed: using TLS with self-signed cert
 
       connection:
         # Control plane connection pattern
-        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
+        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
 
       sharedService:
         security:
@@ -243,7 +264,7 @@ flyte:
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
       imagePullSecrets:
         - name: union-registry-secret
 
@@ -263,7 +284,7 @@ flyte:
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
       imagePullSecrets:
         - name: union-registry-secret
 
@@ -282,12 +303,12 @@ flyte:
       tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
       imagePullSecrets:
         - name: union-registry-secret
 
 # ----------------------------------------------------------------------------
-# SECTION 7: Ingress Configuration
+# SECTION 6: Ingress Configuration
 # ----------------------------------------------------------------------------
 
 ingress:
@@ -300,7 +321,7 @@ ingress:
       secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 8: NGINX Ingress Controller
+# SECTION 7: NGINX Ingress Controller
 # ----------------------------------------------------------------------------
 
 ingress-nginx:
@@ -322,7 +343,7 @@ ingress-nginx:
     extraArgs:
       # TODO (DIRECTLY CONFIGURE): Set to the values of {{ .Values.global.TLS_SECRET_NAMESPACE }}/{{ .Values.global.TLS_SECRET_NAME }}
       # nginx-ingress subchart does not support templating here directly.
-      default-ssl-certificate: '<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>'
+      default-ssl-certificate: 'union-cp/controlplane-tls-cert'
 
     # Admission webhooks configuration
     admissionWebhooks:
@@ -345,7 +366,7 @@ ingress-nginx:
       name: controlplane
 
 # ----------------------------------------------------------------------------
-# SECTION 9: Service-Specific Configuration
+# SECTION 8: Service-Specific Configuration
 # ----------------------------------------------------------------------------
 
 services:
@@ -354,7 +375,17 @@ services:
   artifacts:
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+        iam.gke.io/gcp-service-account: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+    configMap:
+      artifactsConfig:
+        app:
+          artifactBlobStoreConfig:
+            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            stow:
+              kind: google
+              config:
+                projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+            type: stow
 
   # Dataproxy service configuration
   dataproxy:
@@ -373,3 +404,39 @@ services:
               # Flyteadmin endpoint for executions service
               endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
               insecure: true
+
+# ----------------------------------------------------------------------------
+# SECTION 9: ScyllaDB Configuration
+# ----------------------------------------------------------------------------
+scylla:
+  enabled: true
+  # Datacenter NAME (string, not object)
+  datacenter: dc1
+
+  # Replication factor (must match members)
+  replicationFactor: 3
+
+  # Rack configuration
+  racks:
+    - name: rack1
+      members: 3
+      storage:
+        capacity: 100Gi 
+      resources:
+        limits:
+          cpu: "500m"
+          memory: "1Gi"
+        requests:
+          cpu: "200m"
+          memory: "512Mi"
+
+  developerMode: true
+
+  storageClass:
+    provisioner: pd.csi.storage.gke.io
+    parameters:
+      type: pd-standard
+
+
+scylla-operator:
+  enabled: true

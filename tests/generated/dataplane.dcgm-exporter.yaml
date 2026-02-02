@@ -56,12 +56,13 @@ metadata:
   name: release-name-dcgm-exporter
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
+automountServiceAccountToken: false
 ---
 # Source: dataplane/charts/fluentbit/templates/serviceaccount.yaml
 apiVersion: v1
@@ -224,86 +225,93 @@ kind: ConfigMap
 metadata:
   name: exporter-metrics-config-map
   namespace: union
+  labels:
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
 data:
   metrics: |
-      # Format
-      # If line starts with a '#' it is considered a comment
-      # DCGM FIELD, Prometheus metric type, help message
-      
-      # Clocks
-      DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
-      DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
-      
-      # Temperature
-      DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
-      DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
-      
-      # Power
-      DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
-      DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
-      
-      # PCIE
-      # DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
-      # DCGM_FI_PROF_PCIE_RX_BYTES,  counter, Total number of bytes received through PCIe RX via NVML.
-      DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
-      
-      # Utilization (the sample period varies depending on the product)
-      DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
-      DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
-      DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
-      DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
-      
-      # Errors and violations
-      DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
-      # DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in us).
-      # DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in us).
-      # DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in us).
-      # DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in us).
-      # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in us).
-      # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in us).
-      
-      # Memory usage
-      DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
-      DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
-      
-      # ECC
-      # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
-      # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Total number of double-bit volatile ECC errors.
-      # DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Total number of single-bit persistent ECC errors.
-      # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
-      
-      # Retired pages
-      # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
-      # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
-      # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
-      
-      # NVLink
-      # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
-      # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
-      # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
-      # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
-      DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
-      # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
-      
-      # VGPU License status
-      DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
-      
-      # Remapped rows
-      DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
-      DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
-      DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
-      
-      # DCP metrics
-      DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
-      # DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
-      # DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
-      DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
-      DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
-      # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
-      # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
-      # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
-      DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
-      DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
+    # Format
+    # If line starts with a '#' it is considered a comment
+    # DCGM FIELD, Prometheus metric type, help message
+    
+    # Clocks
+    DCGM_FI_DEV_SM_CLOCK,  gauge, SM clock frequency (in MHz).
+    DCGM_FI_DEV_MEM_CLOCK, gauge, Memory clock frequency (in MHz).
+    
+    # Temperature
+    DCGM_FI_DEV_MEMORY_TEMP, gauge, Memory temperature (in C).
+    DCGM_FI_DEV_GPU_TEMP,    gauge, GPU temperature (in C).
+    
+    # Power
+    DCGM_FI_DEV_POWER_USAGE,              gauge, Power draw (in W).
+    DCGM_FI_DEV_TOTAL_ENERGY_CONSUMPTION, counter, Total energy consumption since boot (in mJ).
+    
+    # PCIE
+    # DCGM_FI_PROF_PCIE_TX_BYTES,  counter, Total number of bytes transmitted through PCIe TX via NVML.
+    # DCGM_FI_PROF_PCIE_RX_BYTES,  counter, Total number of bytes received through PCIe RX via NVML.
+    DCGM_FI_DEV_PCIE_REPLAY_COUNTER, counter, Total number of PCIe retries.
+    
+    # Utilization (the sample period varies depending on the product)
+    DCGM_FI_DEV_GPU_UTIL,      gauge, GPU utilization (in %).
+    DCGM_FI_DEV_MEM_COPY_UTIL, gauge, Memory utilization (in %).
+    DCGM_FI_DEV_ENC_UTIL,      gauge, Encoder utilization (in %).
+    DCGM_FI_DEV_DEC_UTIL ,     gauge, Decoder utilization (in %).
+    
+    # Errors and violations
+    DCGM_FI_DEV_XID_ERRORS,            gauge,   Value of the last XID error encountered.
+    # DCGM_FI_DEV_POWER_VIOLATION,       counter, Throttling duration due to power constraints (in ns).
+    # DCGM_FI_DEV_THERMAL_VIOLATION,     counter, Throttling duration due to thermal constraints (in ns).
+    # DCGM_FI_DEV_SYNC_BOOST_VIOLATION,  counter, Throttling duration due to sync-boost constraints (in ns).
+    # DCGM_FI_DEV_BOARD_LIMIT_VIOLATION, counter, Throttling duration due to board limit constraints (in ns).
+    # DCGM_FI_DEV_LOW_UTIL_VIOLATION,    counter, Throttling duration due to low utilization (in ns).
+    # DCGM_FI_DEV_RELIABILITY_VIOLATION, counter, Throttling duration due to reliability constraints (in ns).
+    
+    # Memory usage
+    DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
+    DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+    
+    # ECC
+    # DCGM_FI_DEV_ECC_SBE_VOL_TOTAL, counter, Total number of single-bit volatile ECC errors.
+    # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL, counter, Total number of double-bit volatile ECC errors.
+    # DCGM_FI_DEV_ECC_SBE_AGG_TOTAL, counter, Total number of single-bit persistent ECC errors.
+    # DCGM_FI_DEV_ECC_DBE_AGG_TOTAL, counter, Total number of double-bit persistent ECC errors.
+    
+    # Retired pages
+    # DCGM_FI_DEV_RETIRED_SBE,     counter, Total number of retired pages due to single-bit errors.
+    # DCGM_FI_DEV_RETIRED_DBE,     counter, Total number of retired pages due to double-bit errors.
+    # DCGM_FI_DEV_RETIRED_PENDING, counter, Total number of pages pending retirement.
+    
+    # NVLink
+    # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL, counter, Total number of NVLink flow-control CRC errors.
+    # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL, counter, Total number of NVLink data CRC errors.
+    # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,   counter, Total number of NVLink retries.
+    # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL, counter, Total number of NVLink recovery errors.
+    DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL,            counter, Total number of NVLink bandwidth counters for all lanes.
+    # DCGM_FI_DEV_NVLINK_BANDWIDTH_L0,               counter, The number of bytes of active NVLink rx or tx data including both header and payload.
+    
+    # VGPU License status
+    DCGM_FI_DEV_VGPU_LICENSE_STATUS, gauge, vGPU License status
+    
+    # Remapped rows
+    DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS, counter, Number of remapped rows for uncorrectable errors
+    DCGM_FI_DEV_CORRECTABLE_REMAPPED_ROWS,   counter, Number of remapped rows for correctable errors
+    DCGM_FI_DEV_ROW_REMAP_FAILURE,           gauge,   Whether remapping of rows has failed
+    
+    # DCP metrics
+    DCGM_FI_PROF_GR_ENGINE_ACTIVE,   gauge, Ratio of time the graphics engine is active.
+    DCGM_FI_PROF_SM_ACTIVE,          gauge, The ratio of cycles an SM has at least 1 warp assigned.
+    DCGM_FI_PROF_SM_OCCUPANCY,       gauge, The ratio of number of warps resident on an SM.
+    DCGM_FI_PROF_PIPE_TENSOR_ACTIVE, gauge, Ratio of cycles the tensor (HMMA) pipe is active.
+    DCGM_FI_PROF_DRAM_ACTIVE,        gauge, Ratio of cycles the device memory interface is active sending or receiving data.
+    # DCGM_FI_PROF_PIPE_FP64_ACTIVE,   gauge, Ratio of cycles the fp64 pipes are active.
+    # DCGM_FI_PROF_PIPE_FP32_ACTIVE,   gauge, Ratio of cycles the fp32 pipes are active.
+    # DCGM_FI_PROF_PIPE_FP16_ACTIVE,   gauge, Ratio of cycles the fp16 pipes are active.
+    DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
+    DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -311,7 +319,7 @@ kind: ConfigMap
 metadata:
   name: flyte-clusterresourcesync-config
   namespace: union
-  labels: 
+  labels:
     app.kubernetes.io/name: clusterresourcesync
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
@@ -392,7 +400,7 @@ data:
       clusterConfigs: []
       labelClusterMap: {}
   logger.yaml: |
-    logger: 
+    logger:
       level: 4
       show-source: true
 ---
@@ -402,7 +410,7 @@ kind: ConfigMap
 metadata:
   name: clusterresource-template
   namespace: union
-  labels: 
+  labels:
     app.kubernetes.io/name: clusterresourcesync
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
@@ -598,7 +606,7 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: 
+      container: ""
       type: stow
       stow:
         kind: s3
@@ -635,19 +643,19 @@ data:
         default-memory: 100Mi
   config.yaml: |
     union:
-      connection: 
+      connection:
         host: dns:///
-      auth: 
+      auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'dataplane-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
-    sharedService: 
+    sharedService:
       features:
         gatewayV2: true
       port: 8081
-    authorizer: 
+    authorizer:
       type: noop
     operator:
       enabled: true
@@ -655,11 +663,11 @@ data:
       tunnel:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
-      apps: 
+      apps:
         enabled: 'false'
-      syncClusterConfig: 
+      syncClusterConfig:
         enabled: false
-      clusterId: 
+      clusterId:
         organization: ''
       clusterData:
         appId: 'dataplane-operator'
@@ -667,21 +675,21 @@ data:
         bucketRegion: 'us-east-1'
         cloudHostName: ''
         gcpProjectId: ''
-        metadataBucketPrefix: s3://
+        metadataBucketPrefix: 's3://'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
-      collectUsages: 
+      collectUsages:
         enabled: true
-      billableUsageCollector: 
+      billableUsageCollector:
         enabled: true
-      dependenciesHeartbeat: 
+      dependenciesHeartbeat:
         prometheus:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
         propeller:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
-    proxy: 
+    proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
         defaultRepository: ''
@@ -696,7 +704,7 @@ data:
           namespace: 'union'
         type: 'K8s'
   logger.yaml: |
-    logger: 
+    logger:
       level: 4
       show-source: true
   config-overrides.yaml: | 
@@ -705,7 +713,7 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: 
+      container: ""
       type: stow
       stow:
         kind: s3
@@ -800,7 +808,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: s3://
+      rawoutput-prefix: 's3://'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -811,10 +819,12 @@ data:
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
+      listenPort: '9443'
       secretManagerTypes:
       - Embedded
       - K8s
       serviceName: flyte-pod-webhook
+      servicePort: '443'
   enabled_plugins.yaml: | 
     tasks:
       plugins:
@@ -842,7 +852,7 @@ data:
         default-env-vars: []
         default-memory: 100Mi
   logger.yaml: |
-    logger: 
+    logger:
       level: 4
       show-source: true
   resource_manager.yaml: | 
@@ -866,7 +876,7 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: 
+      container: ""
       type: stow
       stow:
         kind: s3
@@ -1697,12 +1707,12 @@ metadata:
   name: dcgm-exporter-read-cm
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
 rules:
 - apiGroups: [""]
   resources: ["configmaps"]
@@ -1762,18 +1772,18 @@ metadata:
   name: release-name-dcgm-exporter
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
 subjects:
 - kind: ServiceAccount
   name: release-name-dcgm-exporter
   namespace: union
 roleRef:
-  kind: Role 
+  kind: Role
   name: dcgm-exporter-read-cm
   apiGroup: rbac.authorization.k8s.io
 ---
@@ -1837,14 +1847,15 @@ metadata:
   name: release-name-dcgm-exporter
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
 spec:
   type: ClusterIP
+  internalTrafficPolicy: Cluster
   ports:
   - name: "metrics"
     port: 9400
@@ -1853,6 +1864,7 @@ spec:
   selector:
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
@@ -2197,15 +2209,15 @@ kind: Service
 metadata:
   name: flyte-pod-webhook
   namespace: union
-  labels: 
+  labels:
     app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
-  annotations: 
+  annotations:
     projectcontour.io/upstream-protocol.h2c: grpc
 spec:
-  selector: 
+  selector:
     app.kubernetes.io/name: flyte-pod-webhook
     app.kubernetes.io/instance: release-name
   ports:
@@ -2224,7 +2236,7 @@ kind: Service
 metadata:
   namespace: union
   name: flytepropeller
-  labels: 
+  labels:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
@@ -2239,7 +2251,7 @@ spec:
       port: 15605
       protocol: TCP
       targetPort: 15605
-  selector: 
+  selector:
     app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
 ---
@@ -2264,12 +2276,12 @@ metadata:
   name: release-name-dcgm-exporter
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
 spec:
   updateStrategy:
     type: RollingUpdate
@@ -2280,16 +2292,22 @@ spec:
     matchLabels:
       app.kubernetes.io/name: dcgm-exporter
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/component: "dcgm-exporter"
+      app.kubernetes.io/component: dcgm-exporter
   template:
     metadata:
       labels:
         app.kubernetes.io/name: dcgm-exporter
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/component: "dcgm-exporter"
+        app.kubernetes.io/component: dcgm-exporter
     spec:
       priorityClassName: system-node-critical
+      hostPID: false
       serviceAccountName: release-name-dcgm-exporter
+      automountServiceAccountToken: false
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
       volumes:
       - name: "pod-gpu-resources"
         hostPath:
@@ -2303,12 +2321,15 @@ spec:
       containers:
       - name: exporter
         securityContext:
+          allowPrivilegeEscalation: false
           capabilities:
             add:
             - SYS_ADMIN
+            drop:
+            - ALL
           runAsNonRoot: false
           runAsUser: 0
-        image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.2.0-4.1.0-ubuntu22.04"
+        image: "nvcr.io/nvidia/k8s/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04"
         imagePullPolicy: "IfNotPresent"
         args:
         - -f
@@ -2322,6 +2343,8 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: spec.nodeName
+        - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
+          value: uid
         ports:
         - name: "metrics"
           containerPort: 9400
@@ -2345,6 +2368,13 @@ spec:
             port: 9400
             scheme: HTTP
           initialDelaySeconds: 45
+        resources:
+          limits:
+            cpu: 200m
+            memory: 1Gi
+          requests:
+            cpu: 100m
+            memory: 128Mi
 ---
 # Source: dataplane/charts/fluentbit/templates/daemonset.yaml
 apiVersion: apps/v1
@@ -2740,9 +2770,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a895ed621b2a4d190572c2f92ae145b24f36eccd0663fc769e7c646dff1d5c6"
+        configChecksum: "ef57effb8a4388e02ca6dc0593b7546e36e7175dca3885c92c4f645b8bfaaf3"
         
       labels:
+        
         app.kubernetes.io/name: clusterresourcesync
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2787,7 +2818,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2833,7 +2864,10 @@ spec:
       app: executor
   template:
     metadata:
+      annotations:
+        configChecksum: "6c11cb2a050301ed0c64caac1057b63b99d0986b389b1e64ffcbddf3c0c66af"
       labels:
+        
         app: executor
     spec:
       securityContext:
@@ -2851,7 +2885,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2866,16 +2900,37 @@ spec:
               containerPort: 10254
               protocol: TCP
           env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             - name: GOMEMLIMIT
               valueFrom:
                 resourceFieldRef:
-                  divisor: "1"
+                  divisor: 1
                   resource: limits.memory
             - name: GOMAXPROCS
               valueFrom:
                 resourceFieldRef:
-                  divisor: "1"
+                  divisor: 1
                   resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
           resources:
             limits:
               cpu:    "4"
@@ -2911,9 +2966,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "88f4f6febd14518449da2ca4d4c27acfba439162ca79de296d5c9a1fd985aee"
+        configChecksum: "dd4d5bc107ec0d396c41195cd06e9448739ccbb28e8698ed656990ab6f36a49"
         
       labels:
+        
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -2930,7 +2986,6 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
-      priorityClassName: 
       serviceAccountName: proxy-system
       securityContext:
         {}
@@ -2938,7 +2993,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3006,7 +3061,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -3022,6 +3077,13 @@ spec:
                   name: union-secret-auth
                   key: tunnel_token
                   optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
 ---
 # Source: dataplane/templates/operator/deployment.yaml
 apiVersion: apps/v1
@@ -3041,7 +3103,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "88f4f6febd14518449da2ca4d4c27acfba439162ca79de296d5c9a1fd985aee"
+        configChecksum: "dd4d5bc107ec0d396c41195cd06e9448739ccbb28e8698ed656990ab6f36a49"
         
       labels:
         
@@ -3050,7 +3112,6 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      priorityClassName: 
       serviceAccountName: operator-system
       securityContext:
         {}
@@ -3065,7 +3126,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3159,10 +3220,10 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "903b86a33df6bce9e262f2a7d6b53122b059868256dd866a3dc05dfd228d978"
+        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
         
     spec:
-      securityContext: 
+      securityContext:
         fsGroup: 65534
         fsGroupChangePolicy: Always
         runAsNonRoot: true
@@ -3172,7 +3233,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3213,16 +3274,21 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+          resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
+            requests:
+              cpu: 200m
+              ephemeral-storage: 500Mi
+              memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3265,11 +3331,11 @@ spec:
           ports:
             - containerPort: 9443
             - containerPort: 10254
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
           resources:
+            limits:
+              cpu: 1
+              ephemeral-storage: 500Mi
+              memory: 500Mi
             requests:
               cpu: 200m
               ephemeral-storage: 500Mi
@@ -3309,7 +3375,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "903b86a33df6bce9e262f2a7d6b53122b059868256dd866a3dc05dfd228d978"
+        configChecksum: "fe2f0ec4339d8b0ade9994d36cb984e77853626f1c6686fd7a3cdcfaab5821c"
         
       labels:
         
@@ -3359,7 +3425,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2025.11.1"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
@@ -4272,18 +4338,18 @@ metadata:
   name: release-name-dcgm-exporter
   namespace: union
   labels:
-    helm.sh/chart: dcgm-exporter-4.1.0
+    helm.sh/chart: dcgm-exporter-4.7.1
     app.kubernetes.io/name: dcgm-exporter
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "4.1.0"
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: "dcgm-exporter"
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: dcgm-exporter
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/component: "dcgm-exporter"
+      app.kubernetes.io/component: dcgm-exporter
   namespaceSelector:
     matchNames:
     - "union"
@@ -4291,8 +4357,11 @@ spec:
   - port: "metrics"
     path: "/metrics"
     interval: "15s"
-    honorLabels: false
+    honorLabels: true
     relabelings:
+      
+      []
+    metricRelabelings:
       
       []
 ---
