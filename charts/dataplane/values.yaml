@@ -409,7 +409,7 @@ config:
           - container
           - sidecar
           - k8s-array
-          - agent-service
+          - connector-service
           - echo
           - fast-task
         default-for-task-types:
@@ -417,8 +417,11 @@ config:
           container: container
           sidecar: sidecar
           container_array: k8s-array
-          # -- Uncomment to enable task type that uses Flyte Agent
-          # bigquery_query_job_task: agent-service
+      plugins:
+        connector-service:
+          defaultConnector:
+            endpoint: "k8s:///flyteconnector.{{ .Release.Namespace }}:8000"
+            defaultServiceConfig: "{\"loadBalancingConfig\": [{\"round_robin\":{}}]}"
   # -- Kubernetes specific Flyte configuration
   k8s:
     plugins:
@@ -991,6 +994,80 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+#
+# FLYTE_CONNECTOR SETTINGS
+#
+
+flyteconnector:
+  enabled: false
+  # -- Replicas count for flyteconnector deployment
+  replicaCount: 2
+  image:
+    # -- Docker image for flyteconnector deployment
+    repository: ghcr.io/flyteorg/flyte-connectors
+    tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
+    # -- Docker image pull policy
+    pullPolicy: IfNotPresent
+  ports:
+    containerPort: 8000
+    name: grpc
+  prometheusPort:
+    containerPort: 9090
+    name: metric
+  # -- Default resources requests and limits for flyteconnector deployment
+  resources:
+    limits:
+      cpu: "1.5"
+      ephemeral-storage: 100Mi
+      memory: 1500Mi
+    requests:
+      cpu: "1"
+      ephemeral-storage: 100Mi
+      memory: 1000Mi
+  # -- Default glob string for searching configuration files
+  configPath: /etc/flyteconnector/config/*.yaml
+  # -- Service settings for flyteconnector
+  service:
+    type: ClusterIP
+    # Use headless service for flyteconnector
+    clusterIP: None
+  # -- Configuration for service accounts for flyteconnector
+  serviceAccount:
+    # -- Should a service account be created for flyteconnector
+    create: true
+    # -- Annotations for ServiceAccount attached to flyteconnector pods
+    annotations: {}
+    # -- ImagePullSecrets to automatically assign to the service account
+    imagePullSecrets: []
+  # -- Annotations for flyteconnector pods
+  podAnnotations: {}
+  # -- nodeSelector for flyteconnector deployment
+  nodeSelector: {}
+  # -- tolerations for flyteconnector deployment
+  tolerations: []
+  # -- affinity for flyteconnector deployment
+  affinity: {}
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []
+  # -- Appends additional containers to the deployment spec. May include template values.
+  additionalContainers: []
+  # -- Appends additional envs to the deployment spec. May include template values
+  additionalEnvs: []
+  # -- Appends extra command line arguments to the main command
+  extraArgs: {}
+  # -- Sets priorityClassName for datacatalog pod(s).
+  priorityClassName: ""
+
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
+
+
 
 # Container images
 image:
