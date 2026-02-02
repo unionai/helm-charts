@@ -2185,6 +2185,75 @@ rules:
     verbs:
       - '*'
 ---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+# Allow Access to all resources under flyte.lyft.com
+- apiGroups:
+  - flyte.lyft.com
+  resources:
+  - flyteworkflows
+  - flyteworkflows/finalizers
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+  - post
+  - deletecollection
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -2506,6 +2575,22 @@ subjects:
   - kind: ServiceAccount
     name: clustersync-system
     namespace: union
+---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-executor
+subjects:
+- kind: ServiceAccount
+  name: executor
+  namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4331,7 +4416,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      serviceAccountName: executor
       volumes:
         - name: config-volume
           configMap:
@@ -4679,7 +4764,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "a4e4707284a1f3560f13f2501cdc08906814ba6a321be0b77cb9a5bf538d5a5"
+        configChecksum: "9d1aa6584852a13f1d4a0c0983c9a9e030303111eefd27d5d9656928a153ae9"
         
     spec:
       securityContext:
@@ -4834,7 +4919,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a4e4707284a1f3560f13f2501cdc08906814ba6a321be0b77cb9a5bf538d5a5"
+        configChecksum: "9d1aa6584852a13f1d4a0c0983c9a9e030303111eefd27d5d9656928a153ae9"
         
       labels:
         
