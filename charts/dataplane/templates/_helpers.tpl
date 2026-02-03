@@ -238,7 +238,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "flyteconnector.labels" -}}
 {{ include "flyteconnector.selectorLabels" . }}
-helm.sh/chart: {{ include "flyte.chart" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
