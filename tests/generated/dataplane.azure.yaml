@@ -2159,6 +2159,59 @@ rules:
     verbs:
       - '*'
 ---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -2480,6 +2533,22 @@ subjects:
   - kind: ServiceAccount
     name: clustersync-system
     namespace: union
+---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-executor
+subjects:
+- kind: ServiceAccount
+  name: executor
+  namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -3973,7 +4042,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      serviceAccountName: executor
       volumes:
         - name: config-volume
           configMap:
@@ -4324,7 +4393,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "56f83e7262209876e9f6cd464d7d4459249db7e2902d0c5074e3ddecc432b48"
+        configChecksum: "d18553017b926aa5ad661985f0d49e4046a21ace841374233e5ee229e7a7d59"
         
     spec:
       securityContext:
@@ -4479,7 +4548,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "56f83e7262209876e9f6cd464d7d4459249db7e2902d0c5074e3ddecc432b48"
+        configChecksum: "d18553017b926aa5ad661985f0d49e4046a21ace841374233e5ee229e7a7d59"
         
       labels:
         
