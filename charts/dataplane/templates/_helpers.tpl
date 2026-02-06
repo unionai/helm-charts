@@ -238,7 +238,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 
 {{- define "flyteconnector.labels" -}}
 {{ include "flyteconnector.selectorLabels" . }}
-helm.sh/chart: {{ include "flyte.chart" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
@@ -1054,4 +1053,18 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{ $labels := include "executor.labels" . | fromYaml -}}
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
 {{- mustMergeOverwrite $podLabels $labels | toYaml }}
+{{- end -}}
+
+{{- define "operator.dependenciesHeartbeat" -}}
+{{- if .Values.flytepropeller.enabled }}
+{{- tpl (toYaml .Values.config.operator.dependenciesHeartbeat) $ | nindent 8 }}
+{{- else }}
+{{- $heartbeat := dict }}
+{{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
+{{- if ne $key "propeller" }}
+{{- $_ := set $heartbeat $key $value }}
+{{- end }}
+{{- end }}
+{{- tpl (toYaml $heartbeat) $ | nindent 8 }}
+{{- end }}
 {{- end -}}

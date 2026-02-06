@@ -439,12 +439,12 @@ data:
         cloudwatch-enabled: false
         kubernetes-enabled: true
   enabled_plugins.yaml: |
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
     tasks:
-      plugins:
-        connector-service:
-          defaultConnector:
-            defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-            endpoint: k8s:///flyteconnector.union:8000
       task-plugins:
         default-for-task-types:
           actor: fast-task
@@ -775,12 +775,12 @@ data:
       serviceName: flyte-pod-webhook
       servicePort: '443'
   enabled_plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
     tasks:
-      plugins:
-        connector-service:
-          defaultConnector:
-            defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-            endpoint: k8s:///flyteconnector.union:8000
       task-plugins:
         default-for-task-types:
           actor: fast-task
@@ -1283,6 +1283,59 @@ rules:
     verbs:
       - '*'
 ---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -1585,6 +1638,22 @@ subjects:
   - kind: ServiceAccount
     name: clustersync-system
     namespace: union
+---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-executor
+subjects:
+- kind: ServiceAccount
+  name: executor
+  namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -2593,7 +2662,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2760,14 +2829,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "e539447a39f0a4f3c2f2f514beae71ffa321a632c576305d95618f125fa821c"
+        configChecksum: "2a465613ee163084cfad0c1a2fc21f431bb233833888282b5bc06a4901e12cc"
       labels:
         
         app: executor
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: flytepropeller-system # TODO: update `executor` ServiceAccount to have required permissions
+      serviceAccountName: executor
       volumes:
         - name: config-volume
           configMap:
@@ -2780,7 +2849,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2890,7 +2959,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2960,7 +3029,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -3033,7 +3102,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3137,7 +3206,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "d191ca7a193b2b2f0703e1ef50de6c4e69eeaa3de5f32ae4ee00ce9b8a252df"
+        configChecksum: "d4c09d5609035f7d3e214df1f0a245a27f8aea91584f5d2eb9e01a3804fb57c"
         
     spec:
       securityContext:
@@ -3150,7 +3219,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3207,7 +3276,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3304,7 +3373,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "d191ca7a193b2b2f0703e1ef50de6c4e69eeaa3de5f32ae4ee00ce9b8a252df"
+        configChecksum: "d4c09d5609035f7d3e214df1f0a245a27f8aea91584f5d2eb9e01a3804fb57c"
         
       labels:
         
@@ -3356,7 +3425,7 @@ spec:
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
             value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.1.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
