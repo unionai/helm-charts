@@ -31,6 +31,30 @@ spec:
       {{- if .Values.flytepropellerwebhook.priorityClassName }}
       priorityClassName: {{ .Values.flytepropellerwebhook.priorityClassName }}
       {{- end }}
+      {{- if eq .Values.flytepropellerwebhook.certificate.provider "legacy" }}
+      initContainers:
+        - name: generate-secrets
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: "{{ .Values.image.union.pullPolicy }}"
+          command:
+            - flytepropeller
+          args:
+            - webhook
+            - init-certs
+            - --config
+            - /etc/flyte/config/*.yaml
+          env:
+            {{- include "global.podEnvVars" . | nindent 12 }}
+            {{- with .Values.flytepropellerwebhook.podEnv -}}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+          {{- with .Values.flytepropellerwebhook.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: webhook
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"

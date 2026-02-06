@@ -3,6 +3,7 @@
 {{- $secretName := include "flytepropellerwebhook.secretName" . }}
 {{- $namespace := .Release.Namespace }}
 {{- $useCertManager := include "flytepropellerwebhook.useCertManager" . }}
+{{- $useLegacy := eq .Values.flytepropellerwebhook.certificate.provider "legacy" }}
 {{- $lowPrivilege := .Values.low_privilege }}
 {{- /* Generate certs once and reuse for both secret and webhook config */ -}}
 {{- $certs := dict }}
@@ -13,7 +14,7 @@
 {{- $_ := set $certs "serverCert" .Values.flytepropellerwebhook.certificate.external.tlsCrt }}
 {{- $_ := set $certs "serverKey" .Values.flytepropellerwebhook.certificate.external.tlsKey }}
 {{- end }}
-{{- /* Create the Secret first (for helm and external providers) */ -}}
+{{- /* Create the Secret (for helm, external, and legacy providers) */ -}}
 {{- if ne .Values.flytepropellerwebhook.certificate.provider "certManager" }}
 ---
 apiVersion: v1
@@ -24,10 +25,12 @@ metadata:
   labels:
     {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
 type: Opaque
+{{- if ne .Values.flytepropellerwebhook.certificate.provider "legacy" }}
 data:
   ca.crt: {{ $certs.caCert }}
   tls.crt: {{ $certs.serverCert }}
   tls.key: {{ $certs.serverKey }}
+{{- end }}
 {{- end }}
 ---
 {{- if .Values.flytepropellerwebhook.managedConfig }}
@@ -49,7 +52,7 @@ webhooks:
       - v1
       - v1beta1
     clientConfig:
-      {{- if not $useCertManager }}
+      {{- if and (not $useCertManager) (not $useLegacy) }}
       caBundle: {{ $certs.caCert }}
       {{- end }}
       service:
@@ -90,7 +93,7 @@ webhooks:
       - v1
       - v1beta1
     clientConfig:
-      {{- if not $useCertManager }}
+      {{- if and (not $useCertManager) (not $useLegacy) }}
       caBundle: {{ $certs.caCert }}
       {{- end }}
       service:
