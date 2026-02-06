@@ -227,6 +227,20 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "flyteconnector.name" -}}
+flyteconnector
+{{- end -}}
+
+{{- define "flyteconnector.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "flyteconnector.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "flyteconnector.labels" -}}
+{{ include "flyteconnector.selectorLabels" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
 {{- define "nodeobserver.serviceAccountName" -}}
 {{- default "nodeobserver-system" .Values.nodeobserver.serviceAccount.name }}
 {{- end }}
@@ -1148,4 +1162,17 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- /* For cert-manager, caBundle is injected by cert-manager's cainjector */ -}}
 {{- /* Return empty to signal that cainjector should handle it */ -}}
 {{- end -}}
+{{- end -}}
+{{- define "operator.dependenciesHeartbeat" -}}
+{{- if .Values.flytepropeller.enabled }}
+{{- tpl (toYaml .Values.config.operator.dependenciesHeartbeat) $ | nindent 8 }}
+{{- else }}
+{{- $heartbeat := dict }}
+{{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
+{{- if ne $key "propeller" }}
+{{- $_ := set $heartbeat $key $value }}
+{{- end }}
+{{- end }}
+{{- tpl (toYaml $heartbeat) $ | nindent 8 }}
+{{- end }}
 {{- end -}}

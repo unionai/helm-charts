@@ -399,6 +399,11 @@ config:
       - id: production
         name: production
   enabled_plugins:
+    plugins:
+      connector-service:
+        defaultConnector:
+          endpoint: "k8s:///flyteconnector.{{ .Release.Namespace }}:8000"
+          defaultServiceConfig: "{\"loadBalancingConfig\": [{\"round_robin\":{}}]}"
     # -- Tasks specific configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#GetConfig)
     tasks:
       # -- Plugins configuration, [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/config#TaskPluginConfig)
@@ -409,7 +414,7 @@ config:
           - container
           - sidecar
           - k8s-array
-          - agent-service
+          - connector-service
           - echo
           - fast-task
         default-for-task-types:
@@ -417,8 +422,6 @@ config:
           container: container
           sidecar: sidecar
           container_array: k8s-array
-          # -- Uncomment to enable task type that uses Flyte Agent
-          # bigquery_query_job_task: agent-service
   # -- Kubernetes specific Flyte configuration
   k8s:
     plugins:
@@ -784,6 +787,7 @@ flyteagent:
 
 executor:
   enabled: true
+  idl2Executor: false
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
@@ -991,7 +995,6 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
-
   # -- Enable Helm-managed MutatingWebhookConfiguration (if false, the webhook will create its own)
   managedConfig: true
   # -- Configuration for the webhook MutatingWebhookConfiguration and certificates
@@ -1063,6 +1066,77 @@ flytepropellerwebhook:
       tlsCrt: ""
       # -- Base64-encoded TLS private key (PEM format)
       tlsKey: ""
+#
+# FLYTE_CONNECTOR SETTINGS
+#
+
+flyteconnector:
+  enabled: false
+  # -- Replicas count for flyteconnector deployment
+  replicaCount: 2
+  image:
+    # -- Docker image for flyteconnector deployment
+    repository: ghcr.io/flyteorg/flyte-connectors
+    tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
+    # -- Docker image pull policy
+    pullPolicy: IfNotPresent
+  ports:
+    containerPort: 8000
+    name: grpc
+  prometheusPort:
+    containerPort: 9090
+    name: metric
+  # -- Default resources requests and limits for flyteconnector deployment
+  resources:
+    limits:
+      cpu: "1.5"
+      ephemeral-storage: 100Mi
+      memory: 1500Mi
+    requests:
+      cpu: "1"
+      ephemeral-storage: 100Mi
+      memory: 1000Mi
+  # -- Default glob string for searching configuration files
+  configPath: /etc/flyteconnector/config/*.yaml
+  # -- Service settings for flyteconnector
+  service:
+    type: ClusterIP
+    # Use headless service for flyteconnector
+    clusterIP: None
+  # -- Configuration for service accounts for flyteconnector
+  serviceAccount:
+    # -- Should a service account be created for flyteconnector
+    create: true
+    # -- Annotations for ServiceAccount attached to flyteconnector pods
+    annotations: {}
+    # -- ImagePullSecrets to automatically assign to the service account
+    imagePullSecrets: []
+  # -- Annotations for flyteconnector pods
+  podAnnotations: {}
+  # -- nodeSelector for flyteconnector deployment
+  nodeSelector: {}
+  # -- tolerations for flyteconnector deployment
+  tolerations: []
+  # -- affinity for flyteconnector deployment
+  affinity: {}
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []
+  # -- Appends additional containers to the deployment spec. May include template values.
+  additionalContainers: []
+  # -- Appends additional envs to the deployment spec. May include template values
+  additionalEnvs: []
+  # -- Appends extra command line arguments to the main command
+  extraArgs: {}
+  # -- Sets priorityClassName for datacatalog pod(s).
+  priorityClassName: ""
+
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+    targetMemoryUtilizationPercentage: 80
 
 # Container images
 image:
@@ -1221,6 +1295,9 @@ ingress:
 
 
 # -- Prometheus configuration
+# This section configures kube-prometheus-stack for monitoring the Union dataplane.
+# By default, most Kubernetes component monitoring is disabled to reduce resource usage.
+# Enable specific components as needed for your observability requirements.
 prometheus:
   enabled: true
   additionalPrometheusRulesMap: { }
@@ -1233,12 +1310,69 @@ prometheus:
   nameOverride: ""
   fullnameOverride: "union-operator"
   namespaceOverride: ""
+
+  # ----------------------------------------------------------------------------
+  # Kubernetes API Server Metrics
+  # ----------------------------------------------------------------------------
+  # Enable kubeApiServer to collect metrics from the Kubernetes API server.
+  # This provides insights into API request latencies, error rates, and throughput.
+  # Note: Requires appropriate RBAC permissions and network access to the API server.
   kubeApiServer:
     enabled: false
+    # -- Uncomment to enable API server metrics collection
+    # enabled: true
+    #
+    # -- Service configuration for scraping API server metrics
+    # service:
+    #   enabled: true
+    #   port: 443
+    #   targetPort: 443
+    #
+    # -- ServiceMonitor configuration
+    # serviceMonitor:
+    #   enabled: true
+    #   interval: 30s
+    #   # -- Metric relabeling to reduce cardinality (recommended for production)
+    #   metricRelabelings:
+    #     # Keep only essential API server metrics to reduce storage
+    #     - sourceLabels: ["__name__"]
+    #       regex: "apiserver_request_total|apiserver_request_duration_seconds_bucket|apiserver_current_inflight_requests|apiserver_response_sizes_bucket|apiserver_watch_events_total|apiserver_admission_webhook_admission_duration_seconds_bucket|rest_client_requests_total|rest_client_request_duration_seconds_bucket"
+    #       action: keep
+    #   # -- Relabeling configs to apply before scraping
+    #   relabelings: []
+    #
+    # -- TLS configuration for API server connection
+    # tlsConfig:
+    #   serverName: kubernetes
+    #   insecureSkipVerify: false
+
   nodeExporter:
     enabled: false
+    # -- Uncomment to enable node-level metrics
+    # enabled: true
+
+  # ----------------------------------------------------------------------------
+  # Default Alerting and Recording Rules
+  # ----------------------------------------------------------------------------
+  # Configure which Prometheus alerting and recording rules to enable.
+  # These rules provide pre-built alerts for common Kubernetes issues.
+  # See: https://github.com/prometheus-operator/kube-prometheus/tree/main/manifests
   defaultRules:
     create: false
+    # -- Uncomment to enable default rules with selective rule groups
+    # create: true
+    #
+    # -- Labels to add to all default rules
+    # labels:
+    #   role: alert-rules
+    #
+    # -- Annotations to add to all default rules
+    # annotations: {}
+    #
+    # -- Disable specific rules by name
+    # disabled:
+    #   KubeAPIDown: true
+    #   KubeAPITerminatedRequests: true
     rules:
       alertmanager: false
       etcd: false
@@ -1251,10 +1385,25 @@ prometheus:
       k8sContainerResource: false
       k8sContainerMemoryWorkingSetBytes: false
       k8sPodOwner: false
+      # -- API Server availability alerts (e.g., KubeAPIDown, KubeAPITerminatedRequests)
       kubeApiserverAvailability: false
+      # -- Uncomment to enable: Alerts when API server error budget is being consumed too quickly
+      # kubeApiserverAvailability: true
+      #
+      # -- API Server burn rate alerts for SLO monitoring
       kubeApiserverBurnrate: false
+      # -- Uncomment to enable: Multi-window burn rate alerts for API server SLOs
+      # kubeApiserverBurnrate: true
+      #
+      # -- API Server latency histogram recording rules
       kubeApiserverHistogram: false
+      # -- Uncomment to enable: Recording rules for API latency percentiles
+      # kubeApiserverHistogram: true
+      #
+      # -- API Server SLO (Service Level Objective) rules
       kubeApiserverSlos: false
+      # -- Uncomment to enable: SLO-based alerting for API server performance
+      # kubeApiserverSlos: true
       kubeControllerManager: false
       kubelet: false
       kubeProxy: false
@@ -1274,21 +1423,127 @@ prometheus:
       prometheus: false
       prometheusOperator: false
       windows: false
+
   crds:
     enabled: true
+
+  # ----------------------------------------------------------------------------
+  # Grafana Configuration
+  # ----------------------------------------------------------------------------
+  # Grafana provides visualization dashboards for Prometheus metrics.
+  # Enable this section to deploy Grafana with pre-built Kubernetes dashboards.
   grafana:
     enabled: false
-    ingress:
-      enabled: false
-    dashboardsConfigMaps: { }
-    # default: ""
+    # -- Uncomment to enable Grafana deployment
+    # enabled: true
+    #
+    # -- Default admin credentials (change in production!)
     adminUser: admin
     adminPassword: union-dataplane
-    additionalDataSources: [ ]
+    #
+    # -- Use existing secret for admin credentials (recommended for production)
     admin:
       existingSecret: ""
       userKey: admin-user
       passwordKey: admin-password
+    #
+    # -- Ingress configuration for external Grafana access
+    ingress:
+      enabled: false
+      # -- Uncomment to enable ingress
+      # enabled: true
+      # ingressClassName: nginx
+      # annotations:
+      #   kubernetes.io/tls-acme: "true"
+      # hosts:
+      #   - grafana.example.com
+      # tls:
+      #   - secretName: grafana-tls
+      #     hosts:
+      #       - grafana.example.com
+    #
+    # -- Default dashboards configuration
+    # By default, kube-prometheus-stack includes dashboards for various components.
+    # Dashboards are controlled by the defaultDashboardsEnabled setting.
+    # defaultDashboardsEnabled: true
+    #
+    # -- Enable timezone selection in dashboards
+    # defaultDashboardsTimezone: utc
+    #
+    # -- Enable editing of provisioned dashboards in the UI
+    # defaultDashboardsEditable: true
+    #
+
+    # kube-prometheus-stack comes with default dashboards configured with "defaultDashboardsEnabled: true".
+    # Ref: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/templates/grafana/dashboards-1.14
+
+    # -- Custom dashboards can be configured with additional ConfigMaps
+    # Format: <configmap-name>: <folder-name>
+    dashboardsConfigMaps: { }
+    # -- Example: Mount a ConfigMap named "custom-dashboards" to the "Custom" folder
+    # custom-dashboards: "Custom"
+
+    # -- Referencing prebuilt Dashboards
+    #
+    # -- Dashboard providers configuration
+    # dashboardProviders:
+    #   dashboardproviders.yaml:
+    #     apiVersion: 1
+    #     providers:
+    #       - name: 'dotdc-kubernetes-dashboards'
+    #         orgId: 1
+    #         folder: 'Kubernetes'
+    #         type: file
+    #         disableDeletion: false
+    #         editable: true
+    #         options:
+    #           path: /var/lib/grafana/dashboards/dotdc-kubernetes-dashboards
+    #
+    # -- Pre-built dashboards from grafana.com
+    # dashboards:
+    #   dotdc-kubernetes-dashboards:
+    #     k8s-system-api-server:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-api-server.json
+    #       token: ''
+    #     k8s-system-coredns:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-coredns.json
+    #       token: ''
+    #     k8s-views-global:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-global.json
+    #       token: ''
+    #     k8s-views-namespaces:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-namespaces.json
+    #       token: ''
+    #     k8s-views-nodes:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-nodes.json
+    #       token: ''
+    #     k8s-views-pods:
+    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-pods.json
+    #       token: ''
+    #
+    # -- Sidecar configuration for automatic dashboard discovery
+    # sidecar:
+    #   dashboards:
+    #     enabled: true
+    #     label: grafana_dashboard
+    #     labelValue: "1"
+    #     # Folder annotation to organize dashboards
+    #     folderAnnotation: grafana_folder
+    #     # Search all namespaces for dashboards
+    #     searchNamespace: ALL
+    #   datasources:
+    #     enabled: true
+    #     label: grafana_datasource
+    #     labelValue: "1"
+    #
+    # -- Additional data sources (e.g., Loki for logs)
+    additionalDataSources: [ ]
+    # -- Example: Add Loki as a data source
+    # - name: Loki
+    #   type: loki
+    #   url: http://loki-gateway.monitoring.svc.cluster.local
+    #   access: proxy
+    #   isDefault: false
   prometheus:
     enabled: true
     service:
