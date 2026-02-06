@@ -1,4 +1,4 @@
-{{- if .Values.flytepropellerwebhook.webhook.enabled }}
+{{- if .Values.flytepropellerwebhook.enabled }}
 {{- $serviceName := include "flytepropellerwebhook.serviceName" . }}
 {{- $secretName := include "flytepropellerwebhook.secretName" . }}
 {{- $namespace := .Release.Namespace }}
@@ -30,10 +30,11 @@ data:
   tls.key: {{ $certs.serverKey }}
 {{- end }}
 ---
+{{- if .Values.flytepropellerwebhook.managedConfig }}
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: flyte-pod-webhook
+  name: {{ tpl .Values.flytepropellerwebhook.webhook.configurationName . }}
   labels:
     {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
   {{- if $useCertManager }}
@@ -67,7 +68,7 @@ webhooks:
     {{- end }}
     objectSelector:
       {{- with .Values.flytepropellerwebhook.webhook.webhooks.secrets.objectSelector }}
-      {{- toYaml . | nindent 6 }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
       {{- end }}
     reinvocationPolicy: {{ .Values.flytepropellerwebhook.webhook.reinvocationPolicy }}
     rules:
@@ -108,7 +109,7 @@ webhooks:
     {{- end }}
     objectSelector:
       {{- with .Values.flytepropellerwebhook.webhook.webhooks.managedImage.objectSelector }}
-      {{- toYaml . | nindent 6 }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
       {{- end }}
     reinvocationPolicy: {{ .Values.flytepropellerwebhook.webhook.reinvocationPolicy }}
     rules:
@@ -123,5 +124,6 @@ webhooks:
         scope: '*'
     sideEffects: NoneOnDryRun
     timeoutSeconds: {{ .Values.flytepropellerwebhook.webhook.timeoutSeconds }}
+{{- end }}
 {{- end }}
 {{- end }}
