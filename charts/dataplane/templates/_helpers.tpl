@@ -1068,3 +1068,6 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{- tpl (toYaml $heartbeat) $ | nindent 8 }}
 {{- end }}
 {{- end -}}
+{{- define "flyte-pod-webhook.name" -}}
+union-pod-webhook
+{{- end -}}
