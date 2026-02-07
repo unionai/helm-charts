@@ -17,7 +17,11 @@ data:
 {{- with .Values.config.copilot }}
   copilot.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
-{{- with .Values.config.core }}
+{{- $core := deepCopy (.Values.config.core | default dict) }}
+{{- if include "singleNamespace" $ }}
+{{- $_ := set (index $core "propeller") "limit-namespace" .Release.Namespace }}
+{{- end }}
+{{- with $core }}
   core.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
 {{- with .Values.config.enabled_plugins }}
@@ -32,8 +36,12 @@ data:
 {{- with .Values.config.qubole }}
   qubole.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
-{{- with .Values.config.namespace_config }}
-  namespace_config.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+{{- if .Values.config.namespace_config }}
+  namespace_config.yaml: | {{ tpl (toYaml .Values.config.namespace_config) $ | nindent 4 }}
+{{- else if include "singleNamespace" . }}
+  namespace_config.yaml: |
+    namespace_mapping:
+      template: {{ .Release.Namespace }}
 {{- end }}
 {{- with .Values.config.resource_manager }}
   resource_manager.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}

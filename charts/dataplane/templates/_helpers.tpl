@@ -1163,6 +1163,15 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- /* Return empty to signal that cainjector should handle it */ -}}
 {{- end -}}
 {{- end -}}
+{{/*
+Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
+In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
+namespace_mapping) so users only need to set namespaces.enabled: false.
+*/}}
+{{- define "singleNamespace" -}}
+{{- if not .Values.namespaces.enabled -}}true{{- end -}}
+{{- end -}}
+
 {{- define "operator.dependenciesHeartbeat" -}}
 {{- if .Values.flytepropeller.enabled }}
 {{- tpl (toYaml .Values.config.operator.dependenciesHeartbeat) $ | nindent 8 }}
