@@ -1,0 +1,59 @@
+{{- /*
+  cert-manager managed certificates.
+  Creates a Certificate resource that will provision the secret automatically.
+  Optionally creates a self-signed Issuer if no issuerRef is provided.
+
+  Note: For "helm" and "external" providers, the secret is created in
+  mutatingwebhookconfiguration.yaml to ensure cert consistency.
+*/ -}}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "certManager" }}
+{{- $secretName := include "flytepropellerwebhook.secretName" . -}}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $issuerRef := .Values.flytepropellerwebhook.certificate.certManager.issuerRef -}}
+{{- if not $issuerRef }}
+{{- /* Create a self-signed issuer if none provided */ -}}
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ $secretName }}-selfsigned-issuer
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
+spec:
+  selfSigned: {}
+{{- end }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $secretName }}-cert
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $secretName }}
+  duration: {{ .Values.flytepropellerwebhook.certificate.duration }}
+  renewBefore: {{ .Values.flytepropellerwebhook.certificate.renewBefore }}
+  {{- if $issuerRef }}
+  issuerRef:
+    {{- toYaml $issuerRef | nindent 4 }}
+  {{- else }}
+  issuerRef:
+    name: {{ $secretName }}-selfsigned-issuer
+    kind: Issuer
+    group: cert-manager.io
+  {{- end }}
+  commonName: {{ $serviceName }}.{{ $namespace }}.svc
+  dnsNames:
+    - {{ $serviceName }}
+    - {{ $serviceName }}.{{ $namespace }}
+    - {{ $serviceName }}.{{ $namespace }}.svc
+    - {{ $serviceName }}.{{ $namespace }}.svc.cluster.local
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  usages:
+    - server auth
+{{- end }}
