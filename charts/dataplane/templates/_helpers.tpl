@@ -1169,19 +1169,17 @@ In this mode, templates auto-inject namespace-scoping config (limitNamespace, li
 namespace_mapping) so users only need to set namespaces.enabled: false.
 */}}
 {{- define "singleNamespace" -}}
-{{- if not .Values.namespaces.enabled -}}true{{- end -}}
+{{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
 {{- end -}}
 
 {{- define "operator.dependenciesHeartbeat" -}}
-{{- if .Values.flytepropeller.enabled }}
-{{- tpl (toYaml .Values.config.operator.dependenciesHeartbeat) $ | nindent 8 }}
-{{- else }}
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
-{{- if ne $key "propeller" }}
+{{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "prometheus") $.Values.low_privilege }}
+{{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}
 {{- end }}
 {{- tpl (toYaml $heartbeat) $ | nindent 8 }}
-{{- end }}
 {{- end -}}

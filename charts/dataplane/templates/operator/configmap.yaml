@@ -35,8 +35,10 @@ data:
       {{- else if include "singleNamespace" . }}
       limitNamespace: {{ .Release.Namespace }}
       {{- end }}
-      {{- with .Values.config.operator.disableClusterPermissions }}
-      disableClusterPermissions: {{ tpl (toYaml .) $ }}
+      {{- if .Values.config.operator.disableClusterPermissions }}
+      disableClusterPermissions: {{ tpl (toYaml .Values.config.operator.disableClusterPermissions) $ }}
+      {{- else if .Values.low_privilege }}
+      disableClusterPermissions: true
       {{- end }}
     {{- with .Values.config.operator.apps }}
       apps:
@@ -51,11 +53,19 @@ data:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
       {{- tpl (include "operator.clusterData" .) $ | nindent 6 }}
-    {{- with .Values.config.operator.collectUsages }}
+    {{- $collectUsages := deepCopy (.Values.config.operator.collectUsages | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $collectUsages "enabled" false }}
+    {{- end }}
+    {{- with $collectUsages }}
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- with .Values.config.operator.billableUsageCollector }}
+    {{- $billableUsage := deepCopy (.Values.config.operator.billableUsageCollector | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $billableUsage "enabled" false }}
+    {{- end }}
+    {{- with $billableUsage }}
       billableUsageCollector:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
