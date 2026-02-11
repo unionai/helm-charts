@@ -1,9 +1,7 @@
 ## Union Self Managed deployment – Supported Environment & Responsibilities
 
-### 1. Purpose & Audience
-
-**Audience**: Prospective and existing customers, plus Union sales / presales / solutions engineers.  
-**Purpose**: Define **what a “supported environment” is** for the `unionai/dataplane` Helm chart and **where the line is** between what **Union** manages and what **the customer** manages.
+### 1. Purpose 
+Define **what a “supported environment” is** for the `unionai/dataplane` Helm chart and **where the line is** between what **Union** manages and what **the customer** manages.
 
 **Key boundary**:  
   > - If it’s configurable via the documented `unionai/dataplane` Helm chart values, Union owns it.  
