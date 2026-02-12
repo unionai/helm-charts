@@ -356,6 +356,46 @@ data:
         region us-east-1
         bucket
 ---
+# Source: dataplane/templates/imagebuilder/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : union-operator-buildkit
+data:
+  buildkitd.toml: |
+    debug = false
+
+    [log]
+      format = "text"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = 0
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
+---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -371,11 +411,6 @@ data:
         cloudwatch-enabled: false
         kubernetes-enabled: true
   enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
     tasks:
       task-plugins:
         default-for-task-types:
@@ -387,9 +422,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   config.yaml: |
     executor:
       cluster: ''
@@ -551,6 +586,12 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      imageBuilder:
+        enabled: true
+        executionNamespaceLabels:
+          union.ai/namespace-type: flyte
+        referenceConfigmapName: union-operator
+        targetConfigMapName: "build-image-config"
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
@@ -605,6 +646,9 @@ data:
           disable_ssl: false
           endpoint: 
           region: us-east-1
+  image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  image-builder.default-repository: ""
+  image-builder.authentication-type: "noop"
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -704,9 +748,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   k8s.yaml: | 
     plugins:
       k8s:
@@ -1859,6 +1903,27 @@ spec:
   sessionAffinity: None
   type: "ClusterIP"
 ---
+# Source: dataplane/templates/imagebuilder/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1234
+      targetPort: tcp
+      protocol: TCP
+      name: tcp
+  selector:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
 kind: Service
@@ -2322,7 +2387,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2353,6 +2418,116 @@ spec:
           secret:
             secretName: union-secret-auth
 ---
+# Source: dataplane/templates/imagebuilder/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: imagebuilder-buildkit
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: imagebuilder-buildkit
+        app.kubernetes.io/instance: release-name
+    spec:
+      containers:
+        - name: "buildkit"
+          image: "moby/buildkit:latest"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+          volumeMounts:
+            - mountPath: /etc/buildkit
+              name: buildkit-config
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run//buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+          ports:
+            - name: tcp
+              containerPort: 1234
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          securityContext:
+            privileged: true
+          resources:
+            requests:
+              cpu: 1
+              ephemeral-storage: 20Gi
+              memory: 1Gi
+      volumes:
+      - configMap:
+          name: union-operator-buildkit
+        name: buildkit-config
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: imagebuilder-buildkit
+                app.kubernetes.io/instance: release-name
+            topologyKey: "kubernetes.io/hostname"
+---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -2369,7 +2544,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "d3a2f7bd1ed4ffd70f3dfd02af15d402cc22e37ab525c2278fdfa95fd74be47"
+        configChecksum: "8683fc84a121ff0f0c39cefe5053de1bb0d12da999ffc27c2cde56aa561c425"
       labels:
         
         app: executor
@@ -2389,7 +2564,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2470,7 +2645,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "dd4d5bc107ec0d396c41195cd06e9448739ccbb28e8698ed656990ab6f36a49"
+        configChecksum: "a07ff6b3543a7ee67cc7bf50e07c29b55945e9035537e26d8650dd765e1ec2a"
         
       labels:
         
@@ -2497,7 +2672,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2565,7 +2740,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -2607,7 +2782,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "dd4d5bc107ec0d396c41195cd06e9448739ccbb28e8698ed656990ab6f36a49"
+        configChecksum: "a07ff6b3543a7ee67cc7bf50e07c29b55945e9035537e26d8650dd765e1ec2a"
         
       labels:
         
@@ -2630,7 +2805,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -2724,7 +2899,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "69456ba57ac9b19b42b033406121bdce9a2cce0532b39e0cd1a72d408353abd"
+        configChecksum: "915dd1c16576bf7f84b7293876a05f5b66993798003e1ce6a9fc2da8a861b26"
         
     spec:
       securityContext:
@@ -2737,7 +2912,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2792,7 +2967,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -2879,7 +3054,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "69456ba57ac9b19b42b033406121bdce9a2cce0532b39e0cd1a72d408353abd"
+        configChecksum: "915dd1c16576bf7f84b7293876a05f5b66993798003e1ce6a9fc2da8a861b26"
         
       labels:
         
@@ -2929,7 +3104,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
