@@ -37,7 +37,7 @@ spec:
       securityContext:
         {{- tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
-      serviceAccountName: flytepropeller-webhook-system
+      serviceAccountName: {{ template "flyte-pod-webhook.name" . }}
       {{- if .Values.flytepropellerwebhook.priorityClassName }}
       priorityClassName: {{ .Values.flytepropellerwebhook.priorityClassName }}
       {{- end }}
@@ -60,6 +60,8 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
+            - name: webhook-certs
+              mountPath: /etc/webhook/certs
           resources: {{- toYaml .Values.flytepropellerwebhook.resources | nindent 12 }}
       containers:
         - name: webhook
@@ -97,10 +99,9 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: flyte-propeller-config
+            name: flyte-propeller-webhook-config
         - name: webhook-certs
-          secret:
-            secretName: {{ template "flyte-pod-webhook.name" . }}
+          emptyDir: {}
       {{- with .Values.flytepropellerwebhook.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}

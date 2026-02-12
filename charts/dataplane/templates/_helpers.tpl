@@ -1071,3 +1071,16 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{- define "flyte-pod-webhook.name" -}}
 union-pod-webhook
 {{- end -}}
+
+{{/*
+  Webhook-only minimal config: core.webhook with serviceName/secretName set to the chart webhook name and localCert true.
+  Used when flytepropeller is disabled but flytepropellerwebhook is enabled.
+*/}}
+{{- define "propeller.webhookConfigMinimal" -}}
+{{- $webhook := deepCopy .Values.config.core.webhook }}
+{{- $_ := set $webhook "serviceName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "secretName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "localCert" true }}
+webhook:
+{{- tpl (toYaml $webhook) . | nindent 2 }}
+{{- end -}}
