@@ -1013,6 +1013,21 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- end -}}
 {{- end -}}
 
+{{/*
+Generate the buildkit image name with smart rootless suffixing.
+Appends "-rootless" to the tag when rootless mode is enabled, unless the tag already contains "rootless".
+*/}}
+{{- define "imagebuilder.buildkit.image" -}}
+{{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
+{{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
+{{- $suffix := "" -}}
+{{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
+  {{- $suffix = "-rootless" -}}
+{{- end -}}
+{{- printf "%s:%s%s" $repo $tag $suffix -}}
+{{- end -}}
+
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
 {{- tpl .Values.ingress.serving.hostOverride . | quote }}
