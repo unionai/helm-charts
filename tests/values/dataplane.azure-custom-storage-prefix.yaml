@@ -1,0 +1,131 @@
+# Test: custom storage.metadataPrefix overrides the auto-generated s3:// prefix
+# for Azure custom storage providers using ABFS protocol.
+
+global:
+  UNION_CONTROL_PLANE_HOST: "test.dataplane.union.ai"
+  CLUSTER_NAME: "test-azure-cluster"
+  ORG_NAME: "test-org"
+  CLIENT_ID: "test-client-id"
+  METADATA_CONTAINER: "test-metadata-container"
+  AZURE_STORAGE_ACCOUNT: "teststorageaccount"
+  AZURE_SUBSCRIPTION_ID: "test-subscription-id"
+  AZURE_TENANT_ID: "test-tenant-id"
+  AZURE_RESOURCE_GROUP: "test-resource-group"
+  AZURE_BACKEND_CLIENT_ID: "test-backend-client-id"
+  AZURE_WORKER_CLIENT_ID: "test-worker-client-id"
+  AZURE_KEY_VAULT_URI: "test-azure-key-vault-uri"
+
+provider: azure
+
+secrets:
+  admin:
+    clientId: '{{ .Values.global.CLIENT_ID }}'
+    clientSecret: "test-client-secret-value"
+    create: true
+
+# Custom Azure storage with explicit metadataPrefix
+storage:
+  provider: custom
+  bucketName: test-metadata-container
+  metadataPrefix: "abfs://test-metadata-container@teststorageaccount.dfs.core.windows.net"
+  enableMultiContainer: true
+  custom:
+    container: '{{ .Values.global.METADATA_CONTAINER }}'
+    type: stow
+    stow:
+      kind: azure
+      config:
+        account: '{{ .Values.global.AZURE_STORAGE_ACCOUNT }}'
+
+additionalServiceAccountAnnotations:
+  azure.workload.identity/client-id: "{{ .Values.global.AZURE_BACKEND_CLIENT_ID }}"
+
+userRoleAnnotationKey: azure.workload.identity/client-id
+userRoleAnnotationValue: "{{ .Values.global.AZURE_WORKER_CLIENT_ID }}"
+
+additionalPodLabels:
+  azure.workload.identity/use: "true"
+
+config:
+  core:
+    webhook:
+      embeddedSecretManagerConfig:
+        enabled: true
+        type: Azure
+        azureConfig:
+          vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+      secretManagerTypes:
+        - Azure
+        - Embedded
+
+  namespace_config:
+    namespace_mapping:
+      template: '{{`{{ domain }}`}}'
+
+  operator:
+    clusterData:
+      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
+    org:
+      namespaceTemplate: '{{`{{ domain }}`}}'
+
+  proxy:
+    persistedLogs:
+      sourceType: AzureLogAnalytics
+      azureLogAnalytics:
+        logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
+    smConfig:
+      enabled: true
+      type: Azure
+      azureConfig:
+        vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+
+  task_logs:
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        stackdriver-enabled: false
+        azure-log-templates:
+          - displayName: Azure Logs
+            templateUris:
+              - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%2FresourceGroups%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            stackdriver-enabled: false
+            azure-log-templates:
+              - displayName: Azure Logs
+                templateUris:
+                  - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%%2Fsubscriptions%%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%%2FresourceGroups%%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          stackdriver-enabled: false
+          azure-log-templates:
+            - displayName: Azure Logs
+              templateUris:
+                - "https://portal.azure.com#@{{.Values.global.AZURE_TENANT_ID}}/blade/Microsoft_OperationsManagementSuite_Workspace/Logs.ReactView/resourceId/%2Fsubscriptions%2F{{.Values.global.AZURE_SUBSCRIPTION_ID}}%2FresourceGroups%2F{{.Values.global.AZURE_RESOURCE_GROUP}}/source/LogsBlade.AnalyticsShareLinkToQuery/q/"
+
+  k8s:
+    plugins:
+      k8s:
+        default-labels:
+          - azure.workload.identity/use: "true"
+        default-env-vars:
+          - AZURE_STORAGE_ACCOUNT_NAME: "{{ .Values.global.AZURE_STORAGE_ACCOUNT }}"
+        interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: In
+          values:
+            - spot
+        interruptible-tolerations:
+          - effect: NoSchedule
+            key: kubernetes.azure.com/scalesetpriority
+            operator: Equal
+            value: spot
+        non-interruptible-node-selector-requirement:
+          key: kubernetes.azure.com/scalesetpriority
+          operator: DoesNotExist
