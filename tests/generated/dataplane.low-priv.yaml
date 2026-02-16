@@ -139,11 +139,6 @@ data:
         cloudwatch-enabled: false
         kubernetes-enabled: true
   enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
     tasks:
       task-plugins:
         default-for-task-types:
@@ -155,9 +150,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   config.yaml: |
     executor:
       cluster: 'my-cluster'
@@ -493,9 +488,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   k8s.yaml: | 
     plugins:
       k8s:
@@ -1054,13 +1049,15 @@ spec:
       app.kubernetes.io/instance: release-name
   template:
     metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
       labels:
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
       containers:
         - name: "buildkit"
-          image: "moby/buildkit:latest"
+          image: "moby/buildkit:buildx-stable-1-rootless"
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAME
@@ -1095,15 +1092,18 @@ spec:
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
           volumeMounts:
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
             - mountPath: /etc/buildkit
               name: buildkit-config
           args:
             - --config
             - /etc/buildkit/buildkitd.toml
             - --addr
-            - unix:///run//buildkit/buildkitd.sock
+            - unix:///run/user/1000/buildkit/buildkitd.sock
             - --addr
             - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
           ports:
             - name: tcp
               containerPort: 1234
@@ -1125,13 +1125,18 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 30
           securityContext:
-            privileged: true
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
           resources:
             requests:
               cpu: 1
               ephemeral-storage: 20Gi
               memory: 1Gi
       volumes:
+      - name: buildkitd
+        emptyDir: {}
       - configMap:
           name: union-operator-buildkit
         name: buildkit-config
@@ -1160,7 +1165,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fed89ef13281c5bf1287bf119d533420feb2527b33373e1f90f9b14c8394ca3"
+        configChecksum: "7ef063ec821b52353d2b4a33d6716d6896b8f707dcc56fd850dfc0a34520f4b"
       labels:
         
         app: executor
@@ -1180,7 +1185,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -1286,7 +1291,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -1354,7 +1359,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -1419,7 +1424,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -1513,7 +1518,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "fba61b0d78eab8140c457b22bdc1844bbe558ec15c5c4b98ea2b4d61ab8fa24"
+        configChecksum: "0a2cddd8767edcb80ec368f2dc97ccc34a25e2f9c8e291560802aacbad83f10"
         
     spec:
       securityContext:
@@ -1526,7 +1531,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -1581,7 +1586,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -1668,7 +1673,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fba61b0d78eab8140c457b22bdc1844bbe558ec15c5c4b98ea2b4d61ab8fa24"
+        configChecksum: "0a2cddd8767edcb80ec368f2dc97ccc34a25e2f9c8e291560802aacbad83f10"
         
       labels:
         
@@ -1717,7 +1722,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:

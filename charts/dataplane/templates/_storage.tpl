@@ -65,7 +65,9 @@ fastRegistrationStorage:
 {{- end }}
 
 {{- define "storage.metadata-prefix" -}}
-{{- if eq .Values.storage.provider "compat" -}}
+{{- if .Values.storage.metadataPrefix -}}
+{{ tpl .Values.storage.metadataPrefix . -}}
+{{- else if eq .Values.storage.provider "compat" -}}
 s3://{{ tpl .Values.storage.bucketName . -}}
 {{- else if eq .Values.storage.provider "oci" -}}
 oci://{{ tpl .Values.storage.bucketName . -}}
