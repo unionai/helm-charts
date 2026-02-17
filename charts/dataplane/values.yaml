@@ -761,6 +761,22 @@ opencost:
           memory: 4Gi
 
 # -- Configuration for fluentbit used for the persistent logging feature.
+# FluentBit runs as a DaemonSet and ships container logs to the persisted-logs/
+# path in the configured object store. The fluentbit-system service account must
+# have write access to the storage bucket.
+#
+# Grant access using cloud-native identity federation:
+#   AWS (IRSA):
+#     annotations:
+#       eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"
+#   Azure (Workload Identity):
+#     annotations:
+#       azure.workload.identity/client-id: "<CLIENT_ID>"
+#   GCP (Workload Identity):
+#     annotations:
+#       iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com"
+#
+# See https://docs.union.ai for full setup instructions.
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
@@ -769,10 +785,11 @@ fluentbit:
     - operator: Exists
   serviceAccount:
     name: fluentbit-system
-  # If you are using EKS and would like to use the IAM role for service account (IRSA) feature,
-  # uncomment the following line and set the role ARN
-    annotations: {}  # eks.amazonaws.com/role-arn: <role>
-  # If you would like to use access keys, uncomment the following lines and set the access key and secret key
+    # Set cloud-provider-specific annotations to grant bucket write access.
+    # See examples above.
+    annotations: {}
+  # If you would like to use static access keys instead of identity federation
+  # (not recommended), uncomment the following lines:
   env: [ ]
   #  - name: AWS_ACCESS_KEY_ID
   #    value:

@@ -110,6 +110,59 @@ Expected output: All pods should be in `Running` state, and logs should show suc
 
 ---
 
+## Logging (FluentBit)
+
+The data plane deploys [FluentBit](https://fluentbit.io/) as a DaemonSet to collect container logs from every node and write them to the `persisted-logs/` path in the configured object store. FluentBit runs under the `fluentbit-system` Kubernetes service account, which must have write access to the storage bucket.
+
+Grant access by setting the appropriate annotation on the FluentBit service account in your values file:
+
+### AWS (IRSA)
+
+```yaml
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    annotations:
+      eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<FLUENTBIT_ROLE_NAME>"
+```
+
+The IAM role needs `s3:PutObject`, `s3:GetObject`, and `s3:ListBucket` permissions on the metadata bucket, with a trust policy scoped to `system:serviceaccount:<NAMESPACE>:fluentbit-system`.
+
+### Azure (Workload Identity)
+
+```yaml
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    annotations:
+      azure.workload.identity/client-id: "<CLIENT_ID>"
+```
+
+The managed identity needs a federated credential for the `fluentbit-system` service account and the `Storage Blob Data Contributor` role on the storage account. Ensure the `azure.workload.identity/use: "true"` pod label is also set (see `additionalPodLabels`).
+
+### GCP (Workload Identity)
+
+```yaml
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    annotations:
+      iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com"
+```
+
+The GCP service account needs `roles/storage.objectAdmin` on the bucket, and the Kubernetes service account must be bound via `roles/iam.workloadIdentityUser`.
+
+### Disabling FluentBit
+
+```yaml
+fluentbit:
+  enabled: false
+```
+
+For full setup instructions including IAM policy examples, see [Persistent logs](https://docs.union.ai/deployment/configuration/persistent-logs) in the Union documentation.
+
+---
+
 ## Alternative Deployment Models
 
 ### Self-Hosted Intra-Cluster Deployment (AWS)
