@@ -159,7 +159,7 @@ fluentbit:
   enabled: false
 ```
 
-For full setup instructions including IAM policy examples, see [Persistent logs](https://docs.union.ai/deployment/configuration/persistent-logs) in the Union documentation.
+For full setup instructions including IAM policy examples, see [Persistent logs](https://www.union.ai/docs/v1/selfmanaged/deployment/configuration/persistent-logs/) in the Union documentation.
 
 ---
 
