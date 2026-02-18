@@ -99,6 +99,15 @@ global:
   #    the endpoint here to skip nginx as grpc through nginx must use TLS.
   CACHESERVICE_ENDPOINT: ""
 
+  # --- Authentication Configuration ---
+  # Set all values below to enable OAuth2 authentication.
+  # Required when the control plane has OIDC enabled.
+  # Supports any OAuth2/OIDC provider (Okta, Azure AD, Auth0, Keycloak, etc.)
+  #
+  # Service-to-service OAuth client ID (client_credentials flow)
+  # Example: "0oa3xyz4abc5def6g7h8"
+  AUTH_CLIENT_ID: ""
+
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
@@ -164,9 +173,16 @@ clusterresourcesync:
         # Set to true for self-signed certificates, false for trusted CA certs
         insecureSkipVerify: true
 
-      # Disable authentication for direct intra-cluster service-to-service calls
+      # --- Service-to-service OAuth2 (disabled by default) ---
+      # When enabled, clusterresourcesync acquires OAuth2 tokens via client_credentials
+      # flow and sends them on outgoing calls to the control plane.
       auth:
         enable: false
+        type: "ClientSecret"
+        clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+        clientSecretLocation: "/etc/union/secret/client_secret"
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: "5m"
 
 # ----------------------------------------------------------------------------
 # Core Service Configuration
@@ -231,9 +247,16 @@ config:
       # Skip SSL verification for self-signed certificates
       insecureSkipVerify: true
 
+    # --- Service-to-service OAuth2 (disabled by default) ---
+    # When enabled, operator acquires OAuth2 tokens via client_credentials
+    # flow and sends them on outgoing calls to the control plane.
     auth:
-      # Disable OAuth authentication for intra-cluster communication
       enable: false
+      type: "ClientSecret"
+      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+      clientSecretLocation: "/etc/union/secret/client_secret"
+      authorizationMetadataKey: "flyte-authorization"
+      tokenRefreshWindow: "5m"
 
   operator:
     # Disable Cloudflare tunnel (not needed for intra-cluster)
@@ -251,8 +274,11 @@ config:
 executor:
   config:
     unionAuth:
-      # Disable API key injection (not needed for intra-cluster communication)
+      # --- API key injection (disabled by default) ---
+      # When enabled, injects the EAGER_API_KEY secret into task pods
+      # for authenticated eager-mode execution.
       injectSecret: false
+      secretName: "EAGER_API_KEY"
 
 # ----------------------------------------------------------------------------
 # Ingress Configuration
@@ -336,9 +362,14 @@ prometheus:
 
 secrets:
   admin:
-    # Disable admin secret creation (OAuth not used for intra-cluster)
+    # --- OAuth secret configuration (disabled by default) ---
+    # When enabled, the chart creates a union-secret-auth K8s Secret
+    # for mounting the client_secret into dataplane pods.
+    # Set create: false if using ExternalSecrets to provision the secret.
     enable: false
     create: false
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+    clientSecret: "placeholder"
 
 # ----------------------------------------------------------------------------
 # App Serving Configuration (Work in Progress)
