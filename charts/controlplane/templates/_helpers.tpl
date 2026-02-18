@@ -290,9 +290,9 @@ default
 
 {{- define "unionai.sharedService" -}}
 {{- if and (hasKey .config "sharedService") }}
-{{ .config.sharedService }}
+{{ toYaml .config.sharedService }}
 {{- else if and (hasKey .Values "sharedService") }}
-{{ .Values.sharedService }}
+{{ toYaml .Values.sharedService }}
 {{- else }}
 {}
 {{- end }}
@@ -300,9 +300,9 @@ default
 
 {{- define "unionai.sync" -}}
 {{- if and (hasKey .config "sync") }}
-{{ .config.sync }}
+{{ toYaml .config.sync }}
 {{- else if and (hasKey .Values "sync") }}
-{{ .Values.sync }}
+{{ toYaml .Values.sync }}
 {{- else }}
 {}
 {{- end }}
