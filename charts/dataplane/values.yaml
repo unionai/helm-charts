@@ -640,16 +640,19 @@ dcgm-exporter:
     # Required to preserve pod and namespace labels from metrics.
     # Without this, Prometheus relabels them as exported_pod and exported_namespace.
     honorLabels: true
+
+    additionalLabels:
+      platform.union.ai/prometheus-group: union-features
+
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
-  resources:
-    limits:
-      memory: 1Gi
+  resources: {}
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
     # TLM uses this to map GPU metrics to task pods
     - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
       value: "uid"
+
   # Based on default metrics list at
   # https://github.com/NVIDIA/dcgm-exporter/blob/3446595fbb31e22e45a8dbcd63ade14e3da49810/deployment/templates/metrics-configmap.yaml#L13
   # with additional metrics required for TLM:
@@ -738,8 +741,20 @@ dcgm-exporter:
 opencost:
   # -- Enable or disable the opencost installation.
   enabled: true
-  fullnameOverride: opencost
+
   opencost:
+    metrics:
+      serviceMonitor:
+        enabled: true
+
+        additionalLabels:
+          platform.union.ai/prometheus-group: union-features
+
+        metricRelabelings:
+        - sourceLabels: [ "__name__" ]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+
     # By default, disable prometheus. This runs opencost in exporter mode: https://www.opencost.io/docs/opencost-exporter
     # Set internal or external values to populate the PROMETHEUS_SERVER_ENDPOINT env var
     prometheus:
@@ -826,9 +841,6 @@ executor:
       memory: 1Gi
   podLabels:
     app: executor
-  selector:
-    matchLabels:
-      app: executor
   task_logs:
     plugins:
       logs:
@@ -1248,251 +1260,48 @@ ingress:
 # By default, most Kubernetes component monitoring is disabled to reduce resource usage.
 # Enable specific components as needed for your observability requirements.
 prometheus:
-  enabled: true
-  additionalPrometheusRulesMap: { }
-  #  rule-name:
-  #    groups:
-  #    - name: my_group
-  #      rules:
-  #      - record: my_record
-  #        expr: 100 * my_record
   nameOverride: ""
+
+  # TODO: Remove the necessity for requiring fullname override to be pinned to union-operator.
   fullnameOverride: "union-operator"
   namespaceOverride: ""
 
-  # ----------------------------------------------------------------------------
-  # Kubernetes API Server Metrics
-  # ----------------------------------------------------------------------------
-  # Enable kubeApiServer to collect metrics from the Kubernetes API server.
-  # This provides insights into API request latencies, error rates, and throughput.
-  # Note: Requires appropriate RBAC permissions and network access to the API server.
-  kubeApiServer:
-    enabled: false
-    # -- Uncomment to enable API server metrics collection
-    # enabled: true
-    #
-    # -- Service configuration for scraping API server metrics
-    # service:
-    #   enabled: true
-    #   port: 443
-    #   targetPort: 443
-    #
-    # -- ServiceMonitor configuration
-    # serviceMonitor:
-    #   enabled: true
-    #   interval: 30s
-    #   # -- Metric relabeling to reduce cardinality (recommended for production)
-    #   metricRelabelings:
-    #     # Keep only essential API server metrics to reduce storage
-    #     - sourceLabels: ["__name__"]
-    #       regex: "apiserver_request_total|apiserver_request_duration_seconds_bucket|apiserver_current_inflight_requests|apiserver_response_sizes_bucket|apiserver_watch_events_total|apiserver_admission_webhook_admission_duration_seconds_bucket|rest_client_requests_total|rest_client_request_duration_seconds_bucket"
-    #       action: keep
-    #   # -- Relabeling configs to apply before scraping
-    #   relabelings: []
-    #
-    # -- TLS configuration for API server connection
-    # tlsConfig:
-    #   serverName: kubernetes
-    #   insecureSkipVerify: false
+  commonLabels:
+    platform.union.ai/prometheus-group: union-features
 
-  nodeExporter:
-    enabled: false
-    # -- Uncomment to enable node-level metrics
-    # enabled: true
+  prometheusOperator:
+    # TODO: Identify if this fullnameOverride is necessary.
+    fullnameOverride: prometheus-operator
 
-  # ----------------------------------------------------------------------------
-  # Default Alerting and Recording Rules
-  # ----------------------------------------------------------------------------
-  # Configure which Prometheus alerting and recording rules to enable.
-  # These rules provide pre-built alerts for common Kubernetes issues.
-  # See: https://github.com/prometheus-operator/kube-prometheus/tree/main/manifests
-  defaultRules:
-    create: false
-    # -- Uncomment to enable default rules with selective rule groups
-    # create: true
-    #
-    # -- Labels to add to all default rules
-    # labels:
-    #   role: alert-rules
-    #
-    # -- Annotations to add to all default rules
-    # annotations: {}
-    #
-    # -- Disable specific rules by name
-    # disabled:
-    #   KubeAPIDown: true
-    #   KubeAPITerminatedRequests: true
-    rules:
-      alertmanager: false
-      etcd: false
-      configReloaders: false
-      general: false
-      k8sContainerCpuUsageSecondsTotal: false
-      k8sContainerMemoryCache: false
-      k8sContainerMemoryRss: false
-      k8sContainerMemorySwap: false
-      k8sContainerResource: false
-      k8sContainerMemoryWorkingSetBytes: false
-      k8sPodOwner: false
-      # -- API Server availability alerts (e.g., KubeAPIDown, KubeAPITerminatedRequests)
-      kubeApiserverAvailability: false
-      # -- Uncomment to enable: Alerts when API server error budget is being consumed too quickly
-      # kubeApiserverAvailability: true
-      #
-      # -- API Server burn rate alerts for SLO monitoring
-      kubeApiserverBurnrate: false
-      # -- Uncomment to enable: Multi-window burn rate alerts for API server SLOs
-      # kubeApiserverBurnrate: true
-      #
-      # -- API Server latency histogram recording rules
-      kubeApiserverHistogram: false
-      # -- Uncomment to enable: Recording rules for API latency percentiles
-      # kubeApiserverHistogram: true
-      #
-      # -- API Server SLO (Service Level Objective) rules
-      kubeApiserverSlos: false
-      # -- Uncomment to enable: SLO-based alerting for API server performance
-      # kubeApiserverSlos: true
-      kubeControllerManager: false
-      kubelet: false
-      kubeProxy: false
-      kubePrometheusGeneral: false
-      kubePrometheusNodeRecording: false
-      kubernetesApps: false
-      kubernetesResources: false
-      kubernetesStorage: false
-      kubernetesSystem: false
-      kubeSchedulerAlerting: false
-      kubeSchedulerRecording: false
-      kubeStateMetrics: false
-      network: false
-      node: false
-      nodeExporterAlerting: false
-      nodeExporterRecording: false
-      prometheus: false
-      prometheusOperator: false
-      windows: false
-
+  # Install CRDs to ensure viability of Prometheus CRDs.
   crds:
     enabled: true
 
-  # ----------------------------------------------------------------------------
-  # Grafana Configuration
-  # ----------------------------------------------------------------------------
-  # Grafana provides visualization dashboards for Prometheus metrics.
-  # Enable this section to deploy Grafana with pre-built Kubernetes dashboards.
+  # The following resources are not required for Union features and are disabled.
+  coreDns:
+    enabled: false
+  defaultRules:
+    create: false
+  kubeApiServer:
+    enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  nodeExporter:
+    enabled: false
   grafana:
     enabled: false
-    # -- Uncomment to enable Grafana deployment
-    # enabled: true
-    #
-    # -- Default admin credentials (change in production!)
-    adminUser: admin
-    adminPassword: union-dataplane
-    #
-    # -- Use existing secret for admin credentials (recommended for production)
-    admin:
-      existingSecret: ""
-      userKey: admin-user
-      passwordKey: admin-password
-    #
-    # -- Ingress configuration for external Grafana access
-    ingress:
-      enabled: false
-      # -- Uncomment to enable ingress
-      # enabled: true
-      # ingressClassName: nginx
-      # annotations:
-      #   kubernetes.io/tls-acme: "true"
-      # hosts:
-      #   - grafana.example.com
-      # tls:
-      #   - secretName: grafana-tls
-      #     hosts:
-      #       - grafana.example.com
-    #
-    # -- Default dashboards configuration
-    # By default, kube-prometheus-stack includes dashboards for various components.
-    # Dashboards are controlled by the defaultDashboardsEnabled setting.
-    # defaultDashboardsEnabled: true
-    #
-    # -- Enable timezone selection in dashboards
-    # defaultDashboardsTimezone: utc
-    #
-    # -- Enable editing of provisioned dashboards in the UI
-    # defaultDashboardsEditable: true
-    #
+  alertmanager:
+    enabled: false
+  ingress:
+    enabled: false
 
-    # kube-prometheus-stack comes with default dashboards configured with "defaultDashboardsEnabled: true".
-    # Ref: https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack/templates/grafana/dashboards-1.14
-
-    # -- Custom dashboards can be configured with additional ConfigMaps
-    # Format: <configmap-name>: <folder-name>
-    dashboardsConfigMaps: { }
-    # -- Example: Mount a ConfigMap named "custom-dashboards" to the "Custom" folder
-    # custom-dashboards: "Custom"
-
-    # -- Referencing prebuilt Dashboards
-    #
-    # -- Dashboard providers configuration
-    # dashboardProviders:
-    #   dashboardproviders.yaml:
-    #     apiVersion: 1
-    #     providers:
-    #       - name: 'dotdc-kubernetes-dashboards'
-    #         orgId: 1
-    #         folder: 'Kubernetes'
-    #         type: file
-    #         disableDeletion: false
-    #         editable: true
-    #         options:
-    #           path: /var/lib/grafana/dashboards/dotdc-kubernetes-dashboards
-    #
-    # -- Pre-built dashboards from grafana.com
-    # dashboards:
-    #   dotdc-kubernetes-dashboards:
-    #     k8s-system-api-server:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-api-server.json
-    #       token: ''
-    #     k8s-system-coredns:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-system-coredns.json
-    #       token: ''
-    #     k8s-views-global:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-global.json
-    #       token: ''
-    #     k8s-views-namespaces:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-namespaces.json
-    #       token: ''
-    #     k8s-views-nodes:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-nodes.json
-    #       token: ''
-    #     k8s-views-pods:
-    #       url: https://raw.githubusercontent.com/dotdc/grafana-dashboards-kubernetes/master/dashboards/k8s-views-pods.json
-    #       token: ''
-    #
-    # -- Sidecar configuration for automatic dashboard discovery
-    # sidecar:
-    #   dashboards:
-    #     enabled: true
-    #     label: grafana_dashboard
-    #     labelValue: "1"
-    #     # Folder annotation to organize dashboards
-    #     folderAnnotation: grafana_folder
-    #     # Search all namespaces for dashboards
-    #     searchNamespace: ALL
-    #   datasources:
-    #     enabled: true
-    #     label: grafana_datasource
-    #     labelValue: "1"
-    #
-    # -- Additional data sources (e.g., Loki for logs)
-    additionalDataSources: [ ]
-    # -- Example: Add Loki as a data source
-    # - name: Loki
-    #   type: loki
-    #   url: http://loki-gateway.monitoring.svc.cluster.local
-    #   access: proxy
-    #   isDefault: false
+  # Prometheus Data storage configuration.
   prometheus:
     enabled: true
     service:
@@ -1505,13 +1314,21 @@ prometheus:
       # If you want to limit the scope of the prometheus service to only the helm release, set this to true
       # and/or set the selectors to the appropriate values.
       ruleSelectorNilUsesHelmValues: false
-      ruleSelector: {}
+      ruleSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       scrapeConfigSelectorNilUsesHelmValues: false
-      scrapeConfigSelector: {}
+      scrapeConfigSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       serviceMonitorSelectorNilUsesHelmValues: false
-      serviceMonitorSelector: {}
+      serviceMonitorSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       podMonitorSelectorNilUsesHelmValues: false
-      podMonitorSelector: {}
+      podMonitorSelector:
+        matchLabels:
+          platform.union.ai/prometheus-group: union-features
       # Prometheus with Union requires relatively high memory due to high cardinality
       # from executions.
       resources:
@@ -1522,39 +1339,60 @@ prometheus:
           cpu: "1"
           memory: "1Gi"
       routePrefix: /prometheus/
-  alertmanager:
-    enabled: false
-  prometheusOperator:
-    fullnameOverride: prometheus-operator
-  kube-state-metrics:
-    namespaceOverride: "kube-system"
-    metricRelabelings:
-      - sourceLabels: [ "__name__" ]
-        separator: ";"
-        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
-        action: keep
-      - sourceLabels: [ "__name__", "phase" ]
-        separator: ";"
-        regex: "kube_pod_status_phase;(Succeeded|Failed)"
-        action: drop
-      # Replace insert nodename to assist Grafana joins
-      - sourceLabels: [ "node" ]
-        targetLabel: "nodename"
-        regex: "(.*)" # copy the value as is
-        action: replace
-      # Ensure all cloud provider group names populate label_node_pool_name
-      - sourceLabels: [ "label_node_group_name" ]
-        action: replace
-        # Assume GCP environments don't have label_node_group_name
-        regex: "(.+)"
-        targetLabel: "label_node_pool_name"
 
-  prometheus-node-exporter:
-    namespaceOverride: "kube-system"
-  ingress:
-    enabled: false
-    annotations: { }
-    hosts: [ ]
+  kubelet:
+    enabled: true
+
+    serviceMonitor:
+      enabled: true
+
+      cAdvisor: true
+
+      # cAdvisor metrics can be extensive leading to high cardinality.
+      # The following relabeling keeps only the necessary metrics for Union features.
+      cAdvisorMetricRelabelings:
+        - action: keep
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          sourceLabels: [ "__name__" ]
+
+      # Kubelet metrics that are not required for Union features
+      kubelet: false
+      probes: false
+      resource: false
+
+  # Kube state metrics metrics is required to surface necessary metrics.
+  kubeStateMetrics:
+    enabled: true
+
+    # Configure ServiceMonitors that are specific to Union features.
+  kube-state-metrics:
+    prometheus:
+      monitor:
+
+        additionalLabels:
+          platform.union.ai/prometheus-group: union-features
+
+        http:
+          metricRelabelings:
+          - sourceLabels: [ "__name__" ]
+            separator: ";"
+            regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+            action: keep
+          - sourceLabels: [ "__name__", "phase" ]
+            separator: ";"
+            regex: "kube_pod_status_phase;(Succeeded|Failed)"
+            action: drop
+          # Replace insert nodename to assist Grafana joins
+          - sourceLabels: [ "node" ]
+            targetLabel: "nodename"
+            regex: "(.*)" # copy the value as is
+            action: replace
+          # Ensure all cloud provider group names populate label_node_pool_name
+          - sourceLabels: [ "label_node_group_name" ]
+            action: replace
+            # Assume GCP environments don't have label_node_group_name
+            regex: "(.+)"
+            targetLabel: "label_node_pool_name"
 
 # -- Scopes the deployment, permissions and actions created into a single namespace
 low_privilege: false
@@ -1871,3 +1709,101 @@ namespaces:
 
 monitoring:
   enabled: true
+
+  # Override the name to distinguish from main prometheus
+  nameOverride: "union-monitoring"
+  fullnameOverride: "union-monitoring"
+
+  prometheusOperator:
+    enabled: true
+
+  # Assume CRDs are installed with union-features kube-prometheus-stack
+  crds:
+    enabled: false
+
+  # Alert manager disabled by default
+  alertmanager:
+    enabled: false
+
+  grafana:
+    enabled: true
+
+    fullNameOverride: "union-monitoring-grafana"
+
+    # Initially set to admin/admin for development
+    # Should override for production deployments
+    adminPassword: admin
+
+  # Default monitoring stack for all relevant K8s components that impact
+  # Union performance and reliability.
+  coreDns:
+    enabled: true
+  defaultRules:
+    create: true
+  kubeApiServer:
+    enabled: true
+  kubeControllerManager:
+    enabled: true
+  kubeEtcd:
+    enabled: true
+  kubeProxy:
+    enabled: true
+  kubeScheduler:
+    enabled: true
+  nodeExporter:
+    enabled: true
+  kubelet:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+
+  kube-state-metrics:
+    nameOverride: "union-monitoring-kube-state-metrics"
+    fullnameOverride: "union-monitoring-kube-state-metrics"
+
+  # By default, install a separate Prometheus instance for monitoring.
+  # This is the simplest, out of the box model, it is highly recommended that users look
+  # at alternative timeseries storage options for production deployments.
+  #
+  # Ref: https://prometheus.io/docs/introduction/faq/
+  prometheus:
+    enabled: true
+
+    # Ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/platform/prometheus-agent.md
+    agentMode: false
+
+    service:
+      port: 80
+    prometheusSpec:
+      maximumStartupDurationSeconds: 600
+      retention: 7d
+
+      # Ignore Prometheus CRD instances that are specifically needed for Union Features
+      ruleSelectorNilUsesHelmValues: false
+      ruleSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      podMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"

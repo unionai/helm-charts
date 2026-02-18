@@ -163,6 +163,88 @@ For full setup instructions including IAM policy examples, see [Persistent logs]
 
 ---
 
+## Monitoring & Observability
+
+The dataplane ships with two separate [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) instances, each with a distinct responsibility:
+
+| Instance       | Helm key     | Purpose                                                               | User-configurable           |
+| -------------- | ------------ | --------------------------------------------------------------------- | --------------------------- |
+| Union features | `prometheus` | Powers Task Level Monitoring (TLM), cost tracking, and app metrics.   | No — managed automatically. |
+| Monitoring     | `monitoring` | General cluster and service observability.                            | Yes — see below.            |
+
+The two instances are isolated through Prometheus Operator CRD label selectors using the `platform.union.ai/prometheus-group` label. The Union features instance only scrapes CRDs labeled `union-features`, while the monitoring instance scrapes everything *except* `union-features`.
+
+> **Note:** The Union features Prometheus is required for platform functionality and cannot be disabled. It is fully self-contained and requires no user configuration.
+
+### Default configuration
+
+The monitoring stack is enabled by default (`monitoring.enabled: true`) and deploys:
+
+- **Prometheus** — scrapes Kubernetes component metrics and Union service health metrics (7-day retention)
+- **Grafana** — pre-configured with kube-prometheus-stack dashboards
+- **kube-state-metrics** — Kubernetes object state metrics
+- **node-exporter** — host-level metrics
+
+To access Grafana, port-forward to the service:
+
+```bash
+kubectl port-forward svc/union-monitoring-grafana -n <namespace> 3000:80
+```
+
+### Forwarding metrics to an external destination
+
+Configure the monitoring Prometheus to forward metrics using `remoteWrite`:
+
+```yaml
+monitoring:
+  prometheus:
+    prometheusSpec:
+      remoteWrite:
+        - url: "https://your-prometheus-endpoint/api/v1/write"
+```
+
+To run in agent mode (forward-only, no local TSDB):
+
+```yaml
+monitoring:
+  prometheus:
+    agentMode: true
+    prometheusSpec:
+      remoteWrite:
+        - url: "https://your-prometheus-endpoint/api/v1/write"
+```
+
+### Using your own Prometheus
+
+Disable the built-in monitoring stack and scrape Union services from your own Prometheus:
+
+```yaml
+monitoring:
+  enabled: false
+```
+
+Union services expose debug endpoints on port 10254 with the label `platform.union.ai/prometheus-group: "union-services"`. Create a ServiceMonitor in your own Prometheus targeting this label to scrape Union service metrics.
+
+### Alertmanager
+
+Alertmanager is disabled by default. Enable it with:
+
+```yaml
+monitoring:
+  alertmanager:
+    enabled: true
+    config:
+      route:
+        receiver: "default"
+      receivers:
+        - name: "default"
+          # Configure Slack, PagerDuty, email, webhook, etc.
+```
+
+For full monitoring documentation, see [Monitoring](https://docs.union.ai/deployment/configuration/monitoring/) in the Union documentation.
+
+---
+
 ## Alternative Deployment Models
 
 ### Self-Hosted Intra-Cluster Deployment (AWS)
@@ -184,14 +266,16 @@ This deployment model is ideal for:
 
 Kubernetes: `>= 1.28.0-0`
 
-| Repository                                         | Name                               | Version  |
-| -------------------------------------------------- | ---------------------------------- | -------- |
-| https://fluent.github.io/helm-charts               | fluentbit(fluent-bit)              | 0.48.9   |
-| https://kubernetes-sigs.github.io/metrics-server/  | metrics-server(metrics-server)     | 3.12.2   |
-| https://nvidia.github.io/dcgm-exporter/helm-charts | dcgm-exporter                      | 4.1.0    |
-| https://opencost.github.io/opencost-helm-chart     | opencost                           | 1.42.0   |
-| https://prometheus-community.github.io/helm-charts | prometheus(kube-prometheus-stack)  | 68.2.2   |
-| https://unionai.github.io/helm-charts              | knative-operator(knative-operator) | 2025.4.0 |
+| Repository                                          | Name                               | Version  |
+| --------------------------------------------------- | ---------------------------------- | -------- |
+| https://fluent.github.io/helm-charts                | fluentbit(fluent-bit)              | 0.48.9   |
+| https://kubernetes.github.io/ingress-nginx          | ingress-nginx                      | 4.12.3   |
+| https://kubernetes-sigs.github.io/metrics-server/   | metrics-server(metrics-server)     | 3.12.2   |
+| https://nvidia.github.io/dcgm-exporter/helm-charts  | dcgm-exporter                      | 4.7.1    |
+| https://opencost.github.io/opencost-helm-chart      | opencost                           | 1.42.0   |
+| https://prometheus-community.github.io/helm-charts  | prometheus(kube-prometheus-stack)  | 80.8.0   |
+| https://prometheus-community.github.io/helm-charts  | monitoring(kube-prometheus-stack)  | 80.8.0   |
+| https://unionai.github.io/helm-charts               | knative-operator(knative-operator) | 2025.5.0 |
 
 ## Values
 

@@ -4,6 +4,8 @@ kind: KnativeServing
 metadata:
   name: {{ include "serving.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "serving.labels" . | nindent 4 }}
 spec:
   config:
     deployment:
@@ -52,17 +54,16 @@ spec:
       net-kourier-controller/controller: ghcr.io/unionai/kourier@sha256:5804c348d15b3959604e3e3ceed216c3a1c7b32cbe254c7d3eb02a35e62ba9c4
   workloads:
   - name: 3scale-kourier-gateway
+    labels:
+      {{- include "3scale-kourier-gateway.labels" . | nindent 6 }}
     affinity:
       podAntiAffinity:
         preferredDuringSchedulingIgnoredDuringExecution:
         - weight: 100
           podAffinityTerm:
             labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - 3scale-kourier-gateway
+              matchLabels:
+                {{- include "3scale-kourier-gateway.selectorLabels" . | nindent 16 }}
             topologyKey: topology.kubernetes.io/zone
     annotations:
       checksum/bootstrap-config: {{ include (print $.Template.BasePath "/serving/bootstrap-configmap.yaml") . | sha256sum }}
