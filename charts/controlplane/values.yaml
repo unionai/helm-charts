@@ -1236,3 +1236,108 @@ scylla-operator:
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []
+
+# ----------------------------------------------------------------------------
+# Monitoring & Observability
+# ----------------------------------------------------------------------------
+# Optional kube-prometheus-stack instance for monitoring controlplane services.
+# This deploys Prometheus, Grafana, and supporting exporters for general
+# observability of the controlplane.
+#
+# CRDs are NOT installed by this chart. They must be installed separately,
+# either by the dataplane chart or manually:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install prometheus-crds prometheus-community/prometheus-operator-crds
+monitoring:
+  enabled: false
+
+  # Override the name to distinguish from dataplane prometheus instances.
+  nameOverride: "union-cp-monitoring"
+  fullnameOverride: "union-cp-monitoring"
+
+  prometheusOperator:
+    enabled: true
+
+  # CRDs should be installed by the dataplane chart or separately.
+  # Do NOT install CRDs from the controlplane to avoid conflicts.
+  crds:
+    enabled: false
+
+  # Alertmanager disabled by default.
+  alertmanager:
+    enabled: false
+
+  grafana:
+    enabled: true
+    fullNameOverride: "union-cp-monitoring-grafana"
+    adminPassword: admin
+
+  # Default monitoring for K8s components that impact controlplane performance.
+  coreDns:
+    enabled: true
+  defaultRules:
+    create: true
+  kubeApiServer:
+    enabled: true
+  kubeControllerManager:
+    enabled: true
+  kubeEtcd:
+    enabled: true
+  kubeProxy:
+    enabled: true
+  kubeScheduler:
+    enabled: true
+  nodeExporter:
+    enabled: true
+  kubelet:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+
+  kube-state-metrics:
+    nameOverride: "union-cp-monitoring-kube-state-metrics"
+    fullnameOverride: "union-cp-monitoring-kube-state-metrics"
+
+  prometheus:
+    enabled: true
+
+    # Ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/platform/prometheus-agent.md
+    agentMode: false
+
+    service:
+      port: 80
+    prometheusSpec:
+      maximumStartupDurationSeconds: 600
+      retention: 7d
+
+      # Use NotIn to pick up everything EXCEPT union-features CRDs.
+      # This matches CRDs with no label, with "union-services", or any other value,
+      # but excludes CRDs explicitly labeled "union-features" (from the dataplane).
+      ruleSelectorNilUsesHelmValues: false
+      ruleSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      serviceMonitorSelectorNilUsesHelmValues: false
+      serviceMonitorSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      podMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelector:
+        matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
