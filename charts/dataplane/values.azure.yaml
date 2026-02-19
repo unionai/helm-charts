@@ -160,6 +160,8 @@ secrets:
 # SECTION 6: Logging Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
 # FluentBit collects and forwards logs to Azure Blob Storage.
+# The azure_blob Fluent Bit plugin requires a storage account key for authentication.
+# Ensure storage.custom.stow.config.key is set when using ObjectStore persisted logs.
 
 fluentbit:
   serviceAccount:
@@ -211,12 +213,18 @@ config:
     org:
       namespaceTemplate: '{{`{{ domain }}`}}'
 
-  # Proxy configuration with Azure Log Analytics and secret manager
+  # Proxy configuration with Azure Blob Storage persisted logs and secret manager
   proxy:
     persistedLogs:
-      sourceType: AzureLogAnalytics
-      azureLogAnalytics:
-        logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
+      sourceType: ObjectStore
+      objectStore:
+        prefix: persisted-logs
+        pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
+    # To use Azure Log Analytics instead of blob storage, uncomment the following:
+    # persistedLogs:
+    #   sourceType: AzureLogAnalytics
+    #   azureLogAnalytics:
+    #     logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
     smConfig:
       enabled: true
       type: Azure

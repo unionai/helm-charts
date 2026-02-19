@@ -925,8 +925,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- with .Values.storage.custom.stow.config.account }}
     account_name {{ tpl . $ }}
 {{- end }}
-    auth_type             key
 {{- with .Values.storage.custom.stow.config.key }}
+    auth_type             key
     shared_key {{ tpl . $ }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
