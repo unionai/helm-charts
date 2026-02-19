@@ -159,19 +159,13 @@ secrets:
 # ----------------------------------------------------------------------------
 # SECTION 6: Logging Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
-# FluentBit collects and forwards logs to Azure Blob Storage.
-# The azure_blob Fluent Bit plugin requires a storage account key for authentication.
-# Ensure storage.custom.stow.config.key is set when using ObjectStore persisted logs.
+# Azure uses AKS Container Insights to collect container logs to Azure Log Analytics.
+# FluentBit is not needed — disable it to avoid running an unnecessary DaemonSet.
+# Ensure Container Insights is enabled on your AKS cluster:
+#   az aks enable-addons -a monitoring -n <CLUSTER> -g <RESOURCE_GROUP>
 
 fluentbit:
-  serviceAccount:
-    name: fluentbit-system
-    # Workload Identity annotation to grant FluentBit write access to Azure Blob Storage.
-    # The managed identity must have a federated credential for the fluentbit-system
-    # service account and the Storage Blob Data Contributor role on the storage account.
-    annotations: {}
-    # annotations:
-    #   azure.workload.identity/client-id: "<CLIENT_ID>"
+  enabled: false
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Workload Identity Pod Labels (REQUIRED)
@@ -213,18 +207,12 @@ config:
     org:
       namespaceTemplate: '{{`{{ domain }}`}}'
 
-  # Proxy configuration with Azure Blob Storage persisted logs and secret manager
+  # Proxy configuration with Azure Log Analytics and secret manager
   proxy:
     persistedLogs:
-      sourceType: ObjectStore
-      objectStore:
-        prefix: persisted-logs
-        pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
-    # To use Azure Log Analytics instead of blob storage, uncomment the following:
-    # persistedLogs:
-    #   sourceType: AzureLogAnalytics
-    #   azureLogAnalytics:
-    #     logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
+      sourceType: AzureLogAnalytics
+      azureLogAnalytics:
+        logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
     smConfig:
       enabled: true
       type: Azure
