@@ -103,6 +103,26 @@ global:
   # Example: "registry.unionai.cloud/controlplane"
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
+  # --- Authentication Configuration ---
+  # Set all values below to enable OIDC authentication.
+  # Supports any OAuth2/OIDC-compliant identity provider.
+  #
+  # OIDC issuer URL
+  # Example: "https://login.example.com/oauth2/default"
+  OIDC_BASE_URL: ""
+  # Flyteadmin OIDC client ID for browser login flow
+  # Example: "0oa1abc2def3ghi4j5k6"
+  OIDC_CLIENT_ID: ""
+  # CLI client ID for flytectl / uctl (public OAuth app, PKCE flow)
+  # Example: "0oa7mno8pqr9stu0v1w2"
+  CLI_CLIENT_ID: ""
+  # Service-to-service OAuth client ID (confidential app, client_credentials flow)
+  # Example: "0oa3xyz4abc5def6g7h8"
+  INTERNAL_CLIENT_ID: ""
+  # OAuth2 token endpoint
+  # Example: "https://login.example.com/oauth2/default/v1/token"
+  AUTH_TOKEN_URL: ""
+
 # ----------------------------------------------------------------------------
 # SECTION 2: Image Tag Overrides
 # ----------------------------------------------------------------------------
@@ -124,6 +144,8 @@ configMap:
   admin:
     endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
     insecure: true
+    clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+    clientSecretLocation: "/etc/secrets/union/client_secret"
 
   # Control plane connection configuration
   connection:
@@ -147,6 +169,18 @@ configMap:
 
       # Skip SSL verification if using self-signed certificates
       insecureSkipVerify: true
+
+    # --- Service-to-service OAuth2 ---
+    # Services acquire OAuth2 tokens via client_credentials flow
+    # and send them on outgoing calls through nginx, which validates via /me.
+    auth:
+      enable: true
+      type: "ClientSecret"
+      clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+      clientSecretLocation: "/etc/secrets/union/client_secret"
+      tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+      authorizationMetadataKey: "flyte-authorization"
+      scopes: ["all"]
 
 # ----------------------------------------------------------------------------
 # SECTION 3: Console Configuration
@@ -245,6 +279,8 @@ flyte:
         # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
         endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
         insecure: false  # Changed: using TLS with self-signed cert
+        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+        clientSecretLocation: "/etc/secrets/client_secret"
 
       connection:
         # Control plane connection pattern
@@ -256,6 +292,45 @@ flyte:
           # NOTE: Temporary configuration for single-tenant mode
           # Subject to removal in the future
           singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+
+      # --- OIDC Authentication ---
+      # To enable authentication, set server.security.useAuth: true
+      # and configure the auth globals in Section 1 above.
+      # server:
+      #   security:
+      #     useAuth: true
+      auth:
+        httpAuthorizationHeader: "flyte-authorization"
+        grpcAuthorizationHeader: "flyte-authorization"
+        authorizedUris:
+          - "http://flyteadmin:80"
+          - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
+        appAuth:
+          authServerType: "External"
+          externalAuthServer:
+            baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
+          thirdPartyConfig:
+            flyteClient:
+              clientId: '{{ .Values.global.CLI_CLIENT_ID }}'
+              redirectUri: "http://localhost:53593/callback"
+              scopes: ["all"]
+        userAuth:
+          openId:
+            baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
+            clientId: '{{ .Values.global.OIDC_CLIENT_ID }}'
+            scopes: ["profile", "openid", "offline_access"]
+          cookieSetting:
+            sameSitePolicy: "LaxMode"
+            domain: ""
+          idpQueryParameter: "idp"
+
+  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
+  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
+  # overwritten externally (e.g. via ExternalSecrets) with the real credential.
+  secrets:
+    adminOauthClientCredentials:
+      enabled: true
+      clientSecret: "placeholder"
 
   flyteadmin:
     image:
@@ -319,6 +394,35 @@ ingress:
         - localhost
         - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
       secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
+
+  # --- Protected Ingress Auth Annotations ---
+  # These configure nginx to validate requests via flyteadmin's /me endpoint
+  # and redirect unauthenticated users to /login for the OIDC flow.
+  # Active when OIDC authentication is enabled (server.security.useAuth: true).
+  protectedIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedConsoleIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedIngressAnnotationsGrpc:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
+
+  protectedIngressAnnotationsWithoutSignin:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
 
 # ----------------------------------------------------------------------------
 # SECTION 7: NGINX Ingress Controller
@@ -404,6 +508,12 @@ services:
               # Flyteadmin endpoint for executions service
               endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
               insecure: true
+              # --- Auth fields (active when OIDC is enabled) ---
+              authorizationHeader: "flyte-authorization"
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: "/etc/secrets/union/client_secret"
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+              scopes: ["all"]
 
 # ----------------------------------------------------------------------------
 # SECTION 9: ScyllaDB Configuration
