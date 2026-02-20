@@ -193,6 +193,16 @@ type: Opaque
 data:
   cluster_name: dW5pb24tb2Np
 ---
+# Source: dataplane/templates/propeller/deployment-webhook.yaml
+# Webhook deployment
+# Create an empty secret that the first propeller pod will populate
+apiVersion: v1
+kind: Secret
+metadata:
+  name: flyte-pod-webhook
+  namespace: union
+type: Opaque
+---
 # Source: dataplane/templates/propeller/mutatingwebhookconfiguration.yaml
 apiVersion: v1
 kind: Secret
@@ -447,11 +457,6 @@ data:
         cloudwatch-enabled: false
         kubernetes-enabled: false
   enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
     tasks:
       task-plugins:
         default-for-task-types:
@@ -463,9 +468,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   config.yaml: |
     executor:
       cluster: 'union-oci'
@@ -542,7 +547,10 @@ data:
         - FLYTE_AWS_ACCESS_KEY_ID: accessKey
         - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
         - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - CREATE_UPRIVER_DATA_SOURCE: "true"
+        - SOME_NUMERIC_VAR: "42"
         - MORE: foo
+        - SOME_CONFIG_BOOL: "true"
         default-memory: 100Mi
         default-pod-template-name: task-template
         co-pilot:
@@ -588,7 +596,10 @@ data:
         - FLYTE_AWS_ACCESS_KEY_ID: accessKey
         - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
         - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - CREATE_UPRIVER_DATA_SOURCE: "true"
+        - SOME_NUMERIC_VAR: "42"
         - MORE: foo
+        - SOME_CONFIG_BOOL: "true"
         default-memory: 100Mi
         default-pod-template-name: task-template
   config.yaml: |
@@ -801,9 +812,9 @@ data:
         - container
         - sidecar
         - k8s-array
-        - connector-service
         - echo
         - fast-task
+        - connector-service
   k8s.yaml: | 
     plugins:
       k8s:
@@ -813,7 +824,10 @@ data:
         - FLYTE_AWS_ACCESS_KEY_ID: accessKey
         - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
         - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - CREATE_UPRIVER_DATA_SOURCE: "true"
+        - SOME_NUMERIC_VAR: "42"
         - MORE: foo
+        - SOME_CONFIG_BOOL: "true"
         default-memory: 100Mi
         default-pod-template-name: task-template
   logger.yaml: |
@@ -2672,8 +2686,12 @@ spec:
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+            value: "when_required"
+          - name: CREATE_UPRIVER_DATA_SOURCE
+            value: "true"
+          - name: SOME_NUMERIC_VAR
+            value: "42"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -2732,13 +2750,15 @@ spec:
       app.kubernetes.io/instance: release-name
   template:
     metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
       labels:
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
       containers:
         - name: "buildkit"
-          image: "moby/buildkit:latest"
+          image: "moby/buildkit:buildx-stable-1-rootless"
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAME
@@ -2773,17 +2793,24 @@ spec:
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
             - name: AWS_REQUEST_CHECKSUM_CALCULATION
-              value: when_required
+              value: "when_required"
+            - name: CREATE_UPRIVER_DATA_SOURCE
+              value: "true"
+            - name: SOME_NUMERIC_VAR
+              value: "42"
           volumeMounts:
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
             - mountPath: /etc/buildkit
               name: buildkit-config
           args:
             - --config
             - /etc/buildkit/buildkitd.toml
             - --addr
-            - unix:///run//buildkit/buildkitd.sock
+            - unix:///run/user/1000/buildkit/buildkitd.sock
             - --addr
             - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
           ports:
             - name: tcp
               containerPort: 1234
@@ -2805,13 +2832,18 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 30
           securityContext:
-            privileged: true
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
           resources:
             requests:
               cpu: 1
               ephemeral-storage: 20Gi
               memory: 1Gi
       volumes:
+      - name: buildkitd
+        emptyDir: {}
       - configMap:
           name: union-operator-buildkit
         name: buildkit-config
@@ -2840,7 +2872,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "77a0401d32ef36195c42aaee9c09d023b6193657e29e39ea64c5e4ca3dcdb76"
+        configChecksum: "5e3f36dd76044a73030dabeeab4f5110d1d7b2ec5db9fe426b7e153323b9611"
       labels:
         
         app: executor
@@ -2860,7 +2892,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -2907,7 +2939,11 @@ spec:
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
             - name: AWS_REQUEST_CHECKSUM_CALCULATION
-              value: when_required
+              value: "when_required"
+            - name: CREATE_UPRIVER_DATA_SOURCE
+              value: "true"
+            - name: SOME_NUMERIC_VAR
+              value: "42"
           resources:
             limits:
               cpu:    "4"
@@ -2943,7 +2979,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ad0f6411a442a4e34d53a60e37f3867d1988d2236315917eba978a5d444903a"
+        configChecksum: "90c849c5c7b500ae0cd570822b762332f1c0207990755b6eebe2b947cb9b896"
         
       labels:
         
@@ -2970,7 +3006,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3036,11 +3072,15 @@ spec:
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: when_required
+            value: "when_required"
+          - name: CREATE_UPRIVER_DATA_SOURCE
+            value: "true"
+          - name: SOME_NUMERIC_VAR
+            value: "42"
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -3090,7 +3130,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ad0f6411a442a4e34d53a60e37f3867d1988d2236315917eba978a5d444903a"
+        configChecksum: "90c849c5c7b500ae0cd570822b762332f1c0207990755b6eebe2b947cb9b896"
         
       labels:
         
@@ -3113,7 +3153,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3161,7 +3201,11 @@ spec:
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: when_required
+            value: "when_required"
+          - name: CREATE_UPRIVER_DATA_SOURCE
+            value: "true"
+          - name: SOME_NUMERIC_VAR
+            value: "42"
           args:
             - operator
             - serve
@@ -3191,7 +3235,7 @@ spec:
           value: worker
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
-# Webhook deployment
+# Create the actual deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -3217,7 +3261,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "991cda19906b5b3d7a9e3f5f70a760095f919bc01b4c39630b850c686091442"
+        configChecksum: "71d6146000b4370ea81f2fb3a57e5f946ee975c2078fd4ca5c4095c1e1ea2b0"
         
     spec:
       securityContext:
@@ -3230,7 +3274,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3271,7 +3315,11 @@ spec:
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: when_required
+            value: "when_required"
+          - name: CREATE_UPRIVER_DATA_SOURCE
+            value: "true"
+          - name: SOME_NUMERIC_VAR
+            value: "42"
           ports:
             - containerPort: 9443
             - containerPort: 10254
@@ -3327,7 +3375,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "991cda19906b5b3d7a9e3f5f70a760095f919bc01b4c39630b850c686091442"
+        configChecksum: "71d6146000b4370ea81f2fb3a57e5f946ee975c2078fd4ca5c4095c1e1ea2b0"
         
       labels:
         
@@ -3378,8 +3426,12 @@ spec:
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
           - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: when_required
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.3"
+            value: "when_required"
+          - name: CREATE_UPRIVER_DATA_SOURCE
+            value: "true"
+          - name: SOME_NUMERIC_VAR
+            value: "42"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:

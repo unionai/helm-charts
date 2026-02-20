@@ -650,12 +650,12 @@ plugins:
       {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
       {{- end }}
       {{- range $k, $v := .Values.additionalPodEnvVars }}
-      - {{ $k }}: {{ $v }}
+      - {{ $k }}: {{ $v | quote }}
       {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
-      - {{ $k }}: {{ $v }}
+      - {{ $k }}: {{ $v | quote }}
       {{- end }}
       {{- end }}
 {{- end -}}
@@ -784,7 +784,7 @@ Additional pod environment variables
 {{- define "global.podEnvVars.additionalPodEnvVars" -}}
 {{- range $k, $v := .Values.additionalPodEnvVars }}
 - name: {{ $k }}
-  value: {{ $v }}
+  value: {{ $v | quote }}
 {{- end }}
 {{- end -}}
 
@@ -1013,6 +1013,21 @@ tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.
 {{- end -}}
 {{- end -}}
 
+{{/*
+Generate the buildkit image name with smart rootless suffixing.
+Appends "-rootless" to the tag when rootless mode is enabled, unless the tag already contains "rootless".
+*/}}
+{{- define "imagebuilder.buildkit.image" -}}
+{{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
+{{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
+{{- $suffix := "" -}}
+{{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
+  {{- $suffix = "-rootless" -}}
+{{- end -}}
+{{- printf "%s:%s%s" $repo $tag $suffix -}}
+{{- end -}}
+
 {{- define "ingress.serving.host" -}}
 {{- if .Values.ingress.serving.hostOverride }}
 {{- tpl .Values.ingress.serving.hostOverride . | quote }}
@@ -1182,4 +1197,21 @@ namespace_mapping) so users only need to set namespaces.enabled: false.
 {{- end }}
 {{- end }}
 {{- tpl (toYaml $heartbeat) $ | nindent 8 }}
+{{- end -}}
+
+{{- define "flyte-pod-webhook.name" -}}
+union-pod-webhook
+{{- end -}}
+
+{{/*
+  Webhook-only minimal config: core.webhook with serviceName/secretName set to the chart webhook name and localCert true.
+  Used when flytepropeller is disabled but flytepropellerwebhook is enabled.
+*/}}
+{{- define "propeller.webhookConfigMinimal" -}}
+{{- $webhook := deepCopy .Values.config.core.webhook }}
+{{- $_ := set $webhook "serviceName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "secretName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "localCert" true }}
+webhook:
+{{- tpl (toYaml $webhook) . | nindent 2 }}
 {{- end -}}

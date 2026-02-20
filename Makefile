@@ -60,6 +60,10 @@ gen_dataplane_crds_release: requirements
 gen_sandbox_release: requirements
 	invoke builder.release --chart sandbox
 
+.PHONY: release-notes-dry-run
+release-notes-dry-run:
+	./scripts/generate-release-notes.sh
+
 .PHONY: lint
 lint: lint-dataplane lint-dataplane-crds lint-sandbox
 

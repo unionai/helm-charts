@@ -413,10 +413,10 @@ config:
         enabled-plugins:
           - container
           - sidecar
-          - k8s-array
-          - connector-service
+          - k8s-array 
           - echo
           - fast-task
+          - connector-service 
         default-for-task-types:
           actor: fast-task
           container: container
@@ -762,6 +762,22 @@ opencost:
           memory: 4Gi
 
 # -- Configuration for fluentbit used for the persistent logging feature.
+# FluentBit runs as a DaemonSet and ships container logs to the persisted-logs/
+# path in the configured object store. The fluentbit-system service account must
+# have write access to the storage bucket.
+#
+# Grant access using cloud-native identity federation:
+#   AWS (IRSA):
+#     annotations:
+#       eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"
+#   Azure (Workload Identity):
+#     annotations:
+#       azure.workload.identity/client-id: "<CLIENT_ID>"
+#   GCP (Workload Identity):
+#     annotations:
+#       iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com"
+#
+# See https://www.union.ai/docs/v1/selfmanaged/deployment/configuration/persistent-logs/
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
@@ -770,10 +786,11 @@ fluentbit:
     - operator: Exists
   serviceAccount:
     name: fluentbit-system
-  # If you are using EKS and would like to use the IAM role for service account (IRSA) feature,
-  # uncomment the following line and set the role ARN
-    annotations: {}  # eks.amazonaws.com/role-arn: <role>
-  # If you would like to use access keys, uncomment the following lines and set the access key and secret key
+    # Set cloud-provider-specific annotations to grant bucket write access.
+    # See examples above.
+    annotations: {}
+  # If you would like to use static access keys instead of identity federation
+  # (not recommended), uncomment the following lines:
   env: [ ]
   #  - name: AWS_ACCESS_KEY_ID
   #    value:
@@ -1722,6 +1739,11 @@ storage:
   cache:
     maxSizeMBs: 0
     targetGCPercent: 70
+  # -- Override the metadata prefix URL used for constructing object storage paths (e.g. rawoutput-prefix,
+  # -- metadataBucketPrefix). When set, this takes precedence over the auto-generated prefix based on the
+  # -- storage provider. Useful for custom providers where the default s3:// scheme is incorrect.
+  # -- Example for Azure: "abfs://my-container@mystorageaccount.dfs.core.windows.net"
+  metadataPrefix: ""
   # -- Define custom configurations for the object storage.  Only used if the provider is set to "custom".
   custom: { }
   # -- Injects the object storage access information into the pod environment variables.  Needed for providers that only support access and secret key based authentication.
@@ -1829,11 +1851,14 @@ imageBuilder:
       repository: moby/buildkit
       # -- Pull policy
       pullPolicy: IfNotPresent
-      # -- Image tag
-      tag: "latest"
+      # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
+      # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
+      tag: "buildx-stable-1"
 
-    # -- Default to non-rootless to support a wider range of linux kernels.
-    rootless: false
+    # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
+    # -- image variant which bundles RootlessKit to set up user namespaces. Requires
+    # -- kernel >= 5.11 with unprivileged user namespace support.
+    rootless: true
 
     # -- Enable debug logging
     log:
