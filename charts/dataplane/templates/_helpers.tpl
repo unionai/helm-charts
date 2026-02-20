@@ -650,12 +650,12 @@ plugins:
       {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
       {{- end }}
       {{- range $k, $v := .Values.additionalPodEnvVars }}
-      - {{ $k }}: {{ $v }}
+      - {{ $k }}: {{ $v | quote }}
       {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
-      - {{ $k }}: {{ $v }}
+      - {{ $k }}: {{ $v | quote }}
       {{- end }}
       {{- end }}
 {{- end -}}
@@ -784,7 +784,7 @@ Additional pod environment variables
 {{- define "global.podEnvVars.additionalPodEnvVars" -}}
 {{- range $k, $v := .Values.additionalPodEnvVars }}
 - name: {{ $k }}
-  value: {{ $v }}
+  value: {{ $v | quote }}
 {{- end }}
 {{- end -}}
 
