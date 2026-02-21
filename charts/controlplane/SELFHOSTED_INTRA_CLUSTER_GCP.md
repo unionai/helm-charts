@@ -223,6 +223,12 @@ global:
   FLYTEADMIN_IAM_ROLE_ARN: "flyteadmin@my-project.iam.gserviceaccount.com"
   UNION_ORG: "my-company"
   GOOGLE_PROJECT_ID: "my-gcp-project"
+  # Authentication (see Authentication section below)
+  OIDC_BASE_URL: "https://your-idp.example.com/oauth2/default"
+  OIDC_CLIENT_ID: "<browser-login-client-id>"
+  CLI_CLIENT_ID: "<cli-client-id>"
+  INTERNAL_CLIENT_ID: "<service-to-service-client-id>"
+  AUTH_TOKEN_URL: "https://your-idp.example.com/oauth2/default/v1/token"
 ```
 
 **Important notes:**
@@ -295,6 +301,128 @@ Control plane services discover each other via Kubernetes DNS:
 - **Flyteadmin**: `flyteadmin.union-cp.svc.cluster.local:81`
 - **NGINX Ingress**: `controlplane-nginx-controller.union-cp.svc.cluster.local`
 - **Dataplane** (for dataproxy): `dataplane-nginx-controller.union.svc.cluster.local`
+
+## Authentication (OIDC/OAuth2)
+
+Union supports OIDC-based authentication for self-hosted deployments. When enabled, all API calls (browser, CLI, and service-to-service) are authenticated via an external OAuth2/OIDC provider.
+
+### Overview
+
+Authentication uses an external OAuth2/OIDC-compliant identity provider. You will need to create **three OAuth2 client applications** in your identity provider:
+
+| Client | Flow | Type | Purpose |
+|--------|------|------|---------|
+| Browser login | Authorization Code | Confidential | Console/web UI authentication |
+| CLI | Authorization Code + PKCE | Public | `flytectl` / `uctl` CLI authentication |
+| Service-to-service | Client Credentials | Confidential | Internal service authentication |
+
+### OIDC Provider Requirements
+
+Your OIDC provider must support:
+
+1. **OpenID Connect Discovery** — `/.well-known/openid-configuration` endpoint
+2. **Authorization Code flow** — for browser and CLI login
+3. **Client Credentials flow** — for service-to-service tokens
+4. **PKCE** (Proof Key for Code Exchange) — for the CLI public client
+5. **Custom scopes** — ability to create an `all` scope (or equivalent)
+
+### Step-by-Step Configuration
+
+#### 1. Create OAuth2 Applications
+
+Create three applications in your identity provider:
+
+**Browser Login App (Confidential):**
+- Grant type: Authorization Code
+- Redirect URI: `https://<your-domain>/callback` (or the control plane ingress host)
+- Scopes: `openid`, `profile`, `offline_access`
+- Note the **Client ID** → used as `OIDC_CLIENT_ID`
+
+**CLI App (Public):**
+- Grant type: Authorization Code + PKCE
+- Redirect URI: `http://localhost:53593/callback`
+- Scopes: `all`
+- Note the **Client ID** → used as `CLI_CLIENT_ID`
+
+**Service-to-Service App (Confidential):**
+- Grant type: Client Credentials
+- Scopes: `all`
+- Note the **Client ID** → used as `INTERNAL_CLIENT_ID`
+- Note the **Client Secret** → stored in Kubernetes secrets
+
+#### 2. Set Authentication Globals
+
+Add the following to your customer overrides file:
+
+```yaml
+global:
+  # ... existing globals ...
+  OIDC_BASE_URL: "https://your-idp.example.com/oauth2/default"
+  OIDC_CLIENT_ID: "<browser-login-client-id>"
+  CLI_CLIENT_ID: "<cli-client-id>"
+  INTERNAL_CLIENT_ID: "<service-to-service-client-id>"
+  AUTH_TOKEN_URL: "https://your-idp.example.com/oauth2/default/v1/token"
+```
+
+#### 3. Create Kubernetes Secrets
+
+The control plane needs the service-to-service client secret in two Kubernetes secrets:
+
+```bash
+# Secret for flyteadmin (mounted at /etc/secrets/)
+kubectl create secret generic flyte-admin-secrets \
+  --from-literal=client_secret='<SERVICE_CLIENT_SECRET>' \
+  -n union-cp
+
+# Secret for flyte-scheduler (mounted at /etc/secrets/)
+kubectl create secret generic flyte-secret-auth \
+  --from-literal=client_secret='<SERVICE_CLIENT_SECRET>' \
+  -n union-cp
+```
+
+Union control plane services (executions, cluster, usage, etc.) mount secrets at `/etc/secrets/union/`. Create or update the main service secret:
+
+```bash
+# If using the union-controlplane-secrets secret, add client_secret key:
+kubectl create secret generic union-controlplane-secrets \
+  --from-literal=pass.txt='<DB_PASSWORD>' \
+  --from-literal=client_secret='<SERVICE_CLIENT_SECRET>' \
+  -n union-cp --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Tip:** For production, use External Secrets Operator or a similar tool to sync secrets from your cloud provider's secret manager (AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+
+#### 4. Enable Authentication in FlyteAdmin
+
+To activate the OIDC login endpoints (`/login`, `/callback`, `/me`), add the following to your customer overrides:
+
+```yaml
+flyte:
+  configmap:
+    adminServer:
+      server:
+        security:
+          useAuth: true
+```
+
+This enables nginx auth-subrequest validation on protected ingress routes.
+
+### Verifying Authentication
+
+After deploying with auth enabled:
+
+```bash
+# Check flyteadmin logs for auth initialization
+kubectl logs -n union-cp deploy/flyteadmin | grep -i auth
+
+# Test the /me endpoint (should return 401 without a token)
+kubectl exec -n union-cp deploy/flyteadmin -- \
+  curl -s -o /dev/null -w "%{http_code}" https://controlplane-nginx-controller.union-cp.svc.cluster.local/me -k
+
+# Test CLI login
+uctl config init --host https://<your-domain>
+uctl get project
+```
 
 ## Architecture Diagram
 
@@ -452,7 +580,7 @@ kubectl logs -n union-cp deploy/controlplane-nginx-controller
 ## Next Steps
 
 1. **Deploy Dataplane**: Follow the [Dataplane Intra-Cluster Guide](../dataplane/SELFHOST_INTRA_CLUSTER_GCP.md)
-2. **Configure Users**: Set up user authentication and RBAC
+2. **Enable Authentication**: Follow the [Authentication (OIDC/OAuth2)](#authentication-oidcoauth2) section above
 3. **Test Workflows**: Run a test workflow to verify the complete stack
 4. **Set Up Monitoring**: Configure Prometheus and Grafana for observability
 
