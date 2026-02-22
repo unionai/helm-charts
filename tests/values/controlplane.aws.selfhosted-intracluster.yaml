@@ -1,0 +1,60 @@
+# helm-values: values.aws.selfhosted-intracluster.yaml
+#
+# Test values for selfhosted intra-cluster deployment with identity injection enabled.
+# This test verifies that identity injection config propagates to both
+# the executions configmap and the flyteadmin configmap.
+
+# Required globals for selfhosted-intracluster overlay
+global:
+  AWS_REGION: "us-east-2"
+  DB_HOST: "test-db.rds.amazonaws.com"
+  DB_NAME: "unionai"
+  DB_USER: "unionai"
+  BUCKET_NAME: "test-metadata-bucket"
+  ARTIFACTS_BUCKET_NAME: "test-artifacts-bucket"
+  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
+  ARTIFACT_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/test-artifacts-role"
+  FLYTEADMIN_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/test-flyteadmin-role"
+  UNION_ORG: "test-org"
+  FLYTEADMIN_ENDPOINT: "flyteadmin.union-cp.svc.cluster.local:81"
+  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+  TLS_SECRET_NAMESPACE: "union-cp"
+  TLS_SECRET_NAME: "controlplane-tls-cert"
+  DATAPLANE_ENDPOINT: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
+  OIDC_BASE_URL: "https://dev-123456.okta.com/oauth2/default"
+  OIDC_CLIENT_ID: "test-oidc-client-id"
+  CLI_CLIENT_ID: "test-cli-client-id"
+  INTERNAL_CLIENT_ID: "test-internal-client-id"
+  AUTH_TOKEN_URL: "https://dev-123456.okta.com/oauth2/default/v1/token"
+
+controlplane:
+  enabled: true
+
+# Identity injection: define once, reference twice via YAML anchor
+_identityInjection: &identityInjection
+  enabled: true
+  annotations:
+    - claimName: "sub"
+      targetKey: "union.ai/created-by"
+      required: true
+    - claimName: "preferred_username"
+      targetKey: "union.ai/user-email"
+  environmentVariables:
+    - claimName: "sub"
+      targetKey: "UNION_USER_SUBJECT"
+      required: true
+
+# Apply identity injection to executions service (V2)
+services:
+  executions:
+    configMap:
+      executions:
+        task:
+          identityInjection: *identityInjection
+
+# Apply identity injection to flyteadmin (V1)
+flyte:
+  configmap:
+    adminServer:
+      server:
+        identityInjection: *identityInjection
