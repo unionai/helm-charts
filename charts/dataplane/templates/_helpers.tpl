@@ -1209,9 +1209,12 @@ union-pod-webhook
 */}}
 {{- define "propeller.webhookConfigMinimal" -}}
 {{- $webhook := deepCopy .Values.config.core.webhook }}
-{{- $_ := set $webhook "serviceName" (include "flyte-pod-webhook.name" .) }}
-{{- $_ := set $webhook "secretName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
+{{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
+{{- if .Values.low_privilege }}
+{{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
+{{- end }}
 webhook:
 {{- tpl (toYaml $webhook) . | nindent 2 }}
 {{- end -}}

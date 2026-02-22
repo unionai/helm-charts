@@ -225,20 +225,20 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
-# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flytepropeller-webhook-system
-  namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: flytepropeller-system
+  namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flytepropeller-webhook-system
   namespace: union
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
@@ -282,17 +282,7 @@ type: Opaque
 data:
   cluster_name: dGVzdC1jbHVzdGVyLW5hbWU=
 ---
-# Source: dataplane/templates/propeller/deployment-webhook.yaml
-# Webhook deployment
-# Create an empty secret that the first propeller pod will populate
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-pod-webhook
-  namespace: union
-type: Opaque
----
-# Source: dataplane/templates/propeller/mutatingwebhookconfiguration.yaml
+# Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -1484,7 +1474,7 @@ data:
       cache-endpoint: dns:///test-controlplane-host
       endpoint: dns:///test-controlplane-host
       insecure: false
-      type: fallback
+      type: cacheservicev2
       use-admin-auth: true
     logger:
       level: 4
@@ -1677,7 +1667,7 @@ data:
       cache-endpoint: dns:///test-controlplane-host
       endpoint: dns:///test-controlplane-host
       insecure: false
-      type: fallback
+      type: cacheservicev2
       use-admin-auth: true
   copilot.yaml: | 
     plugins:
@@ -2324,26 +2314,6 @@ rules:
     verbs:
       - get
 ---
-# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: flytepropeller-webhook-role
-  namespace: union
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - mutatingwebhookconfigurations
-      - secrets
-      - pods
-      - replicasets/finalizers
-    verbs:
-      - get
-      - create
-      - update
-      - patch
----
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -2410,6 +2380,26 @@ rules:
       - patch
       - post
       - deletecollection
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: flytepropeller-webhook-role
+  namespace: union
+rules:
+  - apiGroups:
+      - "*"
+    resources:
+      - mutatingwebhookconfigurations
+      - secrets
+      - pods
+      - replicasets/finalizers
+    verbs:
+      - get
+      - create
+      - update
+      - patch
 ---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -2610,7 +2600,21 @@ subjects:
     name: operator-system
     namespace: union
 ---
-# Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flytepropeller-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flytepropeller-role
+subjects:
+  - kind: ServiceAccount
+    name: flytepropeller-system
+    namespace: union
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
 # Create a binding from Role -> ServiceAccount
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -2624,20 +2628,6 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: flytepropeller-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/propeller/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: flytepropeller-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: flytepropeller-role
-subjects:
-  - kind: ServiceAccount
-    name: flytepropeller-system
     namespace: union
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
@@ -3317,7 +3307,32 @@ spec:
     app.kubernetes.io/name: union-operator
     app.kubernetes.io/instance: release-name
 ---
-# Source: dataplane/templates/propeller/service-webhook.yaml
+# Source: dataplane/templates/propeller/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: debug
+      protocol: TCP
+      port: 10254
+    - name: fasttask
+      port: 15605
+      protocol: TCP
+      targetPort: 15605
+  selector:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/webhook/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -3343,31 +3358,6 @@ spec:
       protocol: TCP
       port: 10254
       targetPort: 10254
----
-# Source: dataplane/templates/propeller/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  namespace: union
-  name: flytepropeller
-  labels:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: debug
-      protocol: TCP
-      port: 10254
-    - name: fasttask
-      port: 15605
-      protocol: TCP
-      targetPort: 15605
-  selector:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/daemonset.yaml
 # Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
@@ -4599,7 +4589,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fc4ddbe8823978c1767ddf938a4fc0c559b953164f7158ed5c91c7330d5025b"
+        configChecksum: "5df0cd4e64dc6d2f39d94603e1c115386e0eb357354d60b2d299c850230ab2b"
       labels:
         
         app: executor
@@ -4927,7 +4917,104 @@ spec:
               containerPort: 10254
               protocol: TCP
 ---
-# Source: dataplane/templates/propeller/deployment-webhook.yaml
+# Source: dataplane/templates/propeller/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flytepropeller
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "bf3436d366e011bcf0b34585892ddec54efd1c27027dfa8570b5601ac55c82e"
+        
+      labels:
+        
+        
+        app.kubernetes.io/name: flytepropeller
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: system-cluster-critical
+      containers:
+        - command:
+            - flytepropeller
+            - --config
+            - /etc/flyte/config/*.yaml
+            - --propeller.cluster-id
+            - 'test-cluster-name'
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
+          imagePullPolicy: "IfNotPresent"
+          name: flytepropeller
+          ports:
+            - containerPort: 10254
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+            - name: auth
+              mountPath: /etc/union/secret
+      serviceAccountName: flytepropeller-system
+      volumes:
+        - configMap:
+            name: flyte-propeller-config
+          name: config-volume
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+---
+# Source: dataplane/templates/webhook/deployment.yaml
+# Webhook deployment
 # Create the actual deployment
 apiVersion: apps/v1
 kind: Deployment
@@ -4954,7 +5041,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "c5a43cf2676a65d503e9286b116aefc8ea231c9d1d2df21afe42fe6e3efe923"
+        configChecksum: "bf3436d366e011bcf0b34585892ddec54efd1c27027dfa8570b5601ac55c82e"
         
     spec:
       securityContext:
@@ -5034,102 +5121,6 @@ spec:
           secret:
             secretName: flyte-pod-webhook
 ---
-# Source: dataplane/templates/propeller/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  namespace: union
-  name: flytepropeller
-  labels:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: flytepropeller
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "c5a43cf2676a65d503e9286b116aefc8ea231c9d1d2df21afe42fe6e3efe923"
-        
-      labels:
-        
-        
-        app.kubernetes.io/name: flytepropeller
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      priorityClassName: system-cluster-critical
-      containers:
-        - command:
-            - flytepropeller
-            - --config
-            - /etc/flyte/config/*.yaml
-            - --propeller.cluster-id
-            - 'test-cluster-name'
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.8"
-          imagePullPolicy: "IfNotPresent"
-          name: flytepropeller
-          ports:
-            - containerPort: 10254
-          resources:
-            limits:
-              cpu: "3"
-              memory: 3Gi
-            requests:
-              cpu: "1"
-              memory: 1Gi
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/flyte/config
-            - name: auth
-              mountPath: /etc/union/secret
-      serviceAccountName: flytepropeller-system
-      volumes:
-        - configMap:
-            name: flyte-propeller-config
-          name: config-volume
-        - name: auth
-          secret:
-            secretName: union-secret-auth
----
 # Source: dataplane/charts/prometheus/templates/prometheus-operator/admission-webhooks/mutatingWebhookConfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
@@ -5171,7 +5162,7 @@ webhooks:
     admissionReviewVersions: ["v1", "v1beta1"]
     sideEffects: None
 ---
-# Source: dataplane/templates/propeller/mutatingwebhookconfiguration.yaml
+# Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
