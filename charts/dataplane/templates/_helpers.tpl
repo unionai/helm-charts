@@ -686,6 +686,10 @@ http://{{ include "union-operator.fullname" . }}-prometheus:80
 http://flytepropeller:10254
 {{- end -}}
 
+{{- define "executor.health.url" -}}
+http://union-operator-executor:10254
+{{- end -}}
+
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
 {{- end -}}
@@ -1191,6 +1195,7 @@ namespace_mapping) so users only need to set namespaces.enabled: false.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "executor") (not $.Values.executor.enabled) }}
 {{- else if and (eq $key "prometheus") $.Values.low_privilege }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
