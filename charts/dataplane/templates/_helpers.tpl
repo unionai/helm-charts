@@ -147,7 +147,7 @@ tolerations:
 {{- end -}}
 
 {{- define "flytepropellerwebhook.selectorLabels" -}}
-app.kubernetes.io/name: flyte-pod-webhook
+app.kubernetes.io/name: union-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -1082,14 +1082,14 @@ Webhook certificate helpers
 Get the webhook service name
 */}}
 {{- define "flytepropellerwebhook.serviceName" -}}
-flyte-pod-webhook
+union-pod-webhook
 {{- end -}}
 
 {{/*
 Get the webhook secret name
 */}}
 {{- define "flytepropellerwebhook.secretName" -}}
-flyte-pod-webhook
+union-pod-webhook
 {{- end -}}
 
 {{/*
