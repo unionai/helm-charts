@@ -1060,7 +1060,7 @@ TODO: Make these consistent with label sets in other components.
 Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
 */}}
 {{- define "executor.selectorLabels" -}}
-{{- .Values.executor.selector.matchLabels | default (dict "app" "executor") | toYaml }}
+{{- tpl (.Values.executor.selector.matchLabels | default (dict "app.kubernetes.io/name" "executor") | toYaml) . }}
 {{- end -}}
 
 {{- define "executor.labels" -}}
@@ -1071,7 +1071,7 @@ Added complexity here is necessary to support extra pod labels while maintaining
 {{ include "global.podLabels" . }}
 {{ $labels := include "executor.labels" . | fromYaml -}}
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
-{{- mustMergeOverwrite $podLabels $labels | toYaml }}
+{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
 {{- end -}}
 
 {{/*
