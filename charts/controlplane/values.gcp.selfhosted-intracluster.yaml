@@ -320,6 +320,35 @@ ingress:
         - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
       secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
 
+  # --- Protected Ingress Auth Annotations ---
+  # These configure nginx to validate requests via flyteadmin's /me endpoint
+  # and redirect unauthenticated users to /login for the OIDC flow.
+  # Active when OIDC authentication is enabled (server.security.useAuth: true).
+  protectedIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedConsoleIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedIngressAnnotationsGrpc:
+    nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
+
+  protectedIngressAnnotationsWithoutSignin:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
 # ----------------------------------------------------------------------------
 # SECTION 7: NGINX Ingress Controller
 # ----------------------------------------------------------------------------
