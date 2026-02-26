@@ -1,5 +1,7 @@
-# Test: custom storage.metadataPrefix overrides the auto-generated s3:// prefix
-# for Azure custom storage providers using ABFS protocol.
+# Test: Azure sovereign cloud deployment.
+# Only AZURE_STORAGE_DNS_SUFFIX differs from the standard Azure test.
+# Validates that the DNS suffix flows through to metadataPrefix,
+# configDomainSuffix, and metadataBucketPrefix.
 
 global:
   UNION_CONTROL_PLANE_HOST: "test.dataplane.union.ai"
@@ -14,6 +16,8 @@ global:
   AZURE_BACKEND_CLIENT_ID: "test-backend-client-id"
   AZURE_WORKER_CLIENT_ID: "test-worker-client-id"
   AZURE_KEY_VAULT_URI: "test-azure-key-vault-uri"
+  # Custom DNS suffix for sovereign cloud (e.g., Azure Government, Azure China)
+  AZURE_STORAGE_DNS_SUFFIX: "dfs.core.chinacloudapi.cn"
 
 provider: azure
 
@@ -23,11 +27,11 @@ secrets:
     clientSecret: "test-client-secret-value"
     create: true
 
-# Custom Azure storage with explicit metadataPrefix
+# Azure storage with custom DNS suffix - only AZURE_STORAGE_DNS_SUFFIX changes
 storage:
   provider: custom
   bucketName: test-metadata-container
-  metadataPrefix: "abfs://test-metadata-container@teststorageaccount.dfs.core.windows.net"
+  metadataPrefix: "abfs://{{ .Values.global.METADATA_CONTAINER }}@{{ .Values.global.AZURE_STORAGE_ACCOUNT }}.{{ .Values.global.AZURE_STORAGE_DNS_SUFFIX }}"
   enableMultiContainer: true
   custom:
     container: '{{ .Values.global.METADATA_CONTAINER }}'
@@ -36,6 +40,7 @@ storage:
       kind: azure
       config:
         account: '{{ .Values.global.AZURE_STORAGE_ACCOUNT }}'
+        configDomainSuffix: '{{ .Values.global.AZURE_STORAGE_DNS_SUFFIX }}'
 
 additionalServiceAccountAnnotations:
   azure.workload.identity/client-id: "{{ .Values.global.AZURE_BACKEND_CLIENT_ID }}"
@@ -64,7 +69,7 @@ config:
 
   operator:
     clusterData:
-      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
+      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.{{.Values.global.AZURE_STORAGE_DNS_SUFFIX}}"
     org:
       namespaceTemplate: '{{`{{ domain }}`}}'
 

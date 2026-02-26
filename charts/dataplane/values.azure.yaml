@@ -91,6 +91,13 @@ global:
   #     Note: Key Vault must exist with appropriate access policies
   AZURE_KEY_VAULT_URI: ""
 
+  # 13. AZURE_STORAGE_DNS_SUFFIX - Azure Storage DNS suffix
+  #     Default: "dfs.core.windows.net" (Azure Public Cloud, Data Lake Storage Gen2)
+  #     Override for sovereign clouds:
+  #       Azure China:      "dfs.core.chinacloudapi.cn"
+  #       Azure Government: "dfs.core.usgovcloudapi.net"
+  AZURE_STORAGE_DNS_SUFFIX: "dfs.core.windows.net"
+
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
@@ -110,6 +117,7 @@ storage:
   provider: custom
   bucketName: '{{ .Values.global.METADATA_CONTAINER }}'
   enableMultiContainer: true
+  metadataPrefix: "abfs://{{ .Values.global.METADATA_CONTAINER }}@{{ .Values.global.AZURE_STORAGE_ACCOUNT }}.{{ .Values.global.AZURE_STORAGE_DNS_SUFFIX }}"
 
   # Custom storage configuration using stow with Azure backend
   custom:
@@ -123,6 +131,7 @@ storage:
         # Leave key empty to use Workload Identity / Managed Identity authentication
         # For key-based auth, provide the storage account access key
         # key: ""
+        configDomainSuffix: '{{ .Values.global.AZURE_STORAGE_DNS_SUFFIX }}'
 
 # ----------------------------------------------------------------------------
 # SECTION 4: Workload Identity (REQUIRED for Azure)
@@ -207,7 +216,7 @@ config:
   operator:
     clusterData:
       # Azure Blob Storage path format (ABFS protocol for Data Lake Storage Gen2)
-      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
+      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.{{.Values.global.AZURE_STORAGE_DNS_SUFFIX}}"
     org:
       namespaceTemplate: '{{`{{ domain }}`}}'
 
