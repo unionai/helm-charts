@@ -343,25 +343,13 @@ kubectl delete namespace union-cp
 
 ## Alternative Deployment Models
 
-### Self-Hosted Intra-Cluster Deployment (AWS)
+### Self-Hosted Intra-Cluster Deployment
 
-For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the dedicated guide:
+For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the [Self-hosted deployment guide](https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/) on the Union documentation site.
 
-**[Self-Hosted Intra-Cluster Deployment Guide (AWS)](SELFHOSTED_INTRA_CLUSTER_AWS.md)**
-
-This deployment model is ideal for:
-
-- Fully self-hosted Union deployments
-- Single-cluster architectures with co-located control plane and dataplane
-- Environments requiring simplified networking and reduced costs
-- Deployments with strict data sovereignty requirements
-
-The intra-cluster guide covers:
-
-- TLS certificate generation for intra-cluster communication
-- Single-tenant mode configuration
-- Service discovery between control plane and dataplane
-- Complete end-to-end setup for both control plane and dataplane
+Reference guides are also available in this repository:
+- [AWS](SELFHOSTED_INTRA_CLUSTER_AWS.md)
+- [GCP](SELFHOSTED_INTRA_CLUSTER_GCP.md)
 
 ---
 
