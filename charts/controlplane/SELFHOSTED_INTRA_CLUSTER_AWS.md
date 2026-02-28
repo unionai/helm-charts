@@ -1,3 +1,7 @@
+> **Note**: This guide has been migrated to the Union.ai documentation site.
+> See: https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/
+> This file is kept for reference but may not be updated.
+
 # Self-Hosted Intra-Cluster Deployment Guide (AWS)
 
 This guide covers deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane (co-located deployment). This is ideal for fully self-hosted Union deployments where both control plane and dataplane run in your infrastructure.
