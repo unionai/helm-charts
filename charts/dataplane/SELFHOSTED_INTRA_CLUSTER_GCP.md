@@ -1,3 +1,7 @@
+> **Note**: This guide has been migrated to the Union.ai documentation site.
+> See: https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/
+> This file is kept for reference but may not be updated.
+
 # Self-Hosted Intra-Cluster Deployment Guide (GCP)
 
 This guide covers deploying Union dataplane in the **same Kubernetes cluster** as your Union control plane (co-located deployment). This is ideal for fully self-hosted Union deployments where both control plane and dataplane run in your infrastructure.
