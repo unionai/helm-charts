@@ -317,7 +317,7 @@ config:
       cache-endpoint: 'dns:///{{ tpl .Values.host . }}'
       endpoint: 'dns:///{{ tpl .Values.host . }}'
       insecure: false
-      type: fallback
+      type: cacheservicev2
       use-admin-auth: true
   clusters:
     labelClusterMap: { }
@@ -427,6 +427,7 @@ config:
     plugins:
       # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
       k8s:
+        default-pod-template-name: "task-template"
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
@@ -484,6 +485,9 @@ config:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
+      # -- Define the propeller health check endpoint.
+      executor:
+        endpoint: '{{ include "executor.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -808,7 +812,7 @@ flyteagent:
 
 executor:
   enabled: true
-  idl2Executor: false
+  idl2Executor: true
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
@@ -830,13 +834,15 @@ executor:
       memory: 1Gi
   podLabels:
     app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: "{{ .Release.Name }}"
   selector:
     matchLabels:
       app: executor
   task_logs:
     plugins:
       logs:
-        kubernetes-enabled: true
+        kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
   sharedService:
@@ -1016,7 +1022,79 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+  # -- Enable Helm-managed MutatingWebhookConfiguration (if false, the webhook will create its own)
+  managedConfig: true
+  # -- Configuration for the webhook MutatingWebhookConfiguration and certificates
+  webhook:
+    # -- Name of the MutatingWebhookConfiguration resource
+    configurationName: "union-pod-webhook-{{ tpl .Values.orgName . }}"
+    # -- Failure policy for the webhook (Fail or Ignore)
+    failurePolicy: Fail
+    # -- Reinvocation policy for the webhook
+    reinvocationPolicy: Never
+    # -- Timeout in seconds for the webhook
+    timeoutSeconds: 30
+    # -- Webhook configurations to create
+    webhooks:
+      # -- Secrets injection webhook configuration
+      secrets:
+        enabled: true
+        # -- Name of the webhook
+        name: flyte-pod-webhook.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/secrets
+        # -- Object selector for the webhook
+        objectSelector:
+          matchLabels:
+            inject-flyte-secrets: "true"
+            organization: "{{ tpl .Values.orgName . }}"
+      # -- Managed image webhook configuration (requires Union operator support)
+      managedImage:
+        enabled: false
+        # -- Name of the webhook
+        name: managed-image-webhook.union.ai
+        # -- Path for the webhook
+        path: /mutate--v1-pod/managed-image
+        # -- Object selector for the webhook (matchExpressions)
+        objectSelector:
+          matchLabels:
+            organization: "{{ tpl .Values.orgName . }}"
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
 
+  # -- Configuration for webhook certificates
+  certificate:
+    # -- Certificate provider:
+    # -- "helm" - Generate self-signed certificates using Helm's crypto functions. Certs are preserved on upgrade if secret exists.
+    # -- "certManager" - Use cert-manager to provision and manage certificates. Requires cert-manager to be installed.
+    # -- "external" - Use externally provided certificates (set caCert, serverCert, serverKey below).
+    # -- "legacy" - Let the webhook binary generate its own certificates using an init container. The init container runs
+    # --           `flytepropeller webhook init-certs` to populate an empty secret, then the webhook uses those certs.
+    provider: helm
+    # -- Duration of the certificate (only used with certManager provider)
+    duration: 8760h
+    # -- Renew before duration (only used with certManager provider)
+    renewBefore: 720h
+    # -- cert-manager configuration (only used when provider is "certManager")
+    certManager:
+      # -- Issuer reference for cert-manager. If not set, a self-signed issuer will be created.
+      issuerRef: {}
+        # name: selfsigned-issuer
+        # kind: ClusterIssuer
+        # group: cert-manager.io
+    # -- External certificate configuration (only used when provider is "external")
+    external:
+      # -- Base64-encoded CA certificate (PEM format)
+      caCert: ""
+      # -- Base64-encoded TLS certificate (PEM format)
+      tlsCrt: ""
+      # -- Base64-encoded TLS private key (PEM format)
+      tlsKey: ""
 #
 # FLYTE_CONNECTOR SETTINGS
 #
@@ -1088,8 +1166,6 @@ flyteconnector:
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
-
-
 
 # Container images
 image:
@@ -1560,7 +1636,8 @@ prometheus:
     annotations: { }
     hosts: [ ]
 
-# -- Scopes the deployment, permissions and actions created into a single namespace
+# -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
+#  require additional permissions on the cluster. This limits the functionality though.
 low_privilege: false
 # -- Union operator proxy configuration
 proxy:

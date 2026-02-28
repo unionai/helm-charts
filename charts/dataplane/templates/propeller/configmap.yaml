@@ -17,7 +17,18 @@ data:
 {{- with .Values.config.copilot }}
   copilot.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
-{{- with .Values.config.core }}
+{{- $core := deepCopy (.Values.config.core | default dict) }}
+{{- if include "singleNamespace" $ }}
+{{- $_ := set (index $core "propeller") "limit-namespace" .Release.Namespace }}
+{{- end }}
+{{- if .Values.low_privilege }}
+{{- if not (hasKey $core "webhook") }}
+{{- $_ := set $core "webhook" (dict "disableCreateMutatingWebhookConfig" true) }}
+{{- else }}
+{{- $_ := set (index $core "webhook") "disableCreateMutatingWebhookConfig" true }}
+{{- end }}
+{{- end }}
+{{- with $core }}
   core.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
 {{- with .Values.config.enabled_plugins }}
@@ -32,8 +43,12 @@ data:
 {{- with .Values.config.qubole }}
   qubole.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
 {{- end }}
-{{- with .Values.config.namespace_config }}
-  namespace_config.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+{{- if .Values.config.namespace_config }}
+  namespace_config.yaml: | {{ tpl (toYaml .Values.config.namespace_config) $ | nindent 4 }}
+{{- else if include "singleNamespace" . }}
+  namespace_config.yaml: |
+    namespace_mapping:
+      template: {{ .Release.Namespace }}
 {{- end }}
 {{- with .Values.config.resource_manager }}
   resource_manager.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
@@ -57,14 +72,4 @@ data:
 {{- end }}
 {{- end }}
   storage.yaml: | {{ tpl (include "storage" .) $ | nindent 4 }}
-{{- end }}
-{{- if and (not .Values.flytepropeller.enabled) .Values.flytepropellerwebhook.enabled }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-propeller-webhook-config
-  namespace: {{ .Release.Namespace }}
-data:
-  core.yaml: |
-{{ include "propeller.webhookConfigMinimal" . | nindent 4 }}
 {{- end }}

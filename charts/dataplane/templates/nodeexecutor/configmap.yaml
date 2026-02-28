@@ -25,7 +25,11 @@ data:
     {{- with .Values.config.task_resource_defaults -}}
     {{ toYaml . | nindent 6 }}
     {{- end }}
-    {{- with .Values.executor.raw_config }}
+    {{- $rawConfig := deepCopy (.Values.executor.raw_config | default dict) }}
+    {{- if and (include "singleNamespace" $) (not (index $rawConfig "namespace_mapping")) }}
+    {{- $_ := set $rawConfig "namespace_mapping" (dict "template" $.Release.Namespace) }}
+    {{- end }}
+    {{- with $rawConfig }}
     {{- tpl (toYaml .) $ | nindent 4 }}
     {{- end }}
     union:
@@ -53,14 +57,21 @@ data:
     logger:
       {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}
-    {{- with .Values.config.namespace_config -}}
-    {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- if .Values.config.namespace_config -}}
+    {{- tpl (toYaml .Values.config.namespace_config) $ | nindent 4 }}
+    {{- else if and (include "singleNamespace" $) (not (index $rawConfig "namespace_mapping")) }}
+    namespace_mapping:
+      template: {{ .Release.Namespace }}
     {{- end }}
     {{- with .Values.executor.sharedService }}
     sharedService:
       {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}
-    {{- with .Values.executor.propeller }}
+    {{- $execPropeller := deepCopy (.Values.executor.propeller | default dict) }}
+    {{- if and (include "singleNamespace" $) (not (index $execPropeller "limit-namespace")) }}
+    {{- $_ := set $execPropeller "limit-namespace" $.Release.Namespace }}
+    {{- end }}
+    {{- with $execPropeller }}
     propeller:
       {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}

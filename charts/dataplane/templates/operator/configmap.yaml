@@ -30,11 +30,15 @@ data:
       tunnel:
         enableDirectToAppIngress: {{ .Values.serving.enabled }}
         deploymentToRestart: union-operator-proxy
-      {{- with .Values.config.operator.limitNamespace }}
-      limitNamespace: {{ tpl (toYaml .) $ }}
+      {{- if .Values.config.operator.limitNamespace }}
+      limitNamespace: {{ tpl (toYaml .Values.config.operator.limitNamespace) $ }}
+      {{- else if include "singleNamespace" . }}
+      limitNamespace: {{ .Release.Namespace }}
       {{- end }}
-      {{- with .Values.config.operator.disableClusterPermissions }}
-      disableClusterPermissions: {{ tpl (toYaml .) $ }}
+      {{- if .Values.config.operator.disableClusterPermissions }}
+      disableClusterPermissions: {{ tpl (toYaml .Values.config.operator.disableClusterPermissions) $ }}
+      {{- else if .Values.low_privilege }}
+      disableClusterPermissions: true
       {{- end }}
     {{- with .Values.config.operator.apps }}
       apps:
@@ -49,15 +53,27 @@ data:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
       {{- tpl (include "operator.clusterData" .) $ | nindent 6 }}
-    {{- with .Values.config.operator.collectUsages }}
+    {{- $collectUsages := deepCopy (.Values.config.operator.collectUsages | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $collectUsages "enabled" false }}
+    {{- end }}
+    {{- with $collectUsages }}
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- with .Values.config.operator.collectBillableResourceUsage }}
+    {{- $collectBillableUsage := deepCopy (.Values.config.operator.collectBillableResourceUsage | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $collectBillableUsage "enabled" false }}
+    {{- end }}
+    {{- with $collectBillableUsage }}
       collectBillableResourceUsage:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- with .Values.config.operator.billableUsageCollector }}
+    {{- $billableUsage := deepCopy (.Values.config.operator.billableUsageCollector | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $billableUsage "enabled" false }}
+    {{- end }}
+    {{- with $billableUsage }}
       billableUsageCollector:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
@@ -98,7 +114,11 @@ data:
   fast_registration_storage.yaml: | {{ tpl (include "fast-registration-storage" .) $ | nindent 4 }}
 {{- end }}
 {{- if .Values.imageBuilder.enabled }}
+{{- if or .Values.imageBuilder.buildkitUri .Values.imageBuilder.buildkit.enabled }}
   image-builder.buildkit-uri: {{ (include "imagebuilder.buildkit.uri" .) | quote }}
+{{- else }}
+  image-builder.buildkit-uri: ""
+{{- end }}
   image-builder.default-repository: {{ .Values.imageBuilder.defaultRepository | quote }}
   image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}
 {{- end }}
