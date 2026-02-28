@@ -11,40 +11,22 @@
 #   helm install -f values.aws.selfhosted-intracluster.yaml [...]
 
 global:
-  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-  #    Format: "hostname" (no protocol prefix for standard BYOC)
-  #    Example: "mycompany.unionai.cloud" or "union.example.com"
-  #    Source: Provided by Union team for BYOC deployments
+  # -- Union control plane hostname. Format: "hostname" (no protocol prefix for standard BYOC). Example: "mycompany.unionai.cloud". Provided by Union team for BYOC deployments.
   UNION_CONTROL_PLANE_HOST: ""
 
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-us-east-1" or "staging-cluster"
-  #    Note: Must be unique within your organization
+  # -- Unique cluster identifier. Format: Lowercase alphanumeric with hyphens. Example: "prod-us-east-1". Must be unique within your organization.
   CLUSTER_NAME: ""
 
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
+  # -- Organization name. Format: RFC 1123 compliant (lowercase alphanumeric and hyphens). Example: "acme-corp". Provided by Union team.
   ORG_NAME: ""
 
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
+  # -- Client ID for dataplane authentication. Provided by Union team.
   CLIENT_ID: ""
 
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-metadata-bucket"
-  #    Note: Bucket must exist before deployment
+  # -- S3 bucket for workflow metadata. Example: "my-union-metadata-bucket". Bucket must exist before deployment.
   METADATA_BUCKET: ""
 
-  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-fast-registration-bucket"
-  #    Note: Can be same as metadata bucket or separate
+  # -- S3 bucket for code uploads. Example: "my-union-fast-registration-bucket". Can be same as metadata bucket or separate.
   FAST_REGISTRATION_BUCKET: ""
 
 # ----------------------------------------------------------------------------
@@ -743,10 +725,13 @@ dcgm-exporter:
     DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
     DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
 
+# -- OpenCost subchart configuration for cost allocation and monitoring.
 opencost:
   # -- Enable or disable the opencost installation.
   enabled: true
+  # @ignored
   fullnameOverride: opencost
+  # -- OpenCost application configuration.
   opencost:
     # By default, disable prometheus. This runs opencost in exporter mode: https://www.opencost.io/docs/opencost-exporter
     # Set internal or external values to populate the PROMETHEUS_SERVER_ENDPOINT env var
@@ -810,21 +795,37 @@ flyteagent:
   enabled: false
   plugin_config: { }
 
+# -- Executor service configuration for running fast tasks and eager workflows.
 executor:
+  # -- Enable or disable the executor service.
   enabled: true
+  # -- Use IDL v2 executor protocol.
   idl2Executor: true
+  # -- Raw configuration to merge into the executor config. Allows arbitrary overrides.
   raw_config: {}
+  # -- Core executor configuration.
   config:
+    # -- Organization name for the executor. Should match .Values.orgName.
     organization: "{{ tpl .Values.orgName . }}"
+    # -- Cluster name for the executor. Should match .Values.clusterName.
     cluster: "{{ tpl .Values.clusterName . }}"
+    # -- Name of this executor worker instance.
     workerName: worker1
+    # -- Authentication configuration for eager workflows.
     unionAuth:
+      # -- Inject an API key secret into eager workflow pods.
       injectSecret: true
+      # -- Name of the environment variable containing the API key secret.
       secretName: EAGER_API_KEY
+    # -- Maximum number of concurrent actions the executor can handle.
     maxActions: 2000
+    # -- Number of evaluator goroutines for processing workflow nodes.
     evaluatorCount: 64
+  # -- Service account configuration for the executor.
   serviceAccount:
+    # -- Annotations to add to the executor service account.
     annotations: { }
+  # -- Resource requests and limits for the executor deployment.
   resources:
     limits:
       cpu: 4
@@ -832,47 +833,66 @@ executor:
     requests:
       cpu: 1
       memory: 1Gi
+  # -- Labels to apply to executor pods.
   podLabels:
     app: executor
     app.kubernetes.io/name: executor
     app.kubernetes.io/instance: "{{ .Release.Name }}"
+  # -- Label selector for the executor deployment.
   selector:
     matchLabels:
       app: executor
+  # -- Task log configuration for the executor.
   task_logs:
     plugins:
       logs:
+        # -- Enable Kubernetes-native log fetching.
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
+  # -- Shared service configuration for the executor gRPC/HTTP server.
   sharedService:
+    # -- Metrics configuration for the executor.
     metrics:
+      # -- Prometheus metrics prefix scope.
       scope: "executor:"
+    # -- Security configuration for the executor API.
     security:
+      # -- Enable TLS for the executor API.
       secure: false
+      # -- Require authentication for the executor API.
       useAuth: false
+      # -- Enable CORS support.
       allowCors: true
       allowedOrigins:
         # Accepting all domains for Sandbox installation
         - "*"
       allowedHeaders:
         - "Content-Type"
+      # -- Allow localhost access without authentication.
       allowLocalhostAccess: true
+  # -- Propeller node configuration overrides for the executor.
   propeller:
     node-config:
+      # -- Disable writing input files to disk (uses remote storage instead).
       disable-input-file-writes: true
+  # -- Plugin configuration for the executor.
   plugins:
+    # -- IO utilities configuration.
     ioutils:
       remoteFileOutputPaths:
+        # -- Filename for Flyte Deck HTML reports.
         deckFilename: report.html
-    # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+    # -- Fast task plugin configuration. Enables in-process task execution for reduced overhead.
     fasttask:
       additional-worker-args:
         - "--last-ack-grace-period-seconds"
         - "120"
       callback-uri: "http://unionai-dataplane-executor.{{.Release.Namespace}}.svc.cluster.local:15605"
       grace-period-status-not-found: 2m
+    # -- Kubernetes plugin configuration for the executor.
     k8s:
+      # -- Disable injecting owner references on task pods (executor manages lifecycle independently).
       disable-inject-owner-references: true
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
@@ -881,13 +901,16 @@ executor:
   # -- Appends additional environment variables to the executor container's spec.
   podEnv: []
 
-# -- Flytepropeller configuration
+# -- Flytepropeller configuration. Propeller is the workflow execution engine that processes
+# registered workflows by evaluating node dependencies and launching task pods.
 flytepropeller:
+  # -- Enable or disable the Flytepropeller deployment.
   enabled: true
+  # -- PriorityClassName for Flytepropeller pods. Set to "system-cluster-critical" to ensure propeller is scheduled even under resource pressure.
   priorityClassName: "system-cluster-critical"
-  # -- Replicas count for Flytepropeller deployment
+  # -- Replicas count for Flytepropeller deployment.
   replicaCount: 1
-  # -- Default resources requests and limits for Flytepropeller deployment
+  # -- Default resources requests and limits for Flytepropeller deployment.
   resources:
     limits:
       cpu: "3"
@@ -896,47 +919,55 @@ flytepropeller:
       cpu: "1"
       memory: "1Gi"
 
+  # -- Maximum size in MiB for the in-memory blob cache. 0 disables caching.
   cacheSizeMbs: 0
 
-  # -- Default regex string for searching configuration files
+  # -- Default regex string for searching configuration files.
   configPath: /etc/flyte/config/*.yaml
 
-  # -- Configuration for service accounts for FlytePropeller
+  # -- Configuration for service accounts for FlytePropeller.
   serviceAccount:
-    # -- Annotations for ServiceAccount attached to FlytePropeller pods
+    # -- Annotations for ServiceAccount attached to FlytePropeller pods.
     annotations: { }
-    # -- ImapgePullSecrets to automatically assign to the service account
+    # -- ImagePullSecrets to automatically assign to the service account.
     imagePullSecrets: [ ]
-  # -- Labels for the Flytepropeller pods
+  # -- Labels for the Flytepropeller pods.
   podLabels: { }
-  # -- Annotations for Flytepropeller pods
+  # -- Annotations for Flytepropeller pods.
   podAnnotations: { }
-  # -- nodeSelector for Flytepropeller deployment
+  # -- nodeSelector for Flytepropeller deployment.
   nodeSelector: { }
-  # -- tolerations for Flytepropeller deployment
+  # -- tolerations for Flytepropeller deployment.
   tolerations: [ ]
-  # -- affinity for Flytepropeller deployment
+  # -- affinity for Flytepropeller deployment.
   affinity: { }
-  # -- topologySpreadConstraints for Flytepropeller deployment
+  # -- topologySpreadConstraints for Flytepropeller deployment.
   topologySpreadConstraints: { }
-  # -- nodeName constraints for Flytepropeller deployment
+  # -- nodeName constraints for Flytepropeller deployment.
   nodeName: ""
-  # -- extra arguments to pass to propeller.
+  # -- Extra arguments to pass to propeller.
   extraArgs: { }
 
+  # -- Additional sidecar containers to add to the propeller pod.
   additionalContainers: { }
+  # -- Override the termination message policy for propeller pods.
   terminationMessagePolicy: ""
 
+  # -- Service configuration for propeller.
   service:
+    # -- Enable the propeller Kubernetes service.
     enabled: true
+    # -- Additional ports to expose on the propeller service.
     additionalPorts:
       - name: fasttask
         port: 15605
         targetPort: 15605
         protocol: TCP
 
+  # -- Additional environment variables for propeller pods.
   podEnv: { }
 
+  # -- Name of the Kubernetes secret containing authentication credentials.
   secretName: union-secret-auth
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
@@ -1095,25 +1126,32 @@ flytepropellerwebhook:
       tlsCrt: ""
       # -- Base64-encoded TLS private key (PEM format)
       tlsKey: ""
-#
-# FLYTE_CONNECTOR SETTINGS
-#
-
+# -- Flyte connector deployment configuration. Connectors provide external service
+# integrations (e.g., Databricks, SageMaker, Snowflake) for Flyte tasks.
 flyteconnector:
+  # -- Enable or disable the flyteconnector deployment.
   enabled: false
-  # -- Replicas count for flyteconnector deployment
+  # -- Replicas count for flyteconnector deployment.
   replicaCount: 2
+  # -- Container image configuration for flyteconnector.
   image:
-    # -- Docker image for flyteconnector deployment
+    # -- Docker image for flyteconnector deployment.
     repository: ghcr.io/flyteorg/flyte-connectors
+    # -- Docker image tag for flyteconnector.
     tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
-    # -- Docker image pull policy
+    # -- Docker image pull policy.
     pullPolicy: IfNotPresent
+  # -- gRPC port configuration for flyteconnector.
   ports:
+    # -- Container port for the gRPC service.
     containerPort: 8000
+    # -- Port name.
     name: grpc
+  # -- Prometheus metrics port configuration.
   prometheusPort:
+    # -- Container port for Prometheus metrics.
     containerPort: 9090
+    # -- Port name.
     name: metric
   # -- Default resources requests and limits for flyteconnector deployment
   resources:
@@ -1161,41 +1199,62 @@ flyteconnector:
   # -- Sets priorityClassName for datacatalog pod(s).
   priorityClassName: ""
 
+  # -- Horizontal pod autoscaler configuration for flyteconnector.
   autoscaling:
+    # -- Minimum number of flyteconnector replicas.
     minReplicas: 2
+    # -- Maximum number of flyteconnector replicas.
     maxReplicas: 5
+    # -- Target CPU utilization percentage for scaling.
     targetCPUUtilizationPercentage: 80
+    # -- Target memory utilization percentage for scaling.
     targetMemoryUtilizationPercentage: 80
 
-# Container images
+# -- Container image configuration for Union services.
 image:
-    # -- Image repository for the operator and union services
+  # -- Image repository for the operator and union services.
   union:
+    # -- Image repository.
     repository: public.ecr.aws/p0i0a9q8/unionoperator
+    # -- Image tag. Defaults to the chart appVersion if empty.
     tag: ""
+    # -- Image pull policy.
     pullPolicy: IfNotPresent
-  # -- Kubestatemetrics repository and tag.
+  # -- Kube-state-metrics image configuration.
   kubeStateMetrics:
+    # -- Image repository.
     repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
+    # -- Image tag.
     tag: v2.11.0
+    # -- Image pull policy.
     pullPolicy: IfNotPresent
-  # -- flytecopilot repository and tag.
+  # -- Flytecopilot sidecar image configuration. Copilot handles data I/O for task pods.
   flytecopilot:
+    # -- Image repository.
     repository: "cr.flyte.org/flyteorg/flytecopilot"
+    # -- Image tag.
     tag: "v1.14.1"
+    # -- Image pull policy.
     pullPolicy: IfNotPresent
 
+# -- Enable or disable the metrics-server subchart. Only needed if your cluster does not already have a metrics server.
 metrics-server:
   enabled: false
 
-# -- nodeobserver contains the configuration information for the node observer service.
+# -- Node observer DaemonSet configuration. Monitors node health and critical DaemonSet
+# availability to detect infrastructure issues affecting workflow execution.
 nodeobserver:
-  # -- Enable or disable nodeobserver
+  # -- Enable or disable nodeobserver.
   enabled: false
+  # -- Service account configuration for the nodeobserver.
   serviceAccount:
+    # -- Override the service account name for the nodeobserver.
     name: ""
+    # -- Annotations for the nodeobserver service account.
     annotations: {}
+  # -- Pod-level security context for the nodeobserver.
   podSecurityContext: { }
+  # -- Container-level security context for the nodeobserver. Requires privileged access for node-level inspection.
   securityContext:
     runAsNonRoot: false
     runAsUser: 0
@@ -1232,7 +1291,9 @@ nodeobserver:
     requests:
       cpu: "500m"
       memory: "100Mi"
+  # -- Nodeobserver configuration.
   config:
+    # -- List of critical DaemonSets to monitor. Nodeobserver will report nodes as unhealthy if these DaemonSets are not running.
     criticalDaemonSets: []
     #  - name: union-mountpoint
     #    namespace: '{{ tpl .Release.Namespace . }}'
@@ -1243,44 +1304,65 @@ nodeobserver:
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
 
-# -- Union Object Store configuration
+# -- Union Object Store service configuration. Provides an internal API for accessing object storage.
 objectStore:
+  # -- Service port configuration.
   service:
+    # -- HTTP port for the object store service.
     httpPort: 8080
+    # -- gRPC port for the object store service.
     grpcPort: 8089
 
-# Union operator configuration.
+# -- Union operator deployment configuration. The operator manages cluster lifecycle,
+# usage reporting, heartbeat checks, and tunnel connectivity to the Union control plane.
 operator:
+  # -- Service account configuration for the operator.
   serviceAccount:
+    # -- Create a dedicated service account for the operator.
     create: true
+    # -- Name of the operator service account.
     name: operator-system
+    # -- Annotations for the operator service account (e.g., for cloud IAM role binding).
     annotations: {}
+  # -- Horizontal pod autoscaler configuration for the operator.
   autoscaling:
+    # -- Enable HPA for the operator deployment.
     enabled: false
     # minReplicas: 1
     # maxReplicas: 20
     # targetCPUUtilizationPercentage: 80
     # targetMemoryUtilizationPercentage: 80
+  # -- Number of operator replicas.
   replicas: 1
+  # -- Annotations for operator pods.
   podAnnotations: { }
+  # -- Labels for operator pods.
   podLabels: { }
+  # -- PriorityClassName for operator pods.
   priorityClassName: ""
+  # -- Image pull secrets for the operator deployment.
   imagePullSecrets: []
+  # -- Additional environment variables for operator pods.
   podEnv: { }
-  # -- nodeSelector constraints for the operator pods
+  # -- nodeSelector constraints for the operator pods.
   nodeSelector: { }
-  # -- topologySpreadConstraints for the operator pods
+  # -- topologySpreadConstraints for the operator pods.
   topologySpreadConstraints: { }
-  # -- tolerations for the operator pods
+  # -- tolerations for the operator pods.
   tolerations: [ ]
-  # -- affinity configurations for the operator pods
+  # -- affinity configurations for the operator pods.
   affinity: { }
-  # -- nodeName constraints for the operator pods
+  # -- nodeName constraints for the operator pods.
   nodeName: ""
+  # -- Pod-level security context for the operator.
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure control plane connectivity.
   enableTunnelService: true
+  # -- Name of the Kubernetes secret containing authentication credentials.
   secretName: union-secret-auth
+  # -- Container-level security context for the operator.
   securityContext: { }
+  # -- Resource requests and limits for the operator deployment.
   resources:
     limits:
       cpu: "2"
@@ -1293,42 +1375,46 @@ operator:
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
 
-# Enable access to dataplane services.
+# -- Ingress configuration for exposing dataplane services externally.
+# Enable this when not using Cloudflare tunnels for service access.
 ingress:
+  # -- Enable or disable ingress resources.
   enabled: false
 
-  # The default host, ommitted if empty.
+  # -- Default host for ingress rules. Omitted if empty.
   host: ""
 
   # -- Dataproxy specific ingress configuration.
   dataproxy:
-    # -- Ingress host
-    hostOverride: "" # Can references Kubernetes service DNS, e.g. dataproxy-service.{{ .Release.Namespace }}.svc.cluster.local
-    # -- Ingress class name
+    # -- Override the ingress host. Can reference Kubernetes service DNS, e.g. dataproxy-service.{{ .Release.Namespace }}.svc.cluster.local
+    hostOverride: ""
+    # -- Ingress class name.
     class: ""
     # -- Annotations to apply to the ingress resource.
     annotations: {}
-    # -- Ingress TLS configuration
+    # -- Ingress TLS configuration.
     tls: {}
 
   # -- Serving specific ingress configuration.
   serving:
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
     hostOverride: ""
-    # -- Ingress class name
+    # -- Ingress class name.
     class: ""
     # -- Annotations to apply to the ingress resource.
     annotations: {}
-    # -- Ingress TLS configuration
+    # -- Ingress TLS configuration.
     tls: {}
 
 
-# -- Prometheus configuration
+# -- Prometheus configuration (kube-prometheus-stack subchart).
 # This section configures kube-prometheus-stack for monitoring the Union dataplane.
 # By default, most Kubernetes component monitoring is disabled to reduce resource usage.
 # Enable specific components as needed for your observability requirements.
 prometheus:
+  # -- Enable or disable the kube-prometheus-stack deployment.
   enabled: true
+  # -- Additional Prometheus recording or alerting rules.
   additionalPrometheusRulesMap: { }
   #  rule-name:
   #    groups:
@@ -1336,8 +1422,11 @@ prometheus:
   #      rules:
   #      - record: my_record
   #        expr: 100 * my_record
+  # @ignored
   nameOverride: ""
+  # @ignored
   fullnameOverride: "union-operator"
+  # @ignored
   namespaceOverride: ""
 
   # ----------------------------------------------------------------------------
@@ -1375,10 +1464,10 @@ prometheus:
     #   serverName: kubernetes
     #   insecureSkipVerify: false
 
+  # -- Node exporter configuration for collecting host-level metrics.
   nodeExporter:
+    # -- Enable or disable the node exporter DaemonSet.
     enabled: false
-    # -- Uncomment to enable node-level metrics
-    # enabled: true
 
   # ----------------------------------------------------------------------------
   # Default Alerting and Recording Rules
@@ -1386,7 +1475,10 @@ prometheus:
   # Configure which Prometheus alerting and recording rules to enable.
   # These rules provide pre-built alerts for common Kubernetes issues.
   # See: https://github.com/prometheus-operator/kube-prometheus/tree/main/manifests
+
+  # -- Default Prometheus alerting and recording rules.
   defaultRules:
+    # -- Create default alerting and recording rules.
     create: false
     # -- Uncomment to enable default rules with selective rule groups
     # create: true
@@ -1453,7 +1545,9 @@ prometheus:
       prometheusOperator: false
       windows: false
 
+  # -- Prometheus Operator CRD configuration.
   crds:
+    # -- Install Prometheus Operator CRDs.
     enabled: true
 
   # ----------------------------------------------------------------------------
@@ -1461,13 +1555,15 @@ prometheus:
   # ----------------------------------------------------------------------------
   # Grafana provides visualization dashboards for Prometheus metrics.
   # Enable this section to deploy Grafana with pre-built Kubernetes dashboards.
+
+  # -- Grafana configuration for visualization dashboards.
   grafana:
+    # -- Enable or disable the Grafana deployment.
     enabled: false
-    # -- Uncomment to enable Grafana deployment
-    # enabled: true
     #
-    # -- Default admin credentials (change in production!)
+    # -- Default admin username (change in production!).
     adminUser: admin
+    # -- Default admin password (change in production!).
     adminPassword: union-dataplane
     #
     # -- Use existing secret for admin credentials (recommended for production)
@@ -1573,12 +1669,17 @@ prometheus:
     #   url: http://loki-gateway.monitoring.svc.cluster.local
     #   access: proxy
     #   isDefault: false
+  # -- Prometheus server configuration.
   prometheus:
+    # -- Enable the Prometheus server.
     enabled: true
     service:
       port: 80
+    # -- Prometheus server spec configuration.
     prometheusSpec:
+      # -- Maximum time in seconds for Prometheus startup before it is considered failed.
       maximumStartupDurationSeconds: 900
+      # -- How long to retain metrics data.
       retention: 3d
       # Disable the nil uses helm values for the selectors.  This is disabled to make sure that
       # prometheus can scrape other externally managed services beyond the scope of the helm release.
@@ -1594,6 +1695,7 @@ prometheus:
       podMonitorSelector: {}
       # Prometheus with Union requires relatively high memory due to high cardinality
       # from executions.
+      # -- Resource requests and limits for the Prometheus server.
       resources:
         limits:
           cpu: "3"
@@ -1601,12 +1703,19 @@ prometheus:
         requests:
           cpu: "1"
           memory: "1Gi"
+      # -- URL path prefix for the Prometheus web UI.
       routePrefix: /prometheus/
+  # -- Alertmanager configuration.
   alertmanager:
+    # -- Enable or disable the Alertmanager deployment.
     enabled: false
+  # -- Prometheus Operator configuration.
   prometheusOperator:
+    # @ignored
     fullnameOverride: prometheus-operator
+  # -- Kube-state-metrics subchart configuration. Provides Kubernetes object metrics to Prometheus.
   kube-state-metrics:
+    # @ignored
     namespaceOverride: "kube-system"
     metricRelabelings:
       - sourceLabels: [ "__name__" ]
@@ -1629,54 +1738,84 @@ prometheus:
         regex: "(.+)"
         targetLabel: "label_node_pool_name"
 
+  # -- Prometheus node-exporter subchart configuration.
   prometheus-node-exporter:
+    # @ignored
     namespaceOverride: "kube-system"
+  # -- Prometheus ingress configuration for external access to the Prometheus UI.
   ingress:
+    # -- Enable or disable ingress for Prometheus.
     enabled: false
+    # -- Annotations for the Prometheus ingress resource.
     annotations: { }
+    # -- Hosts for the Prometheus ingress resource.
     hosts: [ ]
 
 # -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
 #  require additional permissions on the cluster. This limits the functionality though.
 low_privilege: false
-# -- Union operator proxy configuration
+# -- Union operator proxy configuration. The proxy serves as the dataplane's API gateway,
+# handling data uploads/downloads, secret management, and image building requests.
 proxy:
+  # -- Service account configuration for the proxy.
   serviceAccount:
+    # -- Create a dedicated service account for the proxy.
     create: true
+    # -- Name of the proxy service account.
     name: proxy-system
+    # -- Annotations for the proxy service account (e.g., for cloud IAM role binding).
     annotations: {}
+  # -- Horizontal pod autoscaler configuration for the proxy.
   autoscaling:
+    # -- Enable HPA for the proxy deployment.
     enabled: false
+    # -- Minimum number of proxy replicas.
     minReplicas: 1
+    # -- Maximum number of proxy replicas.
     maxReplicas: 10
+    # -- Target CPU utilization percentage for scaling.
     targetCPUUtilizationPercentage: 80
 #    targetMemoryUtilizationPercentage: 80
+  # -- Secret manager configuration for the proxy. Manages user-defined secrets for workflows.
   secretManager:
+    # -- Enable secret manager support for storing and injecting workflow secrets.
     enabled: true
+    # -- The type of secret manager to use. Supported: "K8s" (native Kubernetes secrets).
     type: K8s
     # -- Set the namespace for union managed secrets created through the native Kubernetes secret manager. If the namespace is not set,
     # the release namespace will be used.
     namespace: ""
+  # -- Number of proxy replicas.
   replicas: 1
+  # -- Annotations for proxy pods.
   podAnnotations: { }
+  # -- Labels for proxy pods.
   podLabels: { }
+  # -- PriorityClassName for proxy pods.
   priorityClassName: ""
+  # -- Image pull secrets for the proxy deployment.
   imagePullSecrets: []
+  # -- Additional environment variables for proxy pods.
   podEnv: { }
-  # -- topologySpreadConstraints for the proxy pods
+  # -- topologySpreadConstraints for the proxy pods.
   topologySpreadConstraints: { }
-  # -- nodeSelector constraints for the proxy pods
+  # -- nodeSelector constraints for the proxy pods.
   nodeSelector: { }
-  # -- tolerations for the proxy pods
+  # -- tolerations for the proxy pods.
   tolerations: [ ]
-  # -- affinity configurations for the proxy pods
+  # -- affinity configurations for the proxy pods.
   affinity: { }
-  # -- nodeName constraint for the proxy pods
+  # -- nodeName constraint for the proxy pods.
   nodeName: ""
+  # -- Pod-level security context for the proxy.
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure control plane connectivity.
   enableTunnelService: true
+  # -- Name of the Kubernetes secret containing authentication credentials.
   secretName: union-secret-auth
+  # -- Container-level security context for the proxy.
   securityContext: { }
+  # -- Resource requests and limits for the proxy container.
   resources:
     limits:
       cpu: "3"
@@ -1684,6 +1823,7 @@ proxy:
     requests:
       cpu: "500m"
       memory: "500Mi"
+  # -- Resource requests and limits for the Cloudflare tunnel sidecar container.
   tunnel_resources:
     limits:
       cpu: "3"
@@ -1712,8 +1852,11 @@ secrets:
     # -- The client id used to authenticate to the control plane.  This will be provided by Union.
     clientId: dataplane-operator
 
+# -- Spark operator integration configuration.
 sparkoperator:
+  # -- Enable or disable the Spark operator integration.
   enabled: false
+  # -- Plugin configuration for the Spark operator.
   plugin_config: { }
 
 # -- Object storage configuration used by all Union services.
@@ -1796,37 +1939,39 @@ serving:
     # -- Disabling is common if not leveraging Union Cloud SSO.
     enabled: true
 
-# Enable the knative operator.  Required for app serving.
+# -- Knative operator subchart. Required for app serving.
 knative-operator:
+  # -- Enable or disable the Knative operator. Must be enabled when serving.enabled is true.
   enabled: false
 
+  # -- Install Knative CRDs.
   crds:
     install: true
 
+# -- Image builder configuration for building container images from Flyte ImageSpec.
 imageBuilder:
+  # -- Enable or disable the image builder feature.
   enabled: true
 
   # -- The config map build-image container task attempts to reference.
-  # -- Should not change unless coordinated with Union technical support.
+  # Should not change unless coordinated with Union technical support.
   targetConfigMapName: "build-image-config"
 
   # -- The URI of the buildkitd service. Used for externally managed buildkitd services.
-  # -- Leaving empty and setting imageBuilder.buildkit.enabled to true will create a buildkitd service.
-  # -- E.g. "tcp://buildkitd.buildkit.svc.cluster.local:1234"
+  # Leaving empty and setting imageBuilder.buildkit.enabled to true will create a buildkitd service.
+  # E.g. "tcp://buildkitd.buildkit.svc.cluster.local:1234"
   buildkitUri: ""
 
-  # -- The default repository to publish images to "registry" is not specified with imagespec.
-  # -- Note, the build-image task will fail unless "registry" is specified or a default repository is provided.
+  # -- The default repository to publish images to when "registry" is not specified with imagespec.
+  # The build-image task will fail unless "registry" is specified or a default repository is provided.
   defaultRepository: ""
 
-  # -- How build-image task and operator proxy will attempt to authenticate
-  # -- Supported values are "noop", "google", "aws", "azure"
-  # -- "noop" no authentication is attempted
-  # -- "google" uses docker-credential-gcr to authenticate to the default registry
-  # -- "aws" uses docker-credential-ecr-login to authenticate to the default registry
-  # -- "azure" uses az acr login to authenticate to the default registry. Requires Azure Workload Identity to be enabled.
+  # -- How build-image task and operator proxy will attempt to authenticate to the container registry.
+  # Supported values: "noop" (no auth), "google" (docker-credential-gcr), "aws" (docker-credential-ecr-login),
+  # "azure" (az acr login, requires Azure Workload Identity).
   authenticationType: "noop"
 
+  # -- BuildKit daemon configuration for container image builds.
   buildkit:
 
     # -- Enable buildkit service within this release.
@@ -1835,91 +1980,97 @@ imageBuilder:
     # -- The name to use for the buildkit deployment, service, configmap, etc.
     fullnameOverride: ""
 
-    # -- deployment strategy for buildkit deployment
+    # -- Deployment strategy for buildkit deployment.
     deploymentStrategy: Recreate
 
-    # -- Replicas count for Buildkit deployment
+    # -- Replicas count for Buildkit deployment.
     replicaCount: 1
 
-    # -- buildkit HPA configuration
+    # -- Buildkit HPA configuration.
     autoscaling:
+      # -- Enable HPA for buildkit.
       enabled: false
+      # -- Minimum number of buildkit replicas.
       minReplicas: 1
+      # -- Maximum number of buildkit replicas.
       maxReplicas: 2
 
-      # -- Buildkit aggressively accepts build requests (maybe missing config somewhere)
-      # -- Meaning it will create runc containers correspondingly.
-      # -- max-parallelism limits the number of exec operations (E.G. RUN pip install)
-      # -- However, large burst of requests can leave to significant builds waiting in queue
-      # -- Put CPU utilization a little lower to promote faster scale out and reduce queue times for future requests
-      # -- We can adjust this as needed.
+      # -- Target CPU utilization for scaling. Set lower than usual to promote faster scale out
+      # and reduce queue times for build requests.
       targetCPUUtilizationPercentage: 60
 
+    # -- Buildkit container image configuration.
     image:
-      # -- Image name
+      # -- Image repository.
       repository: moby/buildkit
-      # -- Pull policy
+      # -- Image pull policy.
       pullPolicy: IfNotPresent
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
-      # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
+      # (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
-    # -- image variant which bundles RootlessKit to set up user namespaces. Requires
-    # -- kernel >= 5.11 with unprivileged user namespace support.
+    # image variant which bundles RootlessKit to set up user namespaces. Requires
+    # kernel >= 5.11 with unprivileged user namespace support.
     rootless: true
 
-    # -- Enable debug logging
+    # -- Logging configuration for buildkit.
     log:
+      # -- Enable debug logging.
       debug: false
+      # -- Log format ("text" or "json").
       format: text
 
-    # -- Buildkitd service configuration
+    # -- OCI worker configuration for buildkit.
     oci:
-      # -- maxParalelism limits the number of concurrent builds, default is 0 (unbounded)
+      # -- Maximum number of concurrent builds. 0 means unbounded.
       maxParallelism: 0
 
+    # -- Pod disruption budget for buildkit.
     pdb:
-      # -- Minimum available pods
+      # -- Minimum available pods.
       minAvailable: 1
 
-    # -- Pod annotations
+    # -- Annotations for buildkit pods.
     podAnnotations: {}
 
+    # -- Service configuration for buildkit.
     service:
-      # -- Service type
+      # -- Service type.
       type: ClusterIP
-      # -- Service port
+      # -- Service port.
       port: 1234
-      # -- Static ip address for load balancer
+      # -- Static IP address for load balancer (only used with LoadBalancer type).
       loadbalancerIp: ""
-      # -- Service annotations
+      # -- Service annotations.
       annotations: {}
 
-    # -- Resource definitions
+    # -- Resource requests and limits for the buildkit container.
     resources:
       requests:
         cpu: 1
         memory: 1Gi
         ephemeral-storage: 20Gi
 
-    # -- Node selector
+    # -- Node selector for buildkit pods.
     nodeSelector: {}
 
-    # -- Tolerations
+    # -- Tolerations for buildkit pods.
     tolerations: []
 
-    # -- Additional volumes to add to the pod
+    # -- Additional volumes to add to the buildkit pod.
     additionalVolumes: []
 
-    # -- Additional volume mounts to add to the buildkit container
+    # -- Additional volume mounts to add to the buildkit container.
     additionalVolumeMounts: []
 
     # -- Appends additional environment variables to the buildkit container's spec.
     podEnv: []
 
-# Disable by default, but can be explicityl enabled if needed.
+# -- Ingress-nginx subchart configuration. Disabled by default; enable if you need
+# an ingress controller for dataplane services instead of Cloudflare tunnels.
 ingress-nginx:
+  # -- Enable or disable the ingress-nginx controller subchart.
   enabled: false
 
   controller:
@@ -1943,12 +2094,15 @@ ingress-nginx:
       name: dataplane
       controllerValue: union.ai/dataplane
 
-## -- Extra Kubernetes objects to deploy with the helm chart
+# -- Extra Kubernetes objects to deploy with the helm chart. Each entry is a raw Kubernetes manifest.
 extraObjects: []
 
-## -- Automatically create namespaces to deploy into
+# -- Namespace management configuration.
 namespaces:
+  # -- Automatically create the release namespace if it does not exist.
   enabled: true
 
+# -- Global monitoring toggle. When disabled, skips creation of ServiceMonitor and related monitoring resources.
 monitoring:
+  # -- Enable or disable monitoring resource creation.
   enabled: true
