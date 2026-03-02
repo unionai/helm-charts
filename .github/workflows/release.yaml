@@ -1,11 +1,12 @@
 name: release
 on:
-  pull_request:
-    types: [ labeled ]
+  push:
+    branches: [main]
+    paths:
+      - 'charts/*/Chart.yaml'
 
 jobs:
   create:
-    if: ${{ github.event.label.name == 'release' }}
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -20,6 +21,14 @@ jobs:
           git config user.name "$GITHUB_ACTOR"
           git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
 
+      - name: Record existing tags
+        id: existing-tags
+        run: echo "tags=$(git tag -l | tr '\n' ',')" >> "$GITHUB_OUTPUT"
+
+      # skip_existing must be true — this workflow triggers on every Chart.yaml
+      # change pushed to main, so chart-releaser will see all charts, not just
+      # the ones with new versions. Without skip_existing it would fail on
+      # charts that have already been released.
       - name: Run chart-releaser
         uses: helm/chart-releaser-action@v1.7.0
         with:
@@ -27,3 +36,11 @@ jobs:
           skip_existing: true
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+          EXISTING_TAGS: "${{ steps.existing-tags.outputs.tags }}"
+        run: |
+          git fetch --tags
+          ./scripts/generate-release-notes.sh --publish

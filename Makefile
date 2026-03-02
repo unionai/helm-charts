@@ -32,12 +32,9 @@ kubeconform-test:
 requirements:
 	@pip-sync
 
-.PHONY: gen_controlplane_version_bump
-gen_controlplane_version_bump: requirements
+.PHONY: gen_version_bump
+gen_version_bump: requirements
 	invoke builder.version-bumper --file charts/controlplane/Chart.yaml
-
-.PHONY: gen_dataplane_version_bump
-gen_dataplane_version_bump: requirements
 	invoke builder.version-bumper --file charts/dataplane/Chart.yaml
 
 .PHONY: gen_dataplane_crds_version_bump
@@ -59,6 +56,10 @@ gen_dataplane_crds_release: requirements
 .PHONY: gen_sandbox_release
 gen_sandbox_release: requirements
 	invoke builder.release --chart sandbox
+
+.PHONY: release-notes-dry-run
+release-notes-dry-run:
+	./scripts/generate-release-notes.sh
 
 .PHONY: lint
 lint: lint-dataplane lint-dataplane-crds lint-sandbox
