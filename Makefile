@@ -61,6 +61,10 @@ gen_sandbox_release: requirements
 release-notes-dry-run:
 	./scripts/generate-release-notes.sh
 
+.PHONY: helm-docs
+helm-docs:
+	helm-docs --chart-search-root charts --log-level warn
+
 .PHONY: lint
 lint: lint-dataplane lint-dataplane-crds lint-sandbox
 
