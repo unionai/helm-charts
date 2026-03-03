@@ -170,6 +170,26 @@ spec:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
 ---
+# Source: controlplane/templates/userclouds/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: userclouds-lite
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: all
+---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -309,6 +329,18 @@ metadata:
   labels:
     helm.sh/chart: controlplane-2026.3.0
     app.kubernetes.io/name: usage
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/userclouds/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.3.1"
     app.kubernetes.io/managed-by: Helm
@@ -1079,6 +1111,52 @@ data:
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
 ---
+# Source: controlplane/templates/userclouds/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-userclouds-lite-config
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    database:
+      host: ""
+      port: 5432
+      name: "userclouds"
+      user: ""
+      password: "file:///etc/db/pass.txt"
+      sslMode: "require"
+      mode: "normal"
+
+    auth:
+      issuer: ""
+      signingKey: "kube://secrets/userclouds-signing-key?key=signing_key"
+      apps:
+        - credentials:
+          - clientId: '5ef75bf9ee1e61dbec85758b5dc9857a'
+            clientSecret: kube://secrets/userclouds-client-secret?key=client_secret
+          id: union-controlplane
+          name: union-controlplane
+
+    cache:
+      enabled: true
+      type: "memory"
+      ttl: "60m"
+      memory:
+        maxEntries: 100000
+        shards: 128
+        depShards: 128
+
+    services:
+      checkAttributeEndpoint: "http://localhost:8080"
+      idpEndpoint: "http://localhost:8080"
+      authzEndpoint: "http://localhost:8080"
+---
 # Source: controlplane/templates/scylla/storageclass.yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -1821,6 +1899,22 @@ rules:
     verbs:
       - '*'
 ---
+# Source: controlplane/templates/userclouds/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-userclouds-lite-secrets-reader
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1839,6 +1933,26 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: flyteadmin
+    namespace: union
+---
+# Source: controlplane/templates/userclouds/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-userclouds-lite-secrets-reader
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-userclouds-lite-secrets-reader
+subjects:
+  - kind: ServiceAccount
+    name: release-name-userclouds-lite
     namespace: union
 ---
 # Source: controlplane/charts/flyte/templates/admin/service.yaml
@@ -2211,6 +2325,30 @@ spec:
   selector:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/userclouds/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: all
 ---
 # Source: controlplane/charts/flyte/templates/admin/deployment.yaml
 apiVersion: apps/v1
@@ -2791,6 +2929,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: authorizer
@@ -2818,6 +2963,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -2901,6 +3048,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: cluster
@@ -2918,6 +3072,8 @@ spec:
             mountPath: /etc/db
           - name: secrets
             mountPath: /etc/secrets/union
+          - name: userclouds-client-secret
+            mountPath: /etc/secrets
           - name: config
             mountPath: /etc/config/
       containers:
@@ -2944,6 +3100,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3027,6 +3185,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: dataproxy
@@ -3054,6 +3219,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3137,6 +3304,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: executions
@@ -3154,6 +3328,8 @@ spec:
             mountPath: /etc/db
           - name: secrets
             mountPath: /etc/secrets/union
+          - name: userclouds-client-secret
+            mountPath: /etc/secrets
           - name: config
             mountPath: /etc/config/
       containers:
@@ -3180,6 +3356,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3264,6 +3442,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: queue
@@ -3281,6 +3466,8 @@ spec:
             mountPath: /etc/db
           - name: secrets
             mountPath: /etc/secrets/union
+          - name: userclouds-client-secret
+            mountPath: /etc/secrets
           - name: config
             mountPath: /etc/config/
       containers:
@@ -3307,6 +3494,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3390,6 +3579,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: run-scheduler
@@ -3407,6 +3603,8 @@ spec:
             mountPath: /etc/db
           - name: secrets
             mountPath: /etc/secrets/union
+          - name: userclouds-client-secret
+            mountPath: /etc/secrets
           - name: config
             mountPath: /etc/config/
       containers:
@@ -3434,6 +3632,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3517,6 +3717,13 @@ spec:
       - name: db-pass
         secret:
           secretName: 
+      - name: userclouds-client-secret
+        secret:
+          secretName: userclouds-client-secret
+          optional: false
+          items:
+            - key: client_secret
+              path: client_secret
       - name: config
         configMap:
           name: usage
@@ -3544,6 +3751,8 @@ spec:
               mountPath: /etc/db
             - name: secrets
               mountPath: /etc/secrets/union
+            - name: userclouds-client-secret
+              mountPath: /etc/secrets
             - name: config
               mountPath: /etc/config/
           env:
@@ -3586,6 +3795,120 @@ spec:
                     app.kubernetes.io/name: usage
                     app.kubernetes.io/instance: release-name
                 topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/userclouds/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all
+spec:
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: userclouds-lite
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: all
+  template:
+    metadata:
+      annotations:
+        checksum/config: c9d06a46b65fa85c805172b3268b3d66848e98039cb1d2e71d45380a6c793a07
+      labels:
+        app.kubernetes.io/name: userclouds-lite
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: all
+    spec:
+      serviceAccountName: release-name-userclouds-lite
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: userclouds-lite
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.3.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - userclouds-lite
+          args:
+            - serve
+            - all
+            - --config=/etc/userclouds/config.yaml
+            - --addr=:8080
+            - --static=/usr/share/userclouds/static
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/userclouds
+              readOnly: true
+            - name: db-pass
+              mountPath: /etc/db
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-userclouds-lite-config
+        - name: db-pass
+          secret:
+            secretName: 
+        - name: tmp
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: all
+                app.kubernetes.io/name: userclouds-lite
+            topologyKey: kubernetes.io/hostname
 ---
 # Source: controlplane/charts/flyte/templates/admin/hpa.yaml
 apiVersion: autoscaling/v2
@@ -3800,6 +4123,33 @@ spec:
     - type: Resource
       resource:
         name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# Source: controlplane/templates/userclouds/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: release-name-userclouds-lite
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
         target:
           type: Utilization
           averageUtilization: 80
@@ -6051,3 +6401,45 @@ spec:
       storage:
         capacity: 100Gi
         storageClassName: scylladb
+---
+# Source: controlplane/templates/userclouds/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: release-name-userclouds-lite
+  labels:
+    helm.sh/chart: controlplane-2026.3.0
+    app.kubernetes.io/name: userclouds-lite
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.1"
+    app.kubernetes.io/managed-by: Helm
+    instance: union
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: userclouds-lite
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: all
+  endpoints:
+    - port: http
+      interval: 30s
+      scrapeTimeout: 10s
+      path: /metrics
+      relabelings:
+        - sourceLabels:
+          - __metrics_path__
+          targetLabel: metrics_path
+        - sourceLabels:
+          - __meta_kubernetes_pod_node_name
+          targetLabel: __host__
+        - action: replace
+          sourceLabels:
+          - __meta_kubernetes_namespace
+          targetLabel: kubernetes_namespace
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - action: labeldrop
+          regex: (pod_template_generation|operator_agent_grafana_com_name|operator_agent_grafana_com_type|app_kubernetes_io_managed_by|app_kubernetes_io_version|control_plane_component|control_plane_ns|extension|pod_template_hash|workload_ns|helm_sh_chart|inject|instance|pod_template_hash|workload_ns)
+        - action: replace
+          replacement: integrations/unionai/custom
+          targetLabel: job

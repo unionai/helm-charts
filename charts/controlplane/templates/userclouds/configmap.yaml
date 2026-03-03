@@ -1,0 +1,78 @@
+{{- if .Values.userclouds.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "userclouds.fullname" . }}-config
+  labels:
+    {{- include "userclouds.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    database:
+      host: {{ tpl (.Values.userclouds.database.host | toString) . | quote }}
+      port: {{ .Values.userclouds.database.port }}
+      name: {{ tpl (.Values.userclouds.database.name | toString) . | quote }}
+      user: {{ tpl (.Values.userclouds.database.user | toString) . | quote }}
+      password: {{ .Values.userclouds.database.password | quote }}
+      sslMode: {{ .Values.userclouds.database.sslMode | quote }}
+      mode: {{ .Values.userclouds.database.mode | quote }}
+
+    auth:
+      issuer: {{ tpl (.Values.userclouds.auth.issuer | toString) . | quote }}
+      signingKey: {{ tpl (.Values.userclouds.auth.signingKey | toString) . | quote }}
+      {{- if .Values.userclouds.auth.providers }}
+      providers:
+        {{- toYaml .Values.userclouds.auth.providers | nindent 8 }}
+      {{- end }}
+      {{- if .Values.userclouds.auth.apps }}
+      apps:
+        {{- tpl (toYaml .Values.userclouds.auth.apps) . | nindent 8 }}
+      {{- end }}
+
+    cache:
+      enabled: {{ .Values.userclouds.cache.enabled }}
+      type: {{ .Values.userclouds.cache.type | quote }}
+      ttl: {{ .Values.userclouds.cache.ttl | quote }}
+      {{- if or .Values.userclouds.cache.ttls.objectType .Values.userclouds.cache.ttls.object .Values.userclouds.cache.ttls.edgeType .Values.userclouds.cache.ttls.edge .Values.userclouds.cache.ttls.user }}
+      ttls:
+        {{- with .Values.userclouds.cache.ttls.objectType }}
+        objectType: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.userclouds.cache.ttls.object }}
+        object: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.userclouds.cache.ttls.edgeType }}
+        edgeType: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.userclouds.cache.ttls.edge }}
+        edge: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.userclouds.cache.ttls.user }}
+        user: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if eq .Values.userclouds.cache.type "redis" }}
+      redis:
+        host: {{ .Values.userclouds.cache.redis.host | quote }}
+        port: {{ .Values.userclouds.cache.redis.port }}
+        {{- if .Values.userclouds.cache.redis.password }}
+        password: {{ .Values.userclouds.cache.redis.password | quote }}
+        {{- end }}
+        tls: {{ .Values.userclouds.cache.redis.tls }}
+      {{- end }}
+      {{- if eq .Values.userclouds.cache.type "memory" }}
+      memory:
+        maxEntries: {{ .Values.userclouds.cache.memory.maxEntries }}
+        shards: {{ .Values.userclouds.cache.memory.shards }}
+        depShards: {{ .Values.userclouds.cache.memory.depShards }}
+      {{- end }}
+
+    {{- if .Values.userclouds.users }}
+    users:
+      {{- toYaml .Values.userclouds.users | nindent 6 }}
+    {{- end }}
+
+    services:
+      checkAttributeEndpoint: "http://localhost:{{ .Values.userclouds.service.port }}"
+      idpEndpoint: "http://localhost:{{ .Values.userclouds.service.port }}"
+      authzEndpoint: "http://localhost:{{ .Values.userclouds.service.port }}"
+{{- end }}
