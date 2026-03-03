@@ -1,3 +1,7 @@
+> **Note**: This guide has been migrated to the Union.ai documentation site.
+> See: https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/
+> This file is kept for reference but may not be updated.
+
 # Self-Hosted Intra-Cluster Deployment Guide (GCP)
 
 This guide covers deploying Union dataplane in the **same Kubernetes cluster** as your Union control plane (co-located deployment). This is ideal for fully self-hosted Union deployments where both control plane and dataplane run in your infrastructure.
@@ -96,6 +100,8 @@ global:
   CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
   QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
   CACHESERVICE_ENDPOINT: "cacheservice.union-cp.svc.cluster.local:89"
+  # Set when control plane has OIDC enabled (same as INTERNAL_CLIENT_ID in control plane)
+  AUTH_CLIENT_ID: "<service-to-service-client-id>"
 ```
 
 **Important notes:**
@@ -120,15 +126,66 @@ kubectl exec -n union deploy/unionai-dataplane-operator -- \
 
 ## Key Differences from Standard Deployment
 
-| Feature                | Standard BYOC                                | Intra-Cluster Self-Hosted           |
-| ---------------------- | -------------------------------------------- | ----------------------------------- |
-| Control plane location | External (Union-managed or separate cluster) | Same Kubernetes cluster             |
-| Network path           | Internet or VPN                              | Kubernetes internal networking      |
-| Authentication         | OAuth2 with client credentials               | Direct service-to-service (no auth) |
-| Cloudflare tunnel      | Required                                     | Disabled                            |
-| TLS certificates       | Trusted CA certificates                      | Can use self-signed certificates    |
-| API keys               | Required                                     | Not used                            |
-| Ingress type           | LoadBalancer (external)                      | ClusterIP (internal)                |
+| Feature                | Standard BYOC                                | Intra-Cluster Self-Hosted                     |
+| ---------------------- | -------------------------------------------- | --------------------------------------------- |
+| Control plane location | External (Union-managed or separate cluster) | Same Kubernetes cluster                       |
+| Network path           | Internet or VPN                              | Kubernetes internal networking                |
+| Authentication         | OAuth2 with client credentials               | OAuth2 with client credentials (when enabled) |
+| Cloudflare tunnel      | Required                                     | Disabled                                      |
+| TLS certificates       | Trusted CA certificates                      | Can use self-signed certificates              |
+| API keys               | Required                                     | Injected via EAGER_API_KEY secret             |
+| Ingress type           | LoadBalancer (external)                      | ClusterIP (internal)                          |
+
+## Authentication (OAuth2)
+
+When the control plane has OIDC authentication enabled, the dataplane must also be configured with OAuth2 credentials so its services (operator, propeller, cluster-resource-sync) can authenticate to the control plane.
+
+### Prerequisites
+
+- Control plane deployed with OIDC enabled (see [Control Plane Auth Guide](../controlplane/SELFHOSTED_INTRA_CLUSTER_GCP.md#authentication-oidcoauth2))
+- The **service-to-service OAuth client ID** (same `INTERNAL_CLIENT_ID` used in the control plane)
+- The **client secret** for the service-to-service app
+
+### Configuration
+
+#### 1. Set Authentication Global
+
+Add the following to your customer overrides file:
+
+```yaml
+global:
+  # ... existing globals ...
+  AUTH_CLIENT_ID: "<service-to-service-client-id>"
+```
+
+This is the same client ID used as `INTERNAL_CLIENT_ID` in the control plane configuration.
+
+#### 2. Create Kubernetes Secret
+
+The dataplane services need the client secret mounted at `/etc/union/secret/client_secret`:
+
+```bash
+# Create the auth secret for dataplane services
+kubectl create secret generic union-secret-auth \
+  --from-literal=client_secret='<SERVICE_CLIENT_SECRET>' \
+  -n union
+```
+
+**Tip:** For production, use External Secrets Operator or a similar tool to sync secrets from your cloud provider's secret manager.
+
+#### 3. Deploy
+
+Deploy or upgrade the dataplane with the updated overrides. The values file already has auth enabled for all services — you just need to provide the client ID and secret.
+
+### Verifying Authentication
+
+```bash
+# Check operator logs for successful auth token acquisition
+kubectl logs -n union -l app.kubernetes.io/name=operator --tail=50 | grep -i "token\|auth"
+
+# Check propeller logs
+kubectl logs -n union -l app.kubernetes.io/name=flytepropeller --tail=50 | grep -i "token\|auth"
+```
 
 ## Troubleshooting
 
@@ -166,9 +223,16 @@ kubectl get svc --all-namespaces | grep nginx-controller
 
 ### Dataplane cannot authenticate to control plane
 
-- Verify `auth.enable: false` is set in the intra-cluster config
-- Check that `secrets.admin.create: false` is set (no OAuth credentials needed)
-- Ensure control plane is configured to accept unauthenticated intra-cluster requests
+- Verify `AUTH_CLIENT_ID` is set correctly in your customer overrides
+- Check that the `union-secret-auth` secret exists and contains `client_secret`:
+  ```bash
+  kubectl get secret union-secret-auth -n union -o jsonpath='{.data.client_secret}' | base64 -d
+  ```
+- Check operator logs for authentication errors:
+  ```bash
+  kubectl logs -n union -l app.kubernetes.io/name=operator --tail=50 | grep -i "auth\|token\|401"
+  ```
+- Verify the client ID matches the control plane's `INTERNAL_CLIENT_ID`
 
 ### Workload Identity issues
 
