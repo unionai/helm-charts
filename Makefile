@@ -36,13 +36,7 @@ requirements:
 gen_version_bump: requirements
 	invoke builder.version-bumper --file charts/controlplane/Chart.yaml
 	invoke builder.version-bumper --file charts/dataplane/Chart.yaml
-
-.PHONY: gen_dataplane_crds_version_bump
-gen_dataplane_crds_version_bump: requirements
 	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml
-
-.PHONY: gen_sandbox_crds_version_bump
-gen_sandbox_crds_version_bump: requirements
 	invoke builder.version-bumper --file charts/sandbox/Chart.yaml
 
 .PHONY: gen_dataplane_release
