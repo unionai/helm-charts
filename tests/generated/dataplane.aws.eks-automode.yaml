@@ -153,16 +153,10 @@ automountServiceAccountToken: true
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: union-clustersync-system
+  name: clustersync-system
   namespace: union
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
-# Source: dataplane/templates/imagebuilder/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-imagebuilder
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: v1
@@ -347,7 +341,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: union-clusterresourcesync-config
+  name: flyte-clusterresourcesync-config
   namespace: union
   labels:
     app.kubernetes.io/name: clusterresourcesync
@@ -438,7 +432,7 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: union-clusterresource-template
+  name: clusterresource-template
   namespace: union
   labels:
     app.kubernetes.io/name: clusterresourcesync
@@ -789,8 +783,6 @@ data:
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
-      collectBillableResourceUsage:
-        enabled: false
       billableUsageCollector:
         enabled: true
       dependenciesHeartbeat:
@@ -1437,7 +1429,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-clustersync-resource
+  name: clustersync-resource
 rules:
   - apiGroups:
       - ""
@@ -1788,28 +1780,28 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-clustersync-resource
+  name: clustersync-resource
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: clustersync-resource
 subjects:
   - kind: ServiceAccount
-    name: union-clustersync-system
+    name: clustersync-system
     namespace: union
 ---
 # Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-clustersync-auth-delegator
+  name: clustersync-auth-delegator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: system:auth-delegator
 subjects:
   - kind: ServiceAccount
-    name: union-clustersync-system
+    name: clustersync-system
     namespace: union
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
@@ -3103,7 +3095,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: union-syncresources
+  name: syncresources
   namespace: union
   labels:
     app.kubernetes.io/name: clusterresourcesync
@@ -3119,7 +3111,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4c10925a32e76bd929981340593aa27527dc5f5827716a704f673db74981dc5"
+        configChecksum: "27f7949ac977a5fdecc79fefa89b5d0b4a7e818621ad1016865da18375ad857"
         
       labels:
         
@@ -3167,7 +3159,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -3186,13 +3178,13 @@ spec:
               mountPath: /etc/flyte/config
           ports:
             - containerPort: 10254
-      serviceAccountName: union-clustersync-system
+      serviceAccountName: clustersync-system
       volumes:
         - configMap:
-            name: union-clusterresource-template
+            name: clusterresource-template
           name: resource-templates
         - configMap:
-            name: union-clusterresourcesync-config
+            name: flyte-clusterresourcesync-config
           name: config-volume
         - name: auth
           secret:
@@ -3224,10 +3216,9 @@ spec:
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
-      serviceAccountName: "union-imagebuilder"
       containers:
         - name: "buildkit"
-          image: "docker.io/moby/buildkit:buildx-stable-1-rootless"
+          image: "moby/buildkit:buildx-stable-1-rootless"
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAME
@@ -3355,7 +3346,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -3436,7 +3427,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "42add5042f1173b1a0334f3a0cff379108b073b934db6f4275f917085c73735"
+        configChecksum: "aaf3f6b8409be5b216d33db58c29d91ad15597cfcbb98ba0f45395f89d99d9b"
         
       labels:
         
@@ -3463,7 +3454,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3531,7 +3522,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -3573,7 +3564,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "42add5042f1173b1a0334f3a0cff379108b073b934db6f4275f917085c73735"
+        configChecksum: "aaf3f6b8409be5b216d33db58c29d91ad15597cfcbb98ba0f45395f89d99d9b"
         
       labels:
         
@@ -3596,7 +3587,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -3703,7 +3694,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3758,7 +3749,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -3895,7 +3886,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.1"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
