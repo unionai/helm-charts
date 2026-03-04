@@ -177,6 +177,39 @@ configMap:
       authorizationMetadataKey: "flyte-authorization"
       scopes: ["all"]
 
+  # --- Identity Injection (Optional) ---
+  # Maps OAuth/OIDC claims from authenticated users to pod annotations and
+  # environment variables on execution pods. Enables MutatingAdmissionWebhooks
+  # that inject credentials based on caller identity.
+  # Define the mapping once here; reference it for both services below.
+  # Prerequisite: OIDC authentication must be enabled.
+  #
+  # IMPORTANT — Claim availability:
+  # Identity injection reads claims from the OAuth2 ACCESS TOKEN, not the
+  # ID token. Many IdPs (e.g. Okta) only include standard claims like
+  # preferred_username, email, and groups in ID tokens by default. You must
+  # explicitly configure your authorization server to include any desired
+  # claims in access tokens. For Okta, add a custom claim with
+  # claim_type = "RESOURCE" on the authorization server.
+  # The "sub" claim is always present in access tokens.
+  #
+  # _identityInjection: &identityInjection
+  #   enabled: true
+  #   annotations:
+  #     - claimName: "preferred_username"
+  #       targetKey: "union.ai/created-by"
+  #       required: true
+  #     - claimName: "email"
+  #       targetKey: "union.ai/user-email"
+  #     - claimName: "groups"
+  #       targetKey: "union.ai/user-groups"
+  #   environmentVariables:
+  #     - claimName: "sub"
+  #       targetKey: "UNION_USER_SUBJECT"
+  #       required: true
+  #     - claimName: "preferred_username"
+  #       targetKey: "UNION_USER_EMAIL"
+
 # ----------------------------------------------------------------------------
 # SECTION 4: Console Configuration
 # ----------------------------------------------------------------------------
@@ -282,6 +315,8 @@ flyte:
       # server:
       #   security:
       #     useAuth: true
+      #   # Identity injection: uncomment to apply claim mappings from Section 3.
+      #   identityInjection: *identityInjection
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
@@ -385,25 +420,25 @@ ingress:
   protectedIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
   protectedConsoleIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
   protectedIngressAnnotationsGrpc:
     nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
   protectedIngressAnnotationsWithoutSignin:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
@@ -487,3 +522,6 @@ services:
               clientSecretLocation: "/etc/secrets/union/client_secret"
               tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
               scopes: ["all"]
+        # Identity injection: uncomment to apply claim mappings from Section 3.
+        # task:
+        #   identityInjection: *identityInjection
