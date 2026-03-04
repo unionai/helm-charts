@@ -629,7 +629,11 @@ databricks:
   enabled: false
   plugin_config: { }
 
-# -- Custom namespace mapping for mapping Union runs to Kubernetes namespaces.
+# -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
+# This is the canonical source of truth. All dataplane services (propeller,
+# clusterresourcesync, operator, executor) will inherit this value unless
+# explicitly overridden in their service-specific config sections
+# (config.namespace_config, config.operator.org, executor.raw_config).
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
@@ -845,6 +849,46 @@ executor:
         kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
+        dynamic-log-links:
+          - vscode:
+              displayName: VS Code Debugger
+              linkType: ide
+              templateUris:
+                - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+          - wandb-execution-id:
+              displayName: Weights & Biases
+              linkType: dashboard
+              templateUris:
+                - "{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.entity }}`}}/{{`{{ .taskConfig.project }}`}}/runs/{{`{{ .podName }}`}}"
+          - wandb-custom-id:
+              displayName: Weights & Biases
+              linkType: dashboard
+              templateUris:
+                - "{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.entity }}`}}/{{`{{ .taskConfig.project }}`}}/runs/{{`{{ .taskConfig.id }}`}}"
+          # Comet currently doesn't support multi-node training.
+          #
+          # TODO: Once the templating engine supports filters (e.g., `replace`),
+          #       update this template to use `{{ .podName | replace "-" "" }}`.
+          #
+          # Source: flyteplugins/go/tasks/pluginmachinery/tasklog/template.go
+          - comet-ml-execution-id:
+              displayName: Comet
+              linkType: dashboard
+              templateUris: "{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.workspace }}`}}/{{`{{ .taskConfig.project_name }}`}}/{{`{{ .executionName }}`}}{{`{{ .nodeId }}`}}{{`{{ .taskRetryAttempt }}`}}{{`{{ .taskConfig.link_suffix }}`}}"
+          - comet-ml-custom-id:
+              displayName: Comet
+              linkType: dashboard
+              templateUris: "{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.workspace }}`}}/{{`{{ .taskConfig.project_name }}`}}/{{`{{ .taskConfig.experiment_key }}`}}"
+          - neptune-scale-run:
+              displayName: Neptune Run
+              linkType: dashboard
+              templateUris:
+                - "https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .podName }}`}}"
+          - neptune-scale-custom-id:
+              displayName: Neptune Run
+              linkType: dashboard
+              templateUris:
+                - "https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .taskConfig.id }}`}}"
   sharedService:
     metrics:
       scope: "executor:"
@@ -1837,6 +1881,7 @@ imageBuilder:
       create: true
       name: "union-imagebuilder"
       annotations: {}
+      imagePullSecret: ""
 
     # -- The name to use for the buildkit deployment, service, configmap, etc.
     fullnameOverride: ""

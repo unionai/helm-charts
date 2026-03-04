@@ -1282,6 +1282,9 @@ data:
     logger:
       level: 4
       show-source: true
+  namespace_mapping.yaml: |
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -1426,6 +1429,47 @@ data:
     plugins:
       logs:
         cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
         kubernetes-enabled: false
   enabled_plugins.yaml: |
     tasks:
@@ -1460,6 +1504,8 @@ data:
           cpu: 4096
           gpu: 256
           memory: 2Ti
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
     union:
       connection:
         host: dns:///test-controlplane-host
@@ -1603,6 +1649,8 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "{{ project }}-{{ domain }}"
       imageBuilder:
         enabled: true
         executionNamespaceLabels:
@@ -1767,6 +1815,10 @@ data:
     logger:
       level: 4
       show-source: true
+  namespace_config.yaml: |
+    namespace_config:
+      namespace_mapping:
+        template: '{{ project }}-{{ domain }}'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
@@ -2605,7 +2657,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: clustersync-resource
+  name: union-clustersync-resource
 subjects:
   - kind: ServiceAccount
     name: union-clustersync-system
@@ -4388,7 +4440,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4c10925a32e76bd929981340593aa27527dc5f5827716a704f673db74981dc5"
+        configChecksum: "96e08b4b50439ee97d49319af9b9c392cffe7461c4ffe74aeaa4860d09c0aa8"
         
       labels:
         
@@ -4436,7 +4488,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -4604,7 +4656,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5df0cd4e64dc6d2f39d94603e1c115386e0eb357354d60b2d299c850230ab2b"
+        configChecksum: "22a86c5f07e2fba1700a4587aa5bd063219ea41162d4223bfaf0122bd1bee87"
       labels:
         
         app: executor
@@ -4626,7 +4678,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: IfNotPresent
           command:
             - executorv2
@@ -4707,7 +4759,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a2c91ab7f7c5cdb005ff3e63b0a21b58865e393f9175fb8d132f497a4f2c833"
+        configChecksum: "6cc3e150e4ec9d8e2ef958b26ecb1b012b7ab3c7ee7fdc681897d841b3d20ae"
         
       labels:
         
@@ -4723,7 +4775,7 @@ spec:
             - configMap:
                 name: union-operator
             - configMap:
-                name: flyte-clusterresourcesync-config
+                name: union-clusterresourcesync-config
         - name: secret-volume
           secret:
             secretName: union-secret-auth
@@ -4734,7 +4786,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -4802,7 +4854,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -4844,7 +4896,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a2c91ab7f7c5cdb005ff3e63b0a21b58865e393f9175fb8d132f497a4f2c833"
+        configChecksum: "6cc3e150e4ec9d8e2ef958b26ecb1b012b7ab3c7ee7fdc681897d841b3d20ae"
         
       labels:
         
@@ -4867,7 +4919,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -4954,7 +5006,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "bf3436d366e011bcf0b34585892ddec54efd1c27027dfa8570b5601ac55c82e"
+        configChecksum: "50f0295cbb5ff246e0972b43721f70381b499b65378e6383292af515de85c49"
         
       labels:
         
@@ -5004,7 +5056,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
@@ -5058,7 +5110,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "bf3436d366e011bcf0b34585892ddec54efd1c27027dfa8570b5601ac55c82e"
+        configChecksum: "50f0295cbb5ff246e0972b43721f70381b499b65378e6383292af515de85c49"
         
     spec:
       securityContext:
@@ -5071,7 +5123,7 @@ spec:
       serviceAccountName: union-webhook-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.2.12"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
