@@ -1647,6 +1647,14 @@ data:
         - source_labels: [__meta_kubernetes_pod_name]
           action: replace
           target_label: pod
+      # OpenCost metrics for cost tracking
+      - job_name: opencost
+        static_configs:
+        - targets: ['release-name-opencost:9003']
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
   rules.yml: |
     
     groups:
@@ -5808,7 +5816,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5772d1ceb2c20b9083df3169905cea6af66f7e4ab46dfe0b1f739849d69f66f"
+        configChecksum: "d13567591cc1508f6c0e8e4989c2344f60b3785f15657088b9ec901af3f3646"
       labels:
         app.kubernetes.io/component: prometheus
         app.kubernetes.io/name: release-name-dataplane
@@ -6353,21 +6361,9 @@ spec:
   walCompression: true
   routePrefix: "/"
   serviceAccountName: union-monitoring-prometheus
-  serviceMonitorSelector:
-    matchExpressions:
-    - key: platform.union.ai/prometheus-group
-      operator: NotIn
-      values:
-      - union-features
-
+  serviceMonitorSelector: {}
   serviceMonitorNamespaceSelector: {}
-  podMonitorSelector:
-    matchExpressions:
-    - key: platform.union.ai/prometheus-group
-      operator: NotIn
-      values:
-      - union-features
-
+  podMonitorSelector: {}
   podMonitorNamespaceSelector: {}
   probeSelector:
     matchLabels:
@@ -6382,12 +6378,7 @@ spec:
     seccompProfile:
       type: RuntimeDefault
   ruleNamespaceSelector: {}
-  ruleSelector:
-    matchExpressions:
-    - key: platform.union.ai/prometheus-group
-      operator: NotIn
-      values:
-      - union-features
+  ruleSelector: {}
   scrapeConfigSelector:
     matchLabels:
       release: "release-name"
@@ -10333,40 +10324,6 @@ spec:
     path: "/metrics"
   - port: reloader-web
     path: "/metrics"
----
-# Source: dataplane/charts/opencost/templates/servicemonitor.yaml
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: release-name-opencost
-  labels:
-    helm.sh/chart: opencost-1.42.0
-    app.kubernetes.io/name: opencost
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.111.0"
-    app.kubernetes.io/part-of: opencost
-    app.kubernetes.io/managed-by: Helm
-    platform.union.ai/prometheus-group: union-features
-spec:
-  endpoints:
-    - port: http
-      scheme: http
-      path: /metrics
-      interval: 30s
-      scrapeTimeout: 10s
-      honorLabels: true
-      metricRelabelings:
-        - action: keep
-          regex: kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost
-          sourceLabels:
-          - __name__
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: opencost
-      app.kubernetes.io/instance: release-name
-  namespaceSelector:
-    matchNames:
-      - union
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/tests/test-serviceaccount.yaml
 apiVersion: v1
