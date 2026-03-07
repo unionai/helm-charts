@@ -1,4 +1,20 @@
 ---
+# Source: dataplane/charts/kube-state-metrics/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+automountServiceAccountToken: true
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.30.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.15.0"
+  name: release-name-kube-state-metrics
+  namespace: union
+---
 # Source: dataplane/templates/common/default-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -22,7 +38,12 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: executor
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -30,10 +51,12 @@ kind: ServiceAccount
 metadata:
   name: proxy-system
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -41,10 +64,26 @@ kind: ServiceAccount
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: union-operator
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
+---
+# Source: dataplane/templates/prometheus/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
 ---
 # Source: dataplane/templates/propeller/serviceaccount-webhook.yaml
 apiVersion: v1
@@ -137,7 +176,12 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: executor
 data:
   task_logs.yaml: | 
     plugins:
@@ -310,10 +354,12 @@ kind: ConfigMap
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: union-operator
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
 data:
   k8s.yaml: | 
     plugins:
@@ -437,6 +483,120 @@ data:
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: ""
   image-builder.authentication-type: "noop"
+---
+# Source: dataplane/templates/prometheus/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+    scrape_configs:
+      # Self-monitoring
+      - job_name: prometheus
+        metrics_path: /prometheus/metrics
+        static_configs:
+        - targets: ['localhost:9090']
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_(.*)|.+_(limit|failed|missed|failures)_total
+          action: keep
+
+      # Kube state metrics for pod/node resource tracking and cost calculations
+      - job_name: kube-state-metrics
+        static_configs:
+        - targets: ['release-name-kube-state-metrics:8080']
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
+          action: keep
+        - separator: ;
+          source_labels: [__name__, phase]
+          regex: kube_pod_status_phase;(Succeeded|Failed)
+          action: drop
+        - source_labels: [node]
+          target_label: nodename
+          regex: '(.*)'
+          action: replace
+        - source_labels: [label_node_group_name]
+          action: replace
+          regex: (.+)
+          target_label: label_node_pool_name
+
+      # cAdvisor container metrics for CPU and memory tracking
+      - job_name: kubernetes-cadvisor
+        metrics_path: /metrics
+        scheme: https
+        kubernetes_sd_configs:
+        - role: node
+          namespaces:
+            names: []
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+          action: keep
+        relabel_configs:
+        - separator: ;
+          regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - separator: ;
+          regex: (.*)
+          target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace
+
+      # Flyte propeller metrics for execution info and fast task duration
+      - job_name: flytepropeller
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - union
+          selectors:
+          - role: pod
+            label: app.kubernetes.io/name=flytepropeller
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
 ---
 # Source: dataplane/templates/propeller/configmap.yaml
 apiVersion: v1
@@ -595,6 +755,161 @@ data:
         max_size_mbs: 0
         target_gc_percent: 70
 ---
+# Source: dataplane/charts/kube-state-metrics/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.30.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.15.0"
+  name: release-name-kube-state-metrics
+rules:
+
+- apiGroups: ["certificates.k8s.io"]
+  resources:
+  - certificatesigningrequests
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - configmaps
+  verbs: ["list", "watch"]
+
+- apiGroups: ["batch"]
+  resources:
+  - cronjobs
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - daemonsets
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - deployments
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - endpoints
+  verbs: ["list", "watch"]
+
+- apiGroups: ["autoscaling"]
+  resources:
+  - horizontalpodautoscalers
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "networking.k8s.io"]
+  resources:
+  - ingresses
+  verbs: ["list", "watch"]
+
+- apiGroups: ["batch"]
+  resources:
+  - jobs
+  verbs: ["list", "watch"]
+
+- apiGroups: ["coordination.k8s.io"]
+  resources:
+  - leases
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - limitranges
+  verbs: ["list", "watch"]
+
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources:
+    - mutatingwebhookconfigurations
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - namespaces
+  verbs: ["list", "watch"]
+
+- apiGroups: ["networking.k8s.io"]
+  resources:
+  - networkpolicies
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - nodes
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - persistentvolumeclaims
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - persistentvolumes
+  verbs: ["list", "watch"]
+
+- apiGroups: ["policy"]
+  resources:
+    - poddisruptionbudgets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - pods
+  verbs: ["list", "watch"]
+
+- apiGroups: ["extensions", "apps"]
+  resources:
+  - replicasets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - replicationcontrollers
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - resourcequotas
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - secrets
+  verbs: ["list", "watch"]
+
+- apiGroups: [""]
+  resources:
+  - services
+  verbs: ["list", "watch"]
+
+- apiGroups: ["apps"]
+  resources:
+  - statefulsets
+  verbs: ["list", "watch"]
+
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - storageclasses
+  verbs: ["list", "watch"]
+
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources:
+    - validatingwebhookconfigurations
+  verbs: ["list", "watch"]
+
+- apiGroups: ["storage.k8s.io"]
+  resources:
+    - volumeattachments
+  verbs: ["list", "watch"]
+---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -648,6 +963,58 @@ rules:
   - delete
   - update
 ---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-prometheus
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - pods
+      - endpoints
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - nonResourceURLs:
+      - /metrics
+      - /metrics/cadvisor
+    verbs:
+      - get
+---
+# Source: dataplane/charts/kube-state-metrics/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.30.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.15.0"
+  name: release-name-kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-kube-state-metrics
+subjects:
+- kind: ServiceAccount
+  name: release-name-kube-state-metrics
+  namespace: union
+---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -664,6 +1031,27 @@ subjects:
   name: executor
   namespace: union
 ---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-prometheus
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -671,10 +1059,12 @@ metadata:
   name: proxy-system-secret
   namespace: union
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 rules:
   - apiGroups:
       - '*'
@@ -693,10 +1083,12 @@ kind: Role
 metadata:
   name: proxy-system
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 rules:
   - apiGroups:
       - '*'
@@ -718,10 +1110,12 @@ kind: Role
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: union-operator
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
 rules:
   - apiGroups:
       - '*'
@@ -861,10 +1255,12 @@ metadata:
   name: proxy-system-secret
   namespace: union
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -880,10 +1276,12 @@ kind: RoleBinding
 metadata:
   name: proxy-system
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -899,10 +1297,12 @@ kind: RoleBinding
 metadata:
   name: operator-system
   labels:
-    app.kubernetes.io/name: union-operator
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -942,16 +1342,68 @@ subjects:
     name: flytepropeller-system
     namespace: union
 ---
+# Source: dataplane/charts/kube-state-metrics/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: union
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.30.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.15.0"
+  annotations:
+    prometheus.io/scrape: 'true'
+spec:
+  type: "ClusterIP"
+  ports:
+  - name: "http"
+    protocol: TCP
+    port: 8080
+    targetPort: 8080
+  
+  selector:    
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/clusterresourcesync/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: syncresources
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: clusterresourcesync
+spec:
+  type: ClusterIP
+  ports:
+    - port: 10254
+      targetPort: debug
+      protocol: TCP
+      name: debug
+  selector:
+      app.kubernetes.io/name: release-name-dataplane
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: clusterresourcesync
+---
 # Source: dataplane/templates/imagebuilder/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: union-operator-buildkit
   labels:
-    app.kubernetes.io/name: imagebuilder-buildkit
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: imagebuilder-buildkit
 spec:
   type: ClusterIP
   ports:
@@ -960,8 +1412,9 @@ spec:
       protocol: TCP
       name: tcp
   selector:
-    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: imagebuilder-buildkit
 ---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
@@ -969,7 +1422,13 @@ kind: Service
 metadata:
   name: release-name-dataplane-executor
   labels:
-    app: executor
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: executor
 spec:
   type: ClusterIP
   ports:
@@ -977,8 +1436,14 @@ spec:
       targetPort: 15605
       protocol: TCP
       name: fasttask
+    - port: 10254
+      targetPort: debug
+      protocol: TCP
+      name: debug
   selector:
-    app: executor
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: executor
 ---
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
@@ -986,10 +1451,13 @@ kind: Service
 metadata:
   name: union-operator-proxy
   labels:
-    app.kubernetes.io/name: operator-proxy
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 spec:
   type: ClusterIP
   ports:
@@ -1002,8 +1470,9 @@ spec:
       protocol: TCP
       name: debug
   selector:
-    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: operator-proxy
 ---
 # Source: dataplane/templates/operator/service.yaml
 apiVersion: v1
@@ -1011,19 +1480,48 @@ kind: Service
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: union-operator
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
 spec:
   type: ClusterIP
   ports:
-    - port: 80
+    - port: 10254
       targetPort: debug
       protocol: TCP
       name: debug
   selector:
-    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: union-operator
+---
+# Source: dataplane/templates/prometheus/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 9090
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/component: prometheus
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
 ---
 # Source: dataplane/templates/propeller/service-webhook.yaml
@@ -1033,16 +1531,16 @@ metadata:
   name: flyte-pod-webhook
   namespace: union
   labels:
-    app.kubernetes.io/name: flyte-pod-webhook
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: flyte-pod-webhook
   annotations:
     projectcontour.io/upstream-protocol.h2c: grpc
 spec:
   selector:
-    app.kubernetes.io/name: flyte-pod-webhook
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: flyte-pod-webhook
   ports:
     - name: https
       protocol: TCP
@@ -1060,10 +1558,13 @@ metadata:
   namespace: union
   name: flytepropeller
   labels:
-    app.kubernetes.io/name: flytepropeller
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: flytepropeller
 spec:
   type: ClusterIP
   ports:
@@ -1075,8 +1576,94 @@ spec:
       protocol: TCP
       targetPort: 15605
   selector:
-    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: flytepropeller
+---
+# Source: dataplane/charts/kube-state-metrics/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-kube-state-metrics
+  namespace: union
+  labels:    
+    helm.sh/chart: kube-state-metrics-5.30.1
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: metrics
+    app.kubernetes.io/part-of: kube-state-metrics
+    app.kubernetes.io/name: kube-state-metrics
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2.15.0"
+spec:
+  selector:
+    matchLabels:      
+      app.kubernetes.io/name: kube-state-metrics
+      app.kubernetes.io/instance: release-name
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+  revisionHistoryLimit: 10
+  template:
+    metadata:
+      labels:        
+        helm.sh/chart: kube-state-metrics-5.30.1
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: metrics
+        app.kubernetes.io/part-of: kube-state-metrics
+        app.kubernetes.io/name: kube-state-metrics
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "2.15.0"
+    spec:
+      automountServiceAccountToken: true
+      hostNetwork: false
+      serviceAccountName: release-name-kube-state-metrics
+      securityContext:
+        fsGroup: 65534
+        runAsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: kube-state-metrics
+        args:
+        - --port=8080
+        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+        imagePullPolicy: IfNotPresent
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0
+        ports:
+        - containerPort: 8080
+          name: "http"
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            httpHeaders:
+            path: /livez
+            port: 8080
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        readinessProbe:
+          failureThreshold: 3
+          httpGet:
+            httpHeaders:
+            path: /readyz
+            port: 8081
+            scheme: HTTP
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 5
+        resources:
+          {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          readOnlyRootFilesystem: true
 ---
 # Source: dataplane/templates/imagebuilder/deployment.yaml
 apiVersion: apps/v1
@@ -1084,25 +1671,29 @@ kind: Deployment
 metadata:
   name: union-operator-buildkit
   labels:
-    app.kubernetes.io/name: imagebuilder-buildkit
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: imagebuilder-buildkit
 spec:
   strategy:
     type: Recreate
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: imagebuilder-buildkit
+      app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: imagebuilder-buildkit
   template:
     metadata:
       annotations:
         container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
       labels:
-        app.kubernetes.io/name: imagebuilder-buildkit
+        app.kubernetes.io/name: release-name-dataplane
         app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: imagebuilder-buildkit
     spec:
       serviceAccountName: "union-imagebuilder"
       containers:
@@ -1195,8 +1786,9 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchLabels:
-                app.kubernetes.io/name: imagebuilder-buildkit
+                app.kubernetes.io/name: release-name-dataplane
                 app.kubernetes.io/instance: release-name
+                app.kubernetes.io/component: imagebuilder-buildkit
             topologyKey: "kubernetes.io/hostname"
 ---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
@@ -1206,19 +1798,32 @@ metadata:
   name: executor
   namespace: union
   labels:
-    app: executor
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: executor
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: executor
+      app.kubernetes.io/name: release-name-dataplane
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: executor
   template:
     metadata:
       annotations:
-        configChecksum: "4d5055ab0375127690bf9b9b3eb8646c020f6692b3a030c152e7dc49f95ce51"
+        configChecksum: "3013b3144d4d4aac19aeb084a24bcf12c80ed13818c2fb832cb0f081d93814f"
       labels:
         
         app: executor
+        app.kubernetes.io/component: executor
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: release-name-dataplane
+        app.kubernetes.io/version: 2026.3.2
+        helm.sh/chart: dataplane-2026.3.3
     spec:
       securityContext:
         fsGroup: 1337
@@ -1246,7 +1851,7 @@ spec:
             - name: http
               containerPort: 8089
               protocol: TCP
-            - name: metrics
+            - name: debug
               containerPort: 10254
               protocol: TCP
           env:
@@ -1303,27 +1908,32 @@ metadata:
   name: union-operator-proxy
   namespace: union
   labels:
-    app.kubernetes.io/name: operator-proxy
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: operator-proxy
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: operator-proxy
+      app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: operator-proxy
   template:
     metadata:
       annotations:
-        configChecksum: "5e265b4c69257cade8b18816eccc609ea316a6934122dd5b900fe2a1a1581c5"
+        configChecksum: "87d45af005d10362a444bd78045ad9ff87fe770cfc771a955d6e26161c6dd74"
         
       labels:
         
-        app.kubernetes.io/name: operator-proxy
+        helm.sh/chart: dataplane-2026.3.3
+        app.kubernetes.io/name: release-name-dataplane
         app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
+        app.kubernetes.io/version: "2026.3.2"
         app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: operator-proxy
     spec:
       volumes:
         - name: config-volume
@@ -1439,26 +2049,31 @@ kind: Deployment
 metadata:
   name: union-operator
   labels:
-    app.kubernetes.io/name: union-operator
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: union-operator
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: union-operator
+      app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: union-operator
   template:
     metadata:
       annotations:
-        configChecksum: "5e265b4c69257cade8b18816eccc609ea316a6934122dd5b900fe2a1a1581c5"
+        configChecksum: "87d45af005d10362a444bd78045ad9ff87fe770cfc771a955d6e26161c6dd74"
         
       labels:
         
-        app.kubernetes.io/name: union-operator
+        helm.sh/chart: dataplane-2026.3.3
+        app.kubernetes.io/name: release-name-dataplane
         app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
+        app.kubernetes.io/version: "2026.3.2"
         app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: union-operator
     spec:
       serviceAccountName: operator-system
       securityContext:
@@ -1541,6 +2156,72 @@ spec:
               containerPort: 10254
               protocol: TCP
 ---
+# Source: dataplane/templates/prometheus/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-prometheus
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.2"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: prometheus
+      app.kubernetes.io/name: release-name-dataplane
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "ba76e958e6ed5e694dec7412c783bf942207eb45b1b48e703ce2d541d7c3f0e"
+      labels:
+        app.kubernetes.io/component: prometheus
+        app.kubernetes.io/name: release-name-dataplane
+        app.kubernetes.io/instance: release-name
+    spec:
+      priorityClassName: system-cluster-critical
+      serviceAccountName: union-operator-prometheus
+      securityContext:
+        fsGroup: 65534
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: prometheus
+          image: "prom/prometheus:v3.3.1"
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --web.external-url=/prometheus/
+            - --web.route-prefix=/prometheus/
+            - --storage.tsdb.retention.time=3d
+          ports:
+            - name: http
+              containerPort: 9090
+              protocol: TCP
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3500Mi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - mountPath: /etc/prometheus
+              name: prometheus-config
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: union-operator-prometheus
+---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create the actual deployment
 apiVersion: apps/v1
@@ -1549,24 +2230,23 @@ metadata:
   name: flytepropeller-webhook
   namespace: union
   labels:
-    app.kubernetes.io/name: flyte-pod-webhook
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: flyte-pod-webhook
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: flyte-pod-webhook
+      app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: flyte-pod-webhook
   template:
     metadata:
       labels:
         
-        app.kubernetes.io/name: flyte-pod-webhook
+        app.kubernetes.io/name: release-name-dataplane
         app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: flyte-pod-webhook
       annotations:
         configChecksum: "0a2cddd8767edcb80ec368f2dc97ccc34a25e2f9c8e291560802aacbad83f10"
         
@@ -1710,16 +2390,19 @@ metadata:
   namespace: union
   name: flytepropeller
   labels:
-    app.kubernetes.io/name: flytepropeller
+    helm.sh/chart: dataplane-2026.3.3
+    app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
+    app.kubernetes.io/version: "2026.3.2"
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: flytepropeller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: flytepropeller
+      app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: flytepropeller
   template:
     metadata:
       annotations:
@@ -1728,10 +2411,12 @@ spec:
       labels:
         
         
-        app.kubernetes.io/name: flytepropeller
+        helm.sh/chart: dataplane-2026.3.3
+        app.kubernetes.io/name: release-name-dataplane
         app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
+        app.kubernetes.io/version: "2026.3.2"
         app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: flytepropeller
     spec:
       containers:
         - command:
