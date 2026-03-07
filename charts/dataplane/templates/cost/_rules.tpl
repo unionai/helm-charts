@@ -1,5 +1,5 @@
 {{- /*
-Cost recording rules shared between static Prometheus configmap and PrometheusRule CRD.
+Cost recording rules included in the static Prometheus configmap.
 */ -}}
 {{- define "cost.recording-rules" -}}
 groups:
