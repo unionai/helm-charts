@@ -27,6 +27,7 @@ data:
     operator:
       enabled: {{ .Values.config.operator.enabled }}
       enableTunnelService: {{ .Values.config.operator.enableTunnelService }}
+      enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
         enableDirectToAppIngress: {{ .Values.serving.enabled }}
         deploymentToRestart: union-operator-proxy
@@ -61,20 +62,8 @@ data:
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- $collectBillableUsage := deepCopy (.Values.config.operator.collectBillableResourceUsage | default dict) }}
-    {{- if $.Values.low_privilege }}
-    {{- $_ := set $collectBillableUsage "enabled" false }}
-    {{- end }}
-    {{- with $collectBillableUsage }}
-      collectBillableResourceUsage:
-        {{- tpl (toYaml .) $ | nindent 8 }}
-    {{- end }}
-    {{- $billableUsage := deepCopy (.Values.config.operator.billableUsageCollector | default dict) }}
-    {{- if $.Values.low_privilege }}
-    {{- $_ := set $billableUsage "enabled" false }}
-    {{- end }}
-    {{- with $billableUsage }}
-      billableUsageCollector:
+    {{- with .Values.config.operator.billing }}
+      billing:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
     {{- with .Values.config.operator.computeResourceManager }}
@@ -88,6 +77,15 @@ data:
     {{- with .Values.config.operator.org }}
       org:
         {{- tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
+    {{- if not .Values.config.operator.org }}
+    {{- if .Values.namespace_mapping }}
+      org:
+        namespaceTemplate: {{ tpl (.Values.namespace_mapping.template | quote) $ }}
+    {{- else if include "singleNamespace" . }}
+      org:
+        namespaceTemplate: {{ .Release.Namespace }}
+    {{- end }}
     {{- end }}
     {{- if .Values.imageBuilder.enabled }}
       imageBuilder:
