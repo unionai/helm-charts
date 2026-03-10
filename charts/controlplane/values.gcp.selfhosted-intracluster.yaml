@@ -34,6 +34,14 @@
 
 global:
 
+  # Controls which ingress controller is active for this deployment.
+  # nginx  - ingress-nginx Ingress objects only (default)
+  # envoy  - Envoy Gateway API resources only
+  # both   - both sets rendered simultaneously (parallel-run migration phase)
+  # Automatically set to "both" by Terraform when envoy-gateway/revisions.yaml
+  # exists in the environment directory.
+  ingressProvider: nginx
+
   # Region for all resources
   # Example for GCP: "us-central1", "us-east1", "europe-west1"
   GCP_REGION: "us-central1"
@@ -429,7 +437,28 @@ ingress:
     nginx.org/websocket-services: "dataproxy-service"
 
 # ----------------------------------------------------------------------------
-# SECTION 7: NGINX Ingress Controller
+# SECTION 7: Envoy Gateway Configuration
+# ----------------------------------------------------------------------------
+# Envoy Gateway is installed as a separate Helm release (via the envoy-gateway
+# ArgoCD ApplicationSet) and is NOT a sub-chart of the controlplane chart.
+# This section configures how the controlplane chart interacts with Envoy Gateway
+# when it is present in the cluster.
+#
+# Automatically enabled by Terraform when envoy-gateway/revisions.yaml exists
+# in the environment directory. Manual override possible by setting enabled: true.
+
+envoy-gateway:
+  # Set to true when Envoy Gateway is installed alongside this controlplane.
+  enabled: false
+
+  # GatewayClass name created by the Envoy Gateway installation.
+  # Must match the gatewayClassName in the Gateway resource rendered by the
+  # controlplane chart when global.ingressProvider is "envoy" or "both".
+  # Uses a distinct name from the dataplane's gateway class to avoid conflicts.
+  gatewayClassName: controlplane-envoy
+
+# ----------------------------------------------------------------------------
+# SECTION 8: NGINX Ingress Controller
 # ----------------------------------------------------------------------------
 
 ingress-nginx:
