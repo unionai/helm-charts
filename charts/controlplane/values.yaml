@@ -47,9 +47,11 @@ global:
   # Note: Secret must contain "pass.txt" key
   KUBERNETES_SECRET_NAME: ""
 
-  # RBAC (userclouds) client credentials
-  # Used by controlplane services to provide access control to resources.
-  # The client ID is a pre-generated identifier; the client secret is stored in a K8s secret.
+  # RBAC (userclouds) — master enable switch and client credentials.
+  # usercloudsEnabled controls pod deployment, authorizer config, and service-to-service auth
+  # across all services including the flyte subchart (flyteadmin, cacheservice).
+  # Set to true in an overlay to activate the full userclouds RBAC stack.
+  usercloudsEnabled: false
   RBAC_CLIENT_ID: "5ef75bf9ee1e61dbec85758b5dc9857a"
   RBAC_CLIENT_SECRET: "kube://secrets/userclouds-client-secret?key=client_secret"
 
@@ -1040,8 +1042,7 @@ flyte:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
       authorizer:
-        # Set type to "UserClouds" when userclouds.enabled: true
-        type: "Noop"
+        type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         userCloudsClient:
           tenantUrl: 'http://{{ .Release.Name }}-userclouds-lite.{{ .Release.Namespace }}.svc.cluster.local:8080'
           clientID: '{{ .Values.global.RBAC_CLIENT_ID }}'
@@ -1091,8 +1092,7 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       authorizer:
-        # Set type to "UserClouds" when userclouds.enabled: true
-        type: "Noop"
+        type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         userCloudsClient:
           tenantUrl: 'http://{{ .Release.Name }}-userclouds-lite.{{ .Release.Namespace }}.svc.cluster.local:8080'
           clientID: '{{ .Values.global.RBAC_CLIENT_ID }}'
@@ -1288,8 +1288,6 @@ scylla-operator:
 # Database settings reference the global controlplane DB by default.
 # Override database.host/name/user/password for a dedicated database.
 userclouds:
-  enabled: false
-
   # Service account
   serviceAccount:
     create: true
