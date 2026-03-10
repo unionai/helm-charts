@@ -247,17 +247,12 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
-# Source: dataplane/templates/fluent-bit/serviceaccount.yaml
+# Source: dataplane/templates/common/system-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: fluentbit-system
+  name: union-system
   namespace: union
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
 ---
@@ -278,57 +273,11 @@ kind: ServiceAccount
 metadata:
   name: union-imagebuilder
 ---
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-  annotations:
-    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
-# Source: dataplane/templates/operator/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: operator-system
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: flytepropeller-system
-  namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-webhook-system
   namespace: union
   annotations:
     eks.amazonaws.com/role-arn: 'test-backend-iam-role-arn'
@@ -1889,10 +1838,8 @@ data:
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
-      collectBillableResourceUsage:
-        enabled: false
-      billableUsageCollector:
-        enabled: true
+      billing:
+        model: Legacy
       dependenciesHeartbeat:
         executor:
           endpoint: 'http://union-operator-executor:10254'
@@ -13975,7 +13922,7 @@ roleRef:
   name: union-executor
 subjects:
 - kind: ServiceAccount
-  name: executor
+  name: union-system
   namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
@@ -13994,7 +13941,7 @@ roleRef:
   name: proxy-system
 subjects:
   - kind: ServiceAccount
-    name: proxy-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
@@ -14013,7 +13960,7 @@ roleRef:
   name: operator-system
 subjects:
   - kind: ServiceAccount
-    name: operator-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
@@ -14043,7 +13990,7 @@ roleRef:
   name: union-webhook-role
 subjects:
   - kind: ServiceAccount
-    name: union-webhook-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
@@ -14119,7 +14066,7 @@ rules: []
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: proxy-system-secret
+  name: union-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -14239,7 +14186,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: proxy-system-secret
+  name: union-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -14249,10 +14196,10 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: proxy-system-secret
+  name: union-system-secret
 subjects:
   - kind: ServiceAccount
-    name: proxy-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
@@ -14271,7 +14218,7 @@ roleRef:
   name: operator-system
 subjects:
   - kind: ServiceAccount
-    name: operator-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/service.yaml
@@ -16342,7 +16289,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: executor
+      serviceAccountName: union-system
       volumes:
         - name: config-volume
           configMap:
@@ -16436,7 +16383,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a452361d7c27366d643b9122b55bc57758c42c0e93178f04dffdf1293c1da44"
+        configChecksum: "1e5420bbf707e50339c27d629c02a25152d35c4431bf6bb4266bda0c5bda34f"
         
       labels:
         
@@ -16456,7 +16403,7 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
-      serviceAccountName: proxy-system
+      serviceAccountName: union-system
       securityContext:
         {}
       containers:
@@ -16573,7 +16520,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a452361d7c27366d643b9122b55bc57758c42c0e93178f04dffdf1293c1da44"
+        configChecksum: "1e5420bbf707e50339c27d629c02a25152d35c4431bf6bb4266bda0c5bda34f"
         
       labels:
         
@@ -16582,7 +16529,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      serviceAccountName: operator-system
+      serviceAccountName: union-system
       securityContext:
         {}
       volumes:
@@ -16796,7 +16743,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         seLinuxOptions: null
-      serviceAccountName: union-webhook-system
+      serviceAccountName: union-system
       containers:
         - name: webhook
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.2"
