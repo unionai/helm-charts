@@ -361,6 +361,18 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
+{{- /* When userclouds is disabled, fall back to Noop authorizer and disable service-to-service auth */}}
+{{- if not .Values.userclouds.enabled }}
+  {{- if hasKey $merged "authorizer" }}
+    {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
+  {{- end }}
+  {{- if hasKey $merged "union" }}
+    {{- $union := get $merged "union" }}
+    {{- if hasKey $union "auth" }}
+      {{- $_ := set $union "auth" (dict "enable" false) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
