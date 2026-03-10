@@ -55,12 +55,13 @@ environment in `revisions.yaml` files in the cloud repo.
 
 ## Testing
 
-Snapshot tests live in `tests/`. After changing templates or values files, regenerate:
+Snapshot tests live in `tests/`. After changing templates or values files, regenerate snapshots and run tests:
 
 ```bash
 # From repo root
-make test         # Run existing snapshot tests
-helm template ... # Manually inspect rendered output
+make generate-expected  # Regenerate snapshot files
+make test               # Run comparison tests against snapshots
+helm template ...       # Manually inspect rendered output
 ```
 
 All tests must pass before merging. Generated test snapshots (`tests/generated/*.yaml`) should
@@ -71,4 +72,5 @@ be committed alongside template changes.
 Deployment guides are colocated with the charts:
 - `charts/controlplane/SELFHOSTED_INTRA_CLUSTER_GCP.md`
 - `charts/controlplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
-- `charts/dataplane/SELFHOST_INTRA_CLUSTER_GCP.md`
+- `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_GCP.md`
+- `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
