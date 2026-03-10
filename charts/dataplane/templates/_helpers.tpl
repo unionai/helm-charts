@@ -1006,10 +1006,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 
 {{/*
 Check if Depot should be enabled for image building.
-True when imageBuilder is enabled but buildkit is not (i.e. using Depot instead).
+True when imageBuilder is enabled, buildkit is not, and no custom buildkitUri is set.
 */}}
 {{- define "operator.enableDepot" -}}
-{{- if and .Values.imageBuilder.enabled (not .Values.imageBuilder.buildkit.enabled) -}}true{{- end -}}
+{{- if and .Values.imageBuilder.enabled (not .Values.imageBuilder.buildkit.enabled) (not .Values.imageBuilder.buildkitUri) -}}true{{- end -}}
 {{- end -}}
 
 {{/*
