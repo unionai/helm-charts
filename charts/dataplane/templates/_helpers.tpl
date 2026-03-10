@@ -432,7 +432,11 @@ tolerations:
 Create the name of the service account to use
 */}}
 {{- define "operator.serviceAccountName" -}}
-{{- default "operator-system" .Values.operator.serviceAccount.name }}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- default "operator-system" .Values.operator.serviceAccount.name -}}
+{{- end -}}
 {{- end }}
 
 {{- define "operator.serviceAccount.annotations" -}}
@@ -540,7 +544,11 @@ clusterData:
 Create the name of the service account to use
 */}}
 {{- define "proxy.serviceAccountName" -}}
-{{- default "proxy-system" .Values.proxy.serviceAccount.name }}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- default "proxy-system" .Values.proxy.serviceAccount.name -}}
+{{- end -}}
 {{- end }}
 
 {{- define "proxy.serviceAccount.annotations" -}}
@@ -1190,6 +1198,54 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- /* Return empty to signal that cainjector should handle it */ -}}
 {{- end -}}
 {{- end -}}
+{{/*
+Returns "true" when a common service account should be used for all components.
+Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
+*/}}
+{{- define "useCommonServiceAccount" -}}
+{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the common service account name.
+*/}}
+{{- define "common.serviceAccountName" -}}
+{{- .Values.commonServiceAccount.name | default "union-system" -}}
+{{- end -}}
+
+{{/*
+Returns the executor service account name, using the common SA when enabled.
+*/}}
+{{- define "executor.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+executor
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the webhook service account name, using the common SA when enabled.
+*/}}
+{{- define "webhook.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+union-webhook-system
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the fluentbit service account name, using the common SA when enabled.
+*/}}
+{{- define "fluentbit.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- .Values.fluentbit.serviceAccount.name | default "fluentbit-system" -}}
+{{- end -}}
+{{- end -}}
+
 {{/*
 Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
 In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
