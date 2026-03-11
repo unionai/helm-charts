@@ -43,49 +43,55 @@ global:
   #    Source: Provided by Union team
   CLIENT_ID: ""
 
-  # 5. METADATA_CONTAINER - Azure Blob container for workflow metadata
+  # 5. METADATA_BUCKET - Azure Blob container for workflow metadata
   #    Format: Valid Azure Blob container name
   #    Example: "union-metadata"
   #    Note: Container must exist before deployment
-  METADATA_CONTAINER: ""
+  METADATA_BUCKET: ""
 
-  # 6. AZURE_STORAGE_ACCOUNT - Azure Storage Account name
+  # 6. FAST_REGISTRATION_BUCKET - Azure Blob container for fast registration data
+  #    Format: Valid Azure Blob container name
+  #    Example: "union-fast-registration"
+  #    Note: Container must exist before deployment
+  FAST_REGISTRATION_BUCKET: ""
+
+  # 7. AZURE_STORAGE_ACCOUNT - Azure Storage Account name
   #    Format: 3-24 lowercase alphanumeric characters
   #    Example: "unionstorageaccount"
   #    Note: Storage account must exist before deployment
   AZURE_STORAGE_ACCOUNT: ""
 
-  # 7. AZURE_SUBSCRIPTION_ID - Azure Subscription ID
+  # 8. AZURE_SUBSCRIPTION_ID - Azure Subscription ID
   #    Format: GUID
   #    Example: "12345678-1234-1234-1234-123456789abc"
   #    Source: Azure Portal > Subscriptions
   AZURE_SUBSCRIPTION_ID: ""
 
-  # 8. AZURE_TENANT_ID - Azure AD Tenant ID
+  # 9. AZURE_TENANT_ID - Azure AD Tenant ID
   #    Format: GUID
   #    Example: "87654321-4321-4321-4321-cba987654321"
   #    Source: Azure Portal > Azure Active Directory > Overview
   AZURE_TENANT_ID: ""
 
-  # 9. AZURE_RESOURCE_GROUP - Azure Resource Group name
+  # 10. AZURE_RESOURCE_GROUP - Azure Resource Group name
   #    Format: Valid Azure resource group name
   #    Example: "rg-union-prod-eastus"
   #    Note: Resource group containing Union resources
   AZURE_RESOURCE_GROUP: ""
 
-  # 10. AZURE_BACKEND_CLIENT_ID - Managed Identity for Union backend services
+  # 11. AZURE_BACKEND_CLIENT_ID - Managed Identity for Union backend services
   #     Format: GUID (Client ID of User-Assigned Managed Identity)
   #     Example: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
   #     Permissions: Storage Blob Data Contributor on storage account
   AZURE_BACKEND_CLIENT_ID: ""
 
-  # 11. AZURE_WORKER_CLIENT_ID - Managed Identity for workflow execution pods
+  # 12. AZURE_WORKER_CLIENT_ID - Managed Identity for workflow execution pods
   #     Format: GUID (Client ID of User-Assigned Managed Identity)
   #     Example: "ffffffff-gggg-hhhh-iiii-jjjjjjjjjjjj"
   #     Permissions: Storage Blob Data Contributor, Azure services used by workflows
   AZURE_WORKER_CLIENT_ID: ""
 
-  # 12. AZURE_KEY_VAULT_URI - Azure Key Vault URI for secrets management
+  # 13. AZURE_KEY_VAULT_URI - Azure Key Vault URI for secrets management
   #     Format: Full Key Vault URI
   #     Example: "https://kv-myorg-prod.vault.azure.net/"
   #     Note: Key Vault must exist with appropriate access policies
@@ -108,12 +114,12 @@ provider: azure
 
 storage:
   provider: custom
-  bucketName: '{{ .Values.global.METADATA_CONTAINER }}'
+  bucketName: '{{ .Values.global.METADATA_BUCKET }}'
   enableMultiContainer: true
 
   # Custom storage configuration using stow with Azure backend
   custom:
-    container: '{{ .Values.global.METADATA_CONTAINER }}'
+    container: '{{ .Values.global.METADATA_BUCKET }}'
     type: stow
     stow:
       kind: azure
@@ -190,6 +196,11 @@ namespace_config:
   namespace_mapping:
     template: '{{`{{ domain }}`}}'
 config:
+  core:
+    webhook:
+      embeddedSecretManagerConfig:
+        azureConfig:
+          vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
 #--------------------------------------------------------------
   ## Optional integration with Azure Key Vault secrets manager
   # core:
@@ -197,8 +208,6 @@ config:
   #     embeddedSecretManagerConfig:
   #       enabled: true
   #       type: Azure
-  #       azureConfig:
-  #         vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
   #     secretManagerTypes:
   #       - Azure
   #       - Embedded
@@ -207,7 +216,7 @@ config:
   operator:
     clusterData:
       # Azure Blob Storage path format (ABFS protocol for Data Lake Storage Gen2)
-      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
+      metadataBucketPrefix: "abfs://{{.Values.global.METADATA_BUCKET}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
     org:
       namespaceTemplate: '{{`{{ domain }}`}}'
 
@@ -218,10 +227,14 @@ config:
       azureLogAnalytics:
         logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
     smConfig:
-      enabled: true
-      type: Azure
       azureConfig:
         vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
+#--------------------------------------------------------------
+  ## Optional integration with Azure Key Vault secrets manager
+    # smConfig:
+    #   enabled: true
+    #   type: Azure
+#-------------------------------------------------------------
 
   # Task logs configuration with Azure Log Analytics templates
   task_logs:
