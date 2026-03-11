@@ -27,14 +27,19 @@ data:
     operator:
       enabled: {{ .Values.config.operator.enabled }}
       enableTunnelService: {{ .Values.config.operator.enableTunnelService }}
+      enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
         enableDirectToAppIngress: {{ .Values.serving.enabled }}
         deploymentToRestart: union-operator-proxy
-      {{- with .Values.config.operator.limitNamespace }}
-      limitNamespace: {{ tpl (toYaml .) $ }}
+      {{- if .Values.config.operator.limitNamespace }}
+      limitNamespace: {{ tpl (toYaml .Values.config.operator.limitNamespace) $ }}
+      {{- else if include "singleNamespace" . }}
+      limitNamespace: {{ .Release.Namespace }}
       {{- end }}
-      {{- with .Values.config.operator.disableClusterPermissions }}
-      disableClusterPermissions: {{ tpl (toYaml .) $ }}
+      {{- if .Values.config.operator.disableClusterPermissions }}
+      disableClusterPermissions: {{ tpl (toYaml .Values.config.operator.disableClusterPermissions) $ }}
+      {{- else if .Values.low_privilege }}
+      disableClusterPermissions: true
       {{- end }}
     {{- with .Values.config.operator.apps }}
       apps:
@@ -49,7 +54,11 @@ data:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
       {{- tpl (include "operator.clusterData" .) $ | nindent 6 }}
-    {{- with .Values.config.operator.collectUsages }}
+    {{- $collectUsages := deepCopy (.Values.config.operator.collectUsages | default dict) }}
+    {{- if $.Values.low_privilege }}
+    {{- $_ := set $collectUsages "enabled" false }}
+    {{- end }}
+    {{- with $collectUsages }}
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
@@ -69,9 +78,14 @@ data:
       org:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- if and (not .Values.config.operator.org) .Values.namespace_mapping }}
+    {{- if not .Values.config.operator.org }}
+    {{- if .Values.namespace_mapping }}
       org:
         namespaceTemplate: {{ tpl (.Values.namespace_mapping.template | quote) $ }}
+    {{- else if include "singleNamespace" . }}
+      org:
+        namespaceTemplate: {{ .Release.Namespace }}
+    {{- end }}
     {{- end }}
     {{- if .Values.imageBuilder.enabled }}
       imageBuilder:
@@ -98,7 +112,11 @@ data:
   fast_registration_storage.yaml: | {{ tpl (include "fast-registration-storage" .) $ | nindent 4 }}
 {{- end }}
 {{- if .Values.imageBuilder.enabled }}
+{{- if or .Values.imageBuilder.buildkitUri .Values.imageBuilder.buildkit.enabled }}
   image-builder.buildkit-uri: {{ (include "imagebuilder.buildkit.uri" .) | quote }}
+{{- else }}
+  image-builder.buildkit-uri: ""
+{{- end }}
   image-builder.default-repository: {{ .Values.imageBuilder.defaultRepository | quote }}
   image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}
 {{- end }}

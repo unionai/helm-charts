@@ -317,7 +317,7 @@ config:
       cache-endpoint: 'dns:///{{ tpl .Values.host . }}'
       endpoint: 'dns:///{{ tpl .Values.host . }}'
       insecure: false
-      type: fallback
+      type: cacheservicev2
       use-admin-auth: true
   clusters:
     labelClusterMap: { }
@@ -427,6 +427,7 @@ config:
     plugins:
       # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
       k8s:
+        default-pod-template-name: "task-template"
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
@@ -479,6 +480,9 @@ config:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
+      # -- Define the propeller health check endpoint.
+      executor:
+        endpoint: '{{ include "executor.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -787,9 +791,13 @@ fluentbit:
   tolerations:
     - operator: Exists
   serviceAccount:
+    create: false
     name: fluentbit-system
     # Set cloud-provider-specific annotations to grant bucket write access.
-    # See examples above.
+    # See examples above. These are merged with additionalServiceAccountAnnotations automatically.
+    # NOTE: When commonServiceAccount is enabled (or low_privilege/singleNamespace mode),
+    # set name to the common SA name (default: "union-system") so the fluent-bit subchart
+    # DaemonSet uses the shared service account.
     annotations: {}
   # If you would like to use static access keys instead of identity federation
   # (not recommended), uncomment the following lines:
@@ -807,7 +815,7 @@ flyteagent:
 
 executor:
   enabled: true
-  idl2Executor: false
+  idl2Executor: true
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
@@ -829,13 +837,15 @@ executor:
       memory: 1Gi
   podLabels:
     app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: "{{ .Release.Name }}"
   selector:
     matchLabels:
       app: executor
   task_logs:
     plugins:
       logs:
-        kubernetes-enabled: true
+        kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
         dynamic-log-links:
@@ -1021,8 +1031,7 @@ flytepropellerwebhook:
     runAsNonRoot: true
     runAsUser: 1001
     fsGroupChangePolicy: "Always"
-    seLinuxOptions:
-      type: spc_t
+    seLinuxOptions: null
 
   resources:
     limits:
@@ -1055,13 +1064,85 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+  # -- Enable Helm-managed MutatingWebhookConfiguration (if false, the webhook will create its own)
+  managedConfig: true
+  # -- Configuration for the webhook MutatingWebhookConfiguration and certificates
+  webhook:
+    # -- Name of the MutatingWebhookConfiguration resource
+    configurationName: "union-pod-webhook-{{ tpl .Values.orgName . }}"
+    # -- Failure policy for the webhook (Fail or Ignore)
+    failurePolicy: Fail
+    # -- Reinvocation policy for the webhook
+    reinvocationPolicy: Never
+    # -- Timeout in seconds for the webhook
+    timeoutSeconds: 30
+    # -- Webhook configurations to create
+    webhooks:
+      # -- Secrets injection webhook configuration
+      secrets:
+        enabled: true
+        # -- Name of the webhook
+        name: flyte-pod-webhook.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/secrets
+        # -- Object selector for the webhook
+        objectSelector:
+          matchLabels:
+            inject-flyte-secrets: "true"
+            organization: "{{ tpl .Values.orgName . }}"
+      # -- Managed image webhook configuration (requires Union operator support)
+      managedImage:
+        enabled: false
+        # -- Name of the webhook
+        name: managed-image-webhook.union.ai
+        # -- Path for the webhook
+        path: /mutate--v1-pod/managed-image
+        # -- Object selector for the webhook (matchExpressions)
+        objectSelector:
+          matchLabels:
+            organization: "{{ tpl .Values.orgName . }}"
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
 
+  # -- Configuration for webhook certificates
+  certificate:
+    # -- Certificate provider:
+    # -- "helm" - Generate self-signed certificates using Helm's crypto functions. Certs are preserved on upgrade if secret exists.
+    # -- "certManager" - Use cert-manager to provision and manage certificates. Requires cert-manager to be installed.
+    # -- "external" - Use externally provided certificates (set caCert, serverCert, serverKey below).
+    # -- "legacy" - Let the webhook binary generate its own certificates using an init container. The init container runs
+    # --           `flytepropeller webhook init-certs` to populate an empty secret, then the webhook uses those certs.
+    provider: helm
+    # -- Duration of the certificate (only used with certManager provider)
+    duration: 8760h
+    # -- Renew before duration (only used with certManager provider)
+    renewBefore: 720h
+    # -- cert-manager configuration (only used when provider is "certManager")
+    certManager:
+      # -- Issuer reference for cert-manager. If not set, a self-signed issuer will be created.
+      issuerRef: {}
+        # name: selfsigned-issuer
+        # kind: ClusterIssuer
+        # group: cert-manager.io
+    # -- External certificate configuration (only used when provider is "external")
+    external:
+      # -- Base64-encoded CA certificate (PEM format)
+      caCert: ""
+      # -- Base64-encoded TLS certificate (PEM format)
+      tlsCrt: ""
+      # -- Base64-encoded TLS private key (PEM format)
+      tlsKey: ""
 #
 # FLYTE_CONNECTOR SETTINGS
 #
 
 flyteconnector:
-  enabled: false
+  enabled: true
   # -- Replicas count for flyteconnector deployment
   replicaCount: 2
   image:
@@ -1127,8 +1208,6 @@ flyteconnector:
     maxReplicas: 5
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
-
-
 
 # Container images
 image:
@@ -1599,8 +1678,17 @@ prometheus:
     annotations: { }
     hosts: [ ]
 
-# -- Scopes the deployment, permissions and actions created into a single namespace
+# -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
+#  require additional permissions on the cluster. This limits the functionality though.
 low_privilege: false
+
+# -- When enabled, creates a single shared ServiceAccount for all components
+# (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
+# Automatically enabled when singleNamespace mode is active.
+commonServiceAccount:
+  enabled: true
+  name: union-system
+  annotations: {}
 # -- Union operator proxy configuration
 proxy:
   serviceAccount:
@@ -1732,7 +1820,9 @@ serving:
   # -- Enables scraping of metrics from the serving component
   metrics: true
   # -- Additional configuration for Knative serving
-  extraConfig: {}
+  extraConfig:
+    deployment:
+      registries-skipping-tag-resolving: "managed.cr.union.ai"
   # -- Resources for serving components
   resources:
     3scale-kourier-gateway:
@@ -1760,7 +1850,7 @@ serving:
 
 # Enable the knative operator.  Required for app serving.
 knative-operator:
-  enabled: false
+  enabled: true
 
   crds:
     install: true
@@ -1779,7 +1869,7 @@ imageBuilder:
 
   # -- The default repository to publish images to "registry" is not specified with imagespec.
   # -- Note, the build-image task will fail unless "registry" is specified or a default repository is provided.
-  defaultRepository: ""
+  defaultRepository: registry.depot.dev
 
   # -- How build-image task and operator proxy will attempt to authenticate
   # -- Supported values are "noop", "google", "aws", "azure"
