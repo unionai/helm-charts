@@ -1,6 +1,6 @@
 # sandbox
 
-![Version: 2025.3.1](https://img.shields.io/badge/Version-2025.3.1-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.2.0](https://img.shields.io/badge/AppVersion-2025.2.0-informational?style=flat-square)
+![Version: 2026.3.4](https://img.shields.io/badge/Version-2026.3.4-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2026.3.2](https://img.shields.io/badge/AppVersion-2026.3.2-informational?style=flat-square)
 
 Deploys extras for sandbox testing.
 
@@ -29,3 +29,4 @@ Kubernetes: `>= 1.28.0`
 | minio.volumeMounts[0].name | string | `"minio-storage"` |  |
 | minio.volumes[0].emptyDir | object | `{}` |  |
 | minio.volumes[0].name | string | `"minio-storage"` |  |
+
