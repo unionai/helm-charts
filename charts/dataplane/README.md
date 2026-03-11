@@ -10,8 +10,8 @@ Deploys the Union dataplane components to onboard a kubernetes cluster to the Un
 
 | | |
 |---|---|
-| **Chart version** | 2026.2.10 |
-| **App version** | 2026.2.12 |
+| **Chart version** | 2026.3.4 |
+| **App version** | 2026.3.2 |
 | **Kubernetes version** | `>= 1.28.0-0` |
 
 ## Requirements
@@ -63,6 +63,7 @@ Kubernetes: `>= 1.28.0-0`
 | clusterresourcesync.templates[1] | object | `{"key":"b_default_service_account","value":"apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: default\n  namespace: {{ namespace }}\n  annotations:\n    {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}\n"}` | Patch default service account |
 | clusterresourcesync.tolerations | list | `[]` | tolerations for the syncresources pods |
 | clusterresourcesync.topologySpreadConstraints | object | `{}` | topologySpreadConstraints for the syncresources pods |
+| commonServiceAccount | object | `{"annotations":{},"enabled":true,"name":"union-system"}` | When enabled, creates a single shared ServiceAccount for all components (operator, executor, proxy, webhook, fluentbit) instead of individual ones. Automatically enabled when singleNamespace mode is active. |
 | config | object | see [values.yaml](values.yaml) | Global configuration settings for all Union services. |
 | config.admin | object | see [values.yaml](values.yaml) | Admin Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/subworkflow/launchplan#AdminConfig) |
 | config.catalog | object | `{"catalog-cache":{"cache-endpoint":"dns:///{{ tpl .Values.host . }}","endpoint":"dns:///{{ tpl .Values.host . }}","insecure":false,"type":"cacheservicev2","use-admin-auth":true}}` | Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config) Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config) |
@@ -80,8 +81,7 @@ Kubernetes: `>= 1.28.0-0`
 | config.logger | object | `{"level":4,"show-source":true}` | Logging configuration |
 | config.operator | object | see [values.yaml](values.yaml) | Configuration for the Union operator service |
 | config.operator.apps | object | `{"enabled":"{{ .Values.serving.enabled }}"}` | Enable app serving |
-| config.operator.billableUsageCollector | object | `{"enabled":true}` | Configuration for billable usage collector. |
-| config.operator.billableUsageCollector.enabled | bool | `true` | Enable billable usage collection in the operator service. |
+| config.operator.billing | object | `{"model":"Legacy"}` | Billing model: None, Legacy, or ResourceUsage. |
 | config.operator.clusterData | object | see [values.yaml](values.yaml) | Dataplane cluster configuration. |
 | config.operator.clusterData.appId | string | `"{{ tpl .Values.secrets.admin.clientId . }}"` | The client id used to authenticate to the control plane.  This will be provided by Union. |
 | config.operator.clusterData.bucketName | string | `"{{ tpl .Values.storage.bucketName . }}"` | The bucket name for object storage. |
@@ -91,8 +91,6 @@ Kubernetes: `>= 1.28.0-0`
 | config.operator.clusterData.metadataBucketPrefix | string | `"{{ include \"storage.metadata-prefix\" . }}"` | The prefix for constructing object storage URLs. |
 | config.operator.clusterId | object | `{"organization":"{{ tpl .Values.orgName . }}"}` | Set the cluster information for the operator service |
 | config.operator.clusterId.organization | string | `"{{ tpl .Values.orgName . }}"` | The organization name for the cluster.  This should match your organization name that you were provided. |
-| config.operator.collectBillableResourceUsage | object | `{"enabled":false}` | Configuration for billable resource usage collection. |
-| config.operator.collectBillableResourceUsage.enabled | bool | `false` | Enable billable resource usage collection in the operator service. |
 | config.operator.collectUsages | object | `{"enabled":true}` | Configuration for the usage reporting service. |
 | config.operator.collectUsages.enabled | bool | `true` | Enable usage collection in the operator service. |
 | config.operator.dependenciesHeartbeat | object | see [values.yaml](values.yaml) | Heartbeat check configuration. |
@@ -161,11 +159,11 @@ Kubernetes: `>= 1.28.0-0`
 | executor.sharedService.security.allowLocalhostAccess | bool | `true` | Allow localhost access without authentication. |
 | executor.sharedService.security.secure | bool | `false` | Enable TLS for the executor API. |
 | executor.sharedService.security.useAuth | bool | `false` | Require authentication for the executor API. |
-| executor.task_logs | object | `{"plugins":{"logs":{"cloudwatch-enabled":false,"kubernetes-enabled":false}}}` | Task log configuration for the executor. |
+| executor.task_logs | object | `{"plugins":{"logs":{"cloudwatch-enabled":false,"dynamic-log-links":[{"vscode":{"displayName":"VS Code Debugger","linkType":"ide","templateUris":["/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"]}},{"wandb-execution-id":{"displayName":"Weights & Biases","linkType":"dashboard","templateUris":["{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.entity }}`}}/{{`{{ .taskConfig.project }}`}}/runs/{{`{{ .podName }}`}}"]}},{"wandb-custom-id":{"displayName":"Weights & Biases","linkType":"dashboard","templateUris":["{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.entity }}`}}/{{`{{ .taskConfig.project }}`}}/runs/{{`{{ .taskConfig.id }}`}}"]}},{"comet-ml-execution-id":{"displayName":"Comet","linkType":"dashboard","templateUris":"{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.workspace }}`}}/{{`{{ .taskConfig.project_name }}`}}/{{`{{ .executionName }}`}}{{`{{ .nodeId }}`}}{{`{{ .taskRetryAttempt }}`}}{{`{{ .taskConfig.link_suffix }}`}}"}},{"comet-ml-custom-id":{"displayName":"Comet","linkType":"dashboard","templateUris":"{{`{{ .taskConfig.host }}`}}/{{`{{ .taskConfig.workspace }}`}}/{{`{{ .taskConfig.project_name }}`}}/{{`{{ .taskConfig.experiment_key }}`}}"}},{"neptune-scale-run":{"displayName":"Neptune Run","linkType":"dashboard","templateUris":["https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .podName }}`}}"]}},{"neptune-scale-custom-id":{"displayName":"Neptune Run","linkType":"dashboard","templateUris":["https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .taskConfig.id }}`}}"]}}],"kubernetes-enabled":false}}}` | Task log configuration for the executor. |
 | executor.task_logs.plugins.logs.cloudwatch-enabled | bool | `false` | One option is to enable cloudwatch logging for EKS, update the region and log group accordingly |
 | executor.task_logs.plugins.logs.kubernetes-enabled | bool | `false` | Enable Kubernetes-native log fetching. |
 | extraObjects | list | `[]` | Extra Kubernetes objects to deploy with the helm chart. Each entry is a raw Kubernetes manifest. |
-| fluentbit | object | `{"enabled":true,"env":[],"existingConfigMap":"fluentbit-system","serviceAccount":{"annotations":{},"name":"fluentbit-system"},"tolerations":[{"operator":"Exists"}]}` | Configuration for fluentbit used for the persistent logging feature. FluentBit runs as a DaemonSet and ships container logs to the persisted-logs/ path in the configured object store. The fluentbit-system service account must have write access to the storage bucket. Grant access using cloud-native identity federation:   AWS (IRSA):     annotations:       eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"   Azure (Workload Identity):     annotations:       azure.workload.identity/client-id: "<CLIENT_ID>"   GCP (Workload Identity):     annotations:       iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com" See https://www.union.ai/docs/v1/selfmanaged/deployment/configuration/persistent-logs/ |
+| fluentbit | object | `{"enabled":true,"env":[],"existingConfigMap":"fluentbit-system","serviceAccount":{"annotations":{},"create":false,"name":"fluentbit-system"},"tolerations":[{"operator":"Exists"}]}` | Configuration for fluentbit used for the persistent logging feature. FluentBit runs as a DaemonSet and ships container logs to the persisted-logs/ path in the configured object store. The fluentbit-system service account must have write access to the storage bucket. Grant access using cloud-native identity federation:   AWS (IRSA):     annotations:       eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>"   Azure (Workload Identity):     annotations:       azure.workload.identity/client-id: "<CLIENT_ID>"   GCP (Workload Identity):     annotations:       iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com" See https://www.union.ai/docs/v1/selfmanaged/deployment/configuration/persistent-logs/ |
 | flyteagent | object | `{"enabled":false,"plugin_config":{}}` | Flyteagent configuration |
 | flyteconnector | object | see [values.yaml](values.yaml) | Flyte connector deployment configuration. Connectors provide external service integrations (e.g., Databricks, SageMaker, Snowflake) for Flyte tasks. |
 | flyteconnector.additionalContainers | list | `[]` | Appends additional containers to the deployment spec. May include template values. |
@@ -179,7 +177,7 @@ Kubernetes: `>= 1.28.0-0`
 | flyteconnector.autoscaling.targetCPUUtilizationPercentage | int | `80` | Target CPU utilization percentage for scaling. |
 | flyteconnector.autoscaling.targetMemoryUtilizationPercentage | int | `80` | Target memory utilization percentage for scaling. |
 | flyteconnector.configPath | string | `"/etc/flyteconnector/config/*.yaml"` | Default glob string for searching configuration files |
-| flyteconnector.enabled | bool | `false` | Enable or disable the flyteconnector deployment. |
+| flyteconnector.enabled | bool | `true` | Enable or disable the flyteconnector deployment. |
 | flyteconnector.extraArgs | object | `{}` | Appends extra command line arguments to the main command |
 | flyteconnector.image | object | `{"pullPolicy":"IfNotPresent","repository":"ghcr.io/flyteorg/flyte-connectors","tag":"py3.13-2.0.0b50.dev3-g695bb1db3.d20260122"}` | Container image configuration for flyteconnector. |
 | flyteconnector.image.pullPolicy | string | `"IfNotPresent"` | Docker image pull policy. |
@@ -194,7 +192,7 @@ Kubernetes: `>= 1.28.0-0`
 | flyteconnector.prometheusPort | object | `{"containerPort":9090,"name":"metric"}` | Prometheus metrics port configuration. |
 | flyteconnector.prometheusPort.containerPort | int | `9090` | Container port for Prometheus metrics. |
 | flyteconnector.prometheusPort.name | string | `"metric"` | Port name. |
-| flyteconnector.replicaCount | int | `2` | Replicas count for flyteconnector deployment. |
+| flyteconnector.replicaCount | int | `2` | Replicas count for flyteconnector deployment |
 | flyteconnector.resources | object | `{"limits":{"cpu":"1.5","ephemeral-storage":"100Mi","memory":"1500Mi"},"requests":{"cpu":"1","ephemeral-storage":"100Mi","memory":"1000Mi"}}` | Default resources requests and limits for flyteconnector deployment |
 | flyteconnector.service | object | `{"clusterIP":"None","type":"ClusterIP"}` | Service settings for flyteconnector |
 | flyteconnector.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecrets":[]}` | Configuration for service accounts for flyteconnector |
@@ -252,7 +250,7 @@ Kubernetes: `>= 1.28.0-0`
 | flytepropellerwebhook.podLabels | object | `{}` | Labels for webhook pods |
 | flytepropellerwebhook.priorityClassName | string | `""` | Sets priorityClassName for webhook pod |
 | flytepropellerwebhook.replicaCount | int | `1` | Replicas |
-| flytepropellerwebhook.securityContext | object | `{"fsGroup":65534,"fsGroupChangePolicy":"Always","runAsNonRoot":true,"runAsUser":1001,"seLinuxOptions":{"type":"spc_t"}}` | Sets securityContext for webhook pod(s). |
+| flytepropellerwebhook.securityContext | object | `{"fsGroup":65534,"fsGroupChangePolicy":"Always","runAsNonRoot":true,"runAsUser":1001,"seLinuxOptions":null}` | Sets securityContext for webhook pod(s). |
 | flytepropellerwebhook.service | object | `{"annotations":{"projectcontour.io/upstream-protocol.h2c":"grpc"},"port":443,"targetPort":9443,"type":"ClusterIP"}` | Service settings for the webhook |
 | flytepropellerwebhook.service.port | int | `443` | HTTPS port for the webhook service |
 | flytepropellerwebhook.service.targetPort | int | `9443` | Target port for the webhook service (container port) |
@@ -330,9 +328,10 @@ Kubernetes: `>= 1.28.0-0`
 | imageBuilder.buildkit.service.loadbalancerIp | string | `""` | Static IP address for load balancer (only used with LoadBalancer type). |
 | imageBuilder.buildkit.service.port | int | `1234` | Service port. |
 | imageBuilder.buildkit.service.type | string | `"ClusterIP"` | Service type. |
+| imageBuilder.buildkit.serviceAccount | object | `{"annotations":{},"create":true,"imagePullSecret":"","name":"union-imagebuilder"}` | Service account configuration for buildkit |
 | imageBuilder.buildkit.tolerations | list | `[]` | Tolerations for buildkit pods. |
 | imageBuilder.buildkitUri | string | `""` | The URI of the buildkitd service. Used for externally managed buildkitd services. Leaving empty and setting imageBuilder.buildkit.enabled to true will create a buildkitd service. E.g. "tcp://buildkitd.buildkit.svc.cluster.local:1234" |
-| imageBuilder.defaultRepository | string | `""` | The default repository to publish images to when "registry" is not specified with imagespec. The build-image task will fail unless "registry" is specified or a default repository is provided. |
+| imageBuilder.defaultRepository | string | `"registry.depot.dev"` | Note, the build-image task will fail unless "registry" is specified or a default repository is provided. |
 | imageBuilder.enabled | bool | `true` | Enable or disable the image builder feature. |
 | imageBuilder.targetConfigMapName | string | `"build-image-config"` | The config map build-image container task attempts to reference. Should not change unless coordinated with Union technical support. |
 | ingress | object | `{"dataproxy":{"annotations":{},"class":"","hostOverride":"","tls":{}},"enabled":false,"host":"","serving":{"annotations":{},"class":"","hostOverride":"","tls":{}}}` | Ingress configuration for exposing dataplane services externally. Enable this when not using Cloudflare tunnels for service access. |
@@ -350,15 +349,15 @@ Kubernetes: `>= 1.28.0-0`
 | ingress.serving.class | string | `""` | Ingress class name. |
 | ingress.serving.hostOverride | string | `""` | (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}. |
 | ingress.serving.tls | object | `{}` | Ingress TLS configuration. |
-| knative-operator | object | `{"crds":{"install":true},"enabled":false}` | Knative operator subchart. Required for app serving. |
+| knative-operator | object | `{"crds":{"install":true},"enabled":true}` | Knative operator subchart. Required for app serving. |
 | knative-operator.crds | object | `{"install":true}` | Install Knative CRDs. |
-| knative-operator.enabled | bool | `false` | Enable or disable the Knative operator. Must be enabled when serving.enabled is true. |
+| knative-operator.enabled | bool | `true` | Enable or disable the Knative operator. Must be enabled when serving.enabled is true. |
 | low_privilege | bool | `false` | Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would  require additional permissions on the cluster. This limits the functionality though. |
 | metrics-server | object | `{"enabled":false}` | Enable or disable the metrics-server subchart. Only needed if your cluster does not already have a metrics server. |
 | monitoring | object | `{"enabled":true}` | Global monitoring toggle. When disabled, skips creation of ServiceMonitor and related monitoring resources. |
 | monitoring.enabled | bool | `true` | Enable or disable monitoring resource creation. |
 | nameOverride | string | `""` | Override the chart name. |
-| namespace_mapping | object | `{}` | Custom namespace mapping for mapping Union runs to Kubernetes namespaces. |
+| namespace_mapping | object | `{}` | Namespace mapping template for mapping Union runs to Kubernetes namespaces. This is the canonical source of truth. All dataplane services (propeller, clusterresourcesync, operator, executor) will inherit this value unless explicitly overridden in their service-specific config sections (config.namespace_config, config.operator.org, executor.raw_config). |
 | namespaces | object | `{"enabled":true}` | Namespace management configuration. |
 | namespaces.enabled | bool | `true` | Automatically create the release namespace if it does not exist. |
 | nodeobserver | object | see [values.yaml](values.yaml) | Node observer DaemonSet configuration. Monitors node health and critical DaemonSet availability to detect infrastructure issues affecting workflow execution. |
@@ -501,7 +500,7 @@ Kubernetes: `>= 1.28.0-0`
 | serving.auth | object | `{"enabled":true}` | Union authentication and authorization configuration. |
 | serving.auth.enabled | bool | `true` | Disabling is common if not leveraging Union Cloud SSO. |
 | serving.enabled | bool | `false` | Enables the serving components. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work. Enables app serving in operator. |
-| serving.extraConfig | object | `{}` | Additional configuration for Knative serving |
+| serving.extraConfig | object | `{"deployment":{"registries-skipping-tag-resolving":"managed.cr.union.ai"}}` | Additional configuration for Knative serving |
 | serving.metrics | bool | `true` | Enables scraping of metrics from the serving component |
 | serving.replicas | int | `2` | The number of replicas to create for all components for high availability. |
 | serving.resources | object | see [values.yaml](values.yaml) | Resources for serving components. |

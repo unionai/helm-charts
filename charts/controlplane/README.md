@@ -1,6 +1,6 @@
 # controlplane
 
-![Version: 2026.2.7](https://img.shields.io/badge/Version-2026.2.7-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2026.2.12](https://img.shields.io/badge/AppVersion-2026.2.12-informational?style=flat-square)
+![Version: 2026.3.4](https://img.shields.io/badge/Version-2026.3.4-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2026.3.2](https://img.shields.io/badge/AppVersion-2026.3.2-informational?style=flat-square)
 Deploys the Union controlplane components to onboard a kubernetes cluster to the Union Cloud.
 
 ## Prerequisites
@@ -321,6 +321,7 @@ helm show values unionai/controlplane
 | configMap.connection.rootTenantURLPattern | string | `"dns:///{{ .Values.global.UNION_HOST }}"` |  |
 | configMap.logger.level | int | `6` |  |
 | configMap.otel.type | string | `"noop"` |  |
+| configMap.sharedService.selfServeConfig.legacyHosts[0] | string | `"{{ .Values.global.UNION_ORG }}"` |  |
 | configMap.union.auth.enable | bool | `false` |  |
 | configMap.union.internalConnectionConfig.enabled | bool | `true` |  |
 | configMap.union.internalConnectionConfig.urlPattern | string | `"_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"` |  |
@@ -428,6 +429,7 @@ helm show values unionai/controlplane
 | flyte.configmap.adminServer.sharedService.connectPort | int | `8089` |  |
 | flyte.configmap.adminServer.sharedService.httpPort | int | `8088` |  |
 | flyte.configmap.adminServer.sharedService.port | int | `8089` |  |
+| flyte.configmap.adminServer.sharedService.selfServeConfig.legacyHosts[0] | string | `"{{ .Values.global.UNION_ORG }}"` |  |
 | flyte.configmap.adminServer.union.internalConnectionConfig.enabled | bool | `true` |  |
 | flyte.configmap.adminServer.union.internalConnectionConfig.urlPattern | string | `"{{ printf \"_SERVICE_.%s.svc.cluster.local:80\" .Release.Namespace }}"` |  |
 | flyte.configmap.cacheserviceServer.authorizer.internalCommunicationConfig.enabled | bool | `false` |  |
@@ -698,6 +700,7 @@ helm show values unionai/controlplane
 | services.authorizer.configMap.sharedService.connectPort | int | `8081` |  |
 | services.authorizer.configMap.sharedService.metrics.scope | string | `"authorizer:"` |  |
 | services.authorizer.fullnameOverride | string | `"authorizer"` |  |
+| services.authorizer.sharedService.connectPort | int | `8081` |  |
 | services.cluster.args[0] | string | `"cloudcluster"` |  |
 | services.cluster.args[1] | string | `"serve"` |  |
 | services.cluster.args[2] | string | `"--config"` |  |
@@ -712,6 +715,7 @@ helm show values unionai/controlplane
 | services.cluster.configMap.db.passwordPath | string | `"/etc/db/pass.txt"` |  |
 | services.cluster.configMap.db.port | int | `5432` |  |
 | services.cluster.configMap.db.username | string | `"{{ .Values.global.DB_USER }}"` |  |
+| services.cluster.configMap.sharedService.connectPort | int | `8081` |  |
 | services.cluster.configMap.sharedService.metrics.scope | string | `"cluster:"` |  |
 | services.cluster.fullnameOverride | string | `"cluster"` |  |
 | services.cluster.initContainers[0].args[0] | string | `"cloudcluster"` |  |
@@ -719,6 +723,7 @@ helm show values unionai/controlplane
 | services.cluster.initContainers[0].args[2] | string | `"--config"` |  |
 | services.cluster.initContainers[0].args[3] | string | `"/etc/config/*.yaml"` |  |
 | services.cluster.initContainers[0].name | string | `"migrate"` |  |
+| services.cluster.sharedService.connectPort | int | `8081` |  |
 | services.dataproxy.args[0] | string | `"dataproxy"` |  |
 | services.dataproxy.args[1] | string | `"serve"` |  |
 | services.dataproxy.args[2] | string | `"--config"` |  |
@@ -797,6 +802,7 @@ helm show values unionai/controlplane
 | services.usage.args[3] | string | `"/etc/config/*.yaml"` |  |
 | services.usage.configMap.billing.enable | bool | `false` |  |
 | services.usage.configMap.cloudProvider.provider | string | `"Mock"` |  |
+| services.usage.configMap.sharedService.connectPort | int | `8081` |  |
 | services.usage.configMap.sharedService.metrics.scope | string | `"usage:"` |  |
 | services.usage.configMap.usage.taskMetrics.agentQuery.mappings.dgx_job.queries.EXECUTION_METRIC_ALLOCATED_CPU_AVG | string | `"CPU_ALLOCATION:MEAN"` |  |
 | services.usage.configMap.usage.taskMetrics.agentQuery.mappings.dgx_job.queries.EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG | string | `"MEM_ALLOCATION:MEAN"` |  |
@@ -830,6 +836,7 @@ helm show values unionai/controlplane
 | services.usage.resources.limits.memory | string | `"512Mi"` |  |
 | services.usage.resources.requests.cpu | string | `"500m"` |  |
 | services.usage.resources.requests.memory | string | `"250Mi"` |  |
+| services.usage.sharedService.connectPort | int | `8081` |  |
 | spreadConstraints.enabled | bool | `false` |  |
 | strategy.rollingUpdate.maxSurge | int | `1` |  |
 | strategy.rollingUpdate.maxUnavailable | int | `1` |  |
@@ -876,13 +883,25 @@ kubectl delete namespace union-cp
 
 ## Alternative Deployment Models
 
-### Self-Hosted Intra-Cluster Deployment
+### Self-Hosted Intra-Cluster Deployment (AWS)
 
-For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the [Self-hosted deployment guide](https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/) on the Union documentation site.
+For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the dedicated guide:
 
-Reference guides are also available in this repository:
-- [AWS](SELFHOSTED_INTRA_CLUSTER_AWS.md)
-- [GCP](SELFHOSTED_INTRA_CLUSTER_GCP.md)
+**[Self-Hosted Intra-Cluster Deployment Guide (AWS)](SELFHOSTED_INTRA_CLUSTER_AWS.md)**
+
+This deployment model is ideal for:
+
+- Fully self-hosted Union deployments
+- Single-cluster architectures with co-located control plane and dataplane
+- Environments requiring simplified networking and reduced costs
+- Deployments with strict data sovereignty requirements
+
+The intra-cluster guide covers:
+
+- TLS certificate generation for intra-cluster communication
+- Single-tenant mode configuration
+- Service discovery between control plane and dataplane
+- Complete end-to-end setup for both control plane and dataplane
 
 ---
 
