@@ -1,0 +1,38 @@
+{{- if and .Values.global.usercloudsEnabled .Values.userclouds.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "userclouds.fullname" . }}
+  labels:
+    {{- include "userclouds.labels" . | nindent 4 }}
+    app.kubernetes.io/component: all
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "userclouds.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: all
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.userclouds.service.port }}
+  egress:
+    # DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # PostgreSQL
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.userclouds.database.port }}
+    {{- if eq .Values.userclouds.cache.type "redis" }}
+    # Redis
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.userclouds.cache.redis.port }}
+    {{- end }}
+{{- end }}

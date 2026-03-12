@@ -47,6 +47,14 @@ global:
   # Note: Secret must contain "pass.txt" key
   KUBERNETES_SECRET_NAME: ""
 
+  # RBAC (userclouds) — master enable switch and client credentials.
+  # usercloudsEnabled controls pod deployment, authorizer config, and service-to-service auth
+  # across all services including the flyte subchart (flyteadmin, cacheservice).
+  # Set to true in an overlay to activate the full userclouds RBAC stack.
+  usercloudsEnabled: false
+  RBAC_CLIENT_ID: "5ef75bf9ee1e61dbec85758b5dc9857a"
+  RBAC_CLIENT_SECRET: "kube://secrets/userclouds-client-secret?key=client_secret"
+
   # Union Private ECR repository prefix for control plane images
   # Contact Union for controlplane access and distribution.
   IMAGE_REPOSITORY_PREFIX: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp"
@@ -219,9 +227,11 @@ ingress:
 
 configMap:
   authorizer:
-    type: "Noop"
-    internalCommunicationConfig:
-      enabled: false
+    type: "UserClouds"
+    userCloudsClient:
+      tenantUrl: 'http://{{ .Release.Name }}-userclouds-lite.{{ .Release.Namespace }}.svc.cluster.local:8080'
+      clientID: '{{ .Values.global.RBAC_CLIENT_ID }}'
+      enableLogging: true
   cache:
     identity:
       enabled: false
@@ -242,7 +252,12 @@ configMap:
       enabled: true
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
     auth:
-      enable: false
+      authorizationMetadataKey: flyte-authorization
+      clientId: '{{ .Values.global.RBAC_CLIENT_ID }}'
+      clientSecretLocation: /etc/secrets/client_secret
+      scopes:
+        - all
+      type: ClientSecret
 
 services:
   artifacts:
@@ -1027,7 +1042,7 @@ flyte:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
       authorizer:
-        type: "Noop"
+        type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         internalCommunicationConfig:
           enabled: false
       cloudEvents:
@@ -1073,7 +1088,7 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       authorizer:
-        type: "Noop"
+        type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         internalCommunicationConfig:
           enabled: false
       cacheservice:
@@ -1257,6 +1272,166 @@ scylla-operator:
 # NOTE: ScyllaDB Manager is NOT included as a subchart.
 # For backup/repair functionality, install scylla-manager separately.
 # See README.md for installation instructions.
+
+# ----------------------------------------------------------------------------
+# Userclouds
+# ----------------------------------------------------------------------------
+# Deploys userclouds-lite as a subchart for authorization and identity management.
+# Database settings reference the global controlplane DB by default.
+# Override database.host/name/user/password for a dedicated database.
+userclouds:
+  # Service account
+  serviceAccount:
+    create: true
+    name: ""
+    annotations: {}
+
+  # Pod security context
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+
+  # Container security context
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Pod annotations
+  podAnnotations: {}
+
+  # Static assets directory for Console SPA
+  staticDir: /usr/share/userclouds/static
+
+  # Network policy
+  networkPolicy:
+    enabled: false
+
+  database:
+    host: '{{ .Values.global.DB_HOST }}'
+    port: 5432
+    user: '{{ .Values.global.DB_USER }}'
+    password: "file:///etc/db/pass.txt"
+    sslMode: require
+    name: userclouds
+    mode: normal
+
+  command:
+    - userclouds-lite
+  replicaCount: 3
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 256Mi
+  pdb:
+    enabled: true
+    minAvailable: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 80
+  probes:
+    liveness:
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+    readiness:
+      initialDelaySeconds: 5
+      periodSeconds: 5
+      timeoutSeconds: 3
+      failureThreshold: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  terminationGracePeriodSeconds: 45
+  priorityClassName: ""
+  topologySpreadConstraints: []
+  nodeSelector: {}
+  tolerations: []
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: userclouds-lite
+              app.kubernetes.io/component: all
+          topologyKey: kubernetes.io/hostname
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+
+  auth:
+    issuer: ""
+    signingKey: "kube://secrets/userclouds-signing-key?key=signing_key"
+    providers: []
+    apps:
+      - id: "union-controlplane"
+        name: "union-controlplane"
+        credentials:
+          - clientId: '{{ .Values.global.RBAC_CLIENT_ID }}'
+            clientSecret: "kube://secrets/userclouds-client-secret?key=client_secret"
+
+  cache:
+    enabled: true
+    type: memory
+    ttl: 60m
+    ttls:
+      objectType: ""
+      object: ""
+      edgeType: ""
+      edge: ""
+      user: ""
+    redis:
+      host: redis
+      port: 6379
+      password: ""
+      tls: false
+    memory:
+      maxEntries: 100000
+      shards: 128
+      depShards: 128
+
+  users: []
+
+  metrics:
+    enabled: true
+    serviceMonitor:
+      labels:
+        instance: union
+      interval: 30s
+      scrapeTimeout: 10s
+      metricRelabelings: []
+      relabelings:
+        - sourceLabels: [__metrics_path__]
+          targetLabel: metrics_path
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: __host__
+        - action: replace
+          sourceLabels: [__meta_kubernetes_namespace]
+          targetLabel: kubernetes_namespace
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - action: labeldrop
+          regex: (pod_template_generation|operator_agent_grafana_com_name|operator_agent_grafana_com_type|app_kubernetes_io_managed_by|app_kubernetes_io_version|control_plane_component|control_plane_ns|extension|pod_template_hash|workload_ns|helm_sh_chart|inject|instance|pod_template_hash|workload_ns)
+        - action: replace
+          replacement: integrations/unionai/custom
+          targetLabel: job
+
+  externalSecrets: []
 
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []

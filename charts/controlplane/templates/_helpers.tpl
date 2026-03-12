@@ -361,6 +361,18 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
+{{- /* When userclouds is disabled, fall back to Noop authorizer and disable service-to-service auth */}}
+{{- if not .Values.global.usercloudsEnabled }}
+  {{- if hasKey $merged "authorizer" }}
+    {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
+  {{- end }}
+  {{- if hasKey $merged "union" }}
+    {{- $union := get $merged "union" }}
+    {{- if hasKey $union "auth" }}
+      {{- $_ := set $union "auth" (dict "enable" false) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
@@ -620,3 +632,35 @@ NOTE: This is ONLY for the queue service. All other services use Postgres on por
 {{- end -}}
 {{- end -}}
 
+{{/*
+Start of userclouds helpers.
+*/}}
+{{- define "userclouds.name" -}}
+userclouds-lite
+{{- end -}}
+
+{{- define "userclouds.fullname" -}}
+{{- printf "%s-userclouds-lite" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "userclouds.labels" -}}
+helm.sh/chart: {{ include "unionai.chart" . }}
+{{ include "userclouds.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "userclouds.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "userclouds.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "userclouds.serviceAccountName" -}}
+{{- if .Values.userclouds.serviceAccount.create -}}
+{{- default (include "userclouds.fullname" .) .Values.userclouds.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.userclouds.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
