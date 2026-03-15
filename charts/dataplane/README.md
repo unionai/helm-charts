@@ -225,6 +225,26 @@ monitoring:
 
 Union services expose debug endpoints on port 10254 with the label `platform.union.ai/prometheus-group: "union-services"`. Create a ServiceMonitor in your own Prometheus targeting this label to scrape Union service metrics.
 
+**Important:** The dataplane also deploys an internal `union-features` Prometheus instance that powers Task Level Monitoring and cost tracking. To ensure your Prometheus does **not** pick up the internal ServiceMonitors and PodMonitors, configure your Prometheus operator with a `NotIn` selector:
+
+```yaml
+# In your Prometheus CR or kube-prometheus-stack values
+prometheus:
+  prometheusSpec:
+    serviceMonitorSelector:
+      matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+    podMonitorSelector:
+      matchExpressions:
+        - key: platform.union.ai/prometheus-group
+          operator: NotIn
+          values: ["union-features"]
+```
+
+The `NotIn` operator matches resources where the label is **absent** or has any value other than `union-features`. This safely includes your own ServiceMonitors, the Union `union-services` monitors, and any other monitors in the cluster, while excluding the internal Union features stack.
+
 ### Alertmanager
 
 Alertmanager is disabled by default. Enable it with:
