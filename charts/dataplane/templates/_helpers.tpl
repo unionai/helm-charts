@@ -682,12 +682,36 @@ access the storage is injected.
 {{- end }}
 {{- end -}}
 
+{{/*
+Validate that prometheus and prometheus-simple are not both enabled.
+*/}}
+{{- define "prometheus.validate" -}}
+{{- if and .Values.prometheus.enabled (index .Values "prometheus-simple" "enabled") -}}
+{{- fail "prometheus.enabled and prometheus-simple.enabled are mutually exclusive. Enable only one." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns true if the Prometheus Operator CRDs are available (kube-prometheus-stack mode).
+*/}}
+{{- define "prometheus.useOperator" -}}
+{{- if and .Values.prometheus.enabled (not (index .Values "prometheus-simple" "enabled")) -}}true{{- end -}}
+{{- end -}}
+
+{{- define "prometheus.service.name" -}}
+{{- if index .Values "prometheus-simple" "enabled" -}}
+union-operator-prometheus
+{{- else -}}
+{{ include "union-operator.fullname" . }}-prometheus
+{{- end -}}
+{{- end -}}
+
 {{- define "prometheus.health.url" -}}
-http://{{ include "union-operator.fullname" . }}-prometheus:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
-http://{{ include "union-operator.fullname" . }}-prometheus:80
+http://{{ include "prometheus.service.name" . }}:80
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
