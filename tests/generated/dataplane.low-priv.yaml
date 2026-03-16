@@ -28,6 +28,12 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: dataplane/templates/imagebuilder/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-imagebuilder
+---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -150,9 +156,49 @@ data:
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
-  buildkit-uri: ""
+  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   default-repository: "registry.depot.dev"
   authentication-type: "noop"
+---
+# Source: dataplane/templates/imagebuilder/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : union-operator-buildkit
+data:
+  buildkitd.toml: |
+    debug = false
+
+    [log]
+      format = "text"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = 0
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -372,7 +418,7 @@ data:
     operator:
       enabled: true
       enableTunnelService: true
-      enableDepot: true
+      #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
@@ -415,6 +461,10 @@ data:
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
+        basicAuth:
+          passwordSecretName: 'DEPOT_TOKEN'
+          registry: 'registry.depot.dev'
+          username: 'x-token'
         defaultRepository: 'registry.depot.dev'
       persistedLogs:
         objectStore:
@@ -466,7 +516,7 @@ data:
           disable_ssl: false
           endpoint: http://localstack.aws.svc.cluster.local:4566
           region: us-west-2
-  image-builder.buildkit-uri: ""
+  image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: "registry.depot.dev"
   image-builder.authentication-type: "noop"
 ---
@@ -1065,6 +1115,27 @@ spec:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
 ---
+# Source: dataplane/templates/imagebuilder/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 1234
+      targetPort: tcp
+      protocol: TCP
+      name: tcp
+  selector:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
 kind: Service
@@ -1322,6 +1393,127 @@ spec:
               memory: 1000Mi
       serviceAccountName: flyteconnector
 ---
+# Source: dataplane/templates/imagebuilder/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-buildkit
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  strategy:
+    type: Recreate
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: imagebuilder-buildkit
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
+      labels:
+        app.kubernetes.io/name: imagebuilder-buildkit
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: "union-imagebuilder"
+      containers:
+        - name: "buildkit"
+          image: "docker.io/moby/buildkit:buildx-stable-1-rootless"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+          volumeMounts:
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
+            - mountPath: /etc/buildkit
+              name: buildkit-config
+          args:
+            - --config
+            - /etc/buildkit/buildkitd.toml
+            - --addr
+            - unix:///run/user/1000/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
+          ports:
+            - name: tcp
+              containerPort: 1234
+              protocol: TCP
+          readinessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          livenessProbe:
+            exec:
+              command:
+              - buildctl
+              - debug
+              - workers
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          securityContext:
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
+          resources:
+            requests:
+              cpu: 1
+              ephemeral-storage: 20Gi
+              memory: 1Gi
+      volumes:
+      - name: buildkitd
+        emptyDir: {}
+      - configMap:
+          name: union-operator-buildkit
+        name: buildkit-config
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: imagebuilder-buildkit
+                app.kubernetes.io/instance: release-name
+            topologyKey: "kubernetes.io/hostname"
+---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -1441,7 +1633,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "dcb7d20023ebdb2a4fe6b913f16b888932e19f89ff89d2728e8f5cd2562b08f"
+        configChecksum: "8f7e1e5b93db7d3760d93a874da5f4cbe9bf0732c4cae69f4e577eec5a007ef"
         
       labels:
         
@@ -1576,7 +1768,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "dcb7d20023ebdb2a4fe6b913f16b888932e19f89ff89d2728e8f5cd2562b08f"
+        configChecksum: "8f7e1e5b93db7d3760d93a874da5f4cbe9bf0732c4cae69f4e577eec5a007ef"
         
       labels:
         
@@ -1952,8 +2144,6 @@ metadata:
 template:
   spec:
     serviceAccountName: union
-    imagePullSecrets:
-      - name: depot-token
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
