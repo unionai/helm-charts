@@ -816,10 +816,12 @@ flyte:
             - key: client_secret
               path: userclouds-client-secret
     # -- Appends additional volume mounts to the flyteadmin main container's spec. May include template values.
+    # Mounted as a directory (no subPath) because the flyte-core subchart already mounts
+    # flyte-admin-secrets at /etc/secrets/ — subPath file mounts into an existing volume
+    # mount fail at container init. A nested directory mount works fine.
     additionalVolumeMounts:
       - name: userclouds-client-secret
-        mountPath: /etc/secrets/userclouds-client-secret
-        subPath: userclouds-client-secret
+        mountPath: /etc/secrets/userclouds
         readOnly: true
 
   flytescheduler:
@@ -1076,6 +1078,16 @@ flyte:
         type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         internalCommunicationConfig:
           enabled: false
+        userCloudsClient:
+          tenantUrl: 'http://{{ .Release.Name }}-userclouds-lite.{{ .Release.Namespace }}.svc.cluster.local:8080'
+          tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+          clientID: '{{ .Values.global.RBAC_CLIENT_ID }}'
+          # flyteadmin-specific: the flyte-core subchart mounts flyte-admin-secrets at /etc/secrets/
+          # as a directory, so the userclouds secret must be mounted as a nested directory at
+          # /etc/secrets/userclouds/ rather than as a subPath file at /etc/secrets/userclouds-client-secret.
+          # The default clientSecretName ("userclouds-client-secret") would resolve to the wrong path.
+          clientSecretName: 'userclouds/userclouds-client-secret'
+          enableLogging: true
       cloudEvents:
         enable: false
       connection:
@@ -1122,6 +1134,11 @@ flyte:
         type: '{{ if .Values.global.usercloudsEnabled }}UserClouds{{ else }}Noop{{ end }}'
         internalCommunicationConfig:
           enabled: false
+        userCloudsClient:
+          tenantUrl: 'http://{{ .Release.Name }}-userclouds-lite.{{ .Release.Namespace }}.svc.cluster.local:8080'
+          tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+          clientID: '{{ .Values.global.RBAC_CLIENT_ID }}'
+          enableLogging: true
       cacheservice:
         storage-prefix: cached_outputs
         metrics-scope: flyte
