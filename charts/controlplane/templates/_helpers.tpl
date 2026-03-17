@@ -361,8 +361,8 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
-{{- /* When userclouds is disabled, fall back to Noop authorizer and disable service-to-service auth */}}
-{{- if not .Values.global.usercloudsEnabled }}
+{{- /* When union.authz is disabled, fall back to Noop authorizer and disable service-to-service auth */}}
+{{- if not .Values.union.authz.enabled }}
   {{- if hasKey $merged "authorizer" }}
     {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
   {{- end }}
@@ -633,34 +633,34 @@ NOTE: This is ONLY for the queue service. All other services use Postgres on por
 {{- end -}}
 
 {{/*
-Start of userclouds helpers.
+Start of union.authz helpers.
 */}}
-{{- define "userclouds.name" -}}
-userclouds-lite
+{{- define "union.authz.name" -}}
+union-authz
 {{- end -}}
 
-{{- define "userclouds.fullname" -}}
-{{- printf "%s-userclouds-lite" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- define "union.authz.fullname" -}}
+{{- printf "%s-union-authz" .Release.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
-{{- define "userclouds.labels" -}}
+{{- define "union.authz.labels" -}}
 helm.sh/chart: {{ include "unionai.chart" . }}
-{{ include "userclouds.selectorLabels" . }}
+{{ include "union.authz.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "userclouds.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "userclouds.name" . }}
+{{- define "union.authz.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "union.authz.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "userclouds.serviceAccountName" -}}
-{{- if .Values.userclouds.serviceAccount.create -}}
-{{- default (include "userclouds.fullname" .) .Values.userclouds.serviceAccount.name -}}
+{{- define "union.authz.serviceAccountName" -}}
+{{- if .Values.union.authz.serviceAccount.create -}}
+{{- default (include "union.authz.fullname" .) .Values.union.authz.serviceAccount.name -}}
 {{- else -}}
-{{- default "default" .Values.userclouds.serviceAccount.name -}}
+{{- default "default" .Values.union.authz.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}

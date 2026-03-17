@@ -1,0 +1,78 @@
+{{- if .Values.union.authz.enabled -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "union.authz.fullname" . }}-config
+  labels:
+    {{- include "union.authz.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    database:
+      host: {{ tpl (.Values.union.authz.database.host | toString) . | quote }}
+      port: {{ .Values.union.authz.database.port }}
+      name: {{ tpl (.Values.union.authz.database.name | toString) . | quote }}
+      user: {{ tpl (.Values.union.authz.database.user | toString) . | quote }}
+      password: {{ .Values.union.authz.database.password | quote }}
+      sslMode: {{ .Values.union.authz.database.sslMode | quote }}
+      mode: {{ .Values.union.authz.database.mode | quote }}
+
+    auth:
+      issuer: {{ tpl (.Values.union.authz.auth.issuer | toString) . | quote }}
+      signingKey: {{ tpl (.Values.union.authz.auth.signingKey | toString) . | quote }}
+      {{- if .Values.union.authz.auth.providers }}
+      providers:
+        {{- toYaml .Values.union.authz.auth.providers | nindent 8 }}
+      {{- end }}
+      {{- if .Values.union.authz.auth.apps }}
+      apps:
+        {{- tpl (toYaml .Values.union.authz.auth.apps) . | nindent 8 }}
+      {{- end }}
+
+    cache:
+      enabled: {{ .Values.union.authz.cache.enabled }}
+      type: {{ .Values.union.authz.cache.type | quote }}
+      ttl: {{ .Values.union.authz.cache.ttl | quote }}
+      {{- if or .Values.union.authz.cache.ttls.objectType .Values.union.authz.cache.ttls.object .Values.union.authz.cache.ttls.edgeType .Values.union.authz.cache.ttls.edge .Values.union.authz.cache.ttls.user }}
+      ttls:
+        {{- with .Values.union.authz.cache.ttls.objectType }}
+        objectType: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.union.authz.cache.ttls.object }}
+        object: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.union.authz.cache.ttls.edgeType }}
+        edgeType: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.union.authz.cache.ttls.edge }}
+        edge: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.union.authz.cache.ttls.user }}
+        user: {{ . | quote }}
+        {{- end }}
+      {{- end }}
+      {{- if eq .Values.union.authz.cache.type "redis" }}
+      redis:
+        host: {{ .Values.union.authz.cache.redis.host | quote }}
+        port: {{ .Values.union.authz.cache.redis.port }}
+        {{- if .Values.union.authz.cache.redis.password }}
+        password: {{ .Values.union.authz.cache.redis.password | quote }}
+        {{- end }}
+        tls: {{ .Values.union.authz.cache.redis.tls }}
+      {{- end }}
+      {{- if eq .Values.union.authz.cache.type "memory" }}
+      memory:
+        maxEntries: {{ .Values.union.authz.cache.memory.maxEntries }}
+        shards: {{ .Values.union.authz.cache.memory.shards }}
+        depShards: {{ .Values.union.authz.cache.memory.depShards }}
+      {{- end }}
+
+    {{- if .Values.union.authz.users }}
+    users:
+      {{- toYaml .Values.union.authz.users | nindent 6 }}
+    {{- end }}
+
+    services:
+      checkAttributeEndpoint: "http://localhost:{{ .Values.union.authz.service.port }}"
+      idpEndpoint: "http://localhost:{{ .Values.union.authz.service.port }}"
+      authzEndpoint: "http://localhost:{{ .Values.union.authz.service.port }}"
+{{- end }}
