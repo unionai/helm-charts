@@ -1,0 +1,32 @@
+{{- define "control-plane-library.gateway" }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: {{ template "flyte.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  gatewayClassName: {{ .Values.global.gatewayClassName }}
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.global.UNION_HOST | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            namespace: {{ .Values.global.TLS_SECRET_NAMESPACE }}
+            name: {{ .Values.global.TLS_SECRET_NAME }}
+    {{- if .Values.flyte.common.ingress.isServerless }}
+    - name: https-serverless
+      protocol: HTTPS
+      port: 443
+      hostname: {{ .Values.flyte.common.ingress.serverlessVanityHost | quote }}
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            namespace: {{ .Values.global.TLS_SECRET_NAMESPACE }}
+            name: {{ .Values.global.TLS_SECRET_NAME }}
+    {{- end }}
+{{- end }}
