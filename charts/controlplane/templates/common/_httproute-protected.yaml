@@ -13,9 +13,6 @@ spec:
       namespace: {{ template "flyte.namespace" . }}
   hostnames:
     - {{ .Values.global.UNION_HOST | quote }}
-    {{- if .Values.flyte.common.ingress.isServerless }}
-    - {{ .Values.flyte.common.ingress.serverlessVanityHost | quote }}
-    {{- end }}
   rules:
     # Flyte REST API
     - matches:
@@ -83,34 +80,7 @@ spec:
       backendRefs:
         - name: usage-service
           port: 81
-    {{- if .Values.dataproxy.prometheus.enabled }}
-    # Prometheus (via dataproxy)
-    - matches:
-        - path: {type: PathPrefix, value: "/prometheus"}
-      backendRefs:
-        - name: dataproxy-service
-          port: 81
-    {{- end }}
-    {{- if .Values.grafana.enabled }}
-    # Grafana
-    - matches:
-        - path: {type: PathPrefix, value: "/grafana/d-solo"}
-        - path: {type: PathPrefix, value: "/grafana/api"}
-        - path: {type: PathPrefix, value: "/grafana/public"}
-      backendRefs:
-        - name: {{ include "grafana.fullname" .Subcharts.grafana }}
-          port: 80
-    {{- end }}
-    {{- if .Values.workspaceService.enabled }}
-    # Workspace service HTTP
-    - matches:
-        - path: {type: PathPrefix, value: "/workspace_registry"}
-        - path: {type: PathPrefix, value: "/workspace_instance"}
-      backendRefs:
-        - name: execution-service
-          port: 81
-    {{- end }}
-    {{- if .Values.artifacts.enabled }}
+    {{- if ((.Values.artifacts).enabled) }}
     # Artifacts service HTTP
     - matches:
         - path: {type: PathPrefix, value: "/artifacts"}
@@ -128,20 +98,12 @@ spec:
       backendRefs:
         - name: flyteconsole
           port: 80
-    {{- if .Values.unionv2.enabled }}
+    {{- if ((.Values.unionv2).enabled) }}
     # Union v2 console
     - matches:
         - path: {type: PathPrefix, value: "/v2"}
       backendRefs:
         - name: unionconsole
-          port: 80
-    {{- end }}
-    {{- if .Values.flyte.common.ingress.isServerless }}
-    # Serverless root catch-all → console
-    - matches:
-        - path: {type: PathPrefix, value: "/"}
-      backendRefs:
-        - name: flyteconsole
           port: 80
     {{- end }}
 {{- end }}
