@@ -1,0 +1,169 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "union-operator.fullname" . }}-prometheus
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prometheus
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    alerting:
+      alertmanagers:
+      - static_configs:
+        - targets:
+    {{- if .Values.cost.enabled }}
+    rule_files:
+      - rules.yml
+    {{- end }}
+    scrape_configs:
+      # Self-monitoring
+      - job_name: prometheus
+        metrics_path: /prometheus/metrics
+        static_configs:
+        - targets: ['localhost:9090']
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: prometheus_tsdb_head_chunks_storage_size_bytes|prometheus_tsdb_head_series|prometheus_tsdb_head_series_created_total|prometheus_tsdb_head_series_removed_total|prometheus_tsdb_head_samples_appended_total|prometheus_tsdb_storage_blocks_bytes|prometheus_tsdb_retention_limit_bytes|prometheus_tsdb_wal_(.*)|.+_(limit|failed|missed|failures)_total
+          action: keep
+
+      # Kube state metrics for pod/node resource tracking and cost calculations
+      - job_name: kube-state-metrics
+        static_configs:
+        - targets: ['{{ .Release.Name }}-kube-state-metrics:8080']
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
+          action: keep
+        - separator: ;
+          source_labels: [__name__, phase]
+          regex: kube_pod_status_phase;(Succeeded|Failed)
+          action: drop
+        - source_labels: [node]
+          target_label: nodename
+          regex: '(.*)'
+          action: replace
+        - source_labels: [label_node_group_name]
+          action: replace
+          regex: (.+)
+          target_label: label_node_pool_name
+
+      # cAdvisor container metrics for CPU and memory tracking
+      - job_name: kubernetes-cadvisor
+        metrics_path: /metrics
+        scheme: https
+        kubernetes_sd_configs:
+        - role: node
+          namespaces:
+            names: []
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          insecure_skip_verify: false
+        metric_relabel_configs:
+        - separator: ;
+          source_labels: [__name__]
+          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+          action: keep
+        relabel_configs:
+        - separator: ;
+          regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - separator: ;
+          regex: (.*)
+          target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          separator: ;
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace
+
+      # Flyte propeller metrics for execution info and fast task duration
+      - job_name: flytepropeller
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - {{ .Release.Namespace }}
+          selectors:
+          - role: pod
+            label: app.kubernetes.io/name=flytepropeller
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+
+      {{- if .Values.serving.enabled }}
+      # Kourier gateway (envoy) metrics for serving
+      - job_name: serving-envoy
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - {{ .Release.Namespace }}
+          selectors:
+          - role: pod
+            label: app=3scale-kourier-gateway
+        metrics_path: /stats/prometheus
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+      {{- end }}
+
+      {{- if .Values.opencost.enabled }}
+      # OpenCost metrics for cost tracking
+      - job_name: opencost
+        static_configs:
+        - targets: ['{{ .Release.Name }}-opencost:9003']
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+      {{- end }}
+
+      {{- if (index .Values "dcgm-exporter" "enabled" | default false) }}
+      # DCGM GPU metrics
+      - job_name: gpu-metrics
+        kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+            - kube-system
+          selectors:
+          - role: pod
+            label: app.kubernetes.io/name=dcgm-exporter
+      {{- end }}
+
+  {{- if .Values.cost.enabled }}
+  rules.yml: |
+    {{ include "cost.recording-rules" . | nindent 4 }}
+  {{- end }}
