@@ -1001,6 +1001,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end }}
 {{- end }}
+{{- with .Values.fluentbit.additionalOutputs }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{/*
