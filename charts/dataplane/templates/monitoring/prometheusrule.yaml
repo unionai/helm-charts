@@ -1,0 +1,145 @@
+{{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}-dataplane-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+spec:
+  groups:
+    # --- Recording rules (always active) ---
+    - name: union_dataplane_recording
+      interval: 30s
+      rules:
+        - record: union:dp:service_availability
+          expr: |
+            min by (namespace, deployment) (
+              kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}"}
+              / kube_deployment_spec_replicas{namespace="{{ .Release.Namespace }}"}
+            )
+
+        - record: union:dp:propeller:round_latency_p99
+          expr: |
+            flyte:propeller:all:round:round_time_unlabeled_ms{
+              namespace="{{ .Release.Namespace }}",
+              quantile="0.99"
+            }
+
+        - record: union:dp:propeller:active_workflows
+          expr: |
+            sum(flyte:propeller:all:execstats:active_workflow_executions{
+              namespace="{{ .Release.Namespace }}"
+            })
+
+        - record: union:dp:propeller:queue_depth
+          expr: |
+            sum(flyte:propeller:all:main_depth{namespace="{{ .Release.Namespace }}"})
+
+        - record: union:dp:operator:work_queue_failed_rate
+          expr: |
+            rate(union_operator:work_queue:operations_failed{
+              namespace="{{ .Release.Namespace }}"
+            }[5m])
+
+        - record: union:dp:executor:active_actions
+          expr: |
+            executor:active_actions_count{namespace="{{ .Release.Namespace }}"}
+
+    {{- if .Values.monitoring.alerting.enabled }}
+    # --- Alerting rules (opt-in) ---
+    - name: union_dataplane_alerts
+      rules:
+        - alert: UnionDPServiceDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ "{{" }} $labels.deployment {{ "}}" }} has 0 available replicas"
+
+        - alert: UnionDPHighRestartRate
+          expr: |
+            increase(
+              kube_pod_container_status_restarts_total{namespace="{{ .Release.Namespace }}"}[1h]
+            ) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
+
+        - alert: UnionDPPropellerRoundLatencyHigh
+          expr: |
+            flyte:propeller:all:round:round_time_unlabeled_ms{
+              namespace="{{ .Release.Namespace }}",
+              quantile="0.99"
+            } > 30000
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Propeller round p99 latency > 30s"
+
+        - alert: UnionDPPropellerQueueBacklog
+          expr: |
+            sum(flyte:propeller:all:main_depth{namespace="{{ .Release.Namespace }}"}) > 100
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Propeller workflow queue backlog > 100"
+
+        - alert: UnionDPOperatorWorkQueueErrors
+          expr: |
+            rate(union_operator:work_queue:operations_failed{
+              namespace="{{ .Release.Namespace }}"
+            }[5m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Operator work queue errors occurring"
+
+        - alert: UnionDPPropellerRoundErrors
+          expr: |
+            rate(flyte:propeller:all:round:error_count{
+              namespace="{{ .Release.Namespace }}"
+            }[5m]) /
+            (
+              rate(flyte:propeller:all:round:success_count{
+                namespace="{{ .Release.Namespace }}"
+              }[5m])
+              +
+              rate(flyte:propeller:all:round:error_count{
+                namespace="{{ .Release.Namespace }}"
+              }[5m])
+            ) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Propeller round error rate > 10%"
+
+        - alert: UnionDPPropellerWfUpdateFailures
+          expr: |
+            rate(flyte:propeller:all:wf_update_failed{
+              namespace="{{ .Release.Namespace }}"
+            }[5m]) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Propeller workflow update failures > 0.1/s"
+
+        - alert: UnionDPHandlerPanic
+          expr: |
+            increase(executor:handler_panic{namespace="{{ .Release.Namespace }}"}[1h]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Handler panic detected in DP executor"
+    {{- end }}
+{{- end }}
