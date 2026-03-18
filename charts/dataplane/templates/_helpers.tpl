@@ -20,13 +20,13 @@ migrated to the "dataplane" service and will use these.
 
 {{- define "unionai-dataplane.fullname" -}}
 {{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- .Values.fullnameOverride | trunc 54 | trimSuffix "-" }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- .Release.Name | trunc 54 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name $name | trunc 54 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -141,6 +141,68 @@ tolerations:
 {{- end }}
 {{- if .Values.flytepropeller.tolerations }}
 {{- include "flytepropeller.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{- define "executor.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.executor.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.affinity" -}}
+{{- with .Values.executor.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.nodeSelector" -}}
+{{- with .Values.executor.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.nodeName" -}}
+{{- with .Values.executor.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.tolerations" -}}
+{{- with .Values.executor.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling" -}}
+{{- if .Values.executor.topologySpreadConstraints }}
+{{- include "executor.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.executor.affinity }}
+{{- include "executor.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.executor.nodeSelector }}
+{{- include "executor.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.executor.nodeName }}
+{{- include "executor.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.executor.tolerations }}
+{{- include "executor.scheduling.tolerations" . }}
 {{- else }}
 {{- include "global.scheduling.tolerations" . }}
 {{- end }}
