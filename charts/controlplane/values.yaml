@@ -803,6 +803,17 @@ flyte:
         cpu: 50m
         ephemeral-storage: 200Mi
         memory: 500Mi
+    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
+    # can read client_secret from union/client_secret. The flyte-core subchart does not
+    # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
   flytescheduler:
     image:
       # TODO flyte-core does not render templated repository and tag correctly.
@@ -934,6 +945,17 @@ flyte:
     nodeSelector: { }
     # -- tolerations for Cacheservice deployment
     tolerations: [ ]
+    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
+    # can read client_secret from union/client_secret. The flyte-core subchart does not
+    # include this mount by default.
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
     # -- Appends additional containers to the deployment spec. May include template values.
     additionalContainers: [ ]
     # -- Appends extra command line arguments to the main command
@@ -1047,10 +1069,10 @@ flyte:
           tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
           tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
           clientID: "union-authz-client"
-          # flyteadmin: flyte-admin-secrets is mounted at /etc/secrets/ by the flyte-core subchart.
-          # client_secret resolves to /etc/secrets/client_secret — the same credential used
-          # for OAuth2 to the external IdP. No additional volume mount is needed.
-          clientSecretName: 'client_secret'
+          # flyteadmin: service-shared-secret is mounted at /etc/secrets/union/ via
+          # additionalVolumes/additionalVolumeMounts above. client_secret resolves to
+          # /etc/secrets/union/client_secret (same credential used by all union services).
+          clientSecretName: 'union/client_secret'
           enableLogging: true
       cloudEvents:
         enable: false
