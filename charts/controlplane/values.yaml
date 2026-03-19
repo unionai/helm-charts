@@ -230,6 +230,7 @@ configMap:
       tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
       tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
       clientID: '{{ .Values.union.authz.clientID }}'
+      clientSecretName: 'union/client_secret'
       enableLogging: true
   cache:
     identity:
@@ -802,26 +803,6 @@ flyte:
         cpu: 50m
         ephemeral-storage: 200Mi
         memory: 500Mi
-    # -- Appends additional volumes to the flyteadmin deployment spec. May include template values.
-    # Mounts userclouds-client-secret for the UserClouds authorizer (used when union.authz.enabled=true).
-    # optional: true ensures pods start normally on deployments that don't use userclouds.
-    additionalVolumes:
-      - name: userclouds-client-secret
-        secret:
-          secretName: userclouds-client-secret
-          optional: true
-          items:
-            - key: client_secret
-              path: userclouds-client-secret
-    # -- Appends additional volume mounts to the flyteadmin main container's spec. May include template values.
-    # Mounted as a directory (no subPath) because the flyte-core subchart already mounts
-    # flyte-admin-secrets at /etc/secrets/ — subPath file mounts into an existing volume
-    # mount fail at container init. A nested directory mount works fine.
-    additionalVolumeMounts:
-      - name: userclouds-client-secret
-        mountPath: /etc/secrets/userclouds
-        readOnly: true
-
   flytescheduler:
     image:
       # TODO flyte-core does not render templated repository and tag correctly.
@@ -953,23 +934,6 @@ flyte:
     nodeSelector: { }
     # -- tolerations for Cacheservice deployment
     tolerations: [ ]
-    # -- Appends additional volumes to the deployment spec. May include template values.
-    # Mounts userclouds-client-secret for the UserClouds authorizer (used when union.authz.enabled=true).
-    # optional: true ensures pods start normally on deployments that don't use userclouds.
-    additionalVolumes:
-      - name: userclouds-client-secret
-        secret:
-          secretName: userclouds-client-secret
-          optional: true
-          items:
-            - key: client_secret
-              path: userclouds-client-secret
-    # -- Appends additional volume mounts to the main container's spec. May include template values.
-    additionalVolumeMounts:
-      - name: userclouds-client-secret
-        mountPath: /etc/secrets/userclouds-client-secret
-        subPath: userclouds-client-secret
-        readOnly: true
     # -- Appends additional containers to the deployment spec. May include template values.
     additionalContainers: [ ]
     # -- Appends extra command line arguments to the main command
@@ -1083,11 +1047,10 @@ flyte:
           tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
           tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
           clientID: "union-authz-client"
-          # flyteadmin-specific: the flyte-core subchart mounts flyte-admin-secrets at /etc/secrets/
-          # as a directory, so the userclouds secret must be mounted as a nested directory at
-          # /etc/secrets/userclouds/ rather than as a subPath file at /etc/secrets/userclouds-client-secret.
-          # The default clientSecretName ("userclouds-client-secret") would resolve to the wrong path.
-          clientSecretName: 'userclouds/userclouds-client-secret'
+          # flyteadmin: flyte-admin-secrets is mounted at /etc/secrets/ by the flyte-core subchart.
+          # client_secret resolves to /etc/secrets/client_secret — the same credential used
+          # for OAuth2 to the external IdP. No additional volume mount is needed.
+          clientSecretName: 'client_secret'
           enableLogging: true
       cloudEvents:
         enable: false
@@ -1140,6 +1103,7 @@ flyte:
           tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
           tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
           clientID: "union-authz-client"
+          clientSecretName: 'union/client_secret'
           enableLogging: true
       cacheservice:
         storage-prefix: cached_outputs
@@ -1441,7 +1405,7 @@ union:
           name: "union-controlplane"
           credentials:
             - clientId: '{{ .Values.union.authz.clientID }}'
-              clientSecret: "kube://secrets/userclouds-client-secret?key=client_secret"
+              clientSecret: 'kube://secrets/{{ .Values.global.KUBERNETES_SECRET_NAME }}?key=client_secret'
 
     cache:
       enabled: true
