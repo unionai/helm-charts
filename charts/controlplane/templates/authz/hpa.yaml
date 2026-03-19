@@ -1,0 +1,31 @@
+{{- if and (eq .Values.global.AUTHZ_TYPE "union") .Values.union.authz.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "union.authz.fullname" . }}
+  labels:
+    {{- include "union.authz.labels" . | nindent 4 }}
+    app.kubernetes.io/component: all
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "union.authz.fullname" . }}
+  minReplicas: {{ .Values.union.authz.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.union.authz.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.union.authz.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if .Values.union.authz.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.union.authz.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}

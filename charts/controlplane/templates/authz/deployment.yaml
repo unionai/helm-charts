@@ -1,0 +1,135 @@
+{{- if eq .Values.global.AUTHZ_TYPE "union" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "union.authz.fullname" . }}
+  labels:
+    {{- include "union.authz.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.union.authz.autoscaling.enabled }}
+  replicas: {{ .Values.union.authz.replicaCount }}
+  {{- end }}
+  {{- with .Values.union.authz.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "union.authz.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/authz/configmap.yaml") . | sha256sum }}
+        {{- with .Values.union.authz.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "union.authz.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "union.authz.serviceAccountName" . }}
+      {{- if .Values.union.authz.priorityClassName }}
+      priorityClassName: {{ .Values.union.authz.priorityClassName | quote }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.union.authz.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.union.authz.podSecurityContext | nindent 8 }}
+      containers:
+        - name: userclouds-lite
+          securityContext:
+            {{- toYaml .Values.union.authz.securityContext | nindent 12 }}
+          image: {{ tpl .Values.image.repository . }}:{{ tpl (.Values.image.tag | toString) . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.union.authz.command }}
+          command:
+            {{- toYaml .Values.union.authz.command | nindent 12 }}
+          {{- end }}
+          args:
+            - serve
+            - all
+            - --config=/etc/userclouds/config.yaml
+            - --addr=:{{ .Values.union.authz.service.port }}
+            - --static={{ .Values.union.authz.staticDir }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.union.authz.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: {{ .Values.union.authz.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.union.authz.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.union.authz.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.union.authz.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: {{ .Values.union.authz.probes.readiness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.union.authz.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.union.authz.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.union.authz.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml .Values.union.authz.resources | nindent 12 }}
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          {{- with .Values.union.authz.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/userclouds
+              readOnly: true
+            - name: db-pass
+              mountPath: /etc/db
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.union.authz.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "union.authz.fullname" . }}-config
+        - name: db-pass
+          secret:
+            secretName: {{ tpl .Values.defaults.dbSecretName . }}
+        - name: tmp
+          emptyDir: {}
+        {{- with .Values.union.authz.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.union.authz.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.union.authz.affinity }}
+      affinity:
+        {{- toYaml .Values.union.authz.affinity | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "union.authz.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      {{- with .Values.union.authz.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.union.authz.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
