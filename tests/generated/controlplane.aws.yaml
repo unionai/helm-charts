@@ -1054,6 +1054,3034 @@ data:
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
 ---
+# Source: controlplane/templates/monitoring/dashboard-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-controlplane-overview
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  union-controlplane-overview.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "Union Controlplane health and service metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "title": "Health",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 1
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "auto"
+          },
+          "title": "Service Availability",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
+              "legendFormat": "Availability",
+              "refId": "A"
+            }
+          ],
+          "description": "Percentage of deployments with all requested replicas available. 1.0 = all healthy."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 3
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 1
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "auto"
+          },
+          "title": "Pod Restarts (1h)",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[1h]))",
+              "legendFormat": "Restarts",
+              "refId": "A"
+            }
+          ],
+          "description": "Total container restarts in the last hour. Non-zero indicates crashlooping or OOM kills."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.01
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.05
+                  }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 5
+          },
+          "id": 7,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "area",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "auto"
+          },
+          "title": "Connect Error Rate",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval])) / sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "Error %",
+              "refId": "A"
+            }
+          ],
+          "description": "Fraction of Connect RPC responses with non-OK/non-Canceled codes across all CP services."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never",
+                "stacking": {
+                  "mode": "none"
+                }
+              },
+              "unit": "reqps"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 10,
+            "x": 8,
+            "y": 1
+          },
+          "id": 4,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "title": "Connect Request Rate by Service",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum by (service) (rate(connect:server_requests_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "{{ service }}",
+              "refId": "A"
+            }
+          ],
+          "description": "Connect protocol request throughput broken down by service (e.g. ExecutionService, ClusterService)."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "reqps"
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 6,
+            "x": 18,
+            "y": 1
+          },
+          "id": 5,
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "title": "Connect Errors by Code",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum by (code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval]))",
+              "legendFormat": "{{ code }}",
+              "refId": "A"
+            }
+          ],
+          "description": "Connect error responses by gRPC status code (Internal, Unavailable, etc.)."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "percentunit"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 5
+          },
+          "id": 6,
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "title": "Service Availability Over Time",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"}",
+              "legendFormat": "{{ deployment }}",
+              "refId": "A"
+            }
+          ],
+          "description": "Percentage of deployments with all requested replicas available. 1.0 = all healthy."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 16,
+            "y": 5
+          },
+          "id": 11,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value_and_name"
+          },
+          "title": "Handler Panics",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(authorizer:handler_panic{namespace=\"$namespace\"} + cluster:handler_panic{namespace=\"$namespace\"} + dataproxy:handler_panic{namespace=\"$namespace\"} + executions:handler_panic{namespace=\"$namespace\"} + queue:handler_panic{namespace=\"$namespace\"} + usage:handler_panic{namespace=\"$namespace\"})",
+              "legendFormat": "Total",
+              "refId": "A"
+            }
+          ],
+          "description": "Total handler panics across all CP services. Any non-zero value indicates a service caught a panic during request handling."
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "id": 100,
+          "title": "Ingress (nginx)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 10
+              },
+              "id": 101,
+              "title": "Request Rate by Path",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (host, path) (rate(nginx_ingress_controller_request_duration_seconds_count{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ host }}{{ path }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Ingress request rate broken down by host and URL path."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 10
+              },
+              "id": 102,
+              "title": "Error Rate by Status Code",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (status) (rate(nginx_ingress_controller_request_duration_seconds_count{namespace=\"$namespace\", status=~\"[45]..\"}[$__rate_interval]))",
+                  "legendFormat": "{{ status }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "4xx and 5xx error rates from ingress-nginx by HTTP status code."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 18
+              },
+              "id": 103,
+              "title": "Latency p50 / p95 / p99",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.50, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p50",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p95",
+                  "refId": "B"
+                },
+                {
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p99",
+                  "refId": "C"
+                }
+              ],
+              "description": "Ingress request latency percentiles. Includes TLS + routing + upstream response time."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 18
+              },
+              "id": 104,
+              "title": "Active Connections",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum(nginx_ingress_controller_nginx_process_connections{namespace=\"$namespace\"})",
+                  "legendFormat": "Active",
+                  "refId": "A"
+                }
+              ],
+              "description": "Current number of active client connections to ingress-nginx."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 10
+          },
+          "id": 200,
+          "title": "Connect / gRPC",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 11
+              },
+              "id": 201,
+              "title": "Connect Request Rate by Service",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (service) (rate(connect:server_requests_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ service }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Connect protocol request throughput broken down by service (e.g. ExecutionService, ClusterService)."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 11
+              },
+              "id": 202,
+              "title": "Connect Errors by Service & Code",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (service, code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval]))",
+                  "legendFormat": "{{ service }} {{ code }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Connect errors broken down by service and gRPC code. Identifies which services are erroring."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 19
+              },
+              "id": 203,
+              "title": "gRPC Server Request Rate (CacheService)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (grpc_service, grpc_method) (rate(grpc_server_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ grpc_service }}/{{ grpc_method }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "CacheService is the only CP service using gRPC (not Connect). Shows Get/Put/Delete/Reservation rates."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 19
+              },
+              "id": 204,
+              "title": "gRPC Server Errors (CacheService)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (grpc_method, grpc_code) (rate(grpc_server_handled_total{namespace=\"$namespace\", grpc_code!=\"OK\"}[$__rate_interval]))",
+                  "legendFormat": "{{ grpc_method }} {{ grpc_code }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "CacheService gRPC errors by method and code."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 11
+          },
+          "id": 300,
+          "title": "FlyteAdmin (V1 + V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 12
+              },
+              "id": 301,
+              "title": "Active Executions",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "flyte:admin:execution_manager:active_executions{namespace=\"$namespace\"}",
+                  "legendFormat": "Workflows",
+                  "refId": "A"
+                },
+                {
+                  "expr": "flyte:admin:node_execution_manager:active_node_executions{namespace=\"$namespace\"}",
+                  "legendFormat": "Nodes",
+                  "refId": "B"
+                },
+                {
+                  "expr": "flyte:admin:task_execution_manager:active_executions{namespace=\"$namespace\"}",
+                  "legendFormat": "Tasks",
+                  "refId": "C"
+                }
+              ],
+              "description": "Current count of active workflow, node, and task executions tracked by FlyteAdmin."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 12
+              },
+              "id": 302,
+              "title": "Execution Create / Event Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(flyte:admin:execution_manager:executions_created{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Executions created",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(flyte:admin:execution_manager:execution_events_created{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Workflow events",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(flyte:admin:node_execution_manager:node_execution_events_created{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Node events",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(flyte:admin:task_execution_manager:task_execution_events_created{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Task events",
+                  "refId": "D"
+                }
+              ],
+              "description": "Rate of execution creations and event ingestion (workflow, node, task events from propeller)."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 12
+              },
+              "id": 303,
+              "title": "Errors",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(flyte:admin:execution_manager:propeller_failures{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Propeller failures",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(flyte:admin:execution_manager:transformer_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Transformer errors",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(flyte:admin:execution_manager:publish_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Publish errors",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(flyte:admin:execution_manager:execution_termination_failure{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Termination failures",
+                  "refId": "D"
+                }
+              ],
+              "description": "FlyteAdmin error rates: propeller communication failures, model transform errors, notification publish failures."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 20
+              },
+              "id": 304,
+              "title": "Endpoint Latency (p95)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "flyte:admin:create_execution:duration_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "legendFormat": "CreateExecution",
+                  "refId": "A"
+                },
+                {
+                  "expr": "flyte:admin:create_execution_event:duration_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "legendFormat": "CreateExecutionEvent",
+                  "refId": "B"
+                },
+                {
+                  "expr": "flyte:admin:get_execution:duration_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "legendFormat": "GetExecution",
+                  "refId": "C"
+                },
+                {
+                  "expr": "flyte:admin:list_execution:duration_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "legendFormat": "ListExecution",
+                  "refId": "D"
+                }
+              ],
+              "description": "FlyteAdmin gRPC endpoint latency at p95. Key endpoints: CreateExecution, CreateExecutionEvent, GetExecution."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 20
+              },
+              "id": 305,
+              "title": "Auth Middleware Decisions",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(flyte:middleware:authorization:authz_approved{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Approved",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(flyte:middleware:authorization:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Denied",
+                  "refId": "B"
+                }
+              ],
+              "description": "Authorization approve/deny rate from the FlyteAdmin auth middleware. High deny rate may indicate auth misconfiguration."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 12
+          },
+          "id": 400,
+          "title": "Executions (V1 + V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 12
+              },
+              "id": 401,
+              "title": "Execution Create / Ack Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:executions:handle_create_op_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Create",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(executions:executions:handle_ack_op_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Ack",
+                  "refId": "B"
+                }
+              ],
+              "description": "Rate of execution operation creates and acknowledgements. Create = new execution request, Ack = DP confirmed receipt."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 12
+              },
+              "id": 402,
+              "title": "Execution Create / Ack Latency (p95)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(executions:executions:handle_create_op_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "Create p95",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(executions:executions:handle_ack_op_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "Ack p95",
+                  "refId": "B"
+                }
+              ],
+              "description": "Time to prepare create/ack execution requests at p95."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 12
+              },
+              "id": 403,
+              "title": "Assignment Duration (p50 / p90)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.50, sum by (le) (rate(executions:workqueue:announce_cluster_assignment_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p50",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.90, sum by (le) (rate(executions:workqueue:announce_cluster_assignment_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p90",
+                  "refId": "B"
+                }
+              ],
+              "description": "Key SLI: end-to-end time from execution create to cluster assignment. Custom buckets from 10ms to 20min."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 20
+              },
+              "id": 404,
+              "title": "Workqueue Operations",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:workqueue:send_operation_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Send ops",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(executions:workqueue:claim_operations{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Claims",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(executions:workqueue:send_operation_failures{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Send failures",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(executions:workqueue:claim_operation_failures{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Claim failures",
+                  "refId": "D"
+                }
+              ],
+              "description": "Execution operation send/claim rates and failures. Send = dispatch to DP, Claim = pick up from DB."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 20
+              },
+              "id": 405,
+              "title": "DB Operation Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (op) (rate(label_replace({__name__=~\"executions:database:postgres:repositories:execution_ops:.*_count\", namespace=\"$namespace\"}, \"op\", \"$1\", \"__name__\", \"executions:database:postgres:repositories:execution_ops:(.*)_count\")[$__rate_interval:]))",
+                  "legendFormat": "{{ op }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Execution operations DB latency: create, ack, claim, unclaim, get, update."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 20
+              },
+              "id": 406,
+              "title": "DB Errors",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:database:postgres:errors:gorm_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "gorm_error",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(executions:database:postgres:errors:postgres_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "postgres_error",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(executions:database:postgres:errors:not_found{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "not_found",
+                  "refId": "C"
+                }
+              ],
+              "description": "Executions service Postgres error rates by type: gorm errors, native postgres errors, not-found."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 28
+              },
+              "id": 407,
+              "title": "Cluster Cache Hit/Miss",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:executions:list_clusters:hits{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Cluster hits",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(executions:executions:list_clusters:miss{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Cluster miss",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(executions:executions:list_nodepools:hits{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Nodepool hits",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(executions:executions:list_nodepools:miss{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Nodepool miss",
+                  "refId": "D"
+                }
+              ],
+              "description": "Cluster and nodepool list cache effectiveness. High miss rate = excessive DB queries."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 28
+              },
+              "id": 408,
+              "title": "Pending Assignments",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "executions:app:leaser:pending_assignment_unlabeled{namespace=\"$namespace\"}",
+                  "legendFormat": "Pending",
+                  "refId": "A"
+                }
+              ],
+              "description": "Number of apps waiting for cluster assignment. Growing backlog = scheduling bottleneck."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 36
+              },
+              "id": 409,
+              "title": "First Ack Latency (V2 SLI)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.50, sum by (le) (rate(executions:app:service:first_ack_latency_unlabeled_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p50",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(executions:app:service:first_ack_latency_unlabeled_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p95",
+                  "refId": "B"
+                },
+                {
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(executions:app:service:first_ack_latency_unlabeled_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "p99",
+                  "refId": "C"
+                }
+              ],
+              "description": "Key V2 SLI: time to deliver an app to the dataplane. Measures end-to-end scheduling latency."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 36
+              },
+              "id": 410,
+              "title": "V2 Run Dispatch",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:run:runs_sent{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Runs sent",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(executions:run:actions_sent{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Actions sent",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(executions:run:enqueue_action_failures{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Enqueue failures",
+                  "refId": "C"
+                }
+              ],
+              "description": "V2 run/action dispatch throughput. Enqueue failures indicate queue service issues."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 36
+              },
+              "id": 411,
+              "title": "V2 Run Notifier",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(executions:run_notifier:notifications_sent{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Notifications/s",
+                  "refId": "A"
+                },
+                {
+                  "expr": "executions:run_notifier:subscribers{namespace=\"$namespace\"}",
+                  "legendFormat": "Subscribers",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(executions:run:logs:tail_logs_bytes_read{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Log bytes/s",
+                  "refId": "C"
+                }
+              ],
+              "description": "V2 notification pipeline: notifications sent per second, active subscribers, log bytes streamed."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 12
+          },
+          "id": 500,
+          "title": "Queue / Run-Scheduler (V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 13
+              },
+              "id": 501,
+              "title": "Metadata Store Counts",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "queue:metadata_store:total_run_count{namespace=\"$namespace\"}",
+                  "legendFormat": "Total runs",
+                  "refId": "A"
+                },
+                {
+                  "expr": "queue:metadata_store:total_action_count{namespace=\"$namespace\"}",
+                  "legendFormat": "Total actions",
+                  "refId": "B"
+                },
+                {
+                  "expr": "queue:metadata_store:scheduled_run_count{namespace=\"$namespace\"}",
+                  "legendFormat": "Scheduled runs",
+                  "refId": "C"
+                },
+                {
+                  "expr": "queue:metadata_store:scheduled_action_count{namespace=\"$namespace\"}",
+                  "legendFormat": "Scheduled actions",
+                  "refId": "D"
+                }
+              ],
+              "description": "Total and scheduled run/action counts in the queue. Shows system load."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 13
+              },
+              "id": 502,
+              "title": "Scheduler / Runner / Aborter Throughput",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(queue:scheduler:enqueued_leases{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Enqueued",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(queue:runner:completed_leases{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Completed",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(queue:aborter:aborted_leases{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Aborted",
+                  "refId": "C"
+                }
+              ],
+              "description": "Lease lifecycle throughput: enqueued (new), completed (done), aborted (cancelled)."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 13
+              },
+              "id": 503,
+              "title": "Queue Lengths",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "queue:scheduler:input_queue_length{namespace=\"$namespace\"}",
+                  "legendFormat": "Scheduler input",
+                  "refId": "A"
+                },
+                {
+                  "expr": "queue:runner:input_queue_length{namespace=\"$namespace\"}",
+                  "legendFormat": "Runner input",
+                  "refId": "B"
+                },
+                {
+                  "expr": "queue:aborter:input_queue_length{namespace=\"$namespace\"}",
+                  "legendFormat": "Aborter input",
+                  "refId": "C"
+                },
+                {
+                  "expr": "queue:dispatcher:chain_queue_length{namespace=\"$namespace\"}",
+                  "legendFormat": "Dispatcher chain",
+                  "refId": "D"
+                },
+                {
+                  "expr": "queue:db:queue_length{namespace=\"$namespace\"}",
+                  "legendFormat": "DB queue",
+                  "refId": "E"
+                }
+              ],
+              "description": "Internal queue depths across scheduler, runner, aborter, dispatcher, and DB worker pool. Growing = backpressure."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 21
+              },
+              "id": 504,
+              "title": "Dispatcher Operation Duration (p99)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.99, sum by (type, le) (rate(queue:dispatcher:operation_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "{{ type }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Dispatcher multi-step operation chain execution time at p99, by operation type."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 21
+              },
+              "id": 505,
+              "title": "State Get/Put Duration (p99)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(queue:state:get_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "Get p99",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(queue:state:put_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "Put p99",
+                  "refId": "B"
+                }
+              ],
+              "description": "In-memory state store operation latency. Backed by ScyllaDB persistence."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 21
+              },
+              "id": 506,
+              "title": "State Cache & Eventer",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "queue:state:active_states{namespace=\"$namespace\"}",
+                  "legendFormat": "Active states",
+                  "refId": "A"
+                },
+                {
+                  "expr": "queue:state:terminal_states{namespace=\"$namespace\"}",
+                  "legendFormat": "Terminal states",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(queue:eventer:record_action_errors{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Eventer errors",
+                  "refId": "C"
+                }
+              ],
+              "description": "Active/terminal state counts and eventer error rate. Eventer reports action status to executions service."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 29
+              },
+              "id": 507,
+              "title": "Worker Capacity",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "queue:scheduler:worker_capacity{namespace=\"$namespace\"}",
+                  "legendFormat": "{{ worker_name }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Remaining execution capacity per connected DP worker. Zero = worker saturated."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 29
+              },
+              "id": 508,
+              "title": "Dispatcher Failures by Type",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (type) (rate(queue:dispatcher:operation_failures{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ type }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Failed dispatcher operations by Go type. Indicates internal queue service errors."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 29
+              },
+              "id": 509,
+              "title": "DB & Client Thread Pool",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "queue:db:free_threads{namespace=\"$namespace\"}",
+                  "legendFormat": "DB free threads",
+                  "refId": "A"
+                },
+                {
+                  "expr": "queue:queue_client:free_threads{namespace=\"$namespace\"}",
+                  "legendFormat": "Queue client free",
+                  "refId": "B"
+                },
+                {
+                  "expr": "queue:state_client:free_threads{namespace=\"$namespace\"}",
+                  "legendFormat": "State client free",
+                  "refId": "C"
+                }
+              ],
+              "description": "Idle worker goroutines in DB, queue-client, and state-client pools. Zero = all threads busy."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "id": 600,
+          "title": "Cluster Service (V1 + V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 14
+              },
+              "id": 601,
+              "title": "UpdateStatus / Heartbeat Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(cluster:svc:update_status:updates_total{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "UpdateStatus",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(cluster:svc:heartbeat:success_ms_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Heartbeat",
+                  "refId": "B"
+                }
+              ],
+              "description": "Rate of DP cluster status updates and heartbeats received by the cluster service."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 14
+              },
+              "id": 602,
+              "title": "Cluster API Latency (p95)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:update_status:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "legendFormat": "UpdateStatus p95",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:heartbeat:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "legendFormat": "Heartbeat p95",
+                  "refId": "B"
+                }
+              ],
+              "description": "Cluster service RPC latency for UpdateStatus and Heartbeat calls."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 14
+              },
+              "id": 603,
+              "title": "Operator / Propeller Restarts (from DP)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "cluster:svc:update_status:operator_restarts{namespace=\"$namespace\"}",
+                  "legendFormat": "Operator restarts",
+                  "refId": "A"
+                },
+                {
+                  "expr": "cluster:svc:update_status:propeller_restarts{namespace=\"$namespace\"}",
+                  "legendFormat": "Propeller restarts",
+                  "refId": "B"
+                }
+              ],
+              "description": "DP-reported restart counts for operator and propeller pods. Set by DP on each UpdateStatus call."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 22
+              },
+              "id": 604,
+              "title": "DB Errors by Type",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(cluster:database:postgres:errors:gorm_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "gorm_error",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(cluster:database:postgres:errors:postgres_error{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "postgres_error",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(cluster:database:postgres:errors:not_found{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "not_found",
+                  "refId": "C"
+                }
+              ],
+              "description": "Cluster service Postgres error rates by type: gorm errors, native postgres errors, not-found."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "thresholds": {
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "unit": "short",
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "0": {
+                          "text": "Healthy",
+                          "color": "green"
+                        },
+                        "1": {
+                          "text": "Unhealthy",
+                          "color": "red"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 22
+              },
+              "id": 605,
+              "title": "Cluster Health Status",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "cluster:cluster_sync:health:unhealthy{namespace=\"$namespace\", subsystem=\"\"}",
+                  "legendFormat": "{{ org }}/{{ cluster_name }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Cluster health collector: 1=unhealthy, 0=healthy. Emitted per cluster on every Prometheus scrape."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 30
+              },
+              "id": 606,
+              "title": "Last Heartbeat Age (stale cluster detection)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "cluster:cluster_sync:health:last_update_age{namespace=\"$namespace\"}",
+                  "legendFormat": "{{ org }}/{{ cluster_name }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Seconds since each cluster last sent a heartbeat. High values = stale/disconnected cluster."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 30
+              },
+              "id": 607,
+              "title": "Managed Cluster Cache",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(cluster:managed_cluster_client_cache:get:hits{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Cache hits",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(cluster:managed_cluster_client_cache:get:miss{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Cache miss",
+                  "refId": "B"
+                }
+              ],
+              "description": "LRU cache hit/miss rate for managed cluster lookups. High miss rate = excessive DB queries."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 900,
+          "title": "CacheService (V1 + V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 15
+              },
+              "id": 901,
+              "title": "Cache Hit / Miss Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(flyte:cacheservice:cache:cache_hit{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Hits",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(flyte:cacheservice:cache:not_found{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Misses",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(flyte:cacheservice:cache:get_failure{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Get failures",
+                  "refId": "C"
+                }
+              ],
+              "description": "CacheService hit/miss rate. Hits = cached task output reused. Misses = task must execute. Get failures = storage errors. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 15
+              },
+              "id": 902,
+              "title": "Reservation Contention & Operations",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(flyte:cacheservice:cache:reservation_contention{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Contention",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(flyte:cacheservice:cache:get_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Reservation acquired",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(flyte:cacheservice:cache:release_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Reservation released",
+                  "refId": "C"
+                }
+              ],
+              "description": "Cache reservation contention: how often workers are blocked waiting for another worker's cache computation. High contention = many workers computing the same task. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 750,
+          "title": "Authorizer (V1 + V2)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 15
+              },
+              "id": 751,
+              "title": "Allow / Deny Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Allowed",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Denied",
+                  "refId": "B"
+                }
+              ],
+              "description": "Authorization decision rate. Allow/deny ratio indicates auth health. High deny rate may signal misconfigured policies. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ms"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 15
+              },
+              "id": 752,
+              "title": "Authorize Latency",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "legendFormat": "p50",
+                  "refId": "A"
+                },
+                {
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "legendFormat": "p90",
+                  "refId": "B"
+                },
+                {
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "legendFormat": "p99",
+                  "refId": "C"
+                }
+              ],
+              "description": "End-to-end Authorize() latency including identity resolution and backend authorization check. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "percentunit"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 15
+              },
+              "id": 753,
+              "title": "Deny Rate (%)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]) / (rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]) + rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "Deny %",
+                  "refId": "A"
+                }
+              ],
+              "description": "Percentage of authorization decisions that denied access. Spikes indicate policy changes or auth issues. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 14
+          },
+          "id": 700,
+          "title": "Data Proxy",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 15
+              },
+              "id": 701,
+              "title": "Cache Hit/Miss Rates",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(dataproxy:domains:hits{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Domain hits",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(dataproxy:domains:miss{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Domain miss",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(dataproxy:clusterpoolcache:hits{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "ClusterPool hits",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(dataproxy:clusterpoolcache:miss{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "ClusterPool miss",
+                  "refId": "D"
+                }
+              ],
+              "description": "DataProxy internal cache effectiveness for domain resolution, cluster pool routing, and namespace mapping."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 15
+              },
+              "id": 702,
+              "title": "Image Read Latency (p95)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(dataproxy:images:read:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "legendFormat": "Success p95",
+                  "refId": "A"
+                },
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(dataproxy:images:read:failure_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "legendFormat": "Failure p95",
+                  "refId": "B"
+                }
+              ],
+              "description": "Time to read image metadata from the dataplane, proxied through DataProxy."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 23
+              },
+              "id": 703,
+              "title": "Secret Proxy Errors by Cluster",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (cluster, operation) (rate(dataproxy:secrets_service:cluster_errors{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ cluster }} {{ operation }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Per-cluster secret proxy errors during fan-out operations. Identifies which dataplane cluster is causing failures. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 15
+          },
+          "id": 800,
+          "title": "Usage Service",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 16
+              },
+              "id": 801,
+              "title": "Billable Usage Reports",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(usage:svc:report_billable_usage{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Reports/s",
+                  "refId": "A"
+                }
+              ],
+              "description": "Rate of ReportBillableUsage calls from DP clusters. Each call reports resource consumption for billing."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 16
+              },
+              "id": 802,
+              "title": "Message Pipeline",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(usage:messages:messages_received{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Received",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(usage:messages:messages_sent{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Sent",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(usage:messages:messages_dropped{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Dropped",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(usage:messages:messages_failed{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Failed",
+                  "refId": "D"
+                }
+              ],
+              "description": "SQS/queue message processing: received, sent (success), failed, dropped (max retries exceeded)."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 24
+              },
+              "id": 803,
+              "title": "Messages by Type (success)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (message_type) (rate(usage:messages:messages_processed{namespace=\"$namespace\", outcome=\"success\"}[$__rate_interval]))",
+                  "legendFormat": "{{ message_type }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Successful message processing rate by type: node_execution, workflow_execution, billable_usage, serverless_billable_usage. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ms"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 24
+              },
+              "id": 804,
+              "title": "Message Processing Latency",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "legendFormat": "p50",
+                  "refId": "A"
+                },
+                {
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "legendFormat": "p90",
+                  "refId": "B"
+                },
+                {
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "legendFormat": "p99",
+                  "refId": "C"
+                }
+              ],
+              "description": "Time to process individual queue messages. Slow processing may indicate backend API issues (Metronome, timestream). [Metrics pending: requires cloud service instrumentation to be deployed]"
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 16
+          },
+          "id": 1100,
+          "title": "Infrastructure",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 17
+              },
+              "id": 1101,
+              "title": "CPU Usage by Service",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", container!=\"\", container!=\"POD\"}[$__rate_interval]))",
+                  "legendFormat": "{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "CPU usage in cores per container, stacked. Identifies resource-heavy services."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "bytes"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 17
+              },
+              "id": 1102,
+              "title": "Memory Usage by Service",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"$namespace\", container!=\"\", container!=\"POD\"})",
+                  "legendFormat": "{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Working set memory per container, stacked. Watch for approaching limits."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "bars",
+                    "fillOpacity": 80,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 25
+              },
+              "id": 1103,
+              "title": "Pod Restart Count by Container",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "{{ pod }}/{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Per-container restart events. Spikes indicate crashes or OOM kills."
+            }
+          ]
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": [
+        "union",
+        "controlplane"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "current": {
+              "selected": true,
+              "text": "union",
+              "value": "union"
+            },
+            "hide": 2,
+            "label": "Namespace",
+            "name": "namespace",
+            "options": [
+              {
+                "selected": true,
+                "text": "union",
+                "value": "union"
+              }
+            ],
+            "query": "union",
+            "type": "constant"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-3h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union Controlplane Overview",
+      "uid": "union-cp-overview",
+      "version": 2
+    }
+---
 # Source: controlplane/templates/scylla/storageclass.yaml
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -1899,7 +4927,8 @@ kind: Service
 metadata:
   name: cacheservice
   namespace: union
-  labels: 
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
     app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.3.7
@@ -1928,6 +4957,7 @@ kind: Service
 metadata:
   name: unionconsole
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: unionconsole
     app.kubernetes.io/instance: release-name
@@ -1955,6 +4985,7 @@ kind: Service
 metadata:
   name: authorizer
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: authorizer
     app.kubernetes.io/instance: release-name
@@ -1989,6 +5020,7 @@ kind: Service
 metadata:
   name: cluster
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: cluster
     app.kubernetes.io/instance: release-name
@@ -2023,6 +5055,7 @@ kind: Service
 metadata:
   name: dataproxy
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: dataproxy
     app.kubernetes.io/instance: release-name
@@ -2057,6 +5090,7 @@ kind: Service
 metadata:
   name: executions
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: executions
     app.kubernetes.io/instance: release-name
@@ -2091,6 +5125,7 @@ kind: Service
 metadata:
   name: queue
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: queue
     app.kubernetes.io/instance: release-name
@@ -2125,6 +5160,7 @@ kind: Service
 metadata:
   name: run-scheduler
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: run-scheduler
     app.kubernetes.io/instance: release-name
@@ -2159,6 +5195,7 @@ kind: Service
 metadata:
   name: usage
   labels:
+    platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.3.7
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name

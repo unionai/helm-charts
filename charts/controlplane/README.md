@@ -54,6 +54,7 @@ Kubernetes: `>= 1.28.0-0`
 | https://kubernetes.github.io/ingress-nginx | ingress-nginx | 4.12.3 | Yes | Only if `ingress-nginx.enabled: true` |
 | https://scylla-operator-charts.storage.googleapis.com/stable | scylla-operator | v1.18.1 | Yes | Only if `scylla.enabled: true` |
 | https://scylla-operator-charts.storage.googleapis.com/stable | scylla | v1.18.1 | Yes | Only if `scylla.enabled: true` |
+| https://prometheus-community.github.io/helm-charts | monitoring(kube-prometheus-stack) | 80.8.0 | Yes | Only if `monitoring.enabled: true` |
 
 ## Optional Components
 
@@ -302,6 +303,115 @@ helm show values unionai/controlplane
 - **ScyllaDB Configuration** (Required): Configure `scylla` section for the queue service database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
 - **Object Storage**: Configure `bucketName`, `artifactsBucketName`, and `region` for S3-compatible storage
 - **Ingress**: Enable and configure ingress under `ingress-nginx` section
+
+---
+
+## Monitoring & Observability
+
+The controlplane chart includes an optional [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) instance for monitoring controlplane service health. It is **disabled by default**.
+
+### Enabling monitoring
+
+```yaml
+monitoring:
+  enabled: true
+```
+
+This deploys:
+
+- **Prometheus** — scrapes controlplane service health metrics (7-day retention)
+- **Grafana** — pre-configured with kube-prometheus-stack dashboards
+- **kube-state-metrics** — Kubernetes object state metrics
+- **node-exporter** — host-level metrics
+- **ServiceMonitors** — auto-configured to scrape all controlplane services
+
+To access Grafana, port-forward to the service:
+
+```bash
+kubectl port-forward svc/union-cp-monitoring-grafana -n union-cp 3000:80
+```
+
+### Forwarding metrics to an external destination
+
+Configure the monitoring Prometheus to forward metrics using `remoteWrite`:
+
+```yaml
+monitoring:
+  prometheus:
+    prometheusSpec:
+      remoteWrite:
+        - url: "https://your-prometheus-endpoint/api/v1/write"
+```
+
+To run in agent mode (forward-only, no local TSDB):
+
+```yaml
+monitoring:
+  prometheus:
+    agentMode: true
+    prometheusSpec:
+      remoteWrite:
+        - url: "https://your-prometheus-endpoint/api/v1/write"
+```
+
+### Using your own Prometheus
+
+Disable the built-in monitoring stack and scrape controlplane services from your own Prometheus:
+
+```yaml
+monitoring:
+  enabled: false
+```
+
+Controlplane services expose metrics with the label `platform.union.ai/prometheus-group: "union-services"`. Create a ServiceMonitor targeting this label:
+
+```yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-controlplane
+spec:
+  selector:
+    matchLabels:
+      platform.union.ai/prometheus-group: "union-services"
+  namespaceSelector:
+    matchNames:
+      - union-cp
+  endpoints:
+    - port: debug
+      path: /metrics
+      interval: 1m
+```
+
+If you are running both the dataplane and controlplane in the same cluster, your existing Prometheus can discover all Union services by using a `NotIn` selector that excludes the internal `union-features` group:
+
+```yaml
+serviceMonitorSelector:
+  matchExpressions:
+    - key: platform.union.ai/prometheus-group
+      operator: NotIn
+      values: ["union-features"]
+```
+
+This matches all ServiceMonitors where the label is absent or has any value other than `union-features`, which safely includes both controlplane and dataplane service monitors.
+
+### Alertmanager
+
+Alertmanager is disabled by default. Enable it with:
+
+```yaml
+monitoring:
+  alertmanager:
+    enabled: true
+    config:
+      route:
+        receiver: "default"
+      receivers:
+        - name: "default"
+          # Configure Slack, PagerDuty, email, webhook, etc.
+```
+
+---
 
 ## Upgrading
 
