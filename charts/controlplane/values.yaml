@@ -210,18 +210,36 @@ ingress:
   separateGrpcIngressAnnotations:
     # Must annotate gRPC ingress with this to ensure proper handling of gRPC traffic.
     nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+  # --- Protected Ingress Auth Annotations ---
+  # These configure nginx to validate requests via flyteadmin's /me endpoint
+  # and redirect unauthenticated users to /login for the OIDC flow.
+  # Active when OIDC authentication is enabled (server.security.useAuth: true).
+  #
+  # auth-response-headers MUST include X-User-Subject for identity to be captured
+  # on browser-initiated requests (cookie auth path). Without it, "Owned By" will
+  # show "Unknown" for UI-initiated runs.
   protectedIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   enableProtectedConsoleIngress: false
   protectedIngressAnnotationsWithoutSignin:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedConsoleIngressAnnotations:
-    # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
-    # Specifically, the cache key should include the configurable authorization header and cookie header.
-    # Make sure to update the key if a different authorization header is used.
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedIngressAnnotationsGrpc:
+    nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
 configMap:
   authorizer:
@@ -444,7 +462,10 @@ services:
               # insecureSkipVerify: true|false
 
         apps:
-          # Identity service is disabled by default. Enriching identities can be enabled here.
+          # Enrich "Owned By" display with name/email from a remote identity service.
+          # Requires a functional identity service, which is NOT supported in selfhosted.
+          # When true and no identity service is reachable, all runs display "Unknown"
+          # even when created_by is populated in the DB.
           enrichIdentities: false
           # App serving URL pattern (work in progress for self-hosted)
           publicURLPattern: 'https://%s.apps.{{ .Values.global.UNION_HOST }}'
@@ -456,7 +477,10 @@ services:
         # Enable V2 task/run/trigger endpoints
         task:
           enabled: true
-          # Identity service is disabled by default. Enriching identities can be enabled here.
+          # Enrich "Owned By" display with name/email from a remote identity service.
+          # Requires a functional identity service, which is NOT supported in selfhosted.
+          # When true and no identity service is reachable, all runs display "Unknown"
+          # even when created_by is populated in the DB.
           enrichIdentities: false
   usage:
     fullnameOverride: "usage"
