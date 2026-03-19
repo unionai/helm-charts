@@ -218,10 +218,22 @@ ingress:
   protectedIngressAnnotationsGrpc:
 
 configMap:
+  # Authorization — all non-authorizer services route Authorize() calls to the
+  # in-cluster authorizer service. The authorizer service defaults to Noop (no
+  # enforcement). To enable external authorization, configure TypeExternal on
+  # the authorizer service:
+  #
+  #   services.authorizer.configMap.authorizer:
+  #     type: "External"
+  #     externalClient:
+  #       endpoint: "http://your-authz-server:50051"
+  #       timeout: "5s"
+  #       forwardToken: true
+  #       failOpen: false
+  #       plaintextGrpc: true
   authorizer:
-    type: "Noop"
-    internalCommunicationConfig:
-      enabled: false
+    type: "Authorizer"
+    authorizerEndpoint: 'http://{{ .Values.services.authorizer.fullnameOverride | default "authorizer" }}.{{ .Release.Namespace }}.svc.cluster.local:80'
   cache:
     identity:
       enabled: false
@@ -327,6 +339,10 @@ services:
       - --config
       - /etc/config/*.yaml
     configMap:
+      # The authorizer service itself defaults to Noop (no enforcement).
+      # Override with TypeExternal to proxy to a customer's authz server.
+      authorizer:
+        type: "Noop"
       sharedService:
         connectPort: 8081
         metrics:
@@ -1027,9 +1043,8 @@ flyte:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
       authorizer:
-        type: "Noop"
-        internalCommunicationConfig:
-          enabled: false
+        type: "Authorizer"
+        authorizerEndpoint: 'http://authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
       cloudEvents:
         enable: false
       connection:
@@ -1073,9 +1088,8 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       authorizer:
-        type: "Noop"
-        internalCommunicationConfig:
-          enabled: false
+        type: "Authorizer"
+        authorizerEndpoint: 'http://authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
       cacheservice:
         storage-prefix: cached_outputs
         metrics-scope: flyte
