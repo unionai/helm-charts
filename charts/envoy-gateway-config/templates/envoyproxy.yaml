@@ -1,0 +1,24 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: envoy-proxy-config
+  namespace: envoy-gateway-system
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyService:
+        type: LoadBalancer
+        {{- if .Values.clusterGatewayConfig.loadBalancerClass }}
+        loadBalancerClass: {{ .Values.clusterGatewayConfig.loadBalancerClass }}
+        {{- end }}
+        {{- if .Values.clusterGatewayConfig.serviceAnnotations }}
+        annotations:
+          {{- toYaml .Values.clusterGatewayConfig.serviceAnnotations | nindent 10 }}
+        {{- end }}
+      envoyDeployment:
+        pod:
+          annotations:
+            # Disable Linkerd sidecar injection — Envoy is itself a proxy;
+            # double-proxying causes routing conflicts.
+            linkerd.io/inject: disabled

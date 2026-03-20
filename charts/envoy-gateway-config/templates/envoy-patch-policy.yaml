@@ -1,0 +1,26 @@
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyPatchPolicy
+metadata:
+  name: control-plane-auth
+  namespace: {{ .Values.clusterGatewayConfig.controlplaneNamespace }}
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: controlplane
+  type: JSONPatch
+  jsonPatches:
+    {{- range $idx, $pluginName := .Values.clusterGatewayConfig.httpFilters }}
+    - type: type.googleapis.com/envoy.config.listener.v3.Listener
+      name: {{ $.Values.clusterGatewayConfig.controlplaneNamespace }}/controlplane/https
+      operation:
+        op: add
+        path: /filter_chains/0/filters/0/typed_config/http_filters/{{ $idx }}
+        value:
+          name: envoy.filters.http.golang
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.golang.v3alpha.Config
+            library_id: control-plane-auth
+            library_path: /lib/control-plane-auth.so
+            plugin_name: {{ $pluginName }}
+    {{- end }}
