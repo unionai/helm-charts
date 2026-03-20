@@ -1,7 +1,11 @@
 {{- define "control-plane-library.backendtrafficpolicy" }}
-# BackendTrafficPolicy — enables HTTP/2 (h2c) for Envoy→gRPC backend connections.
-# All GRPCRoute backends speak gRPC over HTTP/2; without this Envoy defaults to HTTP/1.1.
-# One policy per GRPCRoute so h2c is scoped to gRPC traffic only.
+# BackendTrafficPolicy — configures Envoy→gRPC backend connection settings.
+# Replaces nginx grpc_connect_timeout, grpc_read_timeout, grpc_send_timeout.
+# Two policies (one per GRPCRoute) so h2c and timeouts are scoped to gRPC traffic only.
+#
+# requestTimeout applies to unary calls; maxStreamDuration applies to streaming calls.
+# "0s" for maxStreamDuration means no limit (equivalent to grpc_read_timeout 604800s on streaming routes).
+# Both protected and unprotected GRPCRoutes contain streaming methods so both get the same config.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:
@@ -12,6 +16,12 @@ spec:
     - group: gateway.networking.k8s.io
       kind: GRPCRoute
       name: {{ template "flyte.name" . }}-grpc-protected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for streaming (grpc_read_timeout 604800s on streaming routes)
   http2: {}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
@@ -24,5 +34,11 @@ spec:
     - group: gateway.networking.k8s.io
       kind: GRPCRoute
       name: {{ template "flyte.name" . }}-grpc-unprotected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for WatchExecutionStatusUpdates streaming
   http2: {}
 {{- end }}
