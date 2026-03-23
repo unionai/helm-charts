@@ -20,13 +20,13 @@ migrated to the "dataplane" service and will use these.
 
 {{- define "unionai-dataplane.fullname" -}}
 {{- if .Values.fullnameOverride }}
-{{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- .Values.fullnameOverride | trunc 54 | trimSuffix "-" }}
 {{- else }}
 {{- $name := default .Chart.Name .Values.nameOverride }}
 {{- if contains $name .Release.Name }}
-{{- .Release.Name | trunc 63 | trimSuffix "-" }}
+{{- .Release.Name | trunc 54 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" .Release.Name $name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" .Release.Name $name | trunc 54 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 {{- end }}
@@ -43,6 +43,33 @@ Renders a complete tree, even values that contains template.
 {{- end -}}
 
 {{/*
+Create chart name and version as used by the chart label.
+*/}}
+{{- define "unionai-dataplane.chart" -}}
+{{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
+{{/*
+Shared selector and metadata labels for resources introduced by the monitoring
+split (static Prometheus, dashboards, etc.) that have no pre-existing selectors
+to preserve. Existing per-service deployments must NOT use these in their
+selectorLabels — see each service's own *.selectorLabels helper instead.
+*/}}
+{{- define "unionai-dataplane.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "unionai-dataplane.fullname" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}
+
+{{- define "unionai-dataplane.labels" -}}
+helm.sh/chart: {{ include "unionai-dataplane.chart" . }}
+{{ include "unionai-dataplane.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end }}
+
+{{/*
 Output the cluster name
 */}}
 {{- define "getClusterName" -}}
@@ -57,6 +84,11 @@ Adds custom PodSpec values.
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
+
+{{- define "flytepropeller.fullname" -}}
+{{- $name := include "unionai-dataplane.fullname" . }}
+{{- printf "%s-flytepropeller" $name }}
+{{- end }}
 
 {{- define "flytepropeller.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
@@ -141,6 +173,68 @@ tolerations:
 {{- end }}
 {{- if .Values.flytepropeller.tolerations }}
 {{- include "flytepropeller.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{- define "executor.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.executor.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.affinity" -}}
+{{- with .Values.executor.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.nodeSelector" -}}
+{{- with .Values.executor.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.nodeName" -}}
+{{- with .Values.executor.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling.tolerations" -}}
+{{- with .Values.executor.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "executor.scheduling" -}}
+{{- if .Values.executor.topologySpreadConstraints }}
+{{- include "executor.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.executor.affinity }}
+{{- include "executor.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.executor.nodeSelector }}
+{{- include "executor.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.executor.nodeName }}
+{{- include "executor.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.executor.tolerations }}
+{{- include "executor.scheduling.tolerations" . }}
 {{- else }}
 {{- include "global.scheduling.tolerations" . }}
 {{- end }}
@@ -581,54 +675,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 {{- end -}}
 
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "kubeStateMetrics.serviceAccountName" -}}
-{{- default "kube-state-metrics" .Values.kubeStateMetrics.serviceAccount.name }}
-{{- end }}
-
-{{- define "kubeStateMetrics.selectorLabels" -}}
-app.kubernetes.io/name: kube-state-metrics
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-
 {{- define "kubeStateMetrics.labels" -}}
-{{- include "kubeStateMetrics.selectorLabels" . }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{- define "kubeStateMetrics.podLabels" -}}
-{{- include "kubeStateMetrics.labels" . }}
-{{- with .Values.operator.podLabels }}
-{{ toYaml . }}
+{{- include "unionai-dataplane.labels" . }}
+app.kubernetes.io/component: kube-state-metrics
 {{- end }}
-{{- end -}}
-
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "dcgmExporter.serviceAccountName" -}}
-{{- default "dcgm-exporter-system" .Values.dcgmExporter.serviceAccount.name }}
-{{- end }}
-
-{{- define "dcgmExporter.selectorLabels" -}}
-app.kubernetes.io/name: dcgm-exporter
-app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end -}}
-
-{{- define "dcgmExporter.labels" -}}
-{{- include "dcgmExporter.selectorLabels" . }}
-app.kubernetes.io/managed-by: {{ .Release.Service }}
-{{- end -}}
-
-{{- define "dcgmExporter.podLabels" -}}
-{{- include "dcgmExporter.labels" . }}
-{{- with .Values.operator.podLabels }}
-{{ toYaml . }}
-{{- end }}
-{{- end -}}
 
 {{- define "var.FLYTE_AWS_ENDPOINT" -}}
 {{- with .Values.storage.endpoint }}
@@ -1004,6 +1054,26 @@ Name of the serving-envoy-bootstrap ConfigMap
 {{- include "serving.fullname" . }}-envoy-bootstrap
 {{- end }}
 
+{{- define "serving.selectorLabels" -}}
+app.kubernetes.io/name: serving
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "serving.labels" -}}
+{{ include "unionai-dataplane.labels" . }}
+app.kubernetes.io/component: serving
+{{- end -}}
+
+{{- define "3scale-kourier-gateway.selectorLabels" -}}
+app.kubernetes.io/name: 3scale-kourier-gateway
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "3scale-kourier-gateway.labels" -}}
+{{ include "unionai-dataplane.labels" . }}
+app.kubernetes.io/component: 3scale-kourier-gateway
+{{- end -}}
+
 # Image Builder helpers
 
 {{/*
@@ -1100,7 +1170,11 @@ TODO: Make these consistent with label sets in other components.
 Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
 */}}
 {{- define "executor.selectorLabels" -}}
-{{- tpl (.Values.executor.selector.matchLabels | default (dict "app.kubernetes.io/name" "executor") | toYaml) . }}
+{{- if and .Values.executor.selector .Values.executor.selector.matchLabels -}}
+{{- .Values.executor.selector.matchLabels | toYaml }}
+{{- else -}}
+app: executor
+{{- end -}}
 {{- end -}}
 
 {{- define "executor.labels" -}}

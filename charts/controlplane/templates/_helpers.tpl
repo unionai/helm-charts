@@ -361,6 +361,18 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
+{{- /* When AUTHZ_TYPE is not "union", fall back to Noop authorizer and disable service-to-service auth */}}
+{{- if ne .Values.global.AUTHZ_TYPE "union" }}
+  {{- if hasKey $merged "authorizer" }}
+    {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
+  {{- end }}
+  {{- if hasKey $merged "union" }}
+    {{- $union := get $merged "union" }}
+    {{- if hasKey $union "auth" }}
+      {{- $_ := set $union "auth" (dict "enable" false) }}
+    {{- end }}
+  {{- end }}
+{{- end }}
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
@@ -620,3 +632,35 @@ NOTE: This is ONLY for the queue service. All other services use Postgres on por
 {{- end -}}
 {{- end -}}
 
+{{/*
+Start of union.authz helpers.
+*/}}
+{{- define "union.authz.name" -}}
+union-authz
+{{- end -}}
+
+{{- define "union.authz.fullname" -}}
+{{- printf "%s-union-authz" .Release.Name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "union.authz.labels" -}}
+helm.sh/chart: {{ include "unionai.chart" . }}
+{{ include "union.authz.selectorLabels" . }}
+{{- if .Chart.AppVersion }}
+app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "union.authz.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "union.authz.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "union.authz.serviceAccountName" -}}
+{{- if .Values.union.authz.serviceAccount.create -}}
+{{- default (include "union.authz.fullname" .) .Values.union.authz.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.union.authz.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}

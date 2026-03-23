@@ -124,9 +124,6 @@ global:
 # ----------------------------------------------------------------------------
 # Override image tags for union services (executions, artifacts, etc.)
 
-image:
-  tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
-
 imagePullSecrets:
   - name: union-registry-secret
 
@@ -184,7 +181,6 @@ configMap:
 console:
   image:
     repository: "registry.unionai.cloud/controlplane/unionconsole"
-    tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
   env:
     # Single-tenant organization override
     - name: UNION_ORG_OVERRIDE
@@ -251,6 +247,15 @@ extraObjects: []
 #       kind: "ClusterIssuer"
 #       name: "selfsigned-issuer"
 #     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
+
+# If you are layering multiple values files (e.g. a Terraform-generated base
+# values.yaml and a manual values-overrides.yaml), be aware that Helm replaces
+# arrays on merge rather than appending. Defining extraObjects in a later file
+# will silently discard all entries from earlier files.
+#
+# Use extraObjectsOverrides in your override file to add extra objects without
+# clobbering the base extraObjects list. Both lists are rendered independently.
+extraObjectsOverrides: []
 
 # ----------------------------------------------------------------------------
 # SECTION 6: Flyte Core Configuration
@@ -319,7 +324,6 @@ flyte:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
       repository: "registry.unionai.cloud/controlplane/services"
-      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
@@ -330,7 +334,6 @@ flyte:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
       repository: "registry.unionai.cloud/controlplane/services"
-      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       imagePullSecrets:
         - name: union-registry-secret
@@ -339,7 +342,6 @@ flyte:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
       repository: "registry.unionai.cloud/controlplane/datacatalog"
-      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
@@ -350,7 +352,6 @@ flyte:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
       repository: "registry.unionai.cloud/controlplane/flyteconsole"
-      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     imagePullSecrets:
       - name: union-registry-secret
 
@@ -358,7 +359,6 @@ flyte:
     image:
       # flyte-core subchart doesn't render templates, must use hardcoded repository
       repository: "registry.unionai.cloud/controlplane/services"
-      tag: 67ac733f8a0f6528ecd18e28a739c4299e314f10
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
@@ -385,25 +385,25 @@ ingress:
   protectedIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
   protectedConsoleIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
   protectedIngressAnnotationsGrpc:
     nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
   protectedIngressAnnotationsWithoutSignin:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: "dataproxy-service"
 
@@ -487,3 +487,4 @@ services:
               clientSecretLocation: "/etc/secrets/union/client_secret"
               tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
               scopes: ["all"]
+
