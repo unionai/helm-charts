@@ -1355,6 +1355,13 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 {{- end -}}
 
+{{- define "buildkit.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.imageBuilder.buildkit.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
 {{/*
 Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
 In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
