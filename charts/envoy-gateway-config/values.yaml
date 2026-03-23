@@ -1,3 +1,21 @@
+# Redis deployment for envoyproxy/ratelimit (deployed in envoy-gateway-system).
+# Disabled by default; enabled via Terraform when rate limiting is configured.
+redis:
+  enabled: false
+  image: redis:7-alpine
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      memory: "128Mi"
+
+# Passed through to the gateway-helm EnvoyGateway CR via the config.envoyGateway values key.
+# When rateLimit.backend.redis.url is set, EG auto-deploys envoyproxy/ratelimit in envoy-gateway-system.
+# Set by Terraform alongside redis.enabled when rate_limit_redis_url is configured.
+config:
+  envoyGateway: {}
+
 clusterGatewayConfig:
   # GatewayClass name — must match what controlplane Helm templates reference via global.GATEWAY_CLASS_NAME.
   gatewayClassName: envoy
@@ -17,6 +35,13 @@ clusterGatewayConfig:
   httpFilters:
     - identity-auth    # strips spoofable X-User-* headers, enforces credential validation
     - auth-proxy-cache # caches OAuth2 token responses for the auth-proxy token endpoint
+
+  # rateLimit controls whether BackendTrafficPolicy rate limit rules are rendered in the tenant chart.
+  # Set by Terraform alongside config.envoyGateway.rateLimit when rate_limit_redis_url is configured.
+  rateLimit:
+    enabled: false
+    requestsPerUnit: 100
+    unit: Second
 
   # identityAuth configures the identity-auth HCM filter.
   identityAuth:
