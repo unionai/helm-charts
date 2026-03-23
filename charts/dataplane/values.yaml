@@ -130,6 +130,8 @@ clusterresourcesync:
     name: ""
     # -- Additional annotations for the syncresources service account
     annotations: {}
+  # -- Additional pod labels for the syncresources service
+  podLabels: { }
   # -- Additional pod annotations for the syncresources service
   podAnnotations: { }
   # -- Additional pod environment variables for the syncresources service
@@ -322,9 +324,17 @@ config:
       insecure: false
       type: cacheservicev2
       use-admin-auth: true
+  # -- Optional catalog cache configuration, rendered as catalog_cache.yaml for propeller.
+  catalog_cache: {}
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
+  # -- Optional namespace configuration, rendered as namespace_config.yaml.
+  namespace_config: {}
+  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
+  namespace_mapping: {}
+  # -- Optional Qubole plugin configuration.
+  qubole: {}
   # -- Override any configuration settings.
   configOverrides:
     cache:
@@ -443,6 +453,14 @@ config:
   operator:
     # -- Enables the operator service
     enabled: true
+    # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
+    limitNamespace: ""
+    # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
+    disableClusterPermissions: false
+    # -- Compute resource manager configuration.
+    computeResourceManager: {}
+    # -- Organization namespace template override.
+    org: {}
     # -- Enable app serving
     apps:
       enabled: "{{ .Values.serving.enabled }}"
@@ -970,6 +988,8 @@ flytepropeller:
     annotations: { }
     # -- ImapgePullSecrets to automatically assign to the service account
     imagePullSecrets: [ ]
+  # -- Security context for the Flytepropeller container.
+  securityContext: {}
   # -- Labels for the Flytepropeller pods
   podLabels: { }
   # -- Annotations for Flytepropeller pods
@@ -1264,6 +1284,8 @@ nodeobserver:
     privileged: true
     capabilities:
       add: [ "SYS_ADMIN" ]
+  # -- Additional pod labels for the nodeobserver services
+  podLabels: { }
   # -- Additional pod annotations for the nodeobserver services
   podAnnotations: { }
   # -- Additional pod environment variables for the nodeobserver services
@@ -1389,6 +1411,8 @@ ingress:
 # Deploys a static Prometheus instance (no Prometheus Operator required) for Union
 # features like cost tracking and task-level monitoring.
 prometheus:
+  # -- Enable the static Prometheus deployment for Union features.
+  enabled: false
   image:
     repository: prom/prometheus
     tag: v3.3.1
@@ -1998,6 +2022,9 @@ monitoring:
   kube-state-metrics:
     nameOverride: "monitoring-kube-state-metrics"
     fullnameOverride: "monitoring-kube-state-metrics"
+    # Explicit list type to avoid merge conflict with standalone kube-state-metrics subchart
+    # which defaults env to {} (map) while kube-prometheus-stack's nested chart expects [] (list).
+    env: []
 
   # By default, install a separate Prometheus instance for monitoring.
   # This is the simplest, out of the box model, it is highly recommended that users look
