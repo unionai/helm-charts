@@ -1345,6 +1345,17 @@ Returns the fluentbit service account name, using the common SA when enabled.
 {{- end -}}
 
 {{/*
+Returns the buildkit service account name, using the common SA when enabled.
+*/}}
+{{- define "buildkit.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
 In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
 namespace_mapping) so users only need to set namespaces.enabled: false.
