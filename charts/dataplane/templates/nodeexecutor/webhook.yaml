@@ -134,6 +134,25 @@ spec:
       targetPort: 10254
 
 ---
+# Headless Service for cache invalidation — resolves to all pod IPs so that
+# we can fan out invalidation requests to every webhook replica.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "flyte-pod-webhook.name" . }}-headless
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  selector:
+    {{- include "flytepropellerwebhook.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: cache-internal
+      protocol: TCP
+      port: {{ .Values.flytepropellerwebhook.service.targetPort }}
+      targetPort: {{ .Values.flytepropellerwebhook.service.targetPort }}
+---
 {{- if .Values.low_privilege }}
 kind: Role
 {{- else }}
