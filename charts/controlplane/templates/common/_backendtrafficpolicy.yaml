@@ -6,6 +6,9 @@
 # requestTimeout applies to unary calls; maxStreamDuration applies to streaming calls.
 # "0s" for maxStreamDuration means no limit (equivalent to grpc_read_timeout 604800s on streaming routes).
 # Both protected and unprotected GRPCRoutes contain streaming methods so both get the same config.
+#
+# Rate limit is also included here (when enabled) because route-level BTPs override gateway-level ones,
+# so the gateway-level rate-limit BTP below would be suppressed for these two GRPCRoutes without it.
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
 metadata:
@@ -23,6 +26,19 @@ spec:
       requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
       maxStreamDuration: "0s"  # no limit for streaming (grpc_read_timeout 604800s on streaming routes)
   http2: {}
+{{- if .Values.envoyGateway.rateLimit.enabled }}
+  rateLimit:
+    type: Global
+    global:
+      rules:
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: "0.0.0.0/0"
+          limit:
+            requests: {{ .Values.envoyGateway.rateLimit.requestsPerUnit | default 100 }}
+            unit: {{ .Values.envoyGateway.rateLimit.unit | default "Second" }}
+{{- end }}
 ---
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: BackendTrafficPolicy
@@ -41,6 +57,19 @@ spec:
       requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
       maxStreamDuration: "0s"  # no limit for WatchExecutionStatusUpdates streaming
   http2: {}
+{{- if .Values.envoyGateway.rateLimit.enabled }}
+  rateLimit:
+    type: Global
+    global:
+      rules:
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: "0.0.0.0/0"
+          limit:
+            requests: {{ .Values.envoyGateway.rateLimit.requestsPerUnit | default 100 }}
+            unit: {{ .Values.envoyGateway.rateLimit.unit | default "Second" }}
+{{- end }}
 {{- if .Values.envoyGateway.rateLimit.enabled }}
 ---
 # Global per-source-IP rate limit — replaces nginx.ingress.kubernetes.io/limit-rps annotation.
