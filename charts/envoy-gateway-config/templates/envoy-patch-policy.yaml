@@ -2,7 +2,7 @@ apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyPatchPolicy
 metadata:
   name: control-plane-auth
-  namespace: {{ .Values.clusterGatewayConfig.controlplaneNamespace }}
+  namespace: {{ .Values.envoyGateway.controlplaneNamespace }}
 spec:
   targetRef:
     group: gateway.networking.k8s.io
@@ -10,9 +10,9 @@ spec:
     name: controlplane
   type: JSONPatch
   jsonPatches:
-    {{- range $idx, $pluginName := .Values.clusterGatewayConfig.httpFilters }}
+    {{- range $idx, $pluginName := .Values.envoyGateway.httpFilters }}
     - type: type.googleapis.com/envoy.config.listener.v3.Listener
-      name: {{ $.Values.clusterGatewayConfig.controlplaneNamespace }}/controlplane/https
+      name: {{ $.Values.envoyGateway.controlplaneNamespace }}/controlplane/https
       operation:
         op: add
         path: /filter_chains/0/filters/0/typed_config/http_filters/{{ $idx }}
@@ -23,12 +23,12 @@ spec:
             library_id: control-plane-auth
             library_path: /lib/control-plane-auth.so
             plugin_name: {{ $pluginName }}
-            {{- if and (eq $pluginName "identity-auth") $.Values.clusterGatewayConfig.identityAuth.bypassPaths }}
+            {{- if and (eq $pluginName "identity-auth") $.Values.envoyGateway.identityAuth.bypassPaths }}
             plugin_config:
               "@type": type.googleapis.com/xds.type.v3.TypedStruct
               value:
                 bypassPaths:
-                  {{- range $.Values.clusterGatewayConfig.identityAuth.bypassPaths }}
+                  {{- range $.Values.envoyGateway.identityAuth.bypassPaths }}
                   - {{ . | quote }}
                   {{- end }}
             {{- end }}
