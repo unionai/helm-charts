@@ -47,7 +47,8 @@ spec:
             executor:active_actions_count{namespace="{{ .Release.Namespace }}"}
 
     {{- if .Values.monitoring.alerting.enabled }}
-    # --- Alerting rules (opt-in) ---
+    # --- Operational alerts (opt-in) ---
+    # Basic health checks only. For SLO-based alerts, see monitoring.slos.
     - name: union_dataplane_alerts
       rules:
         - alert: UnionDPServiceDown
@@ -70,69 +71,6 @@ spec:
           annotations:
             summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
 
-        - alert: UnionDPPropellerRoundLatencyHigh
-          expr: |
-            flyte:propeller:all:round:round_time_unlabeled_ms{
-              namespace="{{ .Release.Namespace }}",
-              quantile="0.99"
-            } > 30000
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Propeller round p99 latency > 30s"
-
-        - alert: UnionDPPropellerQueueBacklog
-          expr: |
-            sum(flyte:propeller:all:main_depth{namespace="{{ .Release.Namespace }}"}) > 100
-          for: 15m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Propeller workflow queue backlog > 100"
-
-        - alert: UnionDPOperatorWorkQueueErrors
-          expr: |
-            rate(union_operator:work_queue:operations_failed{
-              namespace="{{ .Release.Namespace }}"
-            }[5m]) > 0
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Operator work queue errors occurring"
-
-        - alert: UnionDPPropellerRoundErrors
-          expr: |
-            rate(flyte:propeller:all:round:error_count{
-              namespace="{{ .Release.Namespace }}"
-            }[5m]) /
-            (
-              rate(flyte:propeller:all:round:success_count{
-                namespace="{{ .Release.Namespace }}"
-              }[5m])
-              +
-              rate(flyte:propeller:all:round:error_count{
-                namespace="{{ .Release.Namespace }}"
-              }[5m])
-            ) > 0.1
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Propeller round error rate > 10%"
-
-        - alert: UnionDPPropellerWfUpdateFailures
-          expr: |
-            rate(flyte:propeller:all:wf_update_failed{
-              namespace="{{ .Release.Namespace }}"
-            }[5m]) > 0.1
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Propeller workflow update failures > 0.1/s"
-
         - alert: UnionDPHandlerPanic
           expr: |
             increase(executor:handler_panic{namespace="{{ .Release.Namespace }}"}[1h]) > 0
@@ -141,5 +79,89 @@ spec:
             severity: critical
           annotations:
             summary: "Handler panic detected in DP executor"
+    {{- end }}
+
+    {{- if .Values.monitoring.slos.enabled }}
+    # --- SLO recording rules (opt-in) ---
+    - name: union_dataplane_slo_recording
+      interval: 30s
+      rules:
+        - record: union:dp:slo:availability:ratio
+          expr: |
+            avg(
+              kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}"}
+              / kube_deployment_spec_replicas{namespace="{{ .Release.Namespace }}"}
+            )
+
+        - record: union:dp:slo:propeller_success_rate
+          expr: |
+            (
+              rate(flyte:propeller:all:round:success_count{namespace="{{ .Release.Namespace }}"}[5m])
+              / (
+                rate(flyte:propeller:all:round:success_count{namespace="{{ .Release.Namespace }}"}[5m])
+                + rate(flyte:propeller:all:round:error_count{namespace="{{ .Release.Namespace }}"}[5m])
+              )
+            ) or vector(1)
+
+        - record: union:dp:slo:propeller_round_latency_p99
+          expr: |
+            flyte:propeller:all:round:round_time_unlabeled_ms{
+              namespace="{{ .Release.Namespace }}",
+              quantile="0.99"
+            } / 1000
+
+        - record: union:dp:slo:executor_success_rate
+          expr: |
+            (
+              sum(rate(executor:actions_terminated{namespace="{{ .Release.Namespace }}", phase="Succeeded"}[5m]))
+              / sum(rate(executor:actions_terminated{namespace="{{ .Release.Namespace }}"}[5m]))
+            ) or vector(1)
+
+        - record: union:dp:slo:execution_success_rate
+          expr: |
+            (
+              (union:dp:slo:propeller_success_rate + union:dp:slo:executor_success_rate) / 2
+            ) or vector(1)
+
+        - record: union:dp:slo:error_budget_remaining
+          expr: |
+            (
+              1 - (
+                (1 - union:dp:slo:execution_success_rate)
+                / (1 - {{ .Values.monitoring.slos.targets.availability }})
+              )
+            ) or vector(1)
+    {{- end }}
+
+    {{- if and .Values.monitoring.slos.enabled .Values.monitoring.slos.alerting.enabled }}
+    # --- SLO burn rate alerts (opt-in) ---
+    - name: union_dataplane_slo_alerts
+      rules:
+        - alert: UnionDPHighErrorBudgetBurn
+          expr: |
+            union:dp:slo:error_budget_remaining < 0.5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DP error budget > 50% consumed"
+
+        - alert: UnionDPErrorBudgetExhausted
+          expr: |
+            union:dp:slo:error_budget_remaining < 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "DP error budget exhausted"
+
+        - alert: UnionDPPropellerLatencySLOBreach
+          expr: |
+            union:dp:slo:propeller_round_latency_p99 > {{ .Values.monitoring.slos.targets.latencyP99 }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "DP propeller p99 latency exceeding SLO target"
     {{- end }}
 {{- end }}

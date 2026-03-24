@@ -248,15 +248,6 @@ extraObjects: []
 #       name: "selfsigned-issuer"
 #     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
 
-# If you are layering multiple values files (e.g. a Terraform-generated base
-# values.yaml and a manual values-overrides.yaml), be aware that Helm replaces
-# arrays on merge rather than appending. Defining extraObjects in a later file
-# will silently discard all entries from earlier files.
-#
-# Use extraObjectsOverrides in your override file to add extra objects without
-# clobbering the base extraObjects list. Both lists are rendered independently.
-extraObjectsOverrides: []
-
 # ----------------------------------------------------------------------------
 # SECTION 6: Flyte Core Configuration
 # ----------------------------------------------------------------------------
@@ -378,8 +369,34 @@ ingress:
         - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
       secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
 
-  # Protected ingress auth annotations are now defined in the base values.yaml.
-  # Override here only if you need to customize auth behavior for this deployment mode.
+  # --- Protected Ingress Auth Annotations ---
+  # These configure nginx to validate requests via flyteadmin's /me endpoint
+  # and redirect unauthenticated users to /login for the OIDC flow.
+  # Active when OIDC authentication is enabled (server.security.useAuth: true).
+  protectedIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedConsoleIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
+
+  protectedIngressAnnotationsGrpc:
+    nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
+
+  protectedIngressAnnotationsWithoutSignin:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.org/websocket-services: "dataproxy-service"
 
 # ----------------------------------------------------------------------------
 # SECTION 8: NGINX Ingress Controller
@@ -462,3 +479,27 @@ services:
               tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
               scopes: ["all"]
 
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (AWS/EKS specific)
+# ----------------------------------------------------------------------------
+
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
