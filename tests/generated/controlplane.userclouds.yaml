@@ -31,6 +31,24 @@ spec:
       app.kubernetes.io/name: webhook-server
       app.kubernetes.io/instance: webhook-server
 ---
+# Source: controlplane/templates/authz/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: release-name-union-authz
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: union-authz
+      app.kubernetes.io/instance: release-name
+---
 # Source: controlplane/templates/console/pdb.yaml
 apiVersion: policy/v1
 kind: PodDisruptionBudget
@@ -203,6 +221,18 @@ metadata:
   labels:
     app.kubernetes.io/name: webhook-server
     app.kubernetes.io/instance: webhook-server
+---
+# Source: controlplane/templates/authz/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-union-authz
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/cacheservice/rbac.yaml
 apiVersion: v1
@@ -421,7 +451,7 @@ data:
     authorizer:
       internalCommunicationConfig:
         enabled: false
-      type: 'Noop'
+      type: 'UserClouds'
       userCloudsClient:
         clientID: union-authz-client
         clientSecretName: union/client_secret
@@ -521,6 +551,52 @@ data:
   BASE_URL: /console
   CONFIG_DIR: /etc/flyte/config
 ---
+# Source: controlplane/templates/authz/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-union-authz-config
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    database:
+      host: ""
+      port: 5432
+      name: "userclouds"
+      user: ""
+      password: "file:///etc/db/pass.txt"
+      sslMode: "require"
+      mode: "normal"
+
+    auth:
+      issuer: "http://release-name-union-authz.union.svc.cluster.local:8080"
+      signingKey: "kube://secrets/userclouds-signing-key?key=signing_key"
+      apps:
+        - credentials:
+          - clientId: 'union-authz-client'
+            clientSecret: kube://secrets/?key=client_secret
+          id: union-controlplane
+          name: union-controlplane
+
+    cache:
+      enabled: true
+      type: "memory"
+      ttl: "60m"
+      memory:
+        maxEntries: 100000
+        shards: 128
+        depShards: 128
+
+    services:
+      checkAttributeEndpoint: "http://localhost:8080"
+      idpEndpoint: "http://localhost:8080"
+      authzEndpoint: "http://localhost:8080"
+---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -549,7 +625,7 @@ data:
     authorizer:
       internalCommunicationConfig:
         enabled: false
-      type: 'Noop'
+      type: 'UserClouds'
       userCloudsClient:
         clientID: union-authz-client
         clientSecretName: union/client_secret
@@ -605,7 +681,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -627,12 +709,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -653,7 +735,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -690,12 +778,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -716,7 +804,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -741,12 +835,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -767,7 +861,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -809,12 +909,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -837,7 +937,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -868,12 +974,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -894,7 +1000,13 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -925,12 +1037,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -951,9 +1063,15 @@ metadata:
 data:
   config.yaml: |
     authorizer:
-      type: Noop
+      type: UserClouds
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     billing:
-      enable: true
+      enable: false
     cache:
       identity:
         enabled: false
@@ -977,12 +1095,12 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-internal-client-id'
+        clientId: ''
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
         - all
-        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        tokenUrl: ''
         type: ClientSecret
       internalConnectionConfig:
         enabled: true
@@ -5132,6 +5250,22 @@ subjects:
   name: scylla-operator
   namespace: scylla-operator
 ---
+# Source: controlplane/templates/authz/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-union-authz-secrets-manager
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "delete"]
+---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5162,6 +5296,26 @@ rules:
       - spark-role
     verbs:
       - '*'
+---
+# Source: controlplane/templates/authz/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-union-authz-secrets-manager
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-union-authz-secrets-manager
+subjects:
+  - kind: ServiceAccount
+    name: release-name-union-authz
+    namespace: union
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5259,6 +5413,28 @@ spec:
   selector:
     app.kubernetes.io/name: webhook-server
     app.kubernetes.io/instance: webhook-server
+---
+# Source: controlplane/templates/authz/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-union-authz
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/cacheservice/service.yaml
 apiVersion: v1
@@ -5587,7 +5763,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b509f2650de48d5f4e931d1494a4871db2c0fb3db30ce957593c84712e6db7c"
+        configChecksum: "4150b5c1afad3c32533edd9d6effda17a60a694dbb986cce396960d517fda47"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -5946,6 +6122,116 @@ spec:
               topologyKey: kubernetes.io/hostname
             weight: 1
 ---
+# Source: controlplane/templates/authz/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-union-authz
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: union-authz
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        checksum/config: af438a6ec6210e9b743a843f136d5cc25d942a7f66b308a24068b4b3bbe7f425
+      labels:
+        app.kubernetes.io/name: union-authz
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: release-name-union-authz
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        fsGroup: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        runAsUser: 1000
+      containers:
+        - name: userclouds-lite
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.3.7
+          imagePullPolicy: IfNotPresent
+          command:
+            - userclouds-lite
+          args:
+            - serve
+            - all
+            - --config=/etc/userclouds/config.yaml
+            - --addr=:8080
+            - --static=/usr/share/userclouds/static
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/userclouds
+              readOnly: true
+            - name: db-pass
+              mountPath: /etc/db
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-union-authz-config
+        - name: db-pass
+          secret:
+            secretName: 
+        - name: tmp
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: union-authz
+            topologyKey: kubernetes.io/hostname
+---
 # Source: controlplane/templates/cacheservice/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -5966,7 +6252,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fb5bd9900a4b2f1bed4038dfdbd4184d7a8aac5bb50ba8061d39f2d888dd363"
+        configChecksum: "51558f4520a9d7ed5a0ad0f0dcad38250772b05e41f793c421be04bce90149e"
       labels: 
         app.kubernetes.io/name: cacheservice
         app.kubernetes.io/instance: release-name
@@ -6978,22 +7264,42 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: flyteadmin
-  minReplicas: 1
+  minReplicas: 4
   maxReplicas: 10
   metrics:
     
     - resource:
         name: cpu
         target:
-          averageUtilization: 80
+          averageUtilization: 70
           type: Utilization
       type: Resource
-    - resource:
-        name: memory
+---
+# Source: controlplane/templates/authz/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: release-name-union-authz
+  labels:
+    helm.sh/chart: controlplane-2026.3.10
+    app.kubernetes.io/name: union-authz
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: release-name-union-authz
+  minReplicas: 3
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
         target:
-          averageUtilization: 80
           type: Utilization
-      type: Resource
+          averageUtilization: 80
 ---
 # Source: controlplane/templates/console/hpa.yaml
 apiVersion: autoscaling/v2
@@ -7222,8 +7528,13 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /data/*
             pathType: ImplementationSpecific
@@ -7274,20 +7585,18 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
-          
-          - path: /cloudidl.usage.UsageService/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
-                port:
-                  name: connect
-          - path: /cloudidl.usage.UsageService
+          - path: /cloudidl.usage.UsageService(/(?!GetCustomMeasuresNames|GetMeasureGroup|GetMeasureGroups|GetBillableMeasures|GetBillingInfo|ReportBillableUsage|ReportServerlessBillableUsage|CreateCustomer|AttachBillingPlanToCustomer|GetCustomerCredits|EnqueueMetronomeRequest|EnqueueStripeRequest|GetOrgCheckoutSession).*|$)
             pathType: ImplementationSpecific
             backend:
               service:
@@ -7330,20 +7639,18 @@ metadata:
     nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
     nginx.ingress.kubernetes.io/auth-url: https://$host/me
     nginx.org/websocket-services: dataproxy-service
+    nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
-          
-          - path: /usage/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: usage
-                port:
-                  name: http
-          - path: /usage
+          - path: /usage/api/v1(/(?!custom_measures_names|measure_group|measure_groups|billable_measures|billing_info|report_billable_usage|customer_credits|checkout_session).*|$)
             pathType: ImplementationSpecific
             backend:
               service:
@@ -7388,8 +7695,13 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /api
             pathType: ImplementationSpecific
@@ -7799,8 +8111,13 @@ metadata:
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /cloudidl.execution.ExecutionService/*
             pathType: ImplementationSpecific
@@ -8533,8 +8850,13 @@ metadata:
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /flyteidl2.auth.IdentityService
             pathType: ImplementationSpecific
@@ -8880,8 +9202,13 @@ metadata:
     nginx.ingress.kubernetes.io/service-upstream: "true"
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           # Port 87 in FlyteAdmin maps to the redoc container.
           - path: /openapi
@@ -9082,8 +9409,13 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           # NOTE: Port 81 in flyteadmin is the GRPC server port for FlyteAdmin.
           - path: /flyteidl.service.HealthService
@@ -9162,8 +9494,13 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /flyteidl.service.WatchService/WatchExecutionStatusUpdates
             pathType: ImplementationSpecific
@@ -9210,8 +9547,13 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - fake-host.domain
+      secretName: fake-host-tls-secret
   rules:
-    - http:
+    - host: fake-host.domain
+      http:
         paths:
           - path: /
             pathType: ImplementationSpecific

@@ -34,7 +34,7 @@ spec:
         - record: union:cp:connect_error_rate:by_service
           expr: |
             sum by (service) (
-              rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}", code!~"0|OK|Canceled"}[5m])
+              rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}", code!~"0|OK|Canceled|NotFound"}[5m])
             )
 
         - record: union:cp:ingress_request_rate
@@ -46,7 +46,8 @@ spec:
             sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}", status=~"5.."}[5m]))
 
     {{- if .Values.monitoring.alerting.enabled }}
-    # --- Alerting rules (opt-in) ---
+    # --- Operational alerts (opt-in) ---
+    # Basic health checks only. For SLO-based alerts, see monitoring.slos.
     - name: union_controlplane_alerts
       rules:
         - alert: UnionCPServiceDown
@@ -68,75 +69,97 @@ spec:
           annotations:
             summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
 
-        - alert: UnionCPHighConnectErrorRate
-          expr: |
-            (
-              sum by (service) (
-                rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}", code!~"0|OK|Canceled"}[5m])
-              )
-              /
-              sum by (service) (
-                rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}"}[5m])
-              )
-            ) > 0.05
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "{{ "{{" }} $labels.service {{ "}}" }} Connect error rate > 5%"
-
-        - alert: UnionCPIngressHighLatency
-          expr: |
-            histogram_quantile(0.99,
-              sum by (le) (
-                rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace="{{ .Release.Namespace }}"}[5m])
-              )
-            ) > 5
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Ingress p99 latency > 5s"
-
-        - alert: UnionCPIngress5xxRate
-          expr: |
-            sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}", status=~"5.."}[5m]))
-            /
-            sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}"}[5m]))
-            > 0.01
-          for: 5m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Ingress 5xx rate > 1%"
-
-        - alert: UnionCPExecutionsDBErrors
-          expr: |
-            sum(rate(executions:database:postgres:errors:postgres_error{namespace="{{ .Release.Namespace }}"}[5m])) > 0.1
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Executions service Postgres errors > 0.1/s"
-
-        - alert: UnionCPQueueDispatcherBacklog
-          expr: |
-            queue:dispatcher:chain_queue_length{namespace="{{ .Release.Namespace }}"} > 100
-          for: 15m
-          labels:
-            severity: warning
-          annotations:
-            summary: "Queue dispatcher chain backlog > 100"
-
         - alert: UnionCPHandlerPanic
           expr: |
-            increase(
-              {__name__=~".+:handler_panic", namespace="{{ .Release.Namespace }}"}[1h]
+            sum by (__name__) (
+              increase(
+                {__name__=~".+:handler_panic", namespace="{{ .Release.Namespace }}"}[1h]
+              )
             ) > 0
           for: 0m
           labels:
             severity: critical
           annotations:
             summary: "Handler panic detected in CP service"
+    {{- end }}
+
+    {{- if .Values.monitoring.slos.enabled }}
+    # --- SLO recording rules (opt-in) ---
+    - name: union_controlplane_slo_recording
+      interval: 30s
+      rules:
+        - record: union:cp:slo:availability:ratio
+          expr: |
+            avg(
+              kube_deployment_status_replicas_available{namespace="{{ .Release.Namespace }}"}
+              / kube_deployment_spec_replicas{namespace="{{ .Release.Namespace }}"}
+            )
+
+        - record: union:cp:slo:connect_success_rate
+          expr: |
+            (
+              1 - (
+                (sum(rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}", code!~"0|OK|Canceled|NotFound"}[5m])) or vector(0))
+                /
+                sum(rate(connect:server_requests_handled_total{namespace="{{ .Release.Namespace }}"}[5m]))
+              )
+            ) or vector(1)
+
+        - record: union:cp:slo:ingress_success_rate
+          expr: |
+            (
+              1 - (
+                (sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}", status=~"5.."}[5m])) or vector(0))
+                /
+                sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}"}[5m]))
+              )
+            ) or vector(1)
+
+        - record: union:cp:slo:ingress_latency_p99
+          expr: |
+            histogram_quantile(0.99,
+              sum by (le) (
+                rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace="{{ .Release.Namespace }}"}[5m])
+              )
+            )
+
+        - record: union:cp:slo:error_budget_remaining
+          expr: |
+            1 - (
+              (1 - union:cp:slo:connect_success_rate)
+              / (1 - {{ .Values.monitoring.slos.targets.availability }})
+            )
+    {{- end }}
+
+    {{- if and .Values.monitoring.slos.enabled .Values.monitoring.slos.alerting.enabled }}
+    # --- SLO burn rate alerts (opt-in) ---
+    - name: union_controlplane_slo_alerts
+      rules:
+        - alert: UnionCPHighErrorBudgetBurn
+          expr: |
+            union:cp:slo:error_budget_remaining < 0.5
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CP error budget > 50% consumed"
+
+        - alert: UnionCPErrorBudgetExhausted
+          expr: |
+            union:cp:slo:error_budget_remaining < 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "CP error budget exhausted"
+
+        - alert: UnionCPIngressLatencySLOBreach
+          expr: |
+            union:cp:slo:ingress_latency_p99 > {{ .Values.monitoring.slos.targets.latencyP99 }}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "CP ingress p99 latency exceeding SLO target"
     {{- end }}
 {{- end }}
