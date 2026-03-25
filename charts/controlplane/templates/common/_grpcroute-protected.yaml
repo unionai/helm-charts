@@ -1,5 +1,4 @@
 {{- define "control-plane-library.grpcroute-protected" }}
-# NOTE: Auth enforcement (SecurityPolicy/ExtAuthz) is added in M2.
 # Consolidates nginx protected-grpc, protected-grpc-streaming, apps-protected,
 # and protected-grpc-high-tput ingresses. GRPCRoute service-level matches
 # cover all methods; specific-method matches are used where routes vary by method.
@@ -32,6 +31,10 @@ spec:
         - method: {service: "cloudidl.execution.ExecutionService"}
         - method: {service: "cloudidl.echo.EchoService"}
         - method: {service: "cloudidl.app.AppService"}
+        - method: {service: "cloudidl.workflow.RunLogsService"}
+        - method: {service: "cloudidl.workflow.TranslatorService"}
+        - method: {service: "flyteidl2.app.AppService"}
+        - method: {service: "flyteidl2.workflow.RunLogsService"}
       backendRefs:
         - name: executions
           port: 80
@@ -46,6 +49,29 @@ spec:
       backendRefs:
         - name: cluster
           port: 80
+    # identity
+    - matches:
+        - method: {service: "cloudidl.apikey.APIKeyService"}
+        - method: {service: "cloudidl.identity.AppsService"}
+        - method: {service: "cloudidl.identity.UserService"}
+        - method: {service: "cloudidl.identity.MemberService"}
+        - method: {service: "cloudidl.identity.RoleService"}
+        - method: {service: "cloudidl.identity.PolicyService"}
+        - method: {service: "cloudidl.identity.IdentityService"}
+      backendRefs:
+        - name: identity
+          port: 83
+    - matches:
+        - method: {service: "cloudidl.identity.SelfServe"}
+      backendRefs:
+        - name: identity
+          port: 80
+    # organizations
+    - matches:
+        - method: {service: "cloudidl.org.OrgService"}
+      backendRefs:
+        - name: organizations
+          port: 83
     # usage
     - matches:
         - method: {service: "cloudidl.usage.UsageService"}
@@ -58,14 +84,12 @@ spec:
       backendRefs:
         - name: authorizer
           port: 83
-    {{- if ((.Values.flyte.datacatalog).enabled) }}
     # datacatalog
     - matches:
         - method: {service: "datacatalog.DataCatalog"}
       backendRefs:
         - name: datacatalog
           port: 89
-    {{- end }}
     # cacheservice
     - matches:
         - method: {service: "flyteidl.cacheservice.CacheService"}
@@ -77,13 +101,13 @@ spec:
     - matches:
         - method: {service: "cloudidl.actor.ActorEnvironmentService"}
         - method: {service: "cloudidl.agent.AgentService"}
+        - method: {service: "cloudidl.support.SupportService"}
         - method: {service: "cloudidl.clouddataproxy.CloudDataProxyService"}
         - method: {service: "flyteidl.service.DataProxyService"}
         - method: {service: "flyteidl2.dataproxy.DataProxyService"}
         - method: {service: "cloudidl.logs.LogsService"}
         - method: {service: "cloudidl.app.AppLogsService"}
         - method: {service: "cloudidl.app.ReplicaService"}
-        - method: {service: "flyteidl2.app.AppService"}
         - method: {service: "flyteidl2.app.AppLogsService"}
         - method: {service: "flyteidl2.app.ReplicaService"}
       backendRefs:
