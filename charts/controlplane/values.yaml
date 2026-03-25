@@ -251,8 +251,10 @@ ingress:
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
 configMap:
-  # Authorization — all non-authorizer services route Authorize() calls to the
-  # in-cluster authorizer service (see services.authorizer below).
+  # Authorization — all non-authorizer services use TypeAuthorizer to route
+  # Authorize() calls to the in-cluster authorizer service via the nginx
+  # ingress controller. The authorizer service itself decides the backend
+  # (Noop, UserClouds, or External) — see services.authorizer.configMap below.
   authorizer:
     type: "Authorizer"
     authorizerEndpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
@@ -368,42 +370,60 @@ services:
       - --config
       - /etc/config/*.yaml
     configMap:
-      # The authorizer service defaults to Noop (no enforcement).
-      # To enable external authorization, set type to "External" and configure
-      # externalClient with your gRPC authorization server.
+      # The authorizer service's own backend. All other services route to this
+      # service via TypeAuthorizer; this config controls what the authorizer
+      # service does with those requests.
       #
-      # Example:
-      #   type: "External"
-      #   externalClient:
-      #     grpcConfig:
-      #       # gRPC target for the external authorization server.
-      #       # Uses standard gRPC name resolution (dns:///, unix:///, etc).
-      #       host: "dns:///your-authz-server.namespace.svc.cluster.local:50051"
+      # Supported types:
+      #   - "Noop"       — no enforcement (default)
+      #   - "UserClouds" — Union Cloud's authorization backend
+      #   - "External"   — customer-provided gRPC authorization server (selfhosted)
       #
-      #       # Connect without TLS (default: false).
-      #       insecure: true
+      # --- Union Cloud (UserClouds) ---
+      # For Union Cloud deployments, set type to "UserClouds":
+      #   authorizer:
+      #     type: "UserClouds"
+      #     userCloudsClient:
+      #       tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
+      #       tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+      #       clientID: '{{ .Values.union.authz.clientID }}'
+      #       clientSecretName: 'union/client_secret'
+      #       enableLogging: true
       #
-      #       # Skip server certificate verification — do NOT use in production (default: false).
-      #       # insecureSkipVerify: false
+      # --- External Authorization (selfhosted) ---
+      # For selfhosted deployments with a customer-provided authz server:
+      #   authorizer:
+      #     type: "External"
+      #     externalClient:
+      #       grpcConfig:
+      #         # gRPC target for the external authorization server.
+      #         # Uses standard gRPC name resolution (dns:///, unix:///, etc).
+      #         host: "dns:///your-authz-server.namespace.svc.cluster.local:50051"
       #
-      #       # Timeout per gRPC retry attempt (default: "5s").
-      #       # perRetryTimeout: "5s"
+      #         # Connect without TLS (default: false).
+      #         insecure: true
       #
-      #       # Max gRPC retries. 0 = no retries, fail fast (default: 0).
-      #       # maxRetries: 0
+      #         # Skip server certificate verification — do NOT use in production (default: false).
+      #         # insecureSkipVerify: false
       #
-      #       # Max delay for gRPC backoff between retries.
-      #       # maxBackoffDelay: "10s"
+      #         # Timeout per gRPC retry attempt (default: "5s").
+      #         # perRetryTimeout: "5s"
       #
-      #     # Incoming gRPC metadata keys to forward to the external server.
-      #     # Default: ["authorization", "flyte-authorization"]
-      #     # forwardHeaders:
-      #     #   - authorization
-      #     #   - flyte-authorization
+      #         # Max gRPC retries. 0 = no retries, fail fast (default: 0).
+      #         # maxRetries: 0
       #
-      #     # If true, allow requests when the external server is unreachable.
-      #     # If false (default), deny on error.
-      #     failOpen: false
+      #         # Max delay for gRPC backoff between retries.
+      #         # maxBackoffDelay: "10s"
+      #
+      #       # Incoming gRPC metadata keys to forward to the external server.
+      #       # Default: ["authorization", "flyte-authorization"]
+      #       # forwardHeaders:
+      #       #   - authorization
+      #       #   - flyte-authorization
+      #
+      #       # If true, allow requests when the external server is unreachable.
+      #       # If false (default), deny on error.
+      #       failOpen: false
       authorizer:
         type: "Noop"
       sharedService:
@@ -1128,6 +1148,15 @@ flyte:
       admin:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
+      # flyteadmin routes authorization to the in-cluster authorizer service.
+      # For Union Cloud with UserClouds, override with:
+      #   type: '{{ if eq .Values.global.AUTHZ_TYPE "union" }}UserClouds{{ else }}Noop{{ end }}'
+      #   userCloudsClient:
+      #     tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
+      #     tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+      #     clientID: "union-authz-client"
+      #     clientSecretName: 'union/client_secret'
+      #     enableLogging: true
       authorizer:
         type: "Authorizer"
         authorizerEndpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
@@ -1173,6 +1202,8 @@ flyte:
         internalConnectionConfig:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      # cacheservice routes authorization to the in-cluster authorizer service.
+      # For Union Cloud with UserClouds, override with the same pattern as flyteadmin above.
       authorizer:
         type: "Authorizer"
         authorizerEndpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
