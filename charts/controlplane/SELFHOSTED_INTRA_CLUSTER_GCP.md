@@ -151,6 +151,12 @@ kubectl create secret tls controlplane-tls-cert \
 
 See the example in `values.gcp.selfhosted-intracluster.yaml` under the `extraObjects` section.
 
+> **Layering values files?** If you use a Terraform-generated base `values.yaml` alongside a
+> manual `values-overrides.yaml`, note that Helm **replaces** arrays on merge — it does not
+> append. Adding `extraObjects` in your override file will silently discard all entries from
+> the base file. Use `extraObjectsOverrides` in your override file instead; both lists are
+> rendered independently by the chart.
+
 ### Step 4: Configure Values File
 
 Download and configure the intra-cluster values file:

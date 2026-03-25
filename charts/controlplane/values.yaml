@@ -51,6 +51,21 @@ global:
   # Contact Union for controlplane access and distribution.
   IMAGE_REPOSITORY_PREFIX: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp"
 
+  # Authorization type for RBAC. Set to "union" to enable UserClouds-based authorization.
+  # Controls union-authz pod deployment and all four authorizer blocks (union services,
+  # flyteadmin, cacheservice). Leave empty or set to "noop" to disable (default).
+  # Visible to subcharts (flyte-core) via global scope.
+  AUTHZ_TYPE: ""
+
+  # OAuth2 client ID for service-to-service authentication (client_credentials flow).
+  # Services use this to acquire tokens for internal calls through nginx.
+  # Example: "0oa3xyz4abc5def6g7h8"
+  INTERNAL_CLIENT_ID: ""
+
+  # OAuth2 token endpoint for service-to-service authentication.
+  # Example: "https://dev-123456.okta.com/oauth2/default/v1/token"
+  AUTH_TOKEN_URL: ""
+
 # ----------------------------------------------------------------------------
 # Additional Configuration
 # ----------------------------------------------------------------------------
@@ -204,18 +219,36 @@ ingress:
   separateGrpcIngressAnnotations:
     # Must annotate gRPC ingress with this to ensure proper handling of gRPC traffic.
     nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
+  # --- Protected Ingress Auth Annotations ---
+  # These configure nginx to validate requests via flyteadmin's /me endpoint
+  # and redirect unauthenticated users to /login for the OIDC flow.
+  # Active when OIDC authentication is enabled (server.security.useAuth: true).
+  #
+  # auth-response-headers MUST include X-User-Subject for identity to be captured
+  # on browser-initiated requests (cookie auth path). Without it, "Owned By" will
+  # show "Unknown" for UI-initiated runs.
   protectedIngressAnnotations:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   enableProtectedConsoleIngress: false
   protectedIngressAnnotationsWithoutSignin:
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedConsoleIngressAnnotations:
-    # Ensure this cache key resolves as non-empty to avoid an unintended hit on a header-less request.
-    # Specifically, the cache key should include the configurable authorization header and cookie header.
-    # Make sure to update the key if a different authorization header is used.
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
+    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
+    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedIngressAnnotationsGrpc:
+    nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
 configMap:
   # Authorization — all non-authorizer services route Authorize() calls to the
@@ -243,7 +276,14 @@ configMap:
       enabled: true
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
     auth:
-      enable: false
+      enable: true
+      type: ClientSecret
+      clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+      authorizationMetadataKey: flyte-authorization
+      scopes:
+        - all
 
 services:
   artifacts:
@@ -469,7 +509,10 @@ services:
               # insecureSkipVerify: true|false
 
         apps:
-          # Identity service is disabled by default. Enriching identities can be enabled here.
+          # Enrich "Owned By" display with name/email from a remote identity service.
+          # Requires a functional identity service, which is NOT supported in selfhosted.
+          # When true and no identity service is reachable, all runs display "Unknown"
+          # even when created_by is populated in the DB.
           enrichIdentities: false
           # App serving URL pattern (work in progress for self-hosted)
           publicURLPattern: 'https://%s.apps.{{ .Values.global.UNION_HOST }}'
@@ -481,7 +524,10 @@ services:
         # Enable V2 task/run/trigger endpoints
         task:
           enabled: true
-          # Identity service is disabled by default. Enriching identities can be enabled here.
+          # Enrich "Owned By" display with name/email from a remote identity service.
+          # Requires a functional identity service, which is NOT supported in selfhosted.
+          # When true and no identity service is reachable, all runs display "Unknown"
+          # even when created_by is populated in the DB.
           enrichIdentities: false
   usage:
     fullnameOverride: "usage"
@@ -828,7 +874,17 @@ flyte:
         cpu: 50m
         ephemeral-storage: 200Mi
         memory: 500Mi
-
+    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
+    # can read client_secret from union/client_secret. The flyte-core subchart does not
+    # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
   flytescheduler:
     image:
       # TODO flyte-core does not render templated repository and tag correctly.
@@ -960,10 +1016,17 @@ flyte:
     nodeSelector: { }
     # -- tolerations for Cacheservice deployment
     tolerations: [ ]
-    # -- Appends additional volumes to the deployment spec. May include template values.
-    additionalVolumes: [ ]
-    # -- Appends additional volume mounts to the main container's spec. May include template values.
-    additionalVolumeMounts: [ ]
+    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
+    # can read client_secret from union/client_secret. The flyte-core subchart does not
+    # include this mount by default.
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
     # -- Appends additional containers to the deployment spec. May include template values.
     additionalContainers: [ ]
     # -- Appends extra command line arguments to the main command
@@ -1302,8 +1365,178 @@ scylla-operator:
 # For backup/repair functionality, install scylla-manager separately.
 # See README.md for installation instructions.
 
+# ----------------------------------------------------------------------------
+# union.authz
+# ----------------------------------------------------------------------------
+# Deploys the union-authz (userclouds-lite) service for RBAC authorization.
+# Activation is controlled by global.AUTHZ_TYPE (see global section above).
+# Set global.AUTHZ_TYPE: "union" in an env overlay to activate the full RBAC
+# stack: union-authz pods, all four authorizer blocks, and service-to-service auth.
+# Database settings reference the global controlplane DB by default.
+# Override database.host/name/user/password for a dedicated database.
+union:
+  authz:
+    # OAuth2 client ID used by union CP services to authenticate with union-authz.
+    # This is a fixed constant — userclouds-lite bootstraps its own DB on first start
+    # using whatever value is set here, so no external provisioning is required.
+    clientID: "union-authz-client"
+
+    # Service account
+    serviceAccount:
+      create: true
+      name: ""
+      annotations: {}
+
+    # Pod security context
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+
+    # Container security context
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
+      readOnlyRootFilesystem: true
+
+    # Pod annotations
+    podAnnotations: {}
+
+    # Static assets directory for Console SPA
+    staticDir: /usr/share/userclouds/static
+
+    # Network policy
+    networkPolicy:
+      enabled: false
+
+    database:
+      host: '{{ .Values.global.DB_HOST }}'
+      port: 5432
+      user: '{{ .Values.global.DB_USER }}'
+      password: "file:///etc/db/pass.txt"
+      sslMode: require
+      name: userclouds
+      mode: normal
+
+    command:
+      - userclouds-lite
+    replicaCount: 3
+    service:
+      type: ClusterIP
+      port: 8080
+    resources:
+      limits:
+        cpu: "1"
+        memory: 512Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    pdb:
+      enabled: true
+      minAvailable: 2
+    autoscaling:
+      enabled: true
+      minReplicas: 3
+      maxReplicas: 10
+      targetCPUUtilizationPercentage: 80
+    probes:
+      liveness:
+        initialDelaySeconds: 10
+        periodSeconds: 10
+        timeoutSeconds: 5
+        failureThreshold: 3
+      readiness:
+        initialDelaySeconds: 5
+        periodSeconds: 5
+        timeoutSeconds: 3
+        failureThreshold: 3
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+    terminationGracePeriodSeconds: 45
+    priorityClassName: ""
+    topologySpreadConstraints: []
+    nodeSelector: {}
+    tolerations: []
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: union-authz
+            topologyKey: kubernetes.io/hostname
+    extraEnv: []
+    extraVolumes: []
+    extraVolumeMounts: []
+
+    auth:
+      issuer: 'http://{{ include "union.authz.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.union.authz.service.port }}'
+      signingKey: "kube://secrets/userclouds-signing-key?key=signing_key"
+      providers: []
+      apps:
+        - id: "union-controlplane"
+          name: "union-controlplane"
+          credentials:
+            - clientId: '{{ .Values.union.authz.clientID }}'
+              clientSecret: 'kube://secrets/{{ .Values.global.KUBERNETES_SECRET_NAME }}?key=client_secret'
+
+    cache:
+      enabled: true
+      type: memory
+      ttl: 60m
+      ttls:
+        objectType: ""
+        object: ""
+        edgeType: ""
+        edge: ""
+        user: ""
+      redis:
+        host: redis
+        port: 6379
+        password: ""
+        tls: false
+      memory:
+        maxEntries: 100000
+        shards: 128
+        depShards: 128
+
+    users: []
+
+    metrics:
+      enabled: true
+      serviceMonitor:
+        labels:
+          instance: union
+        interval: 30s
+        scrapeTimeout: 10s
+        metricRelabelings: []
+        relabelings:
+          - sourceLabels: [__metrics_path__]
+            targetLabel: metrics_path
+          - sourceLabels: [__meta_kubernetes_pod_node_name]
+            targetLabel: __host__
+          - action: replace
+            sourceLabels: [__meta_kubernetes_namespace]
+            targetLabel: kubernetes_namespace
+          - action: labelmap
+            regex: __meta_kubernetes_pod_label_(.+)
+          - action: labeldrop
+            regex: (pod_template_generation|operator_agent_grafana_com_name|operator_agent_grafana_com_type|app_kubernetes_io_managed_by|app_kubernetes_io_version|control_plane_component|control_plane_ns|extension|pod_template_hash|workload_ns|helm_sh_chart|inject|instance|pod_template_hash|workload_ns)
+          - action: replace
+            replacement: integrations/unionai/custom
+            targetLabel: job
+
 # This section is for additional objects that can be added to the Helm chart.
 extraObjects: []
+
+# Additional objects from values-overrides.yaml. Rendered alongside extraObjects
+# so that manual overrides don't clobber Terraform-generated extraObjects entries.
+extraObjectsOverrides: []
 
 # ----------------------------------------------------------------------------
 # Monitoring & Observability
@@ -1342,9 +1575,21 @@ monitoring:
   prometheusRules:
     enabled: true
 
-  # Opt-in alerting rules. Requires AlertManager to be configured.
+  # Opt-in operational alerts (service down, restarts, panics).
+  # Requires AlertManager to be configured.
   alerting:
     enabled: false
+
+  # Opt-in SLO recording rules and burn rate alerts.
+  # SLO recording rules compute availability, success rate, and error budget.
+  # SLO alerts fire when error budget is being consumed too quickly.
+  slos:
+    enabled: false
+    alerting:
+      enabled: false
+    targets:
+      availability: 0.999   # 99.9% availability target
+      latencyP99: 5          # p99 latency target in seconds
 
   nameOverride: "monitoring"
   fullnameOverride: "monitoring"
@@ -1376,6 +1621,11 @@ monitoring:
       auth.anonymous:
         enabled: true
         org_role: Admin
+    # Disable Grafana ServiceMonitor — Grafana's serve_from_sub_path redirects
+    # the /metrics endpoint, causing scrape failures. Grafana health is monitored
+    # via deployment availability instead.
+    serviceMonitor:
+      enabled: false
 
   # Default monitoring for K8s components that impact controlplane performance.
   coreDns:

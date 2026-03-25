@@ -53,7 +53,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 6,
         "x": 0,
         "y": 1
       },
@@ -110,8 +110,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 6,
+        "x": 6,
         "y": 1
       },
       "id": 3,
@@ -169,9 +169,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 0,
-        "y": 5
+        "w": 6,
+        "x": 18,
+        "y": 1
       },
       "id": 7,
       "options": {
@@ -188,7 +188,7 @@
       "type": "stat",
       "targets": [
         {
-          "expr": "sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval])) / sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
+          "expr": "sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled|NotFound\"}[$__rate_interval])) / sum(rate(connect:server_requests_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
           "legendFormat": "Error %",
           "refId": "A"
         }
@@ -218,10 +218,10 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 10,
-        "x": 8,
-        "y": 1
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 5
       },
       "id": 4,
       "options": {
@@ -269,10 +269,10 @@
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 1
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 5
       },
       "id": 5,
       "options": {
@@ -292,60 +292,12 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum by (code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval]))",
+          "expr": "sum by (code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled|NotFound\"}[$__rate_interval]))",
           "legendFormat": "{{ code }}",
           "refId": "A"
         }
       ],
       "description": "Connect error responses by gRPC status code (Internal, Unavailable, etc.)."
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "${datasource}"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "fillOpacity": 10,
-            "lineWidth": 1,
-            "showPoints": "never"
-          },
-          "unit": "percentunit"
-        }
-      },
-      "gridPos": {
-        "h": 4,
-        "w": 4,
-        "x": 4,
-        "y": 5
-      },
-      "id": 6,
-      "options": {
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom"
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "title": "Service Availability Over Time",
-      "type": "timeseries",
-      "targets": [
-        {
-          "expr": "kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"}",
-          "legendFormat": "{{ deployment }}",
-          "refId": "A"
-        }
-      ],
-      "description": "Percentage of deployments with all requested replicas available. 1.0 = all healthy."
     },
     {
       "datasource": {
@@ -374,9 +326,9 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 8,
-        "x": 16,
-        "y": 5
+        "w": 6,
+        "x": 12,
+        "y": 1
       },
       "id": 11,
       "options": {
@@ -401,12 +353,350 @@
       "description": "Total handler panics across all CP services. Any non-zero value indicates a service caught a panic during request handling."
     },
     {
-      "collapsed": true,
+      "collapsed": false,
       "gridPos": {
         "h": 1,
         "w": 24,
         "x": 0,
         "y": 9
+      },
+      "id": 1200,
+      "title": "SLOs",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 0.99
+              },
+              {
+                "color": "green",
+                "value": 0.999
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "decimals": 3
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 10
+      },
+      "id": 1201,
+      "title": "Service Availability",
+      "type": "stat",
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
+          "refId": "A"
+        }
+      ],
+      "description": "Current service availability across all deployments."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": -999
+              },
+              {
+                "color": "orange",
+                "value": 0
+              },
+              {
+                "color": "green",
+                "value": 0.5
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "decimals": 1,
+          "noValue": "N/A"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 10
+      },
+      "id": 1202,
+      "title": "Error Budget Remaining",
+      "type": "stat",
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "union:cp:slo:error_budget_remaining",
+          "refId": "A"
+        }
+      ],
+      "description": "Fraction of error budget remaining. <0 = budget exhausted. Requires monitoring.slos.enabled."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 0
+              },
+              {
+                "color": "orange",
+                "value": 0.95
+              },
+              {
+                "color": "green",
+                "value": 0.999
+              }
+            ]
+          },
+          "unit": "percentunit",
+          "decimals": 2,
+          "noValue": "N/A"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 10
+      },
+      "id": 1203,
+      "title": "Ingress Success Rate",
+      "type": "stat",
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "union:cp:slo:ingress_success_rate or (1 - sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace=\"$namespace\", status=~\"5..\"}[5m])) / sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace=\"$namespace\"}[5m])))",
+          "refId": "A"
+        }
+      ],
+      "description": "Ingress success rate (non-5xx). Customer-facing SLO metric. Falls back to raw metric if SLO recording rules are not enabled."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "s",
+          "decimals": 2
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 10
+      },
+      "id": 1204,
+      "title": "Ingress Latency p99",
+      "type": "stat",
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "expr": "union:cp:slo:ingress_latency_p99 or histogram_quantile(0.99, sum by (le) (rate(nginx_ingress_controller_request_duration_seconds_bucket{namespace=\"$namespace\"}[5m])))",
+          "refId": "A"
+        }
+      ],
+      "description": "Ingress p99 latency. Falls back to raw metric if SLO recording rules are not enabled."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit"
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 1205,
+      "title": "Availability Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
+          "legendFormat": "Availability",
+          "refId": "A"
+        },
+        {
+          "expr": "vector(0.999)",
+          "legendFormat": "Target (99.9%)",
+          "refId": "B"
+        }
+      ],
+      "description": "Service availability over time with SLO target line."
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "showPoints": "never"
+          },
+          "unit": "percentunit",
+          "max": 1,
+          "min": -0.5
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 1206,
+      "title": "Error Budget Burn Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "union:cp:slo:error_budget_remaining",
+          "legendFormat": "Budget remaining",
+          "refId": "A"
+        },
+        {
+          "expr": "vector(0)",
+          "legendFormat": "Exhausted",
+          "refId": "B"
+        }
+      ],
+      "description": "Error budget remaining over time. Requires monitoring.slos.enabled."
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 31
       },
       "id": 100,
       "title": "Ingress (nginx)",
@@ -584,7 +874,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 32
       },
       "id": 200,
       "title": "Connect / gRPC",
@@ -660,7 +950,7 @@
           "type": "timeseries",
           "targets": [
             {
-              "expr": "sum by (service, code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled\"}[$__rate_interval]))",
+              "expr": "sum by (service, code) (rate(connect:server_requests_handled_total{namespace=\"$namespace\", code!~\"0|OK|Canceled|NotFound\"}[$__rate_interval]))",
               "legendFormat": "{{ service }} {{ code }}",
               "refId": "A"
             }
@@ -749,7 +1039,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 11
+        "y": 33
       },
       "id": 300,
       "title": "FlyteAdmin (V1 + V2)",
@@ -1008,7 +1298,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 34
       },
       "id": 400,
       "title": "Executions (V1 + V2)",
@@ -1514,7 +1804,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 12
+        "y": 34
       },
       "id": 500,
       "title": "Queue / Run-Scheduler (V2)",
@@ -1931,7 +2221,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 13
+        "y": 35
       },
       "id": 600,
       "title": "Cluster Service (V1 + V2)",
@@ -2255,7 +2545,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 36
       },
       "id": 900,
       "title": "CacheService (V1 + V2)",
@@ -2363,7 +2653,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 36
       },
       "id": 750,
       "title": "Authorizer (V1 + V2)",
@@ -2503,7 +2793,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 14
+        "y": 36
       },
       "id": 700,
       "title": "Data Proxy",
@@ -2648,7 +2938,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 15
+        "y": 37
       },
       "id": 800,
       "title": "Usage Service",
@@ -2838,7 +3128,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 16
+        "y": 38
       },
       "id": 1100,
       "title": "Infrastructure",

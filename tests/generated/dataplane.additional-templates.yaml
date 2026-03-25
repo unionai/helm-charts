@@ -85,8 +85,6 @@ kind: ServiceAccount
 metadata:
   name: union-clustersync-system
   namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/imagebuilder/serviceaccount.yaml
 apiVersion: v1
@@ -102,8 +100,6 @@ metadata:
   namespace: union
   labels:
     app: executor
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy.yaml
 apiVersion: v1
@@ -115,8 +111,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: v1
@@ -128,8 +122,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/prometheus/serviceaccount.yaml
 apiVersion: v1
@@ -151,8 +143,6 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-webhook-system
   namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 apiVersion: v1
@@ -160,8 +150,6 @@ kind: ServiceAccount
 metadata:
   name: flytepropeller-system
   namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
 ---
 # Source: dataplane/templates/common/auth-secret.yaml
 apiVersion: v1
@@ -172,8 +160,8 @@ metadata:
 type: Opaque
 data:
   # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: Y2xpZW50U2VjcmV0
-  client_secret: Y2xpZW50U2VjcmV0
+  app_secret: dGVzdC1jbGllbnQtc2VjcmV0
+  client_secret: dGVzdC1jbGllbnQtc2VjcmV0
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -182,7 +170,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tYXdz
+  cluster_name:
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -207,7 +195,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: 'union-aws'
+      clusterName: ''
       customData:
       - production:
         - projectQuotaCpu:
@@ -219,7 +207,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
       - staging:
         - projectQuotaCpu:
             value: "4096"
@@ -230,7 +218,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
       - development:
         - projectQuotaCpu:
             value: "4096"
@@ -241,7 +229,7 @@ data:
         - defaultUserRoleKey:
             value: 'eks.amazonaws.com/role-arn'
         - defaultUserRoleValue:
-            value: 'arn:aws:iam::000000000000:role/union-flyte-role'
+            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
       refreshInterval: 5m
       standaloneDeployment: true
       templatePath: /etc/flyte/clusterresource/templates
@@ -251,17 +239,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     event:
       capacity: 1000
@@ -281,8 +269,11 @@ data:
       labelClusterMap: {}
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
+  namespace_mapping.yaml: |
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -327,6 +318,30 @@ data:
         limits.cpu: {{ projectQuotaCpu }}
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+    
+  d_custom_networkpolicy.yaml: | 
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny
+      namespace: {{ namespace }}
+    spec:
+      podSelector: {}
+      policyTypes:
+      - Ingress
+    
+  e_custom_limitrange.yaml: | 
+    apiVersion: v1
+    kind: LimitRange
+    metadata:
+      name: default-limits
+      namespace: {{ namespace }}
+    spec:
+      limits:
+      - default:
+          cpu: "2"
+          memory: "1Gi"
+        type: Container
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
@@ -371,8 +386,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-east-2
-        bucket bucket
+        region us-east-1
+        bucket
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
@@ -2548,7 +2563,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-aws/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2602,10 +2617,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'union-aws'
+      cluster: ''
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: ''
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -2618,30 +2633,32 @@ data:
           cpu: 4096
           gpu: 256
           memory: 2Ti
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.example.com
+      endpoint: dns:///test.example.com
       insecure: false
       type: fallback
       use-admin-auth: true
     logger:
-      level: 6
+      level: 4
       show-source: true
     sharedService:
       metrics:
@@ -2678,12 +2695,18 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
-      enable-multicontainer: true
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -2710,10 +2733,10 @@ data:
   config.yaml: |
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -2734,15 +2757,15 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: ''
       clusterData:
-        appId: 'clientId'
-        bucketName: 'bucket'
-        bucketRegion: 'us-east-2'
-        cloudHostName: 'union.us-west-2.union.ai'
+        appId: 'test-client-id'
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test.example.com'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
-        userRole: 'arn:aws:iam::000000000000:role/union-flyte-role'
+        metadataBucketPrefix: 's3://'
+        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
@@ -2755,6 +2778,8 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "{{ project }}-{{ domain }}"
       imageBuilder:
         enabled: true
         executionNamespaceLabels:
@@ -2777,7 +2802,7 @@ data:
         type: 'K8s'
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
   config-overrides.yaml: | 
     cache:
@@ -2785,12 +2810,18 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
-      enable-multicontainer: true
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -2798,11 +2829,17 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: ""
   image-builder.authentication-type: "noop"
@@ -3727,9 +3764,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     event:
       capacity: 1000
@@ -3737,8 +3774,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.example.com
+      endpoint: dns:///test.example.com
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -3782,7 +3819,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://bucket'
+      rawoutput-prefix: 's3://'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -3827,8 +3864,12 @@ data:
         default-memory: 100Mi
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
+  namespace_config.yaml: |
+    namespace_config:
+      namespace_mapping:
+        template: '{{ project }}-{{ domain }}'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
@@ -3850,12 +3891,18 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
-      enable-multicontainer: true
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -5216,7 +5263,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "034ca9a277bfb2fe7d46aa79c046061054ae8992fe6c4f7a95139ba7d956fec"
+        configChecksum: "8ed2668f48cf124d121f3ee0547f815d1bd37327597d359bec2a27401296519"
         
       labels:
         
@@ -5434,7 +5481,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9f0b4767b08aba01b70483c7df60d56724e56588cff449d6f7dec63eecd7649"
+        configChecksum: "0ef032f0ec0dd213348a6baa4ae5bfe290b29b8ce7dcb1d03d63fb1d4d849a0"
       labels:
         
         app: executor
@@ -5535,7 +5582,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "65099b4fffb7b6816d6d51164d155c9f57650d460044a3cf74f3b529fc41a6f"
+        configChecksum: "8d37df77e38b186895a2b1ee6cd63d96b23dbc012be03c048d175222e2585e1"
         
       labels:
         
@@ -5672,7 +5719,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "65099b4fffb7b6816d6d51164d155c9f57650d460044a3cf74f3b529fc41a6f"
+        configChecksum: "8d37df77e38b186895a2b1ee6cd63d96b23dbc012be03c048d175222e2585e1"
         
       labels:
         
@@ -5855,7 +5902,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "493398543bd09121955945c349ac604b397a8d96dd9869a25efc428c908ed2b"
+        configChecksum: "d60d76ce8befbfdf65391840a4cfe75ccff354e5fcc830f605d523270470d74"
         
     spec:
       securityContext:
@@ -6010,7 +6057,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "493398543bd09121955945c349ac604b397a8d96dd9869a25efc428c908ed2b"
+        configChecksum: "d60d76ce8befbfdf65391840a4cfe75ccff354e5fcc830f605d523270470d74"
         
       labels:
         
@@ -6027,7 +6074,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - union-aws
+            - ''
           env:
           - name: POD_NAME
             valueFrom:
@@ -6085,104 +6132,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
----
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /api/v1/dataproxy/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /prometheus/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-prometheus
-                port:
-                  number: 80
-          - path: /clickhouse/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /dataplane/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /resourcequota/v1/project_quota
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /spark-history-server/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /secrets/api/v1
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /data_plane_object_store/api/v1/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.actor.ActorEnvironmentService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.logs.dataplane.LogsService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.objectstore.v1.ObjectStoreService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.imagebuilder.dataplane.ImageService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
 ---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
