@@ -361,16 +361,6 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
-{{- /* When AUTHZ_TYPE is not "union", fall back to Noop authorizer. */}}
-{{- /* Note: union.auth (service-to-service OAuth2 token acquisition) is intentionally NOT */}}
-{{- /* disabled here. It controls whether services attach bearer tokens when calling other */}}
-{{- /* services through nginx, which is needed in any deployment with auth enabled — */}}
-{{- /* regardless of whether Union's RBAC authorizer is active. */}}
-{{- if ne .Values.global.AUTHZ_TYPE "union" }}
-  {{- if hasKey $merged "authorizer" }}
-    {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
-  {{- end }}
-{{- end }}
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}

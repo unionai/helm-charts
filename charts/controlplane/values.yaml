@@ -51,12 +51,6 @@ global:
   # Contact Union for controlplane access and distribution.
   IMAGE_REPOSITORY_PREFIX: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp"
 
-  # Authorization type for RBAC. Set to "union" to enable UserClouds-based authorization.
-  # Controls union-authz pod deployment and all four authorizer blocks (union services,
-  # flyteadmin, cacheservice). Leave empty or set to "noop" to disable (default).
-  # Visible to subcharts (flyte-core) via global scope.
-  AUTHZ_TYPE: ""
-
   # OAuth2 client ID for service-to-service authentication (client_credentials flow).
   # Services use this to acquire tokens for internal calls through nginx.
   # Example: "0oa3xyz4abc5def6g7h8"
@@ -1156,7 +1150,7 @@ flyte:
         insecure: false
       # flyteadmin routes authorization to the in-cluster authorizer service.
       # For Union Cloud with UserClouds, override with:
-      #   type: '{{ if eq .Values.global.AUTHZ_TYPE "union" }}UserClouds{{ else }}Noop{{ end }}'
+      #   type: "UserClouds"
       #   userCloudsClient:
       #     tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
       #     tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
@@ -1417,13 +1411,14 @@ scylla-operator:
 # union.authz
 # ----------------------------------------------------------------------------
 # Deploys the union-authz (userclouds-lite) service for RBAC authorization.
-# Activation is controlled by global.AUTHZ_TYPE (see global section above).
-# Set global.AUTHZ_TYPE: "union" in an env overlay to activate the full RBAC
-# stack: union-authz pods, all four authorizer blocks, and service-to-service auth.
+# Set enabled: true in an env overlay to activate the union-authz pods.
+# Authorization type is configured separately via services.authorizer.configMap.
 # Database settings reference the global controlplane DB by default.
 # Override database.host/name/user/password for a dedicated database.
 union:
   authz:
+    enabled: false
+
     # OAuth2 client ID used by union CP services to authenticate with union-authz.
     # This is a fixed constant — userclouds-lite bootstraps its own DB on first start
     # using whatever value is set here, so no external provisioning is required.
