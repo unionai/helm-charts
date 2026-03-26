@@ -160,8 +160,8 @@ metadata:
 type: Opaque
 data:
   # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: Y2xpZW50U2VjcmV0
-  client_secret: Y2xpZW50U2VjcmV0
+  app_secret: dGVzdC1jbGllbnQtc2VjcmV0
+  client_secret: dGVzdC1jbGllbnQtc2VjcmV0
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -170,7 +170,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tb2Np
+  cluster_name:
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -195,7 +195,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: 'union-oci'
+      clusterName: ''
       customData:
       - production:
         - projectQuotaCpu:
@@ -239,17 +239,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     event:
       capacity: 1000
@@ -269,8 +269,11 @@ data:
       labelClusterMap: {}
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
+  namespace_mapping.yaml: |
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -315,6 +318,30 @@ data:
         limits.cpu: {{ projectQuotaCpu }}
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
+    
+  d_custom_networkpolicy.yaml: | 
+    apiVersion: networking.k8s.io/v1
+    kind: NetworkPolicy
+    metadata:
+      name: default-deny
+      namespace: {{ namespace }}
+    spec:
+      podSelector: {}
+      policyTypes:
+      - Ingress
+    
+  e_custom_limitrange.yaml: | 
+    apiVersion: v1
+    kind: LimitRange
+    metadata:
+      name: default-limits
+      namespace: {{ namespace }}
+    spec:
+      limits:
+      - default:
+          cpu: "2"
+          memory: "1Gi"
+        type: Container
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
@@ -359,9 +386,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-ashburn-1
-        bucket bucket
-        endpoint https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+        region us-east-1
+        bucket
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
@@ -2537,7 +2563,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-oci/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2591,10 +2617,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'union-oci'
+      cluster: ''
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: ''
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -2607,30 +2633,32 @@ data:
           cpu: 4096
           gpu: 256
           memory: 2Ti
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.example.com
+      endpoint: dns:///test.example.com
       insecure: false
       type: fallback
       use-admin-auth: true
     logger:
-      level: 6
+      level: 4
       show-source: true
     sharedService:
       metrics:
@@ -2659,33 +2687,25 @@ data:
           deckFilename: report.html
       k8s:
         disable-inject-owner-references: true
-        default-cpus: 200m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
-        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
-        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-        - CREATE_UPRIVER_DATA_SOURCE: "true"
-        - SOME_NUMERIC_VAR: "42"
-        - MORE: foo
-        - SOME_CONFIG_BOOL: "true"
+        default-cpus: 100m
+        default-env-vars: []
         default-memory: 100Mi
         co-pilot:
           image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: accessKey
-          secret_key: secretKey
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-          region: us-ashburn-1
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -2707,24 +2727,16 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
-        default-cpus: 200m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
-        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
-        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-        - CREATE_UPRIVER_DATA_SOURCE: "true"
-        - SOME_NUMERIC_VAR: "42"
-        - MORE: foo
-        - SOME_CONFIG_BOOL: "true"
+        default-cpus: 100m
+        default-env-vars: []
         default-memory: 100Mi
   config.yaml: |
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///test.example.com
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -2745,14 +2757,14 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: ''
       clusterData:
-        appId: 'clientId'
-        bucketName: 'bucket'
-        bucketRegion: 'us-ashburn-1'
-        cloudHostName: 'union.us-west-2.union.ai'
+        appId: 'test-client-id'
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test.example.com'
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
+        metadataBucketPrefix: 's3://'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -2766,6 +2778,8 @@ data:
           endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "{{ project }}-{{ domain }}"
       imageBuilder:
         enabled: true
         executionNamespaceLabels:
@@ -2788,7 +2802,7 @@ data:
         type: 'K8s'
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
   config-overrides.yaml: | 
     cache:
@@ -2796,17 +2810,17 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: accessKey
-          secret_key: secretKey
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-          region: us-ashburn-1
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -2815,17 +2829,17 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: accessKey
-          secret_key: secretKey
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-          region: us-ashburn-1
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: ""
   image-builder.authentication-type: "noop"
@@ -3750,9 +3764,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'clientId'
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///test.example.com
       insecure: false
     event:
       capacity: 1000
@@ -3760,8 +3774,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///test.example.com
+      endpoint: dns:///test.example.com
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -3805,7 +3819,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://bucket'
+      rawoutput-prefix: 's3://'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -3845,21 +3859,17 @@ data:
   k8s.yaml: | 
     plugins:
       k8s:
-        default-cpus: 200m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
-        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
-        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-        - CREATE_UPRIVER_DATA_SOURCE: "true"
-        - SOME_NUMERIC_VAR: "42"
-        - MORE: foo
-        - SOME_CONFIG_BOOL: "true"
+        default-cpus: 100m
+        default-env-vars: []
         default-memory: 100Mi
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
+  namespace_config.yaml: |
+    namespace_config:
+      namespace_mapping:
+        template: '{{ project }}-{{ domain }}'
   resource_manager.yaml: | 
     propeller:
       resourcemanager:
@@ -3881,17 +3891,17 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: accessKey
-          secret_key: secretKey
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-          region: us-ashburn-1
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -4951,30 +4961,6 @@ spec:
       port: 10254
       targetPort: 10254
 ---
-# Source: dataplane/templates/propeller/service-webhook.yaml
-# Headless Service for cache invalidation — resolves to all pod IPs so that
-# we can fan out invalidation requests to every webhook replica.
-apiVersion: v1
-kind: Service
-metadata:
-  name: flyte-pod-webhook-headless
-  namespace: union
-  labels:
-    app.kubernetes.io/name: flyte-pod-webhook
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  clusterIP: None
-  selector:
-    app.kubernetes.io/name: flyte-pod-webhook
-    app.kubernetes.io/instance: release-name
-  ports:
-    - name: cache-internal
-      protocol: TCP
-      port: 9443
-      targetPort: 9443
----
 # Source: dataplane/templates/propeller/service.yaml
 apiVersion: v1
 kind: Service
@@ -5277,7 +5263,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "2f78db13d3ceb29f5eba685dd324ebd548c398d19f1c69239076072c4be455c"
+        configChecksum: "8ed2668f48cf124d121f3ee0547f815d1bd37327597d359bec2a27401296519"
         
       labels:
         
@@ -5325,12 +5311,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.7"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
@@ -5363,14 +5343,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/templates/imagebuilder/deployment.yaml
 apiVersion: apps/v1
@@ -5435,12 +5407,6 @@ spec:
               value: http://union-operator-prometheus:80
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
-            - name: AWS_REQUEST_CHECKSUM_CALCULATION
-              value: "when_required"
-            - name: CREATE_UPRIVER_DATA_SOURCE
-              value: "true"
-            - name: SOME_NUMERIC_VAR
-              value: "42"
           volumeMounts:
             - mountPath: /home/user/.local/share/buildkit
               name: buildkitd
@@ -5515,7 +5481,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "2d92e161c83c87ad22b0bd1272a480832003ab3a2d72b20cdd3519bb904700f"
+        configChecksum: "0ef032f0ec0dd213348a6baa4ae5bfe290b29b8ce7dcb1d03d63fb1d4d849a0"
         
       labels:
         
@@ -5582,12 +5548,6 @@ spec:
               value: http://union-operator-prometheus:80
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
-            - name: AWS_REQUEST_CHECKSUM_CALCULATION
-              value: "when_required"
-            - name: CREATE_UPRIVER_DATA_SOURCE
-              value: "true"
-            - name: SOME_NUMERIC_VAR
-              value: "42"
           resources:
             limits:
               cpu:    "4"
@@ -5602,14 +5562,6 @@ spec:
               mountPath: /etc/union/secret
             - name: auth
               mountPath: /etc/secrets/
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
@@ -5631,7 +5583,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fa5221f8eb128490b35e2c1bc93b0ed3b9d265252ad0db41346fb4b26718e99"
+        configChecksum: "8d37df77e38b186895a2b1ee6cd63d96b23dbc012be03c048d175222e2585e1"
         
       labels:
         
@@ -5723,12 +5675,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
         - name: "tunnel"
           securityContext:
             {}
@@ -5755,14 +5701,6 @@ spec:
             requests:
               cpu: 500m
               memory: 500Mi
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/templates/operator/deployment.yaml
 apiVersion: apps/v1
@@ -5782,7 +5720,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "fa5221f8eb128490b35e2c1bc93b0ed3b9d265252ad0db41346fb4b26718e99"
+        configChecksum: "8d37df77e38b186895a2b1ee6cd63d96b23dbc012be03c048d175222e2585e1"
         
       labels:
         
@@ -5852,12 +5790,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
           args:
             - operator
             - serve
@@ -5877,14 +5809,6 @@ spec:
             - name: debug
               containerPort: 10254
               protocol: TCP
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/templates/prometheus/deployment.yaml
 apiVersion: apps/v1
@@ -5979,7 +5903,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "5985a51859f2fdd49ebc38031309ef40227f04061066e332ea650d12abd5cad"
+        configChecksum: "d60d76ce8befbfdf65391840a4cfe75ccff354e5fcc830f605d523270470d74"
         
     spec:
       securityContext:
@@ -6033,12 +5957,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
@@ -6093,12 +6011,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
           ports:
             - containerPort: 9443
             - containerPort: 10254
@@ -6125,14 +6037,6 @@ spec:
         - name: webhook-certs
           secret:
             secretName: flyte-pod-webhook
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/templates/propeller/deployment.yaml
 apiVersion: apps/v1
@@ -6154,7 +6058,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5985a51859f2fdd49ebc38031309ef40227f04061066e332ea650d12abd5cad"
+        configChecksum: "d60d76ce8befbfdf65391840a4cfe75ccff354e5fcc830f605d523270470d74"
         
       labels:
         
@@ -6171,7 +6075,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - union-oci
+            - ''
           env:
           - name: POD_NAME
             valueFrom:
@@ -6204,12 +6108,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          - name: AWS_REQUEST_CHECKSUM_CALCULATION
-            value: "when_required"
-          - name: CREATE_UPRIVER_DATA_SOURCE
-            value: "true"
-          - name: SOME_NUMERIC_VAR
-            value: "42"
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.7"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
@@ -6235,14 +6133,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
-      
-      nodeSelector:
-        flyte.org/node-role: worker
-      tolerations:
-        - effect: NoSchedule
-          key: flyte.org/node-role
-          operator: Equal
-          value: worker
 ---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
