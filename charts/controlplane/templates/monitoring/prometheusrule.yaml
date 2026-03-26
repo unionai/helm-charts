@@ -45,6 +45,12 @@ spec:
           expr: |
             sum(rate(nginx_ingress_controller_request_duration_seconds_count{namespace="{{ .Release.Namespace }}", status=~"5.."}[5m]))
 
+        - record: union:cp:authz:external_error_rate
+          expr: |
+            sum(rate(authorizer:cloudauthorizer:external:errors{namespace="{{ .Release.Namespace }}"}[5m]))
+            /
+            (sum(rate(authorizer:cloudauthorizer:external:authorize_duration_count{namespace="{{ .Release.Namespace }}"}[5m])) > 0 or vector(1))
+
     {{- if .Values.monitoring.alerting.enabled }}
     # --- Operational alerts (opt-in) ---
     # Basic health checks only. For SLO-based alerts, see monitoring.slos.
@@ -81,6 +87,40 @@ spec:
             severity: critical
           annotations:
             summary: "Handler panic detected in CP service"
+
+        - alert: UnionCPAuthorizerExternalErrors
+          expr: |
+            sum(rate(authorizer:cloudauthorizer:external:errors{namespace="{{ .Release.Namespace }}"}[5m])) > 0.1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "External authorization backend returning errors"
+            description: "The external authz backend is returning errors at >0.1/s for 5+ minutes. Check external backend health."
+
+        - alert: UnionCPAuthorizerFailOpenActive
+          expr: |
+            sum(rate(authorizer:cloudauthorizer:external:fail_open_activated{namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Authorizer fail-open mode is actively bypassing authorization"
+            description: "The external authz backend is unreachable and fail-open is allowing requests without authorization checks."
+
+        - alert: UnionCPAuthorizerHighDenyRate
+          expr: |
+            (
+              sum(rate(authorizer:cloudauthorizer:authz_denied{namespace="{{ .Release.Namespace }}"}[5m]))
+              /
+              (sum(rate(authorizer:cloudauthorizer:authz_allowed{namespace="{{ .Release.Namespace }}"}[5m])) + sum(rate(authorizer:cloudauthorizer:authz_denied{namespace="{{ .Release.Namespace }}"}[5m])))
+            ) > 0.5
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Authorization deny rate exceeds 50%"
+            description: "More than half of authorization decisions are being denied. Possible policy misconfiguration."
     {{- end }}
 
     {{- if .Values.monitoring.slos.enabled }}
