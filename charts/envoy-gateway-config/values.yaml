@@ -12,7 +12,9 @@ redis:
 # Passed through to the gateway-helm EnvoyGateway CR via the config.envoyGateway values key.
 # When rateLimit.backend.redis.url is set, EG auto-deploys envoyproxy/ratelimit in envoy-gateway-system.
 config:
-  envoyGateway: {}
+  envoyGateway:
+    extensionApis:
+      enableEnvoyPatchPolicy: true
 
 envoyGateway:
   # GatewayClass name — must match what controlplane Helm templates reference via global.GATEWAY_CLASS_NAME.
@@ -27,6 +29,19 @@ envoyGateway:
   # loadBalancerClass sets spec.loadBalancerClass on the envoy fleet Service (e.g. eks.amazonaws.com/nlb).
   # Omitted when null.
   loadBalancerClass: null
+
+  # envoyDeployment configures the Envoy proxy fleet managed by EG.
+  # pluginImage: init-container image built from Dockerfile.envoy-plugins-lite.
+  #   When set, an init container copies /lib/*.so from this image into a shared
+  #   emptyDir volume that the Envoy proxy mounts at /lib/, making the plugins
+  #   available to the EnvoyPatchPolicy golang filter configuration.
+  #   Leave empty to skip plugin injection (no auth filters loaded).
+  # container.env: extra env vars injected into the proxy container.
+  #   CONTROL_PLANE_AUTHZ_AUTH_URL is required when pluginImage is set.
+  envoyDeployment:
+    pluginImage: ""
+    container:
+      env: []
 
   # httpFilters lists the plugin_name values to inject into the Envoy HCM filter chain, in order.
   # All plugins must be registered in /lib/control-plane-auth.so.
