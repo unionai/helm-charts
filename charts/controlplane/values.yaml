@@ -218,30 +218,32 @@ ingress:
   # and redirect unauthenticated users to /login for the OIDC flow.
   # Active when OIDC authentication is enabled (server.security.useAuth: true).
   #
-  # auth-response-headers MUST include X-User-Subject for identity to be captured
-  # on browser-initiated requests (cookie auth path). Without it, "Owned By" will
-  # show "Unknown" for UI-initiated runs.
+  # auth-response-headers MUST include:
+  #   - X-User-Subject: identity capture on browser requests ("Owned By" display)
+  #   - X-User-Token: raw OIDC token forwarding for external authorization
+  # Removing either will break functionality. X-User-Token enables browser-path
+  # token forwarding to external authz servers for downstream token exchange.
   protectedIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   enableProtectedConsoleIngress: false
   protectedIngressAnnotationsWithoutSignin:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedConsoleIngressAnnotations:
     nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
     nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
     nginx.org/websocket-services: dataproxy-service
   protectedIngressAnnotationsGrpc:
     nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username"
+    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
 
 configMap:
@@ -255,9 +257,14 @@ configMap:
       grpcConfig:
         host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
         insecure: true
+      # Headers forwarded from this service to the authorizer on each
+      # Authorize() call. Do not remove x-user-token — it carries the
+      # browser user's OIDC token (from nginx /me subrequest) to the
+      # authorizer for external authorization token exchange.
       forwardHeaders:
         - authorization
         - flyte-authorization
+        - x-user-token
   cache:
     identity:
       enabled: false
@@ -1167,6 +1174,7 @@ flyte:
           forwardHeaders:
             - authorization
             - flyte-authorization
+            - x-user-token
       cloudEvents:
         enable: false
       connection:
@@ -1220,6 +1228,7 @@ flyte:
           forwardHeaders:
             - authorization
             - flyte-authorization
+            - x-user-token
       cacheservice:
         storage-prefix: cached_outputs
         metrics-scope: flyte
