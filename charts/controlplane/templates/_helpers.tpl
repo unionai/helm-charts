@@ -361,18 +361,6 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
-{{- /* When AUTHZ_TYPE is not "union", fall back to Noop authorizer and disable service-to-service auth */}}
-{{- if ne .Values.global.AUTHZ_TYPE "union" }}
-  {{- if hasKey $merged "authorizer" }}
-    {{- $_ := set $merged "authorizer" (dict "type" "Noop") }}
-  {{- end }}
-  {{- if hasKey $merged "union" }}
-    {{- $union := get $merged "union" }}
-    {{- if hasKey $union "auth" }}
-      {{- $_ := set $union "auth" (dict "enable" false) }}
-    {{- end }}
-  {{- end }}
-{{- end }}
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
