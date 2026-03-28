@@ -1,0 +1,168 @@
+# Restores legacy (pre-low-privilege, pre-v2) defaults.
+# Use this file to opt back into the previous behavior:
+#   helm install -f values-legacy.yaml [...]
+low_privilege: false
+flytepropeller:
+  enabled: true
+executor:
+  idl2Executor: false
+flyteconnector:
+  enabled: false
+opencost:
+  enabled: true
+prometheus:
+  # Enable the chart's own ClusterRole for cluster-wide scraping (cAdvisor, node metrics).
+  rbac:
+    create: true
+  kube-state-metrics:
+    rbac:
+      useClusterRole: true
+    releaseNamespace: false
+  # Append cAdvisor scrape config (requires ClusterRole for nodes/proxy access).
+  extraScrapeConfigs: |
+    - job_name: 'kube-state-metrics'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: kube-state-metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          action: keep
+        - source_labels: [__name__, phase]
+          separator: ";"
+          regex: "kube_pod_status_phase;(Succeeded|Failed)"
+          action: drop
+        - source_labels: [node]
+          target_label: nodename
+          regex: "(.*)"
+          action: replace
+        - source_labels: [label_node_group_name]
+          action: replace
+          regex: "(.+)"
+          target_label: label_node_pool_name
+    - job_name: 'opencost'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: opencost
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+    - job_name: 'union-services'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+          regex: .+
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: debug
+          action: keep
+    - job_name: 'flytepropeller'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=flytepropeller
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    - job_name: 'serving-envoy'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app=3scale-kourier-gateway
+      metrics_path: /stats/prometheus
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    - job_name: 'gpu-metrics'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - kube-system
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=dcgm-exporter
+    # cAdvisor container metrics for actual CPU and memory usage tracking.
+    # Requires cluster-level RBAC (nodes/proxy); not available in low-privilege mode.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: false
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: container_cpu_usage_seconds_total|container_memory_working_set_bytes
+          action: keep
+      relabel_configs:
+        - regex: __meta_kubernetes_node_label_(.+)
+          replacement: $1
+          action: labelmap
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+          action: replace
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+          action: replace

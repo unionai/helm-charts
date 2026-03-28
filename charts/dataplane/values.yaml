@@ -47,6 +47,18 @@ global:
   #    Note: Can be same as metadata bucket or separate
   FAST_REGISTRATION_BUCKET: ""
 
+  #    BACKEND_IAM_ROLE_ARN - IAM Role to use for union-system SA
+  #    GCP Format: service-account-name@project-id.iam.gserviceaccount.com
+  #    Example: "union-backend@my-project.iam.gserviceaccount.com"
+  #    Permissions: GCS access, GCR/Artifact Registry (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  #    WORKER_IAM_ROLE_ARN - IAM Role to use for union SA
+  #    GCP Format: service-account-name@project-id.iam.gserviceaccount.com
+  #    Example: "union-worker@my-project.iam.gserviceaccount.com"
+  #    Permissions: GCS access, GCP services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
 # ----------------------------------------------------------------------------
 # Additional Configuration
 # ----------------------------------------------------------------------------
@@ -80,6 +92,9 @@ additionalPodLabels: { }
 # -- Define additional PodSpec values for all of the Union pods.
 additionalPodSpec: { }
 
+# -- Define additional serviceAccountAnnotations to be added to all system-created service accounts
+additionalServiceAccountAnnotations: { }
+
 # -- Global kubernetes scheduling constraints that will be applied to the
 # pods.  Application specific constraints will always take precedence.
 scheduling:
@@ -112,9 +127,9 @@ scheduling:
   #    effect: "NoSchedule"
   nodeName: ""
 
-# -- This is the annotation key that is added to service accounts.  Used with GCP and AWS.
+# -- This is the annotation key that is added to service accounts.
 userRoleAnnotationKey: "eks.amazonaws.com/role-arn"
-# -- This is the value of the annotation key that is added to service accounts. Used with GCP and AWS.
+# -- This is the value of the annotation key that is added to service accounts.
 userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
@@ -127,6 +142,8 @@ clusterresourcesync:
     name: ""
     # -- Additional annotations for the syncresources service account
     annotations: {}
+  # -- Additional pod labels for the syncresources service
+  podLabels: { }
   # -- Additional pod annotations for the syncresources service
   podAnnotations: { }
   # -- Additional pod environment variables for the syncresources service
@@ -322,11 +339,19 @@ config:
       cache-endpoint: 'dns:///{{ tpl .Values.host . }}'
       endpoint: 'dns:///{{ tpl .Values.host . }}'
       insecure: false
-      type: fallback
+      type: cacheservicev2
       use-admin-auth: true
+  # -- Optional catalog cache configuration, rendered as catalog_cache.yaml for propeller.
+  catalog_cache: {}
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
+  # -- Optional namespace configuration, rendered as namespace_config.yaml.
+  namespace_config: {}
+  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
+  namespace_mapping: {}
+  # -- Optional Qubole plugin configuration.
+  qubole: {}
   # -- Override any configuration settings.
   configOverrides:
     cache:
@@ -382,7 +407,7 @@ config:
         enabled: true
     webhook:
       certDir: /etc/webhook/certs
-      serviceName: flyte-pod-webhook
+      serviceName: union-pod-webhook
       servicePort: "{{ .Values.flytepropellerwebhook.service.port }}"
       listenPort: "{{ .Values.flytepropellerwebhook.service.targetPort }}"
       secretManagerTypes:
@@ -432,6 +457,7 @@ config:
     plugins:
       # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
       k8s:
+        default-pod-template-name: "task-template"
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
@@ -444,6 +470,14 @@ config:
   operator:
     # -- Enables the operator service
     enabled: true
+    # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
+    limitNamespace: ""
+    # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
+    disableClusterPermissions: false
+    # -- Compute resource manager configuration.
+    computeResourceManager: {}
+    # -- Organization namespace template override.
+    org: {}
     # -- Enable app serving
     apps:
       enabled: "{{ .Values.serving.enabled }}"
@@ -484,6 +518,9 @@ config:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
+      # -- Define the propeller health check endpoint.
+      executor:
+        endpoint: '{{ include "executor.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -506,9 +543,14 @@ config:
       objectStore:
         prefix: persisted-logs
         pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
-    imageBuilderConfig:
-      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
-      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
+# Temporarily disable imageBuilderConfig
+#    imageBuilderConfig:
+#      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
+#      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
+#      basicAuth:
+#        registry: "{{ .Values.imageBuilder.defaultRepository }}"
+#        username: "{{ .Values.imageBuilder.basicAuth.username }}"
+#        passwordSecretName: "{{ .Values.imageBuilder.basicAuth.passwordSecretName }}"
   # -- Resource manager configuration
   resource_manager:
     # -- resource manager configuration
@@ -743,7 +785,7 @@ dcgm-exporter:
 
 opencost:
   # -- Enable or disable the opencost installation.
-  enabled: true
+  enabled: false
 
   opencost:
     metrics:
@@ -794,9 +836,13 @@ fluentbit:
   tolerations:
     - operator: Exists
   serviceAccount:
+    create: false
     name: fluentbit-system
     # Set cloud-provider-specific annotations to grant bucket write access.
-    # See examples above.
+    # See examples above. These are merged with additionalServiceAccountAnnotations automatically.
+    # NOTE: When commonServiceAccount is enabled (or low_privilege/singleNamespace mode),
+    # set name to the common SA name (default: "union-system") so the fluent-bit subchart
+    # DaemonSet uses the shared service account.
     annotations: {}
   # If you would like to use static access keys instead of identity federation
   # (not recommended), uncomment the following lines:
@@ -814,7 +860,7 @@ flyteagent:
 
 executor:
   enabled: true
-  idl2Executor: false
+  idl2Executor: true
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
@@ -836,10 +882,15 @@ executor:
       memory: 1Gi
   podLabels:
     app: executor
+    app.kubernetes.io/name: executor
+    app.kubernetes.io/instance: "{{ .Release.Name }}"
+  selector:
+    matchLabels:
+      app: executor
   task_logs:
     plugins:
       logs:
-        kubernetes-enabled: true
+        kubernetes-enabled: false
         # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
         cloudwatch-enabled: false
         dynamic-log-links:
@@ -930,7 +981,7 @@ executor:
 
 # -- Flytepropeller configuration
 flytepropeller:
-  enabled: true
+  enabled: false
   priorityClassName: "system-cluster-critical"
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
@@ -954,6 +1005,8 @@ flytepropeller:
     annotations: { }
     # -- ImapgePullSecrets to automatically assign to the service account
     imagePullSecrets: [ ]
+  # -- Security context for the Flytepropeller container.
+  securityContext: {}
   # -- Labels for the Flytepropeller pods
   podLabels: { }
   # -- Annotations for Flytepropeller pods
@@ -1035,8 +1088,7 @@ flytepropellerwebhook:
     runAsNonRoot: true
     runAsUser: 1001
     fsGroupChangePolicy: "Always"
-    seLinuxOptions:
-      type: spc_t
+    seLinuxOptions: null
 
   resources:
     limits:
@@ -1069,13 +1121,85 @@ flytepropellerwebhook:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+  # -- Enable Helm-managed MutatingWebhookConfiguration (if false, the webhook will create its own)
+  managedConfig: true
+  # -- Configuration for the webhook MutatingWebhookConfiguration and certificates
+  webhook:
+    # -- Name of the MutatingWebhookConfiguration resource
+    configurationName: "union-pod-webhook-{{ tpl .Values.orgName . }}"
+    # -- Failure policy for the webhook (Fail or Ignore)
+    failurePolicy: Fail
+    # -- Reinvocation policy for the webhook
+    reinvocationPolicy: Never
+    # -- Timeout in seconds for the webhook
+    timeoutSeconds: 30
+    # -- Webhook configurations to create
+    webhooks:
+      # -- Secrets injection webhook configuration
+      secrets:
+        enabled: true
+        # -- Name of the webhook
+        name: flyte-pod-webhook.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/secrets
+        # -- Object selector for the webhook
+        objectSelector:
+          matchLabels:
+            inject-flyte-secrets: "true"
+            organization: "{{ tpl .Values.orgName . }}"
+      # -- Managed image webhook configuration (requires Union operator support)
+      managedImage:
+        enabled: false
+        # -- Name of the webhook
+        name: managed-image-webhook.union.ai
+        # -- Path for the webhook
+        path: /mutate--v1-pod/managed-image
+        # -- Object selector for the webhook (matchExpressions)
+        objectSelector:
+          matchLabels:
+            organization: "{{ tpl .Values.orgName . }}"
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
 
+  # -- Configuration for webhook certificates
+  certificate:
+    # -- Certificate provider:
+    # -- "helm" - Generate self-signed certificates using Helm's crypto functions. Certs are preserved on upgrade if secret exists.
+    # -- "certManager" - Use cert-manager to provision and manage certificates. Requires cert-manager to be installed.
+    # -- "external" - Use externally provided certificates (set caCert, serverCert, serverKey below).
+    # -- "legacy" - Let the webhook binary generate its own certificates using an init container. The init container runs
+    # --           `flytepropeller webhook init-certs` to populate an empty secret, then the webhook uses those certs.
+    provider: helm
+    # -- Duration of the certificate (only used with certManager provider)
+    duration: 8760h
+    # -- Renew before duration (only used with certManager provider)
+    renewBefore: 720h
+    # -- cert-manager configuration (only used when provider is "certManager")
+    certManager:
+      # -- Issuer reference for cert-manager. If not set, a self-signed issuer will be created.
+      issuerRef: {}
+        # name: selfsigned-issuer
+        # kind: ClusterIssuer
+        # group: cert-manager.io
+    # -- External certificate configuration (only used when provider is "external")
+    external:
+      # -- Base64-encoded CA certificate (PEM format)
+      caCert: ""
+      # -- Base64-encoded TLS certificate (PEM format)
+      tlsCrt: ""
+      # -- Base64-encoded TLS private key (PEM format)
+      tlsKey: ""
 #
 # FLYTE_CONNECTOR SETTINGS
 #
 
 flyteconnector:
-  enabled: false
+  enabled: true
   # -- Replicas count for flyteconnector deployment
   replicaCount: 2
   image:
@@ -1142,8 +1266,6 @@ flyteconnector:
     targetCPUUtilizationPercentage: 80
     targetMemoryUtilizationPercentage: 80
 
-
-
 # Container images
 image:
     # -- Image repository for the operator and union services
@@ -1179,6 +1301,8 @@ nodeobserver:
     privileged: true
     capabilities:
       add: [ "SYS_ADMIN" ]
+  # -- Additional pod labels for the nodeobserver services
+  podLabels: { }
   # -- Additional pod annotations for the nodeobserver services
   podAnnotations: { }
   # -- Additional pod environment variables for the nodeobserver services
@@ -1300,44 +1424,235 @@ ingress:
     tls: {}
 
 
-# -- Union features Prometheus configuration.
-# Deploys a static Prometheus instance (no Prometheus Operator required) for Union
-# features like cost tracking and task-level monitoring.
+# -- Prometheus configuration (CRD-free)
+# Configures a standalone Prometheus deployment using the community prometheus chart.
+# It does NOT install the Prometheus Operator or any CRDs (ServiceMonitor, PrometheusRule, etc.).
+# Recording rules are delivered via a ConfigMap instead of PrometheusRule CRDs.
+# Scrape targets are configured via static scrape configs instead of ServiceMonitor CRDs.
+# NOTE: If you also enable dcgm-exporter, set dcgm-exporter.serviceMonitor.enabled=false
+# to avoid creating ServiceMonitor CRDs.
 prometheus:
-  image:
-    repository: prom/prometheus
-    tag: v3.3.1
-  # -- Data retention period.
-  retention: 3d
-  # -- Route prefix for Prometheus web UI and API.
-  routePrefix: /prometheus/
-  # -- Resource limits and requests.
-  resources:
-    limits:
-      cpu: "3"
-      memory: "3500Mi"
-    requests:
-      cpu: "1"
-      memory: "1Gi"
-  # -- Service account configuration.
-  serviceAccount:
-    create: true
-    annotations: {}
-  # -- Priority class for the Prometheus pod.
-  priorityClassName: system-cluster-critical
-  # -- Node selector for the Prometheus pod.
-  nodeSelector: {}
-  # -- Tolerations for the Prometheus pod.
-  tolerations: []
-  # -- Affinity rules for the Prometheus pod.
-  affinity: {}
+  enabled: true
+  # Disable the chart's own RBAC (which creates ClusterRoles).
+  # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
+  rbac:
+    create: false
 
-# -- Standalone kube-state-metrics for Union features (cost tracking, pod resource metrics).
-# Metric filtering is handled in the Prometheus static scrape config.
-kube-state-metrics: {}
+  # Match the same service name as kube-prometheus-stack mode so that
+  # health checks, opencost, and ingress work without changes.
+  # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
+  # In low-privilege mode, set rbac.create=false and useExistingClusterRoleName to skip
+  # ClusterRole/ClusterRoleBinding creation; a namespace-scoped Role is created instead.
+  server:
+    fullnameOverride: "union-operator-prometheus"
+    clusterRoleNameOverride: "union-operator-prometheus"
+    useExistingClusterRoleName: ""
 
-# -- Scopes the deployment, permissions and actions created into a single namespace
-low_privilege: false
+    service:
+      servicePort: 80
+
+    prefixURL: "/prometheus"
+    baseURL: "/prometheus/"
+
+    retention: "3d"
+
+    persistentVolume:
+      enabled: false
+
+    emptyDir:
+      sizeLimit: "10Gi"
+
+    startupProbe:
+      initialDelaySeconds: 120
+
+    resources:
+      limits:
+        cpu: "3"
+        memory: "3500Mi"
+      requests:
+        cpu: "1"
+        memory: "1Gi"
+
+    # Mount the recording rules ConfigMap generated by this chart
+    extraConfigmapMounts:
+      - name: recording-rules
+        mountPath: /etc/config/recording
+        configMap: union-recording-rules
+        readonly: true
+
+  # Scrape configs to replace ServiceMonitor CRDs.
+  # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
+  extraScrapeConfigs: |
+    - job_name: 'kube-state-metrics'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: kube-state-metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          action: keep
+        - source_labels: [__name__, phase]
+          separator: ";"
+          regex: "kube_pod_status_phase;(Succeeded|Failed)"
+          action: drop
+        - source_labels: [node]
+          target_label: nodename
+          regex: "(.*)"
+          action: replace
+        - source_labels: [label_node_group_name]
+          action: replace
+          regex: "(.+)"
+          target_label: label_node_pool_name
+    - job_name: 'opencost'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: opencost
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+    - job_name: 'union-services'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+          regex: .+
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: debug
+          action: keep
+    # Flyte propeller metrics for execution info and fast task duration.
+    # No-op when propeller is not deployed (no pods match the label selector).
+    - job_name: 'flytepropeller'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=flytepropeller
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    # Kourier gateway (envoy) metrics for app serving.
+    # No-op when serving is not enabled (no pods match the label selector).
+    - job_name: 'serving-envoy'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app=3scale-kourier-gateway
+      metrics_path: /stats/prometheus
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    # DCGM GPU metrics.
+    # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    - job_name: 'gpu-metrics'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - kube-system
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=dcgm-exporter
+
+  alertmanager:
+    enabled: false
+  # kube-state-metrics: use namespace-scoped Role (not ClusterRole) and only watch the release namespace.
+  # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
+  # (kube_node_*) since nodes are cluster-scoped resources.
+  kube-state-metrics:
+    enabled: true
+    rbac:
+      useClusterRole: false
+    releaseNamespace: true
+    metricRelabelings:
+      - sourceLabels: [ "__name__" ]
+        separator: ";"
+        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+        action: keep
+      - sourceLabels: [ "__name__", "phase" ]
+        separator: ";"
+        regex: "kube_pod_status_phase;(Succeeded|Failed)"
+        action: drop
+      - sourceLabels: [ "node" ]
+        targetLabel: "nodename"
+        regex: "(.*)"
+        action: replace
+      - sourceLabels: [ "label_node_group_name" ]
+        action: replace
+        regex: "(.+)"
+        targetLabel: "label_node_pool_name"
+  prometheus-node-exporter:
+    enabled: false
+  prometheus-pushgateway:
+    enabled: false
+
+# -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
+#  require additional permissions on the cluster. This limits the functionality though.
+low_privilege: true
+
+# -- When enabled, creates a single shared ServiceAccount for all components
+# (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
+# Automatically enabled when singleNamespace mode is active.
+commonServiceAccount:
+  enabled: true
+  name: union-system
+  annotations: {}
+  imagePullSecrets: []
 # -- Union operator proxy configuration
 proxy:
   serviceAccount:
@@ -1469,7 +1784,9 @@ serving:
   # -- Enables scraping of metrics from the serving component
   metrics: true
   # -- Additional configuration for Knative serving
-  extraConfig: {}
+  extraConfig:
+    deployment:
+      registries-skipping-tag-resolving: "managed.cr.union.ai"
   # -- Resources for serving components
   resources:
     3scale-kourier-gateway:
@@ -1497,7 +1814,7 @@ serving:
 
 # Enable the knative operator.  Required for app serving.
 knative-operator:
-  enabled: false
+  enabled: true
 
   crds:
     install: true
@@ -1516,7 +1833,7 @@ imageBuilder:
 
   # -- The default repository to publish images to "registry" is not specified with imagespec.
   # -- Note, the build-image task will fail unless "registry" is specified or a default repository is provided.
-  defaultRepository: ""
+  defaultRepository: registry.depot.dev
 
   # -- How build-image task and operator proxy will attempt to authenticate
   # -- Supported values are "noop", "google", "aws", "azure"
@@ -1524,7 +1841,18 @@ imageBuilder:
   # -- "google" uses docker-credential-gcr to authenticate to the default registry
   # -- "aws" uses docker-credential-ecr-login to authenticate to the default registry
   # -- "azure" uses az acr login to authenticate to the default registry. Requires Azure Workload Identity to be enabled.
+  # -- "basic" uses basic docker username/password auth to authenticate to the registry.
   authenticationType: "noop"
+
+  # -- Basic auth credentials for registry authentication (e.g. Depot, GHCR).
+  # -- Used by the operator proxy to authenticate when checking image existence.
+  basicAuth:
+    # -- Username for registry authentication. For Depot use "x-token".
+    username: "x-token"
+    # -- Secret name for password lookup via secret manager (recommended for production).
+    passwordSecretName: "DEPOT_TOKEN"
+    # -- Plain text password or token (use passwordSecretName for production).
+    passwordPlainText: ""
 
   buildkit:
 
@@ -1573,7 +1901,7 @@ imageBuilder:
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
     # -- kernel >= 5.11 with unprivileged user namespace support.
-    rootless: true
+    rootless: false
 
     # -- Enable debug logging
     log:
@@ -1605,9 +1933,9 @@ imageBuilder:
     # -- Resource definitions
     resources:
       requests:
-        cpu: 1
-        memory: 1Gi
-        ephemeral-storage: 20Gi
+        cpu: 4
+        memory: 4Gi
+        ephemeral-storage: 50Gi
 
     # -- Node selector
     nodeSelector: {}
@@ -1753,6 +2081,9 @@ monitoring:
   kube-state-metrics:
     nameOverride: "monitoring-kube-state-metrics"
     fullnameOverride: "monitoring-kube-state-metrics"
+    # Explicit list type to avoid merge conflict with standalone kube-state-metrics subchart
+    # which defaults env to {} (map) while kube-prometheus-stack's nested chart expects [] (list).
+    env: []
 
   # By default, install a separate Prometheus instance for monitoring.
   # This is the simplest, out of the box model, it is highly recommended that users look
