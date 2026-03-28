@@ -785,7 +785,7 @@ dcgm-exporter:
 
 opencost:
   # -- Enable or disable the opencost installation.
-  enabled: true
+  enabled: false
 
   opencost:
     metrics:
@@ -981,7 +981,7 @@ executor:
 
 # -- Flytepropeller configuration
 flytepropeller:
-  enabled: true
+  enabled: false
   priorityClassName: "system-cluster-critical"
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
@@ -1424,54 +1424,19 @@ ingress:
     tls: {}
 
 
-# -- Union features Prometheus configuration.
-# Deploys a static Prometheus instance (no Prometheus Operator required) for Union
-# features like cost tracking and task-level monitoring.
-prometheus:
-  # -- Enable the static Prometheus deployment for Union features.
-  enabled: false
-  image:
-    repository: prom/prometheus
-    tag: v3.3.1
-  # -- Data retention period.
-  retention: 3d
-  # -- Route prefix for Prometheus web UI and API.
-  routePrefix: /prometheus/
-  # -- Resource limits and requests.
-  resources:
-    limits:
-      cpu: "3"
-      memory: "3500Mi"
-    requests:
-      cpu: "1"
-      memory: "1Gi"
-  # -- Service account configuration.
-  serviceAccount:
-    create: true
-    annotations: {}
-  # -- Priority class for the Prometheus pod.
-  priorityClassName: system-cluster-critical
-  # -- Node selector for the Prometheus pod.
-  nodeSelector: {}
-  # -- Tolerations for the Prometheus pod.
-  tolerations: []
-  # -- Affinity rules for the Prometheus pod.
-  affinity: {}
-
-# -- Standalone kube-state-metrics for Union features (cost tracking, pod resource metrics).
-# Metric filtering is handled in the Prometheus static scrape config.
-kube-state-metrics: {}
-
-# -- Simple Prometheus configuration (CRD-free alternative)
-# This section configures a standalone Prometheus deployment using the community prometheus chart.
+# -- Prometheus configuration (CRD-free)
+# Configures a standalone Prometheus deployment using the community prometheus chart.
 # It does NOT install the Prometheus Operator or any CRDs (ServiceMonitor, PrometheusRule, etc.).
-# Mutually exclusive with prometheus.enabled — enable only one.
 # Recording rules are delivered via a ConfigMap instead of PrometheusRule CRDs.
 # Scrape targets are configured via static scrape configs instead of ServiceMonitor CRDs.
 # NOTE: If you also enable dcgm-exporter, set dcgm-exporter.serviceMonitor.enabled=false
 # to avoid creating ServiceMonitor CRDs.
-prometheus-simple:
-  enabled: false
+prometheus:
+  enabled: true
+  # Disable the chart's own RBAC (which creates ClusterRoles).
+  # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
+  rbac:
+    create: false
 
   # Match the same service name as kube-prometheus-stack mode so that
   # health checks, opencost, and ingress work without changes.
@@ -1480,7 +1445,7 @@ prometheus-simple:
   # ClusterRole/ClusterRoleBinding creation; a namespace-scoped Role is created instead.
   server:
     fullnameOverride: "union-operator-prometheus"
-    clusterRoleNameOverride: "union-operator-prometheus-simple"
+    clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
 
     service:
@@ -1583,11 +1548,77 @@ prometheus-simple:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
+    # Flyte propeller metrics for execution info and fast task duration.
+    # No-op when propeller is not deployed (no pods match the label selector).
+    - job_name: 'flytepropeller'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=flytepropeller
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    # Kourier gateway (envoy) metrics for app serving.
+    # No-op when serving is not enabled (no pods match the label selector).
+    - job_name: 'serving-envoy'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app=3scale-kourier-gateway
+      metrics_path: /stats/prometheus
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    # DCGM GPU metrics.
+    # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    - job_name: 'gpu-metrics'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - kube-system
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=dcgm-exporter
 
   alertmanager:
     enabled: false
+  # kube-state-metrics: use namespace-scoped Role (not ClusterRole) and only watch the release namespace.
+  # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
+  # (kube_node_*) since nodes are cluster-scoped resources.
   kube-state-metrics:
     enabled: true
+    rbac:
+      useClusterRole: false
+    releaseNamespace: true
     metricRelabelings:
       - sourceLabels: [ "__name__" ]
         separator: ";"
@@ -1612,7 +1643,7 @@ prometheus-simple:
 
 # -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
 #  require additional permissions on the cluster. This limits the functionality though.
-low_privilege: false
+low_privilege: true
 
 # -- When enabled, creates a single shared ServiceAccount for all components
 # (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
