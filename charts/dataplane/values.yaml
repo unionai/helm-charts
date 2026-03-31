@@ -650,11 +650,21 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
+  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
+  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
+  namespace: "kube-system"
+
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
     # TLM uses this to map GPU metrics to task pods
     - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
       value: "uid"
+    # Required for MIG (Multi-Instance GPU) partition profiling on A100/H100.
+    # Allows DCGM to access per-partition profiling counters (DCGM_FI_PROF_*).
+    # Without this, DCGM_FI_PROF_SM_ACTIVE and related metrics return no data
+    # for MIG slices.
+    - name: NVIDIA_MIG_MONITOR_DEVICES
+      value: "all"
 
   # Based on default metrics list at
   # https://github.com/NVIDIA/dcgm-exporter/blob/3446595fbb31e22e45a8dbcd63ade14e3da49810/deployment/templates/metrics-configmap.yaml#L13
