@@ -86,20 +86,6 @@ metadata:
   name: union-clustersync-system
   namespace: union
 ---
-# Source: dataplane/templates/event-exporter/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-operator-event-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
----
 # Source: dataplane/templates/imagebuilder/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -318,32 +304,6 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
 ---
-# Source: dataplane/templates/event-exporter/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-operator-event-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
-data:
-  config.yaml: |
-    logLevel: error
-    logFormat: json
-    route:
-      routes:
-        - receiver: "prometheus"
-    receivers:
-      - name: "prometheus"
-        prometheus:
-          port: 2112
-          ttl: 24h
----
 # Source: dataplane/templates/event-exporter/dashboard.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -362,10 +322,8 @@ metadata:
 data:
   union-pod-events.json: |-
     {
-      "annotations": {
-        "list": []
-      },
-      "description": "Kubernetes Pod and cluster event visibility via kubernetes-event-exporter. Requires eventExporter.enabled=true in the dataplane chart.",
+      "annotations": { "list": [] },
+      "description": "Kubernetes Pod and cluster event visibility via kube-state-metrics kube_event_count. Requires eventExporter.enabled=true in the dataplane chart.",
       "editable": true,
       "fiscalYearStartMonth": 0,
       "graphTooltip": 1,
@@ -384,39 +342,17 @@ data:
             "defaults": {
               "color": { "mode": "thresholds" },
               "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 1 },
-                  { "color": "red", "value": 10 }
-                ]
-              },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] },
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
           "id": 2,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-            "textMode": "auto"
-          },
-          "title": "Warning Events (24h)",
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "Warning Events (total count)",
           "type": "stat",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(increase(kubernetes_event_count{type=\"Warning\",namespace=~\"$namespace\"}[24h]))",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            }
-          ]
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -424,39 +360,17 @@ data:
             "defaults": {
               "color": { "mode": "thresholds" },
               "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 1 },
-                  { "color": "red", "value": 5 }
-                ]
-              },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] },
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
           "id": 3,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-            "textMode": "auto"
-          },
-          "title": "FailedMount (24h)",
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "FailedMount (total count)",
           "type": "stat",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(increase(kubernetes_event_count{reason=\"FailedMount\",namespace=~\"$namespace\"}[24h]))",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            }
-          ]
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"FailedMount\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -464,39 +378,17 @@ data:
             "defaults": {
               "color": { "mode": "thresholds" },
               "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 1 },
-                  { "color": "red", "value": 5 }
-                ]
-              },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] },
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
           "id": 4,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-            "textMode": "auto"
-          },
-          "title": "OOMKilling (24h)",
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "OOMKilling (total count)",
           "type": "stat",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(increase(kubernetes_event_count{reason=\"OOMKilling\",namespace=~\"$namespace\"}[24h]))",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            }
-          ]
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"OOMKilling\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
@@ -504,86 +396,34 @@ data:
             "defaults": {
               "color": { "mode": "thresholds" },
               "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 1 },
-                  { "color": "red", "value": 10 }
-                ]
-              },
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] },
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
           "id": 5,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "justifyMode": "auto",
-            "orientation": "auto",
-            "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
-            "textMode": "auto"
-          },
-          "title": "BackOff (24h)",
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "BackOff (total count)",
           "type": "stat",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum(increase(kubernetes_event_count{reason=\"BackOff\",namespace=~\"$namespace\"}[24h]))",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            }
-          ]
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"BackOff\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
         },
         {
           "datasource": { "type": "prometheus", "uid": "${datasource}" },
           "fieldConfig": {
             "defaults": {
               "color": { "mode": "palette-classic" },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "gradientMode": "none",
-                "hideFrom": { "legend": false, "tooltip": false, "viz": false },
-                "insertNulls": false,
-                "lineInterpolation": "linear",
-                "lineWidth": 1,
-                "pointSize": 5,
-                "scaleDistribution": { "type": "linear" },
-                "showPoints": "never",
-                "spanNulls": true,
-                "stacking": { "group": "A", "mode": "none" },
-                "thresholdsStyle": { "mode": "off" }
-              },
+              "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
               "unit": "short"
             },
             "overrides": []
           },
           "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
           "id": 6,
-          "options": {
-            "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "right", "showLegend": true },
-            "tooltip": { "mode": "multi", "sort": "desc" }
-          },
-          "title": "Warning Events Rate by Reason",
+          "options": { "legend": { "calcs": ["max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "title": "Warning Events by Reason (accumulated count over time)",
           "type": "timeseries",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "sum by (reason)(rate(kubernetes_event_count{type=\"Warning\",namespace=~\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "{{reason}}",
-              "refId": "A"
-            }
-          ]
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (reason)(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"})", "legendFormat": "{{reason}}", "refId": "A" }]
         },
         {
           "collapsed": false,
@@ -597,126 +437,36 @@ data:
           "fieldConfig": {
             "defaults": {
               "color": { "mode": "thresholds" },
-              "custom": {
-                "align": "auto",
-                "cellOptions": { "type": "auto" },
-                "inspect": false
-              },
+              "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
               "mappings": [],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "red", "value": 80 }
-                ]
-              }
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] }
             },
             "overrides": [
               {
                 "matcher": { "id": "byName", "options": "Count" },
                 "properties": [
-                  {
-                    "id": "custom.cellOptions",
-                    "value": { "mode": "basic", "type": "color-background" }
-                  },
-                  {
-                    "id": "thresholds",
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        { "color": "green", "value": null },
-                        { "color": "yellow", "value": 3 },
-                        { "color": "red", "value": 10 }
-                      ]
-                    }
-                  }
+                  { "id": "custom.cellOptions", "value": { "mode": "basic", "type": "color-background" } },
+                  { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 10 }] } }
                 ]
               }
             ]
           },
           "gridPos": { "h": 12, "w": 24, "x": 0, "y": 14 },
           "id": 8,
-          "options": {
-            "cellHeight": "sm",
-            "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false },
-            "showHeader": true,
-            "sortBy": [{ "displayName": "Count", "desc": true }]
-          },
-          "title": "Top Warning Events",
+          "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true, "sortBy": [{ "displayName": "Count", "desc": true }] },
+          "title": "Top Warning Events — Event name is formatted as <pod-name>.<hex-suffix>",
           "type": "table",
-          "targets": [
-            {
-              "datasource": { "type": "prometheus", "uid": "${datasource}" },
-              "expr": "topk(20, sum by (namespace, involved_object_kind, involved_object_name, reason, source_component)(increase(kubernetes_event_count{type=\"Warning\",namespace=~\"$namespace\"}[$__range])))",
-              "instant": true,
-              "legendFormat": "__auto",
-              "refId": "A"
-            }
-          ],
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "topk(20, sum by (namespace, name, reason, source_component)(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"}))", "instant": true, "legendFormat": "__auto", "refId": "A" }],
           "transformations": [
             { "id": "labelsToFields", "options": { "mode": "columns" } },
-            {
-              "id": "organize",
-              "options": {
-                "renameByName": {
-                  "namespace": "Namespace",
-                  "involved_object_kind": "Kind",
-                  "involved_object_name": "Pod / Object",
-                  "reason": "Reason",
-                  "source_component": "Source",
-                  "Value": "Count"
-                },
-                "excludeByName": { "Time": true },
-                "indexByName": {
-                  "Namespace": 0,
-                  "Pod / Object": 1,
-                  "Reason": 2,
-                  "Source": 3,
-                  "Count": 4,
-                  "Kind": 5
-                }
-              }
-            }
+            { "id": "organize", "options": { "renameByName": { "namespace": "Namespace", "name": "Event Name (pod-name.hex)", "reason": "Reason", "source_component": "Source", "Value": "Count" }, "excludeByName": { "Time": true }, "indexByName": { "Namespace": 0, "Event Name (pod-name.hex)": 1, "Reason": 2, "Source": 3, "Count": 4 } } }
           ]
         }
       ],
       "templating": {
         "list": [
-          {
-            "current": {},
-            "hide": 0,
-            "includeAll": false,
-            "label": "Data Source",
-            "multi": false,
-            "name": "datasource",
-            "options": [],
-            "query": "prometheus",
-            "refresh": 1,
-            "type": "datasource"
-          },
-          {
-            "current": {
-              "selected": false,
-              "text": "All",
-              "value": "$__all"
-            },
-            "datasource": { "type": "prometheus", "uid": "${datasource}" },
-            "definition": "label_values(kubernetes_event_count, namespace)",
-            "hide": 0,
-            "includeAll": true,
-            "allValue": ".*",
-            "label": "Namespace",
-            "multi": false,
-            "name": "namespace",
-            "options": [],
-            "query": {
-              "query": "label_values(kubernetes_event_count, namespace)",
-              "refId": "StandardVariableQuery"
-            },
-            "refresh": 2,
-            "sort": 1,
-            "type": "query"
-          }
+          { "current": {}, "hide": 0, "includeAll": false, "label": "Data Source", "multi": false, "name": "datasource", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" },
+          { "current": { "selected": false, "text": "All", "value": "$__all" }, "datasource": { "type": "prometheus", "uid": "${datasource}" }, "definition": "label_values(kube_event_count, namespace)", "hide": 0, "includeAll": true, "allValue": ".*", "label": "Namespace", "multi": false, "name": "namespace", "options": [], "query": { "query": "label_values(kube_event_count, namespace)", "refId": "StandardVariableQuery" }, "refresh": 2, "sort": 1, "type": "query" }
         ]
       },
       "time": { "from": "now-3h", "to": "now" },
@@ -3266,7 +3016,7 @@ data:
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total|kube_event_count
           action: keep
         - separator: ;
           source_labels: [__name__, phase]
@@ -3347,10 +3097,6 @@ data:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
-      # Kubernetes event exporter — Pod and cluster event counters
-      - job_name: kubernetes-event-exporter
-        static_configs:
-        - targets: ['union-operator-event-exporter:2112']
   rules.yml: |
     
     groups:
@@ -4577,30 +4323,6 @@ rules:
     verbs:
       - '*'
 ---
-# Source: dataplane/templates/event-exporter/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-operator-event-exporter
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
-rules:
-  - apiGroups: [""]
-    resources:
-      - events
-      - namespaces
-      - nodes
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
----
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -4936,27 +4658,6 @@ subjects:
     name: union-clustersync-system
     namespace: union
 ---
-# Source: dataplane/templates/event-exporter/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-operator-event-exporter
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-event-exporter
-subjects:
-  - kind: ServiceAccount
-    name: union-operator-event-exporter
-    namespace: union
----
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5242,35 +4943,6 @@ spec:
   selector:
       app.kubernetes.io/name: clusterresourcesync
       app.kubernetes.io/instance: release-name
----
-# Source: dataplane/templates/event-exporter/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-event-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
-  annotations:
-    prometheus.io/scrape: "true"
-    prometheus.io/port: "2112"
-    prometheus.io/path: "/metrics"
-spec:
-  selector:
-    app.kubernetes.io/component: event-exporter
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-  ports:
-    - name: metrics
-      port: 2112
-      targetPort: metrics
-      protocol: TCP
-  type: ClusterIP
 ---
 # Source: dataplane/templates/imagebuilder/service.yaml
 apiVersion: v1
@@ -5590,7 +5262,7 @@ spec:
       - name: kube-state-metrics
         args:
         - --port=8080
-        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
+        - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,events,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,serviceaccounts,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
         imagePullPolicy: IfNotPresent
         image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.15.0
         ports:
@@ -5821,67 +5493,6 @@ spec:
         - name: auth
           secret:
             secretName: union-secret-auth
----
-# Source: dataplane/templates/event-exporter/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: union-operator-event-exporter
-  namespace: union
-  labels:
-    helm.sh/chart: dataplane-2026.3.12
-    app.kubernetes.io/name: release-name-dataplane
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.3.9"
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: event-exporter
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/component: event-exporter
-      app.kubernetes.io/name: release-name-dataplane
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "bab69e0afc49f15650f433c9e92c062f82d1ac5bdc6df67f54028eb563184f7"
-      labels:
-        app.kubernetes.io/component: event-exporter
-        app.kubernetes.io/name: release-name-dataplane
-        app.kubernetes.io/instance: release-name
-    spec:
-      serviceAccountName: union-operator-event-exporter
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 65534
-      containers:
-        - name: event-exporter
-          image: "ghcr.io/opsgenie/kubernetes-event-exporter:v0.11"
-          args:
-            - -conf=/data/config.yaml
-          ports:
-            - name: metrics
-              containerPort: 2112
-              protocol: TCP
-          resources:
-            limits:
-              cpu: 100m
-              memory: 128Mi
-            requests:
-              cpu: 10m
-              memory: 64Mi
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-          terminationMessagePolicy: FallbackToLogsOnError
-          volumeMounts:
-            - mountPath: /data
-              name: config
-      volumes:
-        - name: config
-          configMap:
-            name: union-operator-event-exporter
 ---
 # Source: dataplane/templates/imagebuilder/deployment.yaml
 apiVersion: apps/v1
@@ -6372,7 +5983,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4d644265163d9b442847a9ce19883908bdc7c481ea7ac661bc45fe0d2e2b17c"
+        configChecksum: "4a1307274b491415067832cf78a223e42f8e86b2a08b9b9d54a9739a180cf92"
       labels:
         app.kubernetes.io/component: prometheus
         app.kubernetes.io/name: release-name-dataplane

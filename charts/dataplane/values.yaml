@@ -1334,49 +1334,49 @@ prometheus:
 
 # -- Standalone kube-state-metrics for Union features (cost tracking, pod resource metrics).
 # Metric filtering is handled in the Prometheus static scrape config.
-kube-state-metrics: {}
+# The events collector is always enabled so that kube_event_count is available
+# for the eventExporter Grafana dashboard and AlertManager rules.
+kube-state-metrics:
+  collectors:
+    - certificatesigningrequests
+    - configmaps
+    - cronjobs
+    - daemonsets
+    - deployments
+    - endpoints
+    - events
+    - horizontalpodautoscalers
+    - ingresses
+    - jobs
+    - leases
+    - limitranges
+    - mutatingwebhookconfigurations
+    - namespaces
+    - networkpolicies
+    - nodes
+    - persistentvolumeclaims
+    - persistentvolumes
+    - poddisruptionbudgets
+    - pods
+    - replicasets
+    - replicationcontrollers
+    - resourcequotas
+    - secrets
+    - serviceaccounts
+    - services
+    - statefulsets
+    - storageclasses
+    - validatingwebhookconfigurations
+    - volumeattachments
 
-# -- Kubernetes event exporter for Pod event visibility via Prometheus.
-# Deploys a lightweight exporter that converts Kubernetes Events into Prometheus
-# counters (kubernetes_event_count) scrapeable by the Union static Prometheus,
-# a customer-managed Prometheus, or kube-prometheus-stack.
-# Useful for surfacing OOMKill, BackOff, FailedScheduling, and similar events
-# in Grafana dashboards or AlertManager rules.
+# -- Pod event visibility via Prometheus.
+# Uses the kube-state-metrics events collector (already deployed) to expose
+# kube_event_count — no extra container required.
+# When enabled, allows kube_event_count through the Prometheus scrape filter
+# and deploys a Grafana dashboard (when monitoring.dashboards.enabled is also true).
 eventExporter:
-  # -- Enable the event exporter. Disabled by default.
+  # -- Enable pod event metrics and the Grafana dashboard.
   enabled: false
-  image:
-    # -- Use the opsgenie original, which registers the prometheus sink.
-    # The resmoio fork does NOT include the prometheus sink and will fail with "unknown sink".
-    repository: ghcr.io/opsgenie/kubernetes-event-exporter
-    tag: v0.11
-  # -- Log level: error, warn, info, debug.
-  logLevel: error
-  # -- Port on which the /metrics endpoint is exposed.
-  metricsPort: 2112
-  # -- How long to retain per-label metric series after the last observed event.
-  metricsTTL: 24h
-  # -- Custom route config. Each entry must include a `receiver` field pointing to "prometheus".
-  # If empty, all events are forwarded to the Prometheus receiver.
-  # See https://github.com/opsgenie/kubernetes-event-exporter for the full route format.
-  routes: []
-  # -- Resource limits and requests.
-  resources:
-    limits:
-      cpu: "100m"
-      memory: "128Mi"
-    requests:
-      cpu: "10m"
-      memory: "64Mi"
-  # -- Service account annotations (e.g. for IRSA or Workload Identity).
-  serviceAccount:
-    annotations: {}
-  # -- Node selector for the event exporter pod.
-  nodeSelector: {}
-  # -- Tolerations for the event exporter pod.
-  tolerations: []
-  # -- Affinity rules for the event exporter pod.
-  affinity: {}
 
 # -- Scopes the deployment, permissions and actions created into a single namespace
 low_privilege: false
@@ -1696,7 +1696,7 @@ extraObjects: []
 
 ## -- Automatically create namespaces to deploy into
 namespaces:
-  enabled: true
+  enabled: false
 
 monitoring:
   enabled: false
