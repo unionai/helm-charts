@@ -1,0 +1,26 @@
+{{- if .Values.eventExporter.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "union-operator.fullname" . }}-event-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: event-exporter
+data:
+  config.yaml: |
+    logLevel: {{ .Values.eventExporter.logLevel }}
+    logFormat: json
+    route:
+      routes:
+    {{- if .Values.eventExporter.routes }}
+        {{- toYaml .Values.eventExporter.routes | nindent 8 }}
+    {{- else }}
+        - receiver: "prometheus"
+    {{- end }}
+    receivers:
+      - name: "prometheus"
+        prometheus:
+          port: {{ .Values.eventExporter.metricsPort }}
+          ttl: {{ .Values.eventExporter.metricsTTL }}
+{{- end }}

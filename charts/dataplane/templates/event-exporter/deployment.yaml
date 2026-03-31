@@ -1,0 +1,62 @@
+{{- if .Values.eventExporter.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "union-operator.fullname" . }}-event-exporter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: event-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: event-exporter
+      {{- include "unionai-dataplane.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/event-exporter/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+      labels:
+        app.kubernetes.io/component: event-exporter
+        {{- include "unionai-dataplane.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "union-operator.fullname" . }}-event-exporter
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: event-exporter
+          image: "{{ .Values.eventExporter.image.repository }}:{{ .Values.eventExporter.image.tag }}"
+          args:
+            - -conf=/data/config.yaml
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.eventExporter.metricsPort }}
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.eventExporter.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+          terminationMessagePolicy: FallbackToLogsOnError
+          volumeMounts:
+            - mountPath: /data
+              name: config
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "union-operator.fullname" . }}-event-exporter
+      {{- with .Values.eventExporter.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.eventExporter.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.eventExporter.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
