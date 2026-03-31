@@ -157,10 +157,29 @@ data:
         - role: pod
           namespaces:
             names:
-            - kube-system
+            - {{ index .Values "dcgm-exporter" "namespace" | default "kube-system" }}
           selectors:
           - role: pod
             label: app.kubernetes.io/name=dcgm-exporter
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_ip]
+          regex: '(.*)'
+          target_label: __address__
+          replacement: '${1}:9400'
+          action: replace
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
+        metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
+          action: keep
       {{- end }}
 
   {{- if .Values.cost.enabled }}
