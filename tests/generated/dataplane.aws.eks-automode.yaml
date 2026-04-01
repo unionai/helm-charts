@@ -18,7 +18,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: "{{ .Release.Namespace }}"
+  name: "union"
   labels:
     app.kubernetes.io/name: knative-operator
     app.kubernetes.io/version: "1.16.0"
@@ -71,7 +71,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: knative-operator
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -95,7 +95,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: operator-webhook
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -182,7 +182,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: operator-webhook-certs
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/component: operator-webhook
     app.kubernetes.io/version: "1.16.0"
@@ -340,7 +340,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-logging
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -403,7 +403,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-observability
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -13628,87 +13628,44 @@ rules:
       - list
       - watch
 ---
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
+# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: ClusterRoleBinding
 metadata:
-  name: knative-serving-operator-aggregated
+  name: release-name-fluentbit
   labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-aggregationRule:
-  clusterRoleSelectors:
-    # This (along with escalate below) allows the Operator to pick up any
-    # roles that are provided to the admin of the cluster by knative serving
-    # automatically.
-    - matchExpressions:
-        - {key: serving.knative.dev/release, operator: Exists}
-rules: [] # Rules are automatically filled in by the controller manager.
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-fluentbit
+subjects:
+  - kind: ServiceAccount
+    name: fluentbit-system
+    namespace: union
 ---
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Source: dataplane/charts/dcgm-exporter/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: knative-serving-operator-aggregated-stable
+  name: dcgm-exporter-read-cm
+  namespace: union
   labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-aggregationRule:
-  clusterRoleSelectors:
-    # This (along with escalate below) allows the Operator to pick up any
-    # roles that are provided to the admin of the cluster by knative serving
-    # automatically.
-    - matchExpressions:
-        - {key: app.kubernetes.io/name, operator: In, values: ["knative-serving"]}
-rules: [] # Rules are automatically filled in by the controller manager.
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: knative-eventing-operator-aggregated
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-aggregationRule:
-  clusterRoleSelectors:
-    # This (along with escalate below) allows the Operator to pick up any
-    # roles that are provided to the admin of the cluster by knative eventing
-    # automatically.
-    - matchExpressions:
-        - {key: eventing.knative.dev/release, operator: Exists}
-rules: [] # Rules are automatically filled in by the controller manager.
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: knative-eventing-operator-aggregated-stable
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-aggregationRule:
-  clusterRoleSelectors:
-    # This (along with escalate below) allows the Operator to pick up any
-    # roles that are provided to the admin of the cluster by knative eventing
-    # automatically.
-    - matchExpressions:
-        - {key: app.kubernetes.io/name, operator: In, values: ["knative-eventing"]}
-rules: [] # Rules are automatically filled in by the controller manager.
+    helm.sh/chart: dcgm-exporter-4.7.1
+    app.kubernetes.io/name: dcgm-exporter
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: dcgm-exporter
+    app.kubernetes.io/version: "4.7.1"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  resourceNames: ["exporter-metrics-config-map"]
+  verbs: ["get"]
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
@@ -13724,8 +13681,7 @@ rules: [] # Rules are automatically filled in by the controller manager.
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-kind: ClusterRole
+kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-operator
@@ -13966,7 +13922,7 @@ rules:
       - get
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-kind: ClusterRole
+kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-eventing-operator
@@ -14356,8 +14312,46 @@ rules:
       - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+---
+# Copyright 2022 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
+metadata:
+  namespace: "union"
+  name: knative-operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+rules:
+  # For manipulating certs into secrets.
+  - apiGroups:
+      - ""
+    resources:
+      - "secrets"
+    verbs:
+      - "get"
+      - "create"
+      - "update"
+      - "list"
+      - "watch"
+      - "patch"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
 metadata:
   name: knative-operator-webhook
   labels:
@@ -14431,387 +14425,6 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
-# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: release-name-fluentbit
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: release-name-fluentbit
-subjects:
-  - kind: ServiceAccount
-    name: fluentbit-system
-    namespace: union
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# TODO: Consider restriction of non-aggregated role to knativeservings namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-operator
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-serving-operator
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# TODO: Consider restriction of non-aggregated role to knativeeventing namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-eventing-operator
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-eventing-operator
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: operator-webhook
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-operator-webhook
-subjects:
-  - kind: ServiceAccount
-    name: operator-webhook
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-operator-aggregated
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-serving-operator-aggregated
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-serving-operator-aggregated-stable
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-serving-operator-aggregated-stable
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-eventing-operator-aggregated
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-eventing-operator-aggregated
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: knative-eventing-operator-aggregated-stable
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-eventing-operator-aggregated-stable
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "{{ .Release.Namespace }}"
----
-# Source: dataplane/charts/dcgm-exporter/templates/role.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: dcgm-exporter-read-cm
-  namespace: union
-  labels:
-    helm.sh/chart: dcgm-exporter-4.7.1
-    app.kubernetes.io/name: dcgm-exporter
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: dcgm-exporter
-    app.kubernetes.io/version: "4.7.1"
-    app.kubernetes.io/managed-by: Helm
-rules:
-- apiGroups: [""]
-  resources: ["configmaps"]
-  resourceNames: ["exporter-metrics-config-map"]
-  verbs: ["get"]
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2022 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  namespace: "{{ .Release.Namespace }}"
-  name: knative-operator-webhook
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-rules:
-  # For manipulating certs into secrets.
-  - apiGroups:
-      - ""
-    resources:
-      - "secrets"
-    verbs:
-      - "get"
-      - "create"
-      - "update"
-      - "list"
-      - "watch"
-      - "patch"
----
-# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/role.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  labels:    
-    helm.sh/chart: kube-state-metrics-5.25.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: metrics
-    app.kubernetes.io/part-of: kube-state-metrics
-    app.kubernetes.io/name: kube-state-metrics
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.13.0"
-  name: release-name-kube-state-metrics
-  namespace: 
-rules:
-
-- apiGroups: ["certificates.k8s.io"]
-  resources:
-  - certificatesigningrequests
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - configmaps
-  verbs: ["list", "watch"]
-
-- apiGroups: ["batch"]
-  resources:
-  - cronjobs
-  verbs: ["list", "watch"]
-
-- apiGroups: ["extensions", "apps"]
-  resources:
-  - daemonsets
-  verbs: ["list", "watch"]
-
-- apiGroups: ["extensions", "apps"]
-  resources:
-  - deployments
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - endpoints
-  verbs: ["list", "watch"]
-
-- apiGroups: ["autoscaling"]
-  resources:
-  - horizontalpodautoscalers
-  verbs: ["list", "watch"]
-
-- apiGroups: ["extensions", "networking.k8s.io"]
-  resources:
-  - ingresses
-  verbs: ["list", "watch"]
-
-- apiGroups: ["batch"]
-  resources:
-  - jobs
-  verbs: ["list", "watch"]
-
-- apiGroups: ["coordination.k8s.io"]
-  resources:
-  - leases
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - limitranges
-  verbs: ["list", "watch"]
-
-- apiGroups: ["admissionregistration.k8s.io"]
-  resources:
-    - mutatingwebhookconfigurations
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - namespaces
-  verbs: ["list", "watch"]
-
-- apiGroups: ["networking.k8s.io"]
-  resources:
-  - networkpolicies
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - nodes
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - persistentvolumeclaims
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - persistentvolumes
-  verbs: ["list", "watch"]
-
-- apiGroups: ["policy"]
-  resources:
-    - poddisruptionbudgets
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - pods
-  verbs: ["list", "watch"]
-
-- apiGroups: ["extensions", "apps"]
-  resources:
-  - replicasets
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - replicationcontrollers
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - resourcequotas
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - secrets
-  verbs: ["list", "watch"]
-
-- apiGroups: [""]
-  resources:
-  - services
-  verbs: ["list", "watch"]
-
-- apiGroups: ["apps"]
-  resources:
-  - statefulsets
-  verbs: ["list", "watch"]
-
-- apiGroups: ["storage.k8s.io"]
-  resources:
-    - storageclasses
-  verbs: ["list", "watch"]
-
-- apiGroups: ["admissionregistration.k8s.io"]
-  resources:
-    - validatingwebhookconfigurations
-  verbs: ["list", "watch"]
-
-- apiGroups: ["storage.k8s.io"]
-  resources:
-    - volumeattachments
-  verbs: ["list", "watch"]
----
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -14821,6 +14434,7 @@ metadata:
   labels:
     release: release-name
 rules:
+  # Prometheus server scrape permissions
   - apiGroups: [""]
     resources:
       - nodes
@@ -14850,6 +14464,91 @@ rules:
       - get
       - list
       - watch
+  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["daemonsets"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["replicationcontrollers"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["list", "watch"]
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -15050,6 +14749,38 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# TODO: Consider restriction of non-aggregated role to knativeservings namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: knative-serving-operator
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: knative-serving-operator
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15067,7 +14798,7 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   name: operator-webhook
   labels:
     app.kubernetes.io/version: "1.16.0"
@@ -15075,34 +14806,28 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: operator-webhook
-    namespace: "{{ .Release.Namespace }}"
+    namespace: "union"
 roleRef:
   kind: Role
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
 ---
-# Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/rolebinding.yaml
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  labels:    
-    helm.sh/chart: kube-state-metrics-5.25.1
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: metrics
-    app.kubernetes.io/part-of: kube-state-metrics
-    app.kubernetes.io/name: kube-state-metrics
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.13.0"
-  name: release-name-kube-state-metrics
-  namespace: 
+  name: operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: release-name-kube-state-metrics
+  name: knative-operator-webhook
 subjects:
-- kind: ServiceAccount
-  name: release-name-kube-state-metrics
-  namespace: union
+  - kind: ServiceAccount
+    name: operator-webhook
+    namespace: "union"
 ---
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -15115,6 +14840,24 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-prometheus-rbac
+---
+# Source: dataplane/templates/monitoring/prometheus-rbac.yaml
+# kube-state-metrics service account RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-prometheus-kube-state-metrics
+  namespace: union
+  labels:
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: release-name-prometheus-kube-state-metrics
     namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -15298,7 +15041,7 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
   name: operator-webhook
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
 spec:
   ports:
     # Define metrics and profiling for them to be accessible within service meshes.
@@ -15907,7 +15650,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: operator-webhook
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/component: operator-webhook
     app.kubernetes.io/version: "1.16.0"
@@ -16028,7 +15771,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: knative-operator
-  namespace: "{{ .Release.Namespace }}"
+  namespace: "union"
   labels:
     app.kubernetes.io/name: knative-operator
     app.kubernetes.io/version: "1.16.0"
@@ -17029,6 +16772,21 @@ webhooks:
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
