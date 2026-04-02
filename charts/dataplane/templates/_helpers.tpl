@@ -1343,6 +1343,33 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 
 {{/*
+Returns the default container image repository URL.
+If imageBuilder.defaultRepository is set, use it as-is.
+Otherwise, auto-generate from the cloud provider, region, project, and registryName.
+Checks both storage.provider and the top-level provider field (Azure uses storage.provider=custom).
+*/}}
+{{- define "imagebuilder.defaultRepository" -}}
+{{- if .Values.imageBuilder.defaultRepository -}}
+  {{- tpl .Values.imageBuilder.defaultRepository . -}}
+{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s.dkr.ecr.%s.amazonaws.com/%s" $accountId $region $registryName -}}
+{{- else if eq (tpl .Values.storage.provider .) "gcp" -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- $projectId := tpl .Values.storage.gcp.projectId . -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s-docker.pkg.dev/%s/%s" $region $projectId $registryName -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s.azurecr.io" $registryName -}}
+{{- else -}}
+  {{- .Values.imageBuilder.registryName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
 In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
 namespace_mapping) so users only need to set namespaces.enabled: false.

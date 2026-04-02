@@ -983,7 +983,7 @@ data:
         max_size_mbs: 0
         target_gc_percent: 70
   buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: "registry.depot.dev"
+  default-repository: "union-dataplane"
   authentication-type: "noop"
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
@@ -3456,7 +3456,7 @@ data:
           endpoint: 
           region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: "registry.depot.dev"
+  image-builder.default-repository: "union-dataplane"
   image-builder.authentication-type: "noop"
 ---
 # Source: dataplane/templates/webhook/configmap.yaml
@@ -11854,7 +11854,7 @@ spec:
       clientConfig:
         service:
           name: operator-webhook
-          namespace: union
+          namespace: "union"
           path: /resource-conversion
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-crds.yaml
@@ -13564,7 +13564,7 @@ spec:
       clientConfig:
         service:
           name: operator-webhook
-          namespace: union
+          namespace: "union"
           path: /resource-conversion
 ---
 # Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
@@ -13589,6 +13589,84 @@ rules:
       - list
       - watch
 ---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+# Always ClusterRole — the webhook must manage cluster-scoped resources
+# (webhook configurations, CRDs, namespaces) even in single_namespace mode.
+kind: ClusterRole
+metadata:
+  name: knative-operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+rules:
+  # For watching logging configuration and getting certs.
+  - apiGroups:
+      - ""
+    resources:
+      - "configmaps"
+    verbs:
+      - "get"
+      - "list"
+      - "watch"
+  # For manipulating certs into secrets.
+  - apiGroups:
+      - ""
+    resources:
+      - "namespaces"
+    verbs:
+      - "get"
+      - "create"
+      - "update"
+      - "list"
+      - "watch"
+      - "patch"
+  # finalizers are needed for the owner reference of the webhook
+  - apiGroups:
+      - ""
+    resources:
+      - "namespaces/finalizers"
+    verbs:
+      - "update"
+  # For getting our Deployment so we can decorate with ownerref.
+  - apiGroups:
+      - "apps"
+    resources:
+      - "deployments"
+    verbs:
+      - "get"
+  - apiGroups:
+      - "apps"
+    resources:
+      - "deployments/finalizers"
+    verbs:
+      - update
+  # For actually registering our webhook.
+  - apiGroups:
+      - "admissionregistration.k8s.io"
+    resources:
+      - "mutatingwebhookconfigurations"
+      - "validatingwebhookconfigurations"
+    verbs: &everything
+      - "get"
+      - "list"
+      - "create"
+      - "update"
+      - "delete"
+      - "patch"
+      - "watch"
+  # For leader election
+  - apiGroups:
+      - "coordination.k8s.io"
+    resources:
+      - "leases"
+    verbs: *everything
+  # Necessary for conversion webhook. These are copied from the serving
+  # TODO: Do we really need all these permissions?
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -13606,8 +13684,26 @@ roleRef:
   name: release-name-fluentbit
 subjects:
   - kind: ServiceAccount
-    name: fluentbit-system
+    name: union-system
     namespace: union
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+# Always ClusterRoleBinding — matches the webhook ClusterRole above.
+kind: ClusterRoleBinding
+metadata:
+  name: operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-operator-webhook
+subjects:
+  - kind: ServiceAccount
+    name: operator-webhook
+    namespace: "union"
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -14310,82 +14406,6 @@ rules:
       - "watch"
       - "patch"
 ---
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: knative-operator-webhook
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-rules:
-  # For watching logging configuration and getting certs.
-  - apiGroups:
-      - ""
-    resources:
-      - "configmaps"
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  # For manipulating certs into secrets.
-  - apiGroups:
-      - ""
-    resources:
-      - "namespaces"
-    verbs:
-      - "get"
-      - "create"
-      - "update"
-      - "list"
-      - "watch"
-      - "patch"
-  # finalizers are needed for the owner reference of the webhook
-  - apiGroups:
-      - ""
-    resources:
-      - "namespaces/finalizers"
-    verbs:
-      - "update"
-  # For getting our Deployment so we can decorate with ownerref.
-  - apiGroups:
-      - "apps"
-    resources:
-      - "deployments"
-    verbs:
-      - "get"
-  - apiGroups:
-      - "apps"
-    resources:
-      - "deployments/finalizers"
-    verbs:
-      - update
-  # For actually registering our webhook.
-  - apiGroups:
-      - "admissionregistration.k8s.io"
-    resources:
-      - "mutatingwebhookconfigurations"
-      - "validatingwebhookconfigurations"
-    verbs: &everything
-      - "get"
-      - "list"
-      - "create"
-      - "update"
-      - "delete"
-      - "patch"
-      - "watch"
-  # For leader election
-  - apiGroups:
-      - "coordination.k8s.io"
-    resources:
-      - "leases"
-    verbs: *everything
-  # Necessary for conversion webhook. These are copied from the serving
-  # TODO: Do we really need all these permissions?
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources: ["customresourcedefinitions"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
----
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -14772,23 +14792,6 @@ roleRef:
   kind: Role
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: operator-webhook
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: knative-operator-webhook
-subjects:
-  - kind: ServiceAccount
-    name: operator-webhook
-    namespace: "union"
 ---
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -15408,7 +15411,7 @@ spec:
       annotations:
         checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     spec:
-      serviceAccountName: fluentbit-system
+      serviceAccountName: union-system
       hostNetwork: false
       dnsPolicy: ClusterFirst
       containers:
@@ -16171,7 +16174,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "81406b7cd0c71f8445b79fed3ac82df570a3095a83d3d1b08c75ea2d912c09d"
+        configChecksum: "101f01b1a2d9eb96ee3bdc0671bc93d80df6056d3c270a09b91f2500a3b34a4"
         
       labels:
         
@@ -16306,7 +16309,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "81406b7cd0c71f8445b79fed3ac82df570a3095a83d3d1b08c75ea2d912c09d"
+        configChecksum: "101f01b1a2d9eb96ee3bdc0671bc93d80df6056d3c270a09b91f2500a3b34a4"
         
       labels:
         
@@ -16544,7 +16547,7 @@ metadata:
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
 webhooks:
-  - name: flyte-pod-webhook.flyte.org
+  - name: union-pod-webhook.flyte.org
     admissionReviewVersions:
       - v1
       - v1beta1
