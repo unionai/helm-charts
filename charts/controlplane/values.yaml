@@ -795,6 +795,10 @@ services:
             - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
           threadCount: 64
           type: cql
+          # CQL authentication (required when scylla.developerMode is false).
+          # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+          # username: "cassandra"
+          # passwordName: "union/scylla-password"
         eventer:
           recordActionThreadCount: 16
           type: runservice
@@ -1389,6 +1393,17 @@ ingress-nginx:
 scylla:
   enabled: true
 
+  # Developer mode disables authentication and relaxes system requirements.
+  # Set to false for production and configure CQL credentials in
+  # services.queue.configMap.queue.db (username + passwordName).
+  # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+  developerMode: true
+
+  # CQL superuser username used by the queue service and the password init job.
+  # Only relevant when developerMode is false.
+  # this user should already exist in scylladb (cassandra is there by default)
+  username: cassandra
+
   # ScyllaDB cluster configuration
   fullnameOverride: scylla
 
@@ -1410,6 +1425,7 @@ scylla:
   # Rack configuration
   racks:
     - name: rack1
+      scyllaConfig: scylla-config
       agentResources:
         requests:
           cpu: 50m
@@ -1434,9 +1450,6 @@ scylla:
   # ScyllaDB version
   scyllaImage:
     tag: 2025.1.5
-
-  # Developer mode (disable for production)
-  developerMode: true
 
   # Sysctl properties
   sysctls:
