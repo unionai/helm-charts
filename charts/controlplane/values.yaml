@@ -1431,6 +1431,10 @@ services:
             hosts:
               - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
             keyspace: leasor
+            # CQL authentication (required when scylla.developerMode is false).
+            # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+            # username: "cassandra"
+            # passwordName: "union/scylla-password"
         # Single tenant => one shard owns all partitions. With totalPartitions=1
         # every org hashes to partition 0, so this lone shard ([0]) serves every
         # request and no Envoy router is required. shardIndex must be set
@@ -1571,6 +1575,10 @@ actions:
           hosts:
             - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
           keyspace: actions
+          # CQL authentication (required when scylla.developerMode is false).
+          # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+          # username: "cassandra"
+          # passwordName: "union/scylla-password"
       # Replicate to leasor + run service over gRPC (no Redis dependency in
       # self-hosted). Targets are resolved by service name via the global
       # configMap.union.internalConnectionConfig urlPattern.
@@ -2358,6 +2366,19 @@ ingress-nginx:
 scylla:
   enabled: true
 
+  # Developer mode disables authentication and relaxes system requirements.
+  # Set to false for production and configure CQL credentials (username +
+  # passwordName) in the cql blocks of services.leasor.configMap.leasor.db
+  # and actions.configMap.actions.db.
+  # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+  developerMode: true
+
+  # CQL superuser username used by the CQL-backed services and the password
+  # init job.
+  # Only relevant when developerMode is false.
+  # this user should already exist in scylladb (cassandra is there by default)
+  username: cassandra
+
   # ScyllaDB cluster configuration
   fullnameOverride: scylla
 
@@ -2378,6 +2399,7 @@ scylla:
   # Rack configuration
   racks:
     - name: rack1
+      scyllaConfig: scylla-config
       agentResources:
         requests:
           cpu: 50m
@@ -2408,9 +2430,6 @@ scylla:
     tag: 2025.1.5
   agentImage:
     repository: docker.io/scylladb/scylla-manager-agent
-
-  # Developer mode (disable for production)
-  developerMode: true
 
   # Sysctl properties
   sysctls:
