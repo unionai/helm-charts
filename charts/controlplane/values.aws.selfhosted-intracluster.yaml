@@ -92,11 +92,71 @@ services:
     configMap:
       dataproxy:
         secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
+  # Executions service configuration
+  executions:
+    configMap:
+      executions:
+        app:
+          adminClient:
+            connection:
+              # Flyteadmin endpoint for executions service
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              insecure: true
+              # --- Auth fields (active when OIDC is enabled) ---
+              authorizationHeader: "flyte-authorization"
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: "/etc/secrets/union/client_secret"
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+              scopes: ["all"]
 
-# --- AWS ScyllaDB Storage Class ---
-scylla:
-  storageClass:
-    provisioner: "ebs.csi.eks.amazonaws.com"
-    parameters:
-      type: gp2
-      fsType: ext4
+  # ScyllaDB Auth -- Set this if you've enabled scylladb authentication
+  # See docs/SELFHOSTED_scylladb_authentication.md for the full guide.
+  # queue:
+  #   configMap:
+  #     queue:
+  #       db:
+  #         hosts:
+  #           - "scylla-client.union-cp.svc.cluster.local"
+  #         threadCount: 64
+  #         type: cql
+  #         username: "cassandra"
+  #         passwordName: "union/scylla-password" # tells the queue service to read the password from `/etc/secrets/union/scylla-password`
+
+# ----------------------------------------------------------------------------
+# SECTION 10: Monitoring Configuration (AWS/EKS specific)
+# ----------------------------------------------------------------------------
+
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
+
+# ----------------------------------------------------------------------------
+# SECTION 11: ScyllaDB
+# ----------------------------------------------------------------------------
+# Uses defaults from values.yaml (scylla.enabled: true, developerMode: true).
+# To enable authentication, see docs/SELFHOSTED_scylladb_authentication.md.
+# scylla:
+#   enabled: true
+#   developerMode: true
+#   storageClass:
+#     provisioner: "ebs.csi.eks.amazonaws.com"
+#     parameters:
+#       type: gp2
+#       fsType: ext4
