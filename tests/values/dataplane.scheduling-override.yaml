@@ -1,0 +1,47 @@
+# Test that per-service scheduling overrides take precedence over global scheduling.
+# Global scheduling sets app_pool: flyte, but prometheus overrides to app_pool: monitoring.
+
+host: union.test.union.ai
+clusterName: union-test
+orgName: union
+provider: aws
+
+storage:
+  provider: aws
+  authType: iam
+  bucketName: test-bucket
+  region: us-east-1
+
+secrets:
+  admin:
+    create: true
+    clientSecret: test-secret
+    clientId: test-client
+
+scheduling:
+  nodeSelector:
+    app_pool: flyte
+  tolerations:
+    - key: "flyte"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+
+# Per-service overrides should win over global
+prometheus:
+  nodeSelector:
+    app_pool: monitoring
+  tolerations:
+    - key: "monitoring"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+
+flyteconnector:
+  enabled: true
+  nodeSelector:
+    app_pool: connectors
+  tolerations:
+    - key: "connectors"
+      operator: "Exists"
+      effect: "NoSchedule"
