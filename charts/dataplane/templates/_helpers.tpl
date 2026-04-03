@@ -954,6 +954,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     Time_Keep Off
     Time_Key time
     Time_Format %Y-%m-%dT%H:%M:%S.%L
+{{- with .Values.fluentbit.extraParsers }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{- define "fluentbit.service" -}}
@@ -979,6 +982,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
 {{- define "fluentbit.filters" -}}
+{{- with .Values.fluentbit.additionalFilters }}
+{{ . }}
+{{- end }}
 {{- end }}
 
 {{- define "fluentbit.outputs" -}}
