@@ -253,6 +253,16 @@ configMap:
   # or External) — see services.authorizer.configMap below.
   authorizer:
     type: "Authorizer"
+    # When true, construct ExternalIdentity for subjects without an
+    # identitytype JWT claim. Required for External authorization with
+    # non-Okta IdPs that cannot add custom claims. (FAB-189)
+    #
+    # Ideally this would be derived from services.authorizer.configMap.authorizer.type,
+    # but the flyte-core subchart renders configs in its own template scope where
+    # .Values.services is not accessible. Set via global.USE_EXTERNAL_IDENTITY
+    # in your values overlay. A future release removing the flyte-core subchart
+    # dependency will allow direct derivation.
+    useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
     authorizerClient:
       grpcConfig:
         host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
@@ -1167,16 +1177,12 @@ flyte:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
       # flyteadmin routes authorization to the in-cluster authorizer service.
-      # For Union Cloud with UserClouds, override with:
-      #   type: "UserClouds"
-      #   userCloudsClient:
-      #     tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
-      #     tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
-      #     clientID: "union-authz-client"
-      #     clientSecretName: 'union/client_secret'
-      #     enableLogging: true
       authorizer:
         type: "Authorizer"
+        # Set via global.USE_EXTERNAL_IDENTITY in your values overlay.
+        # Cannot cross-reference services.authorizer.configMap here because
+        # this renders inside the flyte subchart scope. (FAB-189)
+        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
         authorizerClient:
           grpcConfig:
             host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
@@ -1228,9 +1234,10 @@ flyte:
           enabled: true
           urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
       # cacheservice routes authorization to the in-cluster authorizer service.
-      # For Union Cloud with UserClouds, override with the same pattern as flyteadmin above.
       authorizer:
         type: "Authorizer"
+        # Set via global.USE_EXTERNAL_IDENTITY in your values overlay. (FAB-189)
+        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
         authorizerClient:
           grpcConfig:
             host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
