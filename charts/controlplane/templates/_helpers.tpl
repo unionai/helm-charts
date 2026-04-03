@@ -361,6 +361,11 @@ IfNotPresent
 {{- end }}
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
+
+{{- if hasKey .Values "logging" }}
+  {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") }}
+{{- end }}
+
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
