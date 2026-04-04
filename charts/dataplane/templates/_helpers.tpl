@@ -1356,7 +1356,7 @@ Checks both storage.provider and the top-level provider field (Azure uses storag
   {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
   {{- $registryName := .Values.imageBuilder.registryName -}}
   {{- printf "%s.dkr.ecr.%s.amazonaws.com/%s" $accountId $region $registryName -}}
-{{- else if eq (tpl .Values.storage.provider .) "gcp" -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
   {{- $region := tpl .Values.storage.region . -}}
   {{- $projectId := tpl .Values.storage.gcp.projectId . -}}
   {{- $registryName := .Values.imageBuilder.registryName -}}
@@ -1366,6 +1366,25 @@ Checks both storage.provider and the top-level provider field (Azure uses storag
   {{- printf "%s.azurecr.io" $registryName -}}
 {{- else -}}
   {{- .Values.imageBuilder.registryName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the image builder authentication type.
+If imageBuilder.authenticationType is explicitly set (non-empty, not "noop"), use it.
+Otherwise, auto-detect from the cloud provider.
+*/}}
+{{- define "imagebuilder.authenticationType" -}}
+{{- if and .Values.imageBuilder.authenticationType (ne .Values.imageBuilder.authenticationType "noop") -}}
+  {{- .Values.imageBuilder.authenticationType -}}
+{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
+  {{- "aws" -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
+  {{- "google" -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
+  {{- "azure" -}}
+{{- else -}}
+  {{- .Values.imageBuilder.authenticationType | default "noop" -}}
 {{- end -}}
 {{- end -}}
 

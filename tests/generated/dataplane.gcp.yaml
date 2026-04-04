@@ -111,7 +111,7 @@ metadata:
   name: union-system
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
+    iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
 ---
 # Source: dataplane/templates/common/union-serviceaccount.yaml
 apiVersion: v1
@@ -120,7 +120,7 @@ metadata:
   name: union
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::000000000000:role/union-flyte-role
+    iam.gke.io/gcp-service-account: union-worker@test-gcp-project-123.iam.gserviceaccount.com
 automountServiceAccountToken: true
 ---
 # Source: dataplane/templates/flyteconnector/serviceaccount.yaml
@@ -169,8 +169,8 @@ metadata:
 type: Opaque
 data:
   # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: Y2xpZW50U2VjcmV0
-  client_secret: Y2xpZW50U2VjcmV0
+  app_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
+  client_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -179,7 +179,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tYXdz
+  cluster_name: dGVzdC1lMmUtZ2Nw
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: v1
@@ -839,8 +839,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-east-2
-        bucket bucket
+        region us-central1
+        bucket test-gcp-bucket
 ---
 # Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
 apiVersion: v1
@@ -855,11 +855,14 @@ metadata:
 data:
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -867,8 +870,8 @@ data:
         max_size_mbs: 0
         target_gc_percent: 70
   buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: ".dkr.ecr.us-east-2.amazonaws.com/union-dataplane"
-  authentication-type: "aws"
+  default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
+  authentication-type: "google"
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
@@ -3056,7 +3059,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-aws/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/test-e2e-gcp/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -3115,10 +3118,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'union-aws'
+      cluster: 'test-e2e-gcp'
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: 'byok'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -3135,28 +3138,28 @@ data:
       template: union
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///byok.us-west-2.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'byok-test-e2e-gcp-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'clientId'
+      clientId: 'byok-test-e2e-gcp-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///byok.us-west-2.union.ai
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
+      cache-endpoint: dns:///byok.us-west-2.union.ai
+      endpoint: dns:///byok.us-west-2.union.ai
       insecure: false
       type: cacheservicev2
       use-admin-auth: true
     logger:
-      level: 6
+      level: 4
       show-source: true
     sharedService:
       metrics:
@@ -3195,11 +3198,14 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -3228,10 +3234,10 @@ data:
   config.yaml: |
     union:
       connection:
-        host: dns:///union.us-west-2.union.ai
+        host: dns:///byok.us-west-2.union.ai
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'clientId'
+        clientId: 'byok-test-e2e-gcp-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -3255,16 +3261,16 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: 'byok'
       clusterData:
-        appId: 'clientId'
-        bucketName: 'bucket'
-        bucketRegion: 'us-east-2'
-        cloudHostName: 'union.us-west-2.union.ai'
-        gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
-        userRole: 'arn:aws:iam::000000000000:role/union-flyte-role'
-        userRoleKey: 'eks.amazonaws.com/role-arn'
+        appId: 'byok-test-e2e-gcp-operator'
+        bucketName: 'test-gcp-bucket'
+        bucketRegion: 'us-central1'
+        cloudHostName: 'byok.us-west-2.union.ai'
+        gcpProjectId: 'test-gcp-project-123'
+        metadataBucketPrefix: 'gs://test-gcp-bucket'
+        userRole: 'union-worker@test-gcp-project-123.iam.gserviceaccount.com'
+        userRoleKey: 'iam.gke.io/gcp-service-account'
       collectUsages:
         enabled: false
       billing:
@@ -3295,7 +3301,7 @@ data:
         type: 'K8s'
   logger.yaml: |
     logger:
-      level: 6
+      level: 4
       show-source: true
   config-overrides.yaml: | 
     cache:
@@ -3303,11 +3309,14 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -3316,14 +3325,17 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-2
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: ".dkr.ecr.us-east-2.amazonaws.com/union-dataplane"
-  image-builder.authentication-type: "aws"
+  image-builder.default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
+  image-builder.authentication-type: "google"
 ---
 # Source: dataplane/templates/webhook/configmap.yaml
 apiVersion: v1
@@ -15734,7 +15746,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "4fa94af90c34f16a93886c5b60657473360014824da336f68556f729820dc51"
+        configChecksum: "482b943a276efe8f0c05a0fbbaedf57e0ea4632fee735adb458b704df492a8b"
         
       labels:
         
@@ -15838,7 +15850,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5e8bd941dfdad3a95fb6095112ea35f8ef65abb8ec71aead20e2441a83d1c3c"
+        configChecksum: "09622b19f8a63e2439fdacdcad0713b040cfd5c345c9ec8b698f783ab8a347c"
         
       labels:
         
@@ -15973,7 +15985,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5e8bd941dfdad3a95fb6095112ea35f8ef65abb8ec71aead20e2441a83d1c3c"
+        configChecksum: "09622b19f8a63e2439fdacdcad0713b040cfd5c345c9ec8b698f783ab8a347c"
         
       labels:
         
@@ -16200,109 +16212,11 @@ spec:
           type: Utilization
           averageUtilization: 80
 ---
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  rules:
-    - http:
-        paths:
-          - path: /api/v1/dataproxy/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /prometheus/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-prometheus
-                port:
-                  number: 80
-          - path: /clickhouse/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /dataplane/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /resourcequota/v1/project_quota
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /spark-history-server/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /secrets/api/v1
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /data_plane_object_store/api/v1/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.actor.ActorEnvironmentService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.logs.dataplane.LogsService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.objectstore.v1.ObjectStoreService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.imagebuilder.dataplane.ImageService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
----
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: union-pod-webhook-union
+  name: union-pod-webhook-byok
   labels:
     app.kubernetes.io/name: union-pod-webhook
     app.kubernetes.io/instance: release-name
@@ -16328,7 +16242,7 @@ webhooks:
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
-        organization: 'union'
+        organization: 'byok'
     reinvocationPolicy: Never
     rules:
       - apiGroups:
