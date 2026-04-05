@@ -137,10 +137,13 @@ imagePullSecrets:
 # These settings configure intra-cluster communication and single-tenant mode.
 
 configMap:
-  # Flyteadmin endpoint for intra-cluster communication
+  # Admin client endpoint -- route through nginx controller so /me auth
+  # subrequest handles identity resolution for service-to-service OAuth tokens.
+  # Direct calls to flyteadmin:81 bypass nginx and fail for IdPs without sub claim.
   admin:
-    endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
-    insecure: true
+    endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+    insecure: false
+    insecureSkipVerify: true
     clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
     clientSecretLocation: "/etc/secrets/union/client_secret"
 
@@ -379,6 +382,10 @@ flyte:
 
 ingress:
   className: controlplane
+  annotations:
+    # Allow nginx to accept requests using the internal K8s FQDN.
+    # Required for service-to-service calls routed through the nginx controller.
+    nginx.ingress.kubernetes.io/server-alias: "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
   tls:
     # TLS configuration for intra-cluster HTTPS
     - hosts:
@@ -470,9 +477,10 @@ services:
         app:
           adminClient:
             connection:
-              # Flyteadmin endpoint for executions service
-              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
-              insecure: true
+              # Route through nginx controller (same as configMap.admin.endpoint)
+              endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+              insecure: false
+              insecureSkipVerify: true
               # --- Auth fields (active when OIDC is enabled) ---
               authorizationHeader: "flyte-authorization"
               clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
