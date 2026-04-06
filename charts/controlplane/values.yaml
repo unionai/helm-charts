@@ -287,15 +287,25 @@ configMap:
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
-    security:
-      # Ordered list of JWT claim names to try when resolving subject identity.
-      # The first non-empty value is used as x-user-subject.
-      # Default (when absent): ["sub"] — only the standard OIDC subject claim.
-      # If your IdP omits "sub" from client credentials tokens, add fallbacks:
-      # subjectClaimNames:
-      # - sub
-      # - azp        # OAuth 2.0 authorized party
-      # - client_id  # Common alternative for client credentials
+    # security.subjectClaimNames: Ordered list of JWT claim names to try when
+    # resolving subject identity. The first non-empty value is used as x-user-subject.
+    # Default (when absent): ["sub"] -- only the standard OIDC subject claim.
+    # If your IdP omits "sub" from client credentials tokens, add fallbacks.
+    #
+    # IMPORTANT: If you set this, you MUST also set the same value under
+    # flyte.configmap.sharedService.security.subjectClaimNames (below).
+    # Flyteadmin uses a separate config path from the Union services.
+    #
+    # NOTE: This config location (configMap.sharedService.security) controls
+    # the identity interceptor on Union services for direct service-to-service
+    # calls. This is expected to be removed in a future release when all
+    # traffic routes through nginx. The flyte.configmap location (below)
+    # controls the /me endpoint and is the long-term config location.
+    #
+    # security:
+    #   subjectClaimNames:
+    #   - sub
+    #   - client_id  # Common alternative for client credentials
     selfServeConfig:
       legacyHosts:
         - '{{ .Values.global.UNION_ORG }}'
@@ -1185,6 +1195,20 @@ flyte:
       admin:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
         insecure: false
+      # sharedService.security.subjectClaimNames: Subject claim fallback for
+      # flyteadmin's /me auth subrequest handler. This MUST match the
+      # configMap.sharedService.security.subjectClaimNames setting.
+      # Both locations need the same values because flyteadmin uses a
+      # separate config path (flyte subchart) from the Union services.
+      # The /me endpoint uses this to resolve X-User-Subject from JWT claims.
+      # This is the long-term config location.
+      #
+      # sharedService:
+      #   security:
+      #     subjectClaimNames:
+      #     - sub
+      #     - client_id  # Common alternative for client credentials
+      #
       # flyteadmin routes authorization to the in-cluster authorizer service.
       authorizer:
         type: "Authorizer"
@@ -1283,6 +1307,9 @@ flyte:
       connectPort: 8089
       httpPort: 8088
       port: 8089
+      # NOTE: subjectClaimNames for flyteadmin's /me endpoint must be set
+      # under flyte.configmap.adminServer.sharedService.security (not here).
+      # See the adminServer section above for the config and documentation.
     admin:
       # Hack: Initializing clients triggers a code path in AdminService where it attempt to extract
       # the org from the host. This constraint breaks in situations where we are using a DNS entry that
