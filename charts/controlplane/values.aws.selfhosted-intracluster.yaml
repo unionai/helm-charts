@@ -127,9 +127,11 @@ configMap:
   # Admin client endpoint -- route through nginx controller so /me auth
   # subrequest handles identity resolution for service-to-service OAuth tokens.
   # Direct calls to flyteadmin:81 bypass nginx and fail for IdPs without sub claim.
+  # gRPC requires HTTP/2 which needs TLS with nginx (self-signed cert, skip verify).
   admin:
     endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
-    insecure: true
+    insecure: false
+    insecureSkipVerify: true
     clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
     clientSecretLocation: "/etc/secrets/union/client_secret"
 
@@ -241,8 +243,10 @@ flyte:
     adminServer:
       admin:
         # Flyteadmin endpoint via control plane ingress
+        # gRPC requires HTTP/2 over TLS with nginx (self-signed cert, skip verify)
         endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
-        insecure: true
+        insecure: false
+        insecureSkipVerify: true
         clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
         clientSecretLocation: "/etc/secrets/client_secret"
 
@@ -463,7 +467,8 @@ services:
             connection:
               # Route through nginx controller (same as configMap.admin.endpoint)
               endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
-              insecure: true
+              insecure: false
+              insecureSkipVerify: true
               # --- Auth fields (active when OIDC is enabled) ---
               authorizationHeader: "flyte-authorization"
               clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
