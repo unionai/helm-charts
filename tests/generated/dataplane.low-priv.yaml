@@ -13613,120 +13613,86 @@ rules:
       - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 apiVersion: rbac.authorization.k8s.io/v1
-# Always ClusterRole — the webhook must manage cluster-scoped resources
-# (webhook configurations, CRDs, namespaces) even in single_namespace mode.
 kind: ClusterRole
 metadata:
-  name: knative-operator-webhook
+  name: knative-serving-operator-aggregated
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
-rules:
-  # For watching logging configuration and getting certs.
-  - apiGroups:
-      - ""
-    resources:
-      - "configmaps"
-    verbs:
-      - "get"
-      - "list"
-      - "watch"
-  # For manipulating certs into secrets.
-  - apiGroups:
-      - ""
-    resources:
-      - "namespaces"
-    verbs:
-      - "get"
-      - "create"
-      - "update"
-      - "list"
-      - "watch"
-      - "patch"
-  # finalizers are needed for the owner reference of the webhook
-  - apiGroups:
-      - ""
-    resources:
-      - "namespaces/finalizers"
-    verbs:
-      - "update"
-  # For getting our Deployment so we can decorate with ownerref.
-  - apiGroups:
-      - "apps"
-    resources:
-      - "deployments"
-    verbs:
-      - "get"
-  - apiGroups:
-      - "apps"
-    resources:
-      - "deployments/finalizers"
-    verbs:
-      - update
-  # For actually registering our webhook.
-  - apiGroups:
-      - "admissionregistration.k8s.io"
-    resources:
-      - "mutatingwebhookconfigurations"
-      - "validatingwebhookconfigurations"
-    verbs: &everything
-      - "get"
-      - "list"
-      - "create"
-      - "update"
-      - "delete"
-      - "patch"
-      - "watch"
-  # For leader election
-  - apiGroups:
-      - "coordination.k8s.io"
-    resources:
-      - "leases"
-    verbs: *everything
-  # Necessary for conversion webhook. These are copied from the serving
-  # TODO: Do we really need all these permissions?
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources: ["customresourcedefinitions"]
-    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
----
-# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: release-name-fluentbit
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: release-name-fluentbit
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
+aggregationRule:
+  clusterRoleSelectors:
+    # This (along with escalate below) allows the Operator to pick up any
+    # roles that are provided to the admin of the cluster by knative serving
+    # automatically.
+    - matchExpressions:
+        - {key: serving.knative.dev/release, operator: Exists}
+rules: [] # Rules are automatically filled in by the controller manager.
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-# Always ClusterRoleBinding — matches the webhook ClusterRole above.
-kind: ClusterRoleBinding
+kind: ClusterRole
 metadata:
-  name: operator-webhook
+  name: knative-serving-operator-aggregated-stable
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: knative-operator-webhook
-subjects:
-  - kind: ServiceAccount
-    name: operator-webhook
-    namespace: "union"
+aggregationRule:
+  clusterRoleSelectors:
+    # This (along with escalate below) allows the Operator to pick up any
+    # roles that are provided to the admin of the cluster by knative serving
+    # automatically.
+    - matchExpressions:
+        - {key: app.kubernetes.io/name, operator: In, values: ["knative-serving"]}
+rules: [] # Rules are automatically filled in by the controller manager.
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: knative-eventing-operator-aggregated
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+aggregationRule:
+  clusterRoleSelectors:
+    # This (along with escalate below) allows the Operator to pick up any
+    # roles that are provided to the admin of the cluster by knative eventing
+    # automatically.
+    - matchExpressions:
+        - {key: eventing.knative.dev/release, operator: Exists}
+rules: [] # Rules are automatically filled in by the controller manager.
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: knative-eventing-operator-aggregated-stable
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+aggregationRule:
+  clusterRoleSelectors:
+    # This (along with escalate below) allows the Operator to pick up any
+    # roles that are provided to the admin of the cluster by knative eventing
+    # automatically.
+    - matchExpressions:
+        - {key: app.kubernetes.io/name, operator: In, values: ["knative-eventing"]}
+rules: [] # Rules are automatically filled in by the controller manager.
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
@@ -13742,7 +13708,8 @@ subjects:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-kind: Role
+
+kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-operator
@@ -13983,7 +13950,7 @@ rules:
       - get
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-kind: Role
+kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-eventing-operator
@@ -14373,7 +14340,251 @@ rules:
       - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: knative-operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+rules:
+  # For watching logging configuration and getting certs.
+  - apiGroups:
+      - ""
+    resources:
+      - "configmaps"
+    verbs:
+      - "get"
+      - "list"
+      - "watch"
+  # For manipulating certs into secrets.
+  - apiGroups:
+      - ""
+    resources:
+      - "namespaces"
+    verbs:
+      - "get"
+      - "create"
+      - "update"
+      - "list"
+      - "watch"
+      - "patch"
+  # finalizers are needed for the owner reference of the webhook
+  - apiGroups:
+      - ""
+    resources:
+      - "namespaces/finalizers"
+    verbs:
+      - "update"
+  # For getting our Deployment so we can decorate with ownerref.
+  - apiGroups:
+      - "apps"
+    resources:
+      - "deployments"
+    verbs:
+      - "get"
+  - apiGroups:
+      - "apps"
+    resources:
+      - "deployments/finalizers"
+    verbs:
+      - update
+  # For actually registering our webhook.
+  - apiGroups:
+      - "admissionregistration.k8s.io"
+    resources:
+      - "mutatingwebhookconfigurations"
+      - "validatingwebhookconfigurations"
+    verbs: &everything
+      - "get"
+      - "list"
+      - "create"
+      - "update"
+      - "delete"
+      - "patch"
+      - "watch"
+  # For leader election
+  - apiGroups:
+      - "coordination.k8s.io"
+    resources:
+      - "leases"
+    verbs: *everything
+  # Necessary for conversion webhook. These are copied from the serving
+  # TODO: Do we really need all these permissions?
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
+# Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-fluentbit
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/name: fluentbit
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-fluentbit
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# TODO: Consider restriction of non-aggregated role to knativeservings namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-operator
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-serving-operator
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# TODO: Consider restriction of non-aggregated role to knativeeventing namespaces.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-eventing-operator
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-eventing-operator
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operator-webhook
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-operator-webhook
+subjects:
+  - kind: ServiceAccount
+    name: operator-webhook
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-operator-aggregated
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-serving-operator-aggregated
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-serving-operator-aggregated-stable
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-serving-operator-aggregated-stable
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-eventing-operator-aggregated
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-eventing-operator-aggregated
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: knative-eventing-operator-aggregated-stable
+  labels:
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/name: knative-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: knative-eventing-operator-aggregated-stable
+subjects:
+  - kind: ServiceAccount
+    name: knative-operator
+    namespace: "union"
+---
+# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14723,38 +14934,6 @@ rules:
       - create
       - update
       - patch
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-# TODO: Consider restriction of non-aggregated role to knativeservings namespaces.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: knative-serving-operator
-  labels:
-    app.kubernetes.io/version: "1.16.0"
-    app.kubernetes.io/name: knative-operator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: knative-serving-operator
-subjects:
-  - kind: ServiceAccount
-    name: knative-operator
-    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -16414,21 +16593,6 @@ webhooks:
         scope: '*'
     sideEffects: NoneOnDryRun
     timeoutSeconds: 30
----
-# Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
-# Copyright 2020 The Knative Authors
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     https://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 ---
