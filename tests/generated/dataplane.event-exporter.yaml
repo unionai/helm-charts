@@ -130,10 +130,10 @@ metadata:
   name: union-operator-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 ---
@@ -151,18 +151,6 @@ metadata:
   name: flytepropeller-system
   namespace: union
 ---
-# Source: dataplane/templates/common/auth-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: union-secret-auth
-  namespace: union
-type: Opaque
-data:
-  # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: dGVzdC1zZWNyZXQ=
-  client_secret: dGVzdC1zZWNyZXQ=
----
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
 kind: Secret
@@ -170,7 +158,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tdGVzdA==
+  cluster_name:
 ---
 # Source: dataplane/templates/propeller/deployment-webhook.yaml
 # Create an empty secret that the first propeller pod will populate
@@ -195,7 +183,7 @@ metadata:
 data:
   cluster_resources.yaml: | 
     cluster_resources:
-      clusterName: 'union-test'
+      clusterName: ''
       customData:
       - production:
         - projectQuotaCpu:
@@ -239,17 +227,17 @@ data:
     union:
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'dataplane-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
       connection:
-        host: dns:///union.test.union.ai
+        host: dns:///
   admin.yaml: | 
     admin:
-      clientId: 'test-client'
+      clientId: 'dataplane-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.test.union.ai
+      endpoint: dns:///
       insecure: false
     event:
       capacity: 1000
@@ -269,8 +257,6 @@ data:
       labelClusterMap: {}
   logger.yaml: |
     logger:
-      formatter:
-        type: json
       level: 4
       show-source: true
 ---
@@ -318,6 +304,179 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
 ---
+# Source: dataplane/templates/event-exporter/dashboard.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-pod-events
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: dataplane-2026.3.12
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.3.9"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: event-exporter
+data:
+  union-pod-events.json: |-
+    {
+      "annotations": { "list": [] },
+      "description": "Kubernetes Pod and cluster event visibility via kube-state-metrics kube_event_count. Requires eventExporter.enabled=true in the dataplane chart.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "id": 1,
+          "title": "Warning Events",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+          "id": 2,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "Warning Events (total count)",
+          "type": "stat",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+          "id": 3,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "FailedMount (total count)",
+          "type": "stat",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"FailedMount\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+          "id": 4,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "OOMKilling (total count)",
+          "type": "stat",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"OOMKilling\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 10 }] },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+          "id": 5,
+          "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "auto", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "auto" },
+          "title": "BackOff (total count)",
+          "type": "stat",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(kube_event_count{reason=\"BackOff\",namespace=~\"$namespace\"})", "instant": true, "legendFormat": "__auto", "refId": "A" }]
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "palette-classic" },
+              "custom": { "axisBorderShow": false, "axisCenteredZero": false, "axisColorMode": "text", "axisLabel": "", "axisPlacement": "auto", "barAlignment": 0, "drawStyle": "line", "fillOpacity": 10, "gradientMode": "none", "hideFrom": { "legend": false, "tooltip": false, "viz": false }, "insertNulls": false, "lineInterpolation": "linear", "lineWidth": 1, "pointSize": 5, "scaleDistribution": { "type": "linear" }, "showPoints": "never", "spanNulls": true, "stacking": { "group": "A", "mode": "none" }, "thresholdsStyle": { "mode": "off" } },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+          "id": 6,
+          "options": { "legend": { "calcs": ["max"], "displayMode": "table", "placement": "right", "showLegend": true }, "tooltip": { "mode": "multi", "sort": "desc" } },
+          "title": "Warning Events by Reason (accumulated count over time)",
+          "type": "timeseries",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (reason)(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"})", "legendFormat": "{{reason}}", "refId": "A" }]
+        },
+        {
+          "collapsed": false,
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 13 },
+          "id": 7,
+          "title": "Pod Event Details",
+          "type": "row"
+        },
+        {
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": {
+            "defaults": {
+              "color": { "mode": "thresholds" },
+              "custom": { "align": "auto", "cellOptions": { "type": "auto" }, "inspect": false },
+              "mappings": [],
+              "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 80 }] }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Count" },
+                "properties": [
+                  { "id": "custom.cellOptions", "value": { "mode": "basic", "type": "color-background" } },
+                  { "id": "thresholds", "value": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 10 }] } }
+                ]
+              }
+            ]
+          },
+          "gridPos": { "h": 12, "w": 24, "x": 0, "y": 14 },
+          "id": 8,
+          "options": { "cellHeight": "sm", "footer": { "countRows": false, "fields": "", "reducer": ["sum"], "show": false }, "showHeader": true, "sortBy": [{ "displayName": "Count", "desc": true }] },
+          "title": "Top Warning Events — Event name is formatted as <pod-name>.<hex-suffix>",
+          "type": "table",
+          "targets": [{ "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "topk(20, sum by (namespace, name, reason, source_component)(kube_event_count{type=\"Warning\",namespace=~\"$namespace\"}))", "instant": true, "legendFormat": "__auto", "refId": "A" }],
+          "transformations": [
+            { "id": "labelsToFields", "options": { "mode": "columns" } },
+            { "id": "organize", "options": { "renameByName": { "namespace": "Namespace", "name": "Event Name (pod-name.hex)", "reason": "Reason", "source_component": "Source", "Value": "Count" }, "excludeByName": { "Time": true }, "indexByName": { "Namespace": 0, "Event Name (pod-name.hex)": 1, "Reason": 2, "Source": 3, "Count": 4 } } }
+          ]
+        }
+      ],
+      "templating": {
+        "list": [
+          { "current": {}, "hide": 0, "includeAll": false, "label": "Data Source", "multi": false, "name": "datasource", "options": [], "query": "prometheus", "refresh": 1, "type": "datasource" },
+          { "current": { "selected": false, "text": "All", "value": "$__all" }, "datasource": { "type": "prometheus", "uid": "${datasource}" }, "definition": "label_values(kube_event_count, namespace)", "hide": 0, "includeAll": true, "allValue": ".*", "label": "Namespace", "multi": false, "name": "namespace", "options": [], "query": { "query": "label_values(kube_event_count, namespace)", "refId": "StandardVariableQuery" }, "refresh": 2, "sort": 1, "type": "query" }
+        ]
+      },
+      "time": { "from": "now-3h", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union - Pod Events",
+      "uid": "union-pod-events",
+      "version": 1
+    }
+---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -362,7 +521,7 @@ data:
         static_file_path true
         json_date_key false
         region us-east-1
-        bucket test-bucket
+        bucket
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
@@ -2538,7 +2697,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-test/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2592,10 +2751,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'union-test'
+      cluster: ''
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: ''
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -2610,29 +2769,27 @@ data:
           memory: 2Ti
     union:
       connection:
-        host: dns:///union.test.union.ai
+        host: dns:///
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'dataplane-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'test-client'
+      clientId: 'dataplane-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.test.union.ai
+      endpoint: dns:///
       insecure: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///union.test.union.ai
-      endpoint: dns:///union.test.union.ai
+      cache-endpoint: dns:///
+      endpoint: dns:///
       insecure: false
       type: fallback
       use-admin-auth: true
     logger:
-      formatter:
-        type: json
       level: 4
       show-source: true
     sharedService:
@@ -2670,11 +2827,17 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -2702,10 +2865,10 @@ data:
   config.yaml: |
     union:
       connection:
-        host: dns:///union.test.union.ai
+        host: dns:///
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'dataplane-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -2726,14 +2889,14 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: ''
       clusterData:
-        appId: 'test-client'
-        bucketName: 'test-bucket'
+        appId: 'dataplane-operator'
+        bucketName: ''
         bucketRegion: 'us-east-1'
-        cloudHostName: 'union.test.union.ai'
+        cloudHostName: ''
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://test-bucket'
+        metadataBucketPrefix: 's3://'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -2769,8 +2932,6 @@ data:
         type: 'K8s'
   logger.yaml: |
     logger:
-      formatter:
-        type: json
       level: 4
       show-source: true
   config-overrides.yaml: | 
@@ -2779,11 +2940,17 @@ data:
         enabled: false
   storage.yaml: | 
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -2793,10 +2960,16 @@ data:
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
       container: ""
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: ""
   image-builder.authentication-type: "noop"
@@ -2808,10 +2981,10 @@ metadata:
   name: union-operator-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 data:
@@ -2843,7 +3016,7 @@ data:
         metric_relabel_configs:
         - separator: ;
           source_labels: [__name__]
-          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total
+          regex: kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total|kube_event_count
           action: keep
         - separator: ;
           source_labels: [__name__, phase]
@@ -3721,9 +3894,9 @@ metadata:
 data:
   admin.yaml: | 
     admin:
-      clientId: 'test-client'
+      clientId: 'dataplane-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.test.union.ai
+      endpoint: dns:///
       insecure: false
     event:
       capacity: 1000
@@ -3731,8 +3904,8 @@ data:
       type: admin
   catalog.yaml: | 
     catalog-cache:
-      cache-endpoint: dns:///union.test.union.ai
-      endpoint: dns:///union.test.union.ai
+      cache-endpoint: dns:///
+      endpoint: dns:///
       insecure: false
       type: fallback
       use-admin-auth: true
@@ -3776,7 +3949,7 @@ data:
           rate: 10
           type: bucket
         type: batch
-      rawoutput-prefix: 's3://test-bucket'
+      rawoutput-prefix: 's3://'
       workers: 4
       workflow-reeval-duration: 30s
     webhook:
@@ -3821,8 +3994,6 @@ data:
         default-memory: 100Mi
   logger.yaml: |
     logger:
-      formatter:
-        type: json
       level: 4
       show-source: true
   resource_manager.yaml: | 
@@ -3846,11 +4017,17 @@ data:
           - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
   storage.yaml: | 
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 1024
@@ -4279,10 +4456,10 @@ kind: ClusterRole
 metadata:
   name: union-operator-prometheus
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 rules:
@@ -4541,10 +4718,10 @@ kind: ClusterRoleBinding
 metadata:
   name: union-operator-prometheus
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 roleRef:
@@ -4865,10 +5042,10 @@ metadata:
   name: union-operator-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 spec:
@@ -5236,12 +5413,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "bef188a6ef20bf390a95e33b16ee869128e28243ae661609aab81d95191b1d3"
-        prometheus.io/scrape: "true"
+        configChecksum: "c545ac02b09bcf3b7362a09f8f9c50fc1b66788213297b7084a6ca216bd898d"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: clusterresourcesync
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -5286,7 +5461,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -5456,12 +5631,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a1e4a396e83da22e5ffee35c34f73c3b54be6c6ba8bf8d81004e789023847e1"
-        prometheus.io/scrape: "true"
+        configChecksum: "7eb188bf81ab82733f04d823f6f5f548f7c5fb12768951835b5b56bba31cae7"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app: executor
     spec:
       securityContext:
@@ -5479,7 +5652,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: IfNotPresent
           command:
             - executor
@@ -5560,12 +5733,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7be121e6bb634d408f8c583aea06ba12169fd6048e02dbda821b587e928f981"
-        prometheus.io/scrape: "true"
+        configChecksum: "324b2bf19510dc501f63eb0c2ae96d244950e60008e1a2cd3c2abcbe9540e6f"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -5589,7 +5760,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -5657,7 +5828,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -5699,12 +5870,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7be121e6bb634d408f8c583aea06ba12169fd6048e02dbda821b587e928f981"
-        prometheus.io/scrape: "true"
+        configChecksum: "324b2bf19510dc501f63eb0c2ae96d244950e60008e1a2cd3c2abcbe9540e6f"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -5724,7 +5893,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -5798,10 +5967,10 @@ metadata:
   name: union-operator-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.4.1
+    helm.sh/chart: dataplane-2026.3.12
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.3"
+    app.kubernetes.io/version: "2026.3.9"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: prometheus
 spec:
@@ -5814,7 +5983,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ec29c6cb4295a9b4fdc23a25c7a6f97d76a27263de6ff38e0c268d84a0ee1a7"
+        configChecksum: "4a1307274b491415067832cf78a223e42f8e86b2a08b9b9d54a9739a180cf92"
       labels:
         app.kubernetes.io/component: prometheus
         app.kubernetes.io/name: release-name-dataplane
@@ -5879,15 +6048,13 @@ spec:
     metadata:
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: flyte-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "24e0f0c6dd0bf39ba1103d08dedaa1047108f9263429148d8f22e6025237ac3"
-        prometheus.io/scrape: "true"
+        configChecksum: "915dd1c16576bf7f84b7293876a05f5b66993798003e1ce6a9fc2da8a861b26"
+        
     spec:
       securityContext:
         fsGroup: 65534
@@ -5899,7 +6066,7 @@ spec:
       serviceAccountName: flytepropeller-webhook-system
       initContainers:
         - name: generate-secrets
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -5954,7 +6121,7 @@ spec:
               memory: 500Mi
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -6041,13 +6208,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "24e0f0c6dd0bf39ba1103d08dedaa1047108f9263429148d8f22e6025237ac3"
-        prometheus.io/scrape: "true"
+        configChecksum: "915dd1c16576bf7f84b7293876a05f5b66993798003e1ce6a9fc2da8a861b26"
+        
       labels:
         
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: flytepropeller
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -6060,7 +6225,7 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
             - --propeller.cluster-id
-            - union-test
+            - ''
           env:
           - name: POD_NAME
             valueFrom:
@@ -6093,7 +6258,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.3.9"
           imagePullPolicy: "IfNotPresent"
           name: flytepropeller
           ports:
