@@ -241,7 +241,7 @@ tolerations:
 {{- end -}}
 
 {{- define "flytepropellerwebhook.selectorLabels" -}}
-app.kubernetes.io/name: flyte-pod-webhook
+app.kubernetes.io/name: union-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -526,7 +526,11 @@ tolerations:
 Create the name of the service account to use
 */}}
 {{- define "operator.serviceAccountName" -}}
-{{- default "operator-system" .Values.operator.serviceAccount.name }}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- default "operator-system" .Values.operator.serviceAccount.name -}}
+{{- end -}}
 {{- end }}
 
 {{- define "operator.serviceAccount.annotations" -}}
@@ -634,7 +638,11 @@ clusterData:
 Create the name of the service account to use
 */}}
 {{- define "proxy.serviceAccountName" -}}
-{{- default "proxy-system" .Values.proxy.serviceAccount.name }}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- default "proxy-system" .Values.proxy.serviceAccount.name -}}
+{{- end -}}
 {{- end }}
 
 {{- define "proxy.serviceAccount.annotations" -}}
@@ -724,16 +732,24 @@ access the storage is injected.
 {{- end }}
 {{- end -}}
 
+{{- define "prometheus.service.name" -}}
+union-operator-prometheus
+{{- end -}}
+
 {{- define "prometheus.health.url" -}}
-http://{{ include "union-operator.fullname" . }}-prometheus:80/-/healthy
+http://{{ include "prometheus.service.name" . }}:80/-/healthy
 {{- end -}}
 
 {{- define "prometheus.service.url" -}}
-http://{{ include "union-operator.fullname" . }}-prometheus:80
+http://{{ include "prometheus.service.name" . }}:80
 {{- end -}}
 
 {{- define "propeller.health.url" -}}
 http://flytepropeller:10254
+{{- end -}}
+
+{{- define "executor.health.url" -}}
+http://union-operator-executor:10254
 {{- end -}}
 
 {{- define "proxy.health.url" -}}
@@ -1063,6 +1079,14 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
+Check if Depot should be enabled for image building.
+True when imageBuilder is enabled, buildkit is not, and no custom buildkitUri is set.
+*/}}
+{{- define "operator.enableDepot" -}}
+{{- if and .Values.imageBuilder.enabled (not .Values.imageBuilder.buildkit.enabled) (not .Values.imageBuilder.buildkitUri) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Check if both imageBuilder and imageBuilder.buildkit are enabled
 */}}
 {{- define "imagebuilder.buildkit.enabled" -}}
@@ -1141,22 +1165,251 @@ app: executor
 {{ include "global.podLabels" . }}
 {{ $labels := include "executor.labels" . | fromYaml -}}
 {{- $podLabels := .Values.executor.podLabels | default dict -}}
-{{- mustMergeOverwrite $podLabels $labels | toYaml }}
+{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
+{{- end -}}
+
+{{/*
+Webhook certificate helpers
+*/}}
+
+{{/*
+Get the webhook service name
+*/}}
+{{- define "flytepropellerwebhook.serviceName" -}}
+union-pod-webhook
+{{- end -}}
+
+{{/*
+Get the webhook secret name
+*/}}
+{{- define "flytepropellerwebhook.secretName" -}}
+union-pod-webhook
+{{- end -}}
+
+{{/*
+Get the webhook service DNS names for certificate generation
+*/}}
+{{- define "flytepropellerwebhook.certDnsNames" -}}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . -}}
+{{- $namespace := .Release.Namespace -}}
+- {{ $serviceName }}
+- {{ $serviceName }}.{{ $namespace }}
+- {{ $serviceName }}.{{ $namespace }}.svc
+- {{ $serviceName }}.{{ $namespace }}.svc.cluster.local
+{{- end -}}
+
+{{/*
+Check if cert-manager CRDs are available in the cluster.
+Uses lookup to detect cert-manager, with fallback for template-only environments.
+Returns "true" if cert-manager is available, empty string otherwise.
+*/}}
+{{- define "flytepropellerwebhook.certManagerAvailable" -}}
+{{- if .Values.flytepropellerwebhook.certificate.certManager.issuerRef -}}
+{{- /* User explicitly configured cert-manager issuer, assume it's available */ -}}
+true
+{{- else if .Capabilities.APIVersions.Has "cert-manager.io/v1" -}}
+{{- /* cert-manager CRDs are registered */ -}}
+true
+{{- else -}}
+{{- /* Try lookup as last resort - this works during helm install but not helm template */ -}}
+{{- $crd := lookup "apiextensions.k8s.io/v1" "CustomResourceDefinition" "" "certificates.cert-manager.io" -}}
+{{- if $crd -}}
+true
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Determine if we should use cert-manager based on configuration and availability.
+For Flux/ArgoCD compatibility, when provider is "certManager", we trust the user's configuration.
+*/}}
+{{- define "flytepropellerwebhook.useCertManager" -}}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "certManager" -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
+Generate self-signed CA and server certificates for the webhook.
+This uses Helm's genCA and genSignedCert functions.
+The certificates are cached in a lookup to ensure consistency across template renders.
+*/}}
+{{- define "flytepropellerwebhook.generateCerts" -}}
+{{- $serviceName := include "flytepropellerwebhook.serviceName" . -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $secretName := include "flytepropellerwebhook.secretName" . -}}
+{{- /* Check if secret already exists to maintain certificate stability */ -}}
+{{- $existingSecret := lookup "v1" "Secret" $namespace $secretName -}}
+{{- if and $existingSecret $existingSecret.data (index $existingSecret.data "ca.crt") -}}
+{{- /* Reuse existing certificates (new key names) */ -}}
+caCert: {{ index $existingSecret.data "ca.crt" }}
+serverCert: {{ index $existingSecret.data "tls.crt" }}
+serverKey: {{ index $existingSecret.data "tls.key" }}
+{{- else if and $existingSecret $existingSecret.data (index $existingSecret.data "ca-cert.pem") -}}
+{{- /* Reuse existing certificates (old key names - for backward compatibility) */ -}}
+caCert: {{ index $existingSecret.data "ca-cert.pem" }}
+serverCert: {{ index $existingSecret.data "server-cert.pem" }}
+serverKey: {{ index $existingSecret.data "server-key.pem" }}
+{{- else -}}
+{{- /* Generate new certificates */ -}}
+{{- $dnsNames := list $serviceName (printf "%s.%s" $serviceName $namespace) (printf "%s.%s.svc" $serviceName $namespace) (printf "%s.%s.svc.cluster.local" $serviceName $namespace) -}}
+{{- $ca := genCA (printf "%s.%s.svc" $serviceName $namespace) 3650 -}}
+{{- $cert := genSignedCert (printf "%s.%s.svc" $serviceName $namespace) nil $dnsNames 365 $ca -}}
+caCert: {{ $ca.Cert | b64enc }}
+serverCert: {{ $cert.Cert | b64enc }}
+serverKey: {{ $cert.Key | b64enc }}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Get the CA bundle for the webhook configuration.
+This returns the base64-encoded CA certificate based on the certificate provider.
+*/}}
+{{- define "flytepropellerwebhook.caBundle" -}}
+{{- if eq .Values.flytepropellerwebhook.certificate.provider "external" -}}
+{{- .Values.flytepropellerwebhook.certificate.external.caCert -}}
+{{- else if eq .Values.flytepropellerwebhook.certificate.provider "helm" -}}
+{{- $certs := include "flytepropellerwebhook.generateCerts" . | fromYaml -}}
+{{- $certs.caCert -}}
+{{- else if eq .Values.flytepropellerwebhook.certificate.provider "certManager" -}}
+{{- /* For cert-manager, caBundle is injected by cert-manager's cainjector */ -}}
+{{- /* Return empty to signal that cainjector should handle it */ -}}
+{{- end -}}
+{{- end -}}
+{{/*
+Returns "true" when a common service account should be used for all components.
+Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
+*/}}
+{{- define "useCommonServiceAccount" -}}
+{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the common service account name.
+*/}}
+{{- define "common.serviceAccountName" -}}
+{{- .Values.commonServiceAccount.name | default "union-system" -}}
+{{- end -}}
+
+{{/*
+Returns the executor service account name, using the common SA when enabled.
+*/}}
+{{- define "executor.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+executor
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the webhook service account name, using the common SA when enabled.
+*/}}
+{{- define "webhook.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+union-webhook-system
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the fluentbit service account name, using the common SA when enabled.
+*/}}
+{{- define "fluentbit.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- .Values.fluentbit.serviceAccount.name | default "fluentbit-system" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the buildkit service account name, using the common SA when enabled.
+*/}}
+{{- define "buildkit.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "buildkit.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.imageBuilder.buildkit.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Returns the default container image repository URL.
+If imageBuilder.defaultRepository is set, use it as-is.
+Otherwise, auto-generate from the cloud provider, region, project, and registryName.
+Checks both storage.provider and the top-level provider field (Azure uses storage.provider=custom).
+*/}}
+{{- define "imagebuilder.defaultRepository" -}}
+{{- if .Values.imageBuilder.defaultRepository -}}
+  {{- tpl .Values.imageBuilder.defaultRepository . -}}
+{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s.dkr.ecr.%s.amazonaws.com/%s" $accountId $region $registryName -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- $projectId := tpl .Values.storage.gcp.projectId . -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s-docker.pkg.dev/%s/%s" $region $projectId $registryName -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
+  {{- $registryName := .Values.imageBuilder.registryName -}}
+  {{- printf "%s.azurecr.io" $registryName -}}
+{{- else -}}
+  {{- .Values.imageBuilder.registryName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the image builder authentication type.
+If imageBuilder.authenticationType is explicitly set (non-empty, not "noop"), use it.
+Otherwise, auto-detect from the cloud provider.
+*/}}
+{{- define "imagebuilder.authenticationType" -}}
+{{- if and .Values.imageBuilder.authenticationType (ne .Values.imageBuilder.authenticationType "noop") -}}
+  {{- .Values.imageBuilder.authenticationType -}}
+{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
+  {{- "aws" -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
+  {{- "google" -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
+  {{- "azure" -}}
+{{- else -}}
+  {{- .Values.imageBuilder.authenticationType | default "noop" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
+In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
+namespace_mapping) so users only need to set namespaces.enabled: false.
+*/}}
+{{- define "singleNamespace" -}}
+{{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
 {{- end -}}
 
 {{- define "operator.dependenciesHeartbeat" -}}
-{{- if .Values.flytepropeller.enabled }}
-{{- tpl (toYaml .Values.config.operator.dependenciesHeartbeat) $ | nindent 8 }}
-{{- else }}
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
-{{- if ne $key "propeller" }}
+{{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "executor") (not $.Values.executor.enabled) }}
+{{- else if and (eq $key "prometheus") $.Values.low_privilege }}
+{{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}
 {{- end }}
 {{- tpl (toYaml $heartbeat) $ | nindent 8 }}
-{{- end }}
 {{- end -}}
+
 {{- define "flyte-pod-webhook.name" -}}
 union-pod-webhook
 {{- end -}}
@@ -1167,9 +1420,12 @@ union-pod-webhook
 */}}
 {{- define "propeller.webhookConfigMinimal" -}}
 {{- $webhook := deepCopy .Values.config.core.webhook }}
-{{- $_ := set $webhook "serviceName" (include "flyte-pod-webhook.name" .) }}
-{{- $_ := set $webhook "secretName" (include "flyte-pod-webhook.name" .) }}
+{{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
+{{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
+{{- if .Values.low_privilege }}
+{{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
+{{- end }}
 webhook:
 {{- tpl (toYaml $webhook) . | nindent 2 }}
 {{- end -}}

@@ -1,17 +1,10 @@
-{{ if .Values.flytepropeller.enabled }}
-# Create an empty secret that the first propeller pod will populate
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-pod-webhook
-  namespace: {{ .Release.Namespace }}
-type: Opaque
----
+{{- if .Values.flytepropellerwebhook.enabled }}
+# Webhook deployment
 # Create the actual deployment
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: flytepropeller-webhook
+  name: {{ template "flyte-pod-webhook.name" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "flytepropellerwebhook.labels" . | nindent 4 }}
@@ -26,7 +19,11 @@ spec:
         platform.union.ai/zone: "dataplane"
         {{- include "flytepropellerwebhook.podLabels" . | nindent 8 }}
       annotations:
+        {{- if .Values.flytepropeller.enabled }}
         configChecksum: {{ include (print .Template.BasePath "/propeller/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- else }}
+        configChecksum: {{ include (print .Template.BasePath "/webhook/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- end }}
         {{- with .Values.flytepropellerwebhook.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -36,10 +33,11 @@ spec:
       securityContext:
         {{- tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
-      serviceAccountName: flytepropeller-webhook-system
+      serviceAccountName: {{ include "webhook.serviceAccountName" . }}
       {{- if .Values.flytepropellerwebhook.priorityClassName }}
       priorityClassName: {{ .Values.flytepropellerwebhook.priorityClassName }}
       {{- end }}
+      {{- if eq .Values.flytepropellerwebhook.certificate.provider "legacy" }}
       initContainers:
         - name: generate-secrets
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -52,14 +50,17 @@ spec:
             - --config
             - /etc/flyte/config/*.yaml
           env:
-            {{- include "global.podEnvVars" . | nindent 10 }}
+            {{- include "global.podEnvVars" . | nindent 12 }}
             {{- with .Values.flytepropellerwebhook.podEnv -}}
-            {{- toYaml . | nindent 10 }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           volumeMounts:
             - name: config-volume
               mountPath: /etc/flyte/config
-          resources: {{- toYaml .Values.flytepropellerwebhook.resources | nindent 12 }}
+          {{- with .Values.flytepropellerwebhook.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- end }}
       containers:
         - name: webhook
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -96,10 +97,14 @@ spec:
       volumes:
         - name: config-volume
           configMap:
+            {{- if .Values.flytepropeller.enabled }}
             name: flyte-propeller-config
+            {{- else }}
+            name: union-pod-webhook-config
+            {{- end }}
         - name: webhook-certs
           secret:
-            secretName: flyte-pod-webhook
+            secretName: {{ include "flytepropellerwebhook.secretName" . }}
       {{- with .Values.flytepropellerwebhook.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}

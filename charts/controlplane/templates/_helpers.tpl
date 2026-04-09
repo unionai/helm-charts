@@ -284,7 +284,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- include "unionai.fullname" . | trim -}}
   {{- end }}
 {{- else }}
-default
+union
 {{- end }}
 {{- end }}
 
@@ -580,7 +580,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if .Values.console.serviceAccount.create }}
 {{- default (include "console.fullname" .) .Values.console.serviceAccount.name }}
 {{- else }}
-{{- default "default" .Values.console.serviceAccount.name }}
+{{- default "union" .Values.console.serviceAccount.name }}
 {{- end }}
 {{- end }}
 
