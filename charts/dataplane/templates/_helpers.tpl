@@ -911,6 +911,201 @@ nodeName: {{- toYaml . }}
 {{- end -}}
 
 {{/*
+Prometheus scheduling helpers
+*/}}
+{{- define "prometheus.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.prometheus.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "prometheus.scheduling.affinity" -}}
+{{- with .Values.prometheus.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "prometheus.scheduling.nodeSelector" -}}
+{{- with .Values.prometheus.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "prometheus.scheduling.nodeName" -}}
+{{- with .Values.prometheus.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "prometheus.scheduling.tolerations" -}}
+{{- with .Values.prometheus.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "prometheus.scheduling" -}}
+{{- if .Values.prometheus.topologySpreadConstraints }}
+{{- include "prometheus.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.prometheus.affinity }}
+{{- include "prometheus.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.prometheus.nodeSelector }}
+{{- include "prometheus.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.prometheus.nodeName }}
+{{- include "prometheus.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.prometheus.tolerations }}
+{{- include "prometheus.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Flyteconnector scheduling helpers
+*/}}
+{{- define "flyteconnector.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.flyteconnector.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "flyteconnector.scheduling.affinity" -}}
+{{- with .Values.flyteconnector.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "flyteconnector.scheduling.nodeSelector" -}}
+{{- with .Values.flyteconnector.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "flyteconnector.scheduling.nodeName" -}}
+{{- with .Values.flyteconnector.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "flyteconnector.scheduling.tolerations" -}}
+{{- with .Values.flyteconnector.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "flyteconnector.scheduling" -}}
+{{- if .Values.flyteconnector.topologySpreadConstraints }}
+{{- include "flyteconnector.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.flyteconnector.affinity }}
+{{- include "flyteconnector.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.flyteconnector.nodeSelector }}
+{{- include "flyteconnector.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.flyteconnector.nodeName }}
+{{- include "flyteconnector.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.flyteconnector.tolerations }}
+{{- include "flyteconnector.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Imagebuilder buildkit scheduling helpers
+*/}}
+{{- define "imagebuilder.buildkit.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.imageBuilder.buildkit.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.scheduling.affinity" -}}
+{{- with .Values.imageBuilder.buildkit.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.scheduling.nodeSelector" -}}
+{{- with .Values.imageBuilder.buildkit.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.scheduling.nodeName" -}}
+{{- with .Values.imageBuilder.buildkit.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.scheduling.tolerations" -}}
+{{- with .Values.imageBuilder.buildkit.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "imagebuilder.buildkit.scheduling" -}}
+{{- if .Values.imageBuilder.buildkit.topologySpreadConstraints }}
+{{- include "imagebuilder.buildkit.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.imageBuilder.buildkit.affinity }}
+{{- include "imagebuilder.buildkit.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.imageBuilder.buildkit.nodeSelector }}
+{{- include "imagebuilder.buildkit.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.imageBuilder.buildkit.nodeName }}
+{{- include "imagebuilder.buildkit.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.imageBuilder.buildkit.tolerations }}
+{{- include "imagebuilder.buildkit.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Global service account annotations
 */}}
 {{- define "global.serviceAccountAnnotations" -}}

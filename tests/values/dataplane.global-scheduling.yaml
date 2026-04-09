@@ -1,0 +1,42 @@
+# Test that global scheduling (nodeSelector, tolerations, affinity) cascades
+# to all Union-owned components: propeller, executor, webhook, operator, proxy,
+# clusterresourcesync, prometheus, flyteconnector, and imagebuilder/buildkit.
+
+host: union.test.union.ai
+clusterName: union-test
+orgName: union
+provider: aws
+
+storage:
+  provider: aws
+  authType: iam
+  bucketName: test-bucket
+  region: us-east-1
+
+secrets:
+  admin:
+    create: true
+    clientSecret: test-secret
+    clientId: test-client
+
+# Enable flyteconnector to verify it also gets global scheduling
+flyteconnector:
+  enabled: true
+
+scheduling:
+  nodeSelector:
+    app_pool: flyte
+  tolerations:
+    - key: "flyte"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: workload-type
+                operator: In
+                values:
+                  - flyte
