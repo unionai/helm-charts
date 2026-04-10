@@ -1,0 +1,108 @@
+{{- define "control-plane-library.backendtrafficpolicy" }}
+# BackendTrafficPolicy — configures Envoy→gRPC backend connection settings.
+# Replaces nginx grpc_connect_timeout, grpc_read_timeout, grpc_send_timeout.
+# Two policies (one per GRPCRoute) so h2c and timeouts are scoped to gRPC traffic only.
+#
+# requestTimeout applies to unary calls; maxStreamDuration applies to streaming calls.
+# "0s" for maxStreamDuration means no limit (equivalent to grpc_read_timeout 604800s on streaming routes).
+# Both protected and unprotected GRPCRoutes contain streaming methods so both get the same config.
+#
+# Rate limit is also included here (when enabled) because route-level BTPs override gateway-level ones,
+# so the gateway-level rate-limit BTP below would be suppressed for these two GRPCRoutes without it.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-protected-h2c
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: {{ template "flyte.name" . }}-grpc-protected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for streaming (grpc_read_timeout 604800s on streaming routes)
+  tcpKeepalive:
+    probes: 9
+    idleTime: "15s"
+    interval: "15s"
+  http2: {}
+{{- if .Values.envoyGateway.rateLimit.enabled }}
+  rateLimit:
+    type: Global
+    global:
+      rules:
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: "0.0.0.0/0"
+          limit:
+            requests: {{ .Values.envoyGateway.rateLimit.requestsPerUnit | default 100 }}
+            unit: {{ .Values.envoyGateway.rateLimit.unit | default "Second" }}
+{{- end }}
+---
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-unprotected-h2c
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: {{ template "flyte.name" . }}-grpc-unprotected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for WatchExecutionStatusUpdates streaming
+  tcpKeepalive:
+    probes: 9
+    idleTime: "15s"
+    interval: "15s"
+  http2: {}
+{{- if .Values.envoyGateway.rateLimit.enabled }}
+  rateLimit:
+    type: Global
+    global:
+      rules:
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: "0.0.0.0/0"
+          limit:
+            requests: {{ .Values.envoyGateway.rateLimit.requestsPerUnit | default 100 }}
+            unit: {{ .Values.envoyGateway.rateLimit.unit | default "Second" }}
+{{- end }}
+{{- if .Values.envoyGateway.rateLimit.enabled }}
+---
+# Global per-source-IP rate limit — replaces nginx.ingress.kubernetes.io/limit-rps annotation.
+# Requires EG rateLimit backend (envoyproxy/ratelimit + Redis) to be running.
+# Enable via envoyGateway.rateLimit.enabled: true once the backend is confirmed healthy.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: {{ template "flyte.name" . }}-global-rate-limit
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ template "flyte.name" . }}
+  rateLimit:
+    type: Global
+    global:
+      rules:
+        - clientSelectors:
+            - sourceCIDR:
+                type: Distinct
+                value: "0.0.0.0/0"
+          limit:
+            requests: {{ .Values.envoyGateway.rateLimit.requestsPerUnit | default 100 }}
+            unit: {{ .Values.envoyGateway.rateLimit.unit | default "Second" }}
+{{- end }}
+{{- end }}

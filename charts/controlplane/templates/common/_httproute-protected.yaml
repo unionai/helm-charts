@@ -1,0 +1,108 @@
+{{- define "control-plane-library.httproute-protected" }}
+# NOTE: Auth enforcement (SecurityPolicy/ExtAuthz) is added in M2.
+# These routes currently allow unauthenticated access — they match the
+# nginx protected-ingress paths but without the auth-url annotation.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ template "flyte.name" . }}-protected
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  parentRefs:
+    - name: {{ template "flyte.name" . }}
+      namespace: {{ template "flyte.namespace" . }}
+  hostnames:
+    - {{ .Values.global.UNION_HOST | quote }}
+  rules:
+    # Flyte REST API
+    - matches:
+        - path: {type: PathPrefix, value: "/api"}
+        - path: {type: PathPrefix, value: "/v1"}
+        - path: {type: PathPrefix, value: "/cloudadmin"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    # Dataproxy HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/actor"}
+        - path: {type: PathPrefix, value: "/agent"}
+        - path: {type: PathPrefix, value: "/dataplane"}
+        - path: {type: PathPrefix, value: "/spark-history-server"}
+        - path: {type: PathPrefix, value: "/api/v1/dataproxy"}
+        - path: {type: PathPrefix, value: "/cloudidl.support.SupportService"}
+      backendRefs:
+        - name: dataproxy
+          port: 81
+    # Executions HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/app"}
+        - path: {type: PathPrefix, value: "/apps"}
+        - path: {type: PathPrefix, value: "/echo"}
+        - path: {type: PathPrefix, value: "/execution"}
+      backendRefs:
+        - name: executions
+          port: 81
+    # Cluster HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/cluster"}
+        - path: {type: PathPrefix, value: "/clusterpool"}
+        - path: {type: PathPrefix, value: "/clusterconfig"}
+        - path: {type: PathPrefix, value: "/managed_cluster"}
+      backendRefs:
+        - name: cluster
+          port: 81
+    # Authorizer HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/authorizer"}
+      backendRefs:
+        - name: authorizer
+          port: 81
+    # Usage HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/usage"}
+      backendRefs:
+        - name: usage
+          port: 81
+    {{- if ((.Values.artifacts).enabled) }}
+    # Artifacts HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/artifacts"}
+      backendRefs:
+        - name: artifacts
+          port: 81
+    {{- end }}
+    {{- if ((.Values.workspaceService).enabled) }}
+    # Workspace HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/workspace_registry"}
+        - path: {type: PathPrefix, value: "/workspace_instance"}
+      backendRefs:
+        - name: executions
+          port: 81
+    {{- end }}
+    {{- if (((.Values.dataproxy).prometheus).enabled) }}
+    # Prometheus (via dataproxy)
+    - matches:
+        - path: {type: PathPrefix, value: "/prometheus"}
+      backendRefs:
+        - name: dataproxy
+          port: 81
+    {{- end }}
+    # Console (React SPA) — /console, /dashboard, /resources, /cost, /loading, and root catch-all
+    - matches:
+        - path: {type: PathPrefix, value: "/console"}
+        - path: {type: PathPrefix, value: "/dashboard"}
+        - path: {type: PathPrefix, value: "/resources"}
+        - path: {type: PathPrefix, value: "/cost"}
+        - path: {type: PathPrefix, value: "/loading"}
+        - path: {type: PathPrefix, value: "/"}
+      backendRefs:
+        - name: flyteconsole
+          port: 80
+    # Union v2 console
+    - matches:
+        - path: {type: PathPrefix, value: "/v2"}
+      backendRefs:
+        - name: unionconsole
+          port: 80
+{{- end }}

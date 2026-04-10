@@ -1,0 +1,92 @@
+# Redis deployment for envoyproxy/ratelimit (deployed in envoy-gateway-system).
+# Deployed automatically when config.envoyGateway.rateLimit.backend.redis.url is set.
+redis:
+  image: redis:7-alpine
+  resources:
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+    limits:
+      memory: "128Mi"
+
+# Passed through to the gateway-helm EnvoyGateway CR via the config.envoyGateway values key.
+# When rateLimit.backend.redis.url is set, EG auto-deploys envoyproxy/ratelimit in envoy-gateway-system.
+config:
+  envoyGateway:
+    extensionApis:
+      enableEnvoyPatchPolicy: true
+
+envoyGateway:
+  # GatewayClass name — must match what controlplane Helm templates reference via global.GATEWAY_CLASS_NAME.
+  gatewayClassName: envoy
+
+  # Namespace where controlplane resources (EnvoyPatchPolicy) live.
+  controlplaneNamespace: union-cp
+
+  # Annotations applied to the Envoy fleet LoadBalancer Service (provider-specific NLB config).
+  serviceAnnotations: {}
+
+  # proxyServiceName overrides the EG-generated Service name (which includes an unpredictable hash
+  # suffix in EG v1.2+). Setting a stable name allows CONTROLPLANE_INTRA_CLUSTER_HOST to be
+  # derived deterministically: <proxyServiceName>.envoy-gateway-system.svc.cluster.local
+  proxyServiceName: envoy-controlplane
+
+  # loadBalancerClass sets spec.loadBalancerClass on the envoy fleet Service (e.g. eks.amazonaws.com/nlb).
+  # Omitted when null.
+  loadBalancerClass: null
+
+  # envoyDeployment configures the Envoy proxy fleet managed by EG.
+  # pluginImage: custom Envoy proxy image built from Dockerfile.envoy-plugins-ingress
+  #   (contrib Envoy + control-plane-auth.so baked in). Set by the internal selfmanaged
+  #   pipeline in the gitops values file at:
+  #     selfmanaged-internal/envoy-gateway/{env}/{org}/values.yaml
+  #   Must be a contrib-variant image — the standard distroless image does not include
+  #   the envoy.filters.http.golang extension required by the EnvoyPatchPolicy.
+  #   Leave empty to use the EG-managed default image (no Go filter support).
+  # container.env: extra env vars injected into the proxy container.
+  #   CONTROL_PLANE_AUTHZ_AUTHURL is required when pluginImage is set.
+  envoyDeployment:
+    pluginImage: ""
+    container:
+      env: []
+
+  # httpFilters lists the plugin_name values to inject into the Envoy HCM filter chain, in order.
+  # All plugins must be registered in /lib/control-plane-auth.so.
+  httpFilters:
+    - identity-auth    # strips spoofable X-User-* headers, enforces credential validation
+    - auth-proxy-cache # caches OAuth2 token responses for the auth-proxy token endpoint
+
+  # identityAuth configures the identity-auth HCM filter.
+  identityAuth:
+    # loginURL is the path unauthenticated browser GET requests are redirected to.
+    # Mirrors nginx's auth-signin annotation: redirects to <loginURL>?redirect_url=<original_path>.
+    # Leave empty to return 401 for all unauthenticated requests (no redirect).
+    loginURL: "/login"
+
+    # bypassPaths lists path prefixes that skip credential validation.
+    # Identity headers (X-User-*) are still stripped on these paths to prevent spoofing.
+    # Mirrors the paths in the unprotected HTTPRoute and GRPCRoute templates.
+    bypassPaths:
+      # OIDC / auth flows (flyteadmin:80)
+      - "/.well-known"
+      - "/login"
+      - "/logout"
+      - "/callback"
+      - "/config"
+      - "/oauth2"
+      - "/auth"
+      - "/me"
+      - "/healthcheck"
+      # OpenAPI docs (flyteadmin:87)
+      - "/openapi"
+      # Console healthcheck
+      - "/healthz"
+      # Webhooks (usage-service, hooks-service)
+      - "/enqueue_metronome_request/"
+      - "/enqueue_stripe_request/"
+      - "/okta_event_webhook/"
+      # Unprotected gRPC services (path format: /<package>.<Service>/<Method>)
+      - "/flyteidl.service.HealthService/"
+      - "/flyteidl.service.AuthMetadataService/"
+      - "/flyteidl2.auth.AuthMetadataService/"
+      - "/flyteidl.service.WatchService/WatchExecutionStatusUpdates"

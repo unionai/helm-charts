@@ -20,6 +20,9 @@ helm repo add flyte https://helm.flyte.org
 # Add Ingress NGINX Helm repository (if using ingress-nginx)
 helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
 
+# Add Envoy Gateway Helm repository (if using Envoy Gateway)
+helm repo add envoy-gateway oci://docker.io/envoyproxy
+
 # Add ScyllaDB Helm repository (if using ScyllaDB)
 helm repo add scylla https://scylla-operator-charts.storage.googleapis.com/stable
 
@@ -52,6 +55,7 @@ Kubernetes: `>= 1.28.0-0`
 |------------|------|---------|----------|-------|
 | https://helm.flyte.org | flyte-core(flyte) | v1.16.0-b2 | No | Required |
 | https://kubernetes.github.io/ingress-nginx | ingress-nginx | 4.12.3 | Yes | Only if `ingress-nginx.enabled: true` |
+| oci://docker.io/envoyproxy | gateway-helm(envoy-gateway) | v1.6.4 | Yes | Only if `envoy-gateway.enabled: true`; for selfmanaged deployments install via ArgoCD ApplicationSet instead |
 | https://scylla-operator-charts.storage.googleapis.com/stable | scylla-operator | v1.18.1 | Yes | Only if `scylla.enabled: true` |
 | https://scylla-operator-charts.storage.googleapis.com/stable | scylla | v1.18.1 | Yes | Only if `scylla.enabled: true` |
 | https://prometheus-community.github.io/helm-charts | monitoring(kube-prometheus-stack) | 80.8.0 | Yes | Only if `monitoring.enabled: true` |
@@ -261,17 +265,41 @@ helm upgrade --install union-controlplane unionai/controlplane \
   --values values.yaml
 ```
 
-### Installation with Ingress NGINX
+### Ingress Controller
 
-If you need ingress support:
+The chart supports two ingress controllers, selected via `global.INGRESS_PROVIDER`:
+
+| Value | Behavior |
+|-------|----------|
+| `nginx` | Only nginx Ingress objects rendered (default) |
+| `envoy` | Only Envoy Gateway API resources rendered (HTTPRoute/GRPCRoute/Gateway) |
+| `both` | Both sets rendered simultaneously — use during migration |
+
+#### Installation with Ingress NGINX
 
 ```yaml
+global:
+  INGRESS_PROVIDER: nginx
+
 ingress-nginx:
   enabled: true
+```
 
-ingress:
-  className: "controlplane"
-  secretService: true
+#### Installation with Envoy Gateway
+
+Envoy Gateway can be installed as a sub-chart (managed deployments) or as a separate Helm release via ArgoCD (selfmanaged deployments — see [Self-Hosted Guides](#alternative-deployment-models)).
+
+For sub-chart installation:
+
+```yaml
+global:
+  INGRESS_PROVIDER: envoy
+
+envoy-gateway:
+  enabled: true  # installs gateway-helm as a sub-chart
+
+envoyGateway:
+  gatewayClassName: envoy  # must match the GatewayClass created by the EG install
 ```
 
 ## Verification
@@ -302,7 +330,7 @@ helm show values unionai/controlplane
 - **Postgres Configuration** (Required): Set `dbHost`, `dbName`, `dbUser`, and `dbPass` for the primary database used by all control plane services except the queue service
 - **ScyllaDB Configuration** (Required): Configure `scylla` section for the queue service database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
 - **Object Storage**: Configure `bucketName`, `artifactsBucketName`, and `region` for S3-compatible storage
-- **Ingress**: Enable and configure ingress under `ingress-nginx` section
+- **Ingress**: Set `global.INGRESS_PROVIDER` to `nginx`, `envoy`, or `both`. Enable the relevant controller (`ingress-nginx.enabled` or `envoy-gateway.enabled`) and configure `envoyGateway.gatewayClassName` when using Envoy Gateway
 
 ---
 

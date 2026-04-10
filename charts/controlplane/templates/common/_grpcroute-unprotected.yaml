@@ -1,0 +1,37 @@
+{{- define "control-plane-library.grpcroute-unprotected" }}
+# Unauthenticated gRPC routes — health checks and auth metadata used by clients
+# before they have a token. Mirrors the gRPC rules in the nginx unprotected ingress.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-unprotected
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  parentRefs:
+    - name: {{ template "flyte.name" . }}
+      namespace: {{ template "flyte.namespace" . }}
+  hostnames:
+    - {{ .Values.global.UNION_HOST | quote }}
+    {{- if .Values.flyte.common.ingress.isServerless }}
+    - {{ .Values.flyte.common.ingress.serverlessVanityHost | quote }}
+    {{- end }}
+    {{- with .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}
+    {{- if ne . $.Values.global.UNION_HOST }}
+    - {{ . | quote }}
+    {{- end }}
+    {{- end }}
+  rules:
+    - matches:
+        - method:
+            service: "flyteidl.service.HealthService"
+        - method:
+            service: "flyteidl.service.AuthMetadataService"
+        - method:
+            service: "flyteidl2.auth.AuthMetadataService"
+        - method:
+            service: "flyteidl.service.WatchService"
+            method: "WatchExecutionStatusUpdates"
+      backendRefs:
+        - name: flyteadmin
+          port: 81
+{{- end }}

@@ -1,0 +1,195 @@
+{{- define "control-plane-library.grpcroute-protected" }}
+# Consolidates nginx protected-grpc, protected-grpc-streaming, apps-protected,
+# and protected-grpc-high-tput ingresses. GRPCRoute service-level matches
+# cover all methods; specific-method matches are used where routes vary by method.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-protected
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  parentRefs:
+    - name: {{ template "flyte.name" . }}
+      namespace: {{ template "flyte.namespace" . }}
+  hostnames:
+    - {{ .Values.global.UNION_HOST | quote }}
+    {{- with .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}
+    {{- if ne . $.Values.global.UNION_HOST }}
+    - {{ . | quote }}
+    {{- end }}
+    {{- end }}
+  rules:
+    # flyteadmin — protected gRPC (AdminService, ProjectService, IdentityService, etc.)
+    - matches:
+        - method: {service: "flyteidl.service.AdminService"}
+        - method: {service: "flyteidl2.project.ProjectService"}
+        - method: {service: "flyteidl2.auth.IdentityService"}
+        - method: {service: "flyteidl.service.WatchService"}
+        - method: {service: "cloudidl.cloudadmin.CloudAdminService"}
+        - method: {service: "flyteidl.service.IdentityService"}
+        - method: {service: "flyteidl.service.SignalService"}
+      backendRefs:
+        - name: flyteadmin
+          port: 81
+    # executions
+    - matches:
+        - method: {service: "cloudidl.execution.ExecutionService"}
+        - method: {service: "cloudidl.echo.EchoService"}
+        - method: {service: "cloudidl.app.AppService"}
+        - method: {service: "cloudidl.workflow.RunLogsService"}
+        - method: {service: "cloudidl.workflow.TranslatorService"}
+        - method: {service: "flyteidl2.app.AppService"}
+        - method: {service: "flyteidl2.workflow.RunLogsService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    # cluster
+    - matches:
+        - method: {service: "cloudidl.cluster.ClusterService"}
+        - method: {service: "cloudidl.cluster.ClusterNodepoolService"}
+        - method: {service: "cloudidl.cloudaccounts.CloudAccountsService"}
+        - method: {service: "cloudidl.cluster.ManagedClusterService"}
+        - method: {service: "cloudidl.clusterpool.ClusterPoolService"}
+        - method: {service: "cloudidl.clusterconfig.ClusterConfigService"}
+      backendRefs:
+        - name: cluster
+          port: 80
+    # identity
+    - matches:
+        - method: {service: "cloudidl.apikey.APIKeyService"}
+        - method: {service: "cloudidl.identity.AppsService"}
+        - method: {service: "cloudidl.identity.UserService"}
+        - method: {service: "cloudidl.identity.MemberService"}
+        - method: {service: "cloudidl.identity.RoleService"}
+        - method: {service: "cloudidl.identity.PolicyService"}
+        - method: {service: "cloudidl.identity.IdentityService"}
+      backendRefs:
+        - name: identity
+          port: 83
+    - matches:
+        - method: {service: "cloudidl.identity.SelfServe"}
+      backendRefs:
+        - name: identity
+          port: 80
+    # organizations
+    - matches:
+        - method: {service: "cloudidl.org.OrgService"}
+      backendRefs:
+        - name: organizations
+          port: 83
+    # usage
+    - matches:
+        - method: {service: "cloudidl.usage.UsageService"}
+      backendRefs:
+        - name: usage
+          port: 80
+    # authorizer
+    - matches:
+        - method: {service: "cloudidl.authorizer.AuthorizerService"}
+      backendRefs:
+        - name: authorizer
+          port: 83
+    # datacatalog
+    - matches:
+        - method: {service: "datacatalog.DataCatalog"}
+      backendRefs:
+        - name: datacatalog
+          port: 89
+    # cacheservice
+    - matches:
+        - method: {service: "flyteidl.cacheservice.CacheService"}
+        - method: {service: "flyteidl.cacheservice.v2.CacheService"}
+      backendRefs:
+        - name: cacheservice
+          port: 89
+    # dataproxy (gRPC)
+    - matches:
+        - method: {service: "cloudidl.actor.ActorEnvironmentService"}
+        - method: {service: "cloudidl.agent.AgentService"}
+        - method: {service: "cloudidl.support.SupportService"}
+        - method: {service: "cloudidl.clouddataproxy.CloudDataProxyService"}
+        - method: {service: "flyteidl.service.DataProxyService"}
+        - method: {service: "flyteidl2.dataproxy.DataProxyService"}
+        - method: {service: "cloudidl.logs.LogsService"}
+        - method: {service: "cloudidl.app.AppLogsService"}
+        - method: {service: "cloudidl.app.ReplicaService"}
+        - method: {service: "flyteidl2.app.AppLogsService"}
+        - method: {service: "flyteidl2.app.ReplicaService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+    # queue
+    - matches:
+        - method: {service: "cloudidl.workflow.QueueService"}
+        - method: {service: "cloudidl.workflow.StateService"}
+        - method: {service: "cloudidl.workflow.LeaseService"}
+        - method: {service: "flyteidl2.workflow.QueueService"}
+        - method: {service: "flyteidl2.workflow.StateService"}
+      backendRefs:
+        - name: queue
+          port: 80
+    # image builder (dataproxy)
+    - matches:
+        - method: {service: "cloudidl.imagebuilder.ImageService"}
+        - method: {service: "flyteidl2.imagebuilder.ImageService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+    {{- if .Values.flyte.common.ingress.secretService }}
+    - matches:
+        - method: {service: "cloudidl.secret.SecretService"}
+        - method: {service: "flyteidl2.secret.SecretService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+    {{- end }}
+    {{- if ((.Values.artifacts).enabled) }}
+    - matches:
+        - method: {service: "flyteidl.artifact.ArtifactRegistry"}
+      backendRefs:
+        - name: artifacts
+          port: 80
+    {{- end }}
+    {{- if (((.Values.objectstore).controlPlane).enabled) }}
+    - matches:
+        - method: {service: "cloudidl.objectstore.v1.ObjectStoreService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+    {{- end }}
+    {{- if ((.Values.hooksService).enabled) }}
+    - matches:
+        - method: {service: "cloudidl.hooks.HooksService"}
+      backendRefs:
+        - name: hooks-service
+          port: 80
+    {{- end }}
+    {{- if ((.Values.workspaceService).enabled) }}
+    - matches:
+        - method: {service: "cloudidl.workspace.WorkspaceRegistryService"}
+        - method: {service: "cloudidl.workspace.WorkspaceInstanceService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    {{- end }}
+    # Union v2 workflow services (executions)
+    - matches:
+        - method: {service: "cloudidl.workflow.RunService"}
+        - method: {service: "cloudidl.workflow.InternalRunService"}
+        - method: {service: "cloudidl.workflow.TaskService"}
+        - method: {service: "cloudidl.workflow.TriggerService"}
+        - method: {service: "flyteidl2.workflow.RunService"}
+        - method: {service: "flyteidl2.workflow.TranslatorService"}
+        - method: {service: "flyteidl2.task.TaskService"}
+        - method: {service: "flyteidl2.trigger.TriggerService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    {{- if ((.Values.assistant).enabled) }}
+    - matches:
+        - method: {service: "cloudidl.workflow.AssistantService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    {{- end }}
+{{- end }}

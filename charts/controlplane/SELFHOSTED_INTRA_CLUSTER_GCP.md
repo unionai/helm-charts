@@ -287,13 +287,23 @@ global:
   # override is configured.
 ```
 
-### TLS Requirements
+### Ingress Controller
 
-gRPC requires TLS for HTTP/2 with NGINX. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
+The chart supports two ingress controllers, selected via `global.INGRESS_PROVIDER`:
+
+| Value | Behavior |
+|-------|----------|
+| `nginx` | Only nginx Ingress objects rendered (default) |
+| `envoy` | Only Envoy Gateway API resources rendered (HTTPRoute/GRPCRoute/Gateway) |
+| `both` | Both sets rendered simultaneously — use during migration |
+
+#### NGINX (default)
+
+TLS is required for gRPC over HTTP/2. Refer to [values.gcp.selfhosted-intracluster.yaml](./values.gcp.selfhosted-intracluster.yaml) for example configuration.
 
 ```yaml
 global:
-  # Configure namespace and name of the Kubernetes TLS secret.
+  INGRESS_PROVIDER: nginx
   TLS_SECRET_NAMESPACE: ""
   TLS_SECRET_NAME: ""
 
@@ -304,12 +314,35 @@ ingress-nginx:
       default-ssl-certificate: "<TLS_SECRET_NAMESPACE>/<TLS_SECRET_NAME>"
 ```
 
+#### Envoy Gateway
+
+Envoy Gateway is installed as a **separate Helm release** via an ArgoCD ApplicationSet — it is not a sub-chart of the controlplane chart. To enable it:
+
+1. Deploy the Envoy Gateway controller into the cluster (see `cloud/infra/argocd/deploy/manifests/appset-selfmanaged-envoy-gateway.yaml`).
+2. Set the ingress provider and gateway class in your overrides:
+
+```yaml
+global:
+  INGRESS_PROVIDER: envoy  # or "both" during parallel rollout
+
+envoyGateway:
+  gatewayClassName: controlplane-envoy  # must match the GatewayClass created by the EG install
+```
+
+The `envoy-gateway.enabled` key controls whether the chart's bundled sub-chart dependency is installed. For selfmanaged deployments this stays `false` because EG is managed separately:
+
+```yaml
+envoy-gateway:
+  enabled: false  # EG is installed via its own ArgoCD ApplicationSet, not as a sub-chart
+```
+
 ### Service Discovery
 
 Control plane services discover each other via Kubernetes DNS:
 
 - **Flyteadmin**: `flyteadmin.union-cp.svc.cluster.local:81`
 - **NGINX Ingress**: `controlplane-nginx-controller.union-cp.svc.cluster.local`
+- **Envoy Gateway**: `controlplane-envoy-gateway.union-cp.svc.cluster.local` (when using EG)
 - **Dataplane** (for dataproxy): `dataplane-nginx-controller.union.svc.cluster.local`
 
 ## Authentication (OIDC/OAuth2)
@@ -415,7 +448,7 @@ flyte:
           useAuth: true
 ```
 
-This enables nginx auth-subrequest validation on protected ingress routes.
+This enables auth validation on protected ingress routes (nginx auth-subrequest for the nginx path; the Envoy Gateway path uses an equivalent Go auth filter via EnvoyPatchPolicy).
 
 ### Verifying Authentication
 

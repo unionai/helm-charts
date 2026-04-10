@@ -1,0 +1,23 @@
+{{- define "control-plane-library.clienttrafficpolicy" }}
+# ClientTrafficPolicy — configures inbound client connection settings on the Gateway.
+# Replaces nginx server-snippet: client_header_timeout, client_body_timeout,
+# client_header_buffer_size, and large_client_header_buffers.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: {{ template "flyte.name" . }}-client-policy
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ template "flyte.name" . }}
+  timeout:
+    http:
+      requestReceivedTimeout: "0s"  # client_header_timeout 604800
+      streamIdleTimeout: "0s"       # client_body_timeout 604800
+  connection:
+    # large_client_header_buffers 64 32k = 2Mi total; mitigates 400 errors from large cookies
+    # at the /me auth endpoint (see PE-1101).
+    bufferLimit: "2Mi"
+{{- end }}
