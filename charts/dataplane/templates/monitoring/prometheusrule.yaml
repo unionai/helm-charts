@@ -1,8 +1,38 @@
-{{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+{{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")
+  .Values.cost.enabled (not .Values.low_privilege) .Values.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
   name: {{ include "unionai-dataplane.fullname" . }}-dataplane-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+spec:
+{{ .Files.Get "files/recording-rules.yml" | indent 2 }}
+{{- end }}
+---
+{{- if .Values.prometheus.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-recording-rules
+  namespace: {{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+data:
+  recording_rules.yml: |
+{{- if and .Values.cost.enabled (not .Values.low_privilege) }}
+{{ .Files.Get "files/recording-rules.yml" | indent 4 }}
+{{- else }}
+    groups: []
+{{- end }}
+{{- end }}
+---
+{{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}-monitoring-rules
   namespace: {{ .Release.Namespace }}
   labels:
     release: {{ .Release.Name }}
