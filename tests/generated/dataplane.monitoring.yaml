@@ -18,7 +18,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: knative-operator
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -42,7 +42,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: operator-webhook
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -196,6 +196,14 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: dataplane/templates/serving/pre-delete-hook.yaml
+# SA and RBAC are regular release resources (not hooks) so they exist when the pre-delete Job runs.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-pre-delete
+  namespace: union
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -215,7 +223,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: operator-webhook-certs
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/component: operator-webhook
     app.kubernetes.io/version: "1.16.0"
@@ -286,7 +294,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-logging
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -311,7 +319,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: config-observability
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
@@ -8714,7 +8722,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # TODO: Consider restriction of non-aggregated role to knativeeventing namespaces.
@@ -8732,7 +8740,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8749,7 +8757,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: operator-webhook
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
@@ -8780,7 +8788,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8797,7 +8805,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8814,7 +8822,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8831,7 +8839,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: knative-operator
-    namespace: "knative-operator"
+    namespace: "union"
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/clusterrolebinding.yaml
 kind: ClusterRoleBinding
@@ -8943,7 +8951,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  namespace: "knative-operator"
+  namespace: "union"
   name: knative-operator-webhook
   labels:
     app.kubernetes.io/version: "1.16.0"
@@ -9269,6 +9277,17 @@ rules:
       - update
       - delete
 ---
+# Source: dataplane/templates/serving/pre-delete-hook.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-pre-delete
+  namespace: union
+rules:
+- apiGroups: ["operator.knative.dev"]
+  resources: ["knativeservings"]
+  verbs: ["get", "delete"]
+---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
@@ -9307,7 +9326,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  namespace: "knative-operator"
+  namespace: "union"
   name: operator-webhook
   labels:
     app.kubernetes.io/version: "1.16.0"
@@ -9315,7 +9334,7 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: operator-webhook
-    namespace: "knative-operator"
+    namespace: "union"
 roleRef:
   kind: Role
   name: knative-operator-webhook
@@ -9450,6 +9469,21 @@ subjects:
     name: union-system
     namespace: union
 ---
+# Source: dataplane/templates/serving/pre-delete-hook.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-pre-delete
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-pre-delete
+subjects:
+- kind: ServiceAccount
+  name: release-name-pre-delete
+  namespace: union
+---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 # Create a binding from Role -> ServiceAccount
 kind: RoleBinding
@@ -9513,7 +9547,7 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/name: knative-operator
   name: operator-webhook
-  namespace: "knative-operator"
+  namespace: "union"
 spec:
   ports:
     # Define metrics and profiling for them to be accessible within service meshes.
@@ -10281,7 +10315,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: operator-webhook
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/component: operator-webhook
     app.kubernetes.io/version: "1.16.0"
@@ -10402,7 +10436,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: knative-operator
-  namespace: "knative-operator"
+  namespace: "union"
   labels:
     app.kubernetes.io/name: knative-operator
     app.kubernetes.io/version: "1.16.0"
@@ -15985,17 +16019,6 @@ metadata:
     app.kubernetes.io/component: prometheus-operator-webhook
 automountServiceAccountToken: true
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
----
 # Source: dataplane/charts/monitoring/charts/grafana/templates/tests/test-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -16109,21 +16132,6 @@ rules:
       - get
       - create
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-rules:
-- apiGroups: ["operator.knative.dev"]
-  resources: ["knativeservings"]
-  verbs: ["get", "delete"]
----
 # Source: dataplane/charts/monitoring/templates/prometheus-operator/admission-webhooks/job-patch/rolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -16153,25 +16161,6 @@ subjects:
   - kind: ServiceAccount
     name: monitoring-admission
     namespace: union
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: release-name-pre-delete
-subjects:
-- kind: ServiceAccount
-  name: release-name-pre-delete
-  namespace: union
 ---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
