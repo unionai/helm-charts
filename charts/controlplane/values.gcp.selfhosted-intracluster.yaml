@@ -351,33 +351,83 @@ flyte:
           singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
 
       # --- OIDC Authentication ---
-      # To enable authentication, set server.security.useAuth: true
-      # and configure the auth globals in Section 1 above.
+      # Flyteadmin acts as both the OAuth2 resource server (validates access tokens)
+      # and the OIDC relying party (browser login flow). Configure the globals in
+      # Section 1 above, then enable auth:
+      #
       # server:
       #   security:
       #     useAuth: true
+      #
+      # The sections below map to different authentication flows:
+      #
+      #   auth.appAuth.externalAuthServer
+      #     Resource server config — validates access tokens from ALL flows.
+      #     Uses OIDC_BASE_URL for JWKS discovery and token validation.
+      #     Uses: OAuth Apps 1-5 (all tokens are validated here).
+      #     Flows: Browser login, CLI/SDK PKCE, service-to-service.
+      #
+      #   auth.appAuth.thirdPartyConfig.flyteClient
+      #     CLI/SDK PKCE client config — returned by GetPublicClientConfig RPC.
+      #     The SDK/CLI uses this to initiate the PKCE authorization flow.
+      #     Uses: OAuth App 2 (CLI — public client).
+      #     Flow: CLI/SDK PKCE (Flow 2).
+      #
+      #   auth.userAuth.openId
+      #     Browser login config — OIDC redirect flow for web console.
+      #     Uses: OAuth App 1 (Browser — confidential client).
+      #     Flow: Browser login (Flow 1).
+      #
+      # Service-to-service auth (OAuth Apps 3-5) is configured separately:
+      #   - INTERNAL_CLIENT_ID + AUTH_TOKEN_URL in globals (App 3)
+      #   - Operator and EAGER credentials in dataplane values (Apps 4, 5)
       auth:
+        # Custom authorization header name. All services use this instead of
+        # the standard "authorization" header to avoid conflicts with service
+        # meshes (e.g. Linkerd, Istio) that intercept the default header.
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
+        # URIs that flyteadmin accepts as valid audiences in its own tokens.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
+
+        # --- Resource Server (validates access tokens from all flows) ---
         appAuth:
           authServerType: "External"
           externalAuthServer:
+            # OIDC issuer for JWKS discovery and token validation.
             baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
+            # Metadata discovery endpoint (see OIDC_METADATA_URL global).
             metadataUrl: '{{ .Values.global.OIDC_METADATA_URL }}'
+            # allowedAudience is set by Terraform (list type, can't use a single global).
+            # Default: ["https://{domain}"]. Override via OIDC_ALLOWED_AUDIENCE global
+            # or Terraform authn module output.
+
+          # --- CLI/SDK PKCE Client (Flow 2: SDK/CLI authentication) ---
+          # Returned by the GetPublicClientConfig RPC. The SDK reads this to
+          # know which client ID, scopes, and audience to use for PKCE auth.
           thirdPartyConfig:
             flyteClient:
+              # OAuth App 2: CLI (public client, PKCE flow)
               clientId: '{{ .Values.global.CLI_CLIENT_ID }}'
               redirectUri: "http://localhost:53593/callback"
+              # Resource scope — determines the audience of the access token.
+              # See OIDC_APP_SCOPE global.
               scopes:
               - '{{ default "all" .Values.global.OIDC_APP_SCOPE }}'
+              # Audience parameter for the authorization request.
+              # See OIDC_APP_AUDIENCE global.
               audience: '{{ default "" .Values.global.OIDC_APP_AUDIENCE }}'
+
+        # --- Browser Login (Flow 1: OIDC redirect for web console) ---
         userAuth:
           openId:
+            # OAuth App 1: Browser (confidential client, authorization_code grant)
             baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
             clientId: '{{ .Values.global.OIDC_CLIENT_ID }}'
+            # Scopes requested during browser OIDC login.
+            # Terraform appends OIDC_APP_SCOPE here when set (for Entra ID).
             scopes: ["profile", "openid", "offline_access"]
           cookieSetting:
             sameSitePolicy: "LaxMode"
