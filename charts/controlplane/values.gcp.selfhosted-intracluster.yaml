@@ -116,26 +116,73 @@ global:
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
   # --- Authentication Configuration ---
-  # Set all values below to enable OIDC authentication.
-  # Supports any OAuth2/OIDC-compliant identity provider.
+  # Configure your OAuth2/OIDC identity provider below.
+  # Supports any OIDC-compliant provider (Okta, Azure AD / Entra ID, Keycloak, etc.)
   #
-  # OIDC issuer URL
-  # Example: "https://login.example.com/oauth2/default"
+  # Required for all providers:
+  #   OIDC_BASE_URL, OIDC_CLIENT_ID, CLI_CLIENT_ID
+  #   INTERNAL_CLIENT_ID, AUTH_TOKEN_URL (in base values.yaml)
+  #
+  # Provider-specific (may be required depending on your IdP):
+  #   OIDC_METADATA_URL, OIDC_ALLOWED_AUDIENCE, OIDC_APP_SCOPE, OIDC_APP_AUDIENCE
+  #
+  # See also: flyte.configmap.adminServer.auth.appAuth.identityTypeClaimsForApps
+  # for IdP-specific identity type claim mapping (set in values overlay, not as a global).
+
+  # OIDC issuer URL (authorization server base URL).
+  # This is the base URL for token validation, JWKS discovery, and user info.
+  # Okta example: "https://dev-123456.okta.com/oauth2/default"
+  # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
   OIDC_BASE_URL: ""
+
   # OIDC metadata discovery endpoint (relative to OIDC_BASE_URL).
   # Flyteadmin resolves this against OIDC_BASE_URL to fetch JWKS and token endpoints.
-  # Default: ".well-known/oauth-authorization-server" (RFC 8414, supported by Okta).
-  # Set to ".well-known/openid-configuration" for Entra ID or other providers that
-  # only support OpenID Connect Discovery (RFC 5785).
+  # Most providers support one or both of these endpoints:
+  #   ".well-known/oauth-authorization-server" — RFC 8414 (Okta)
+  #   ".well-known/openid-configuration"       — OpenID Connect Discovery (Entra ID, Keycloak)
+  # Default: ".well-known/oauth-authorization-server"
   OIDC_METADATA_URL: ".well-known/oauth-authorization-server"
-  # Flyteadmin OIDC client ID for browser login flow
-  # Example: "0oa1abc2def3ghi4j5k6"
+
+  # OAuth2 client ID for the browser/web UI login app (confidential client,
+  # authorization_code grant). This is the "flyteadmin" or "browser" app
+  # in your IdP's OAuth application configuration.
+  # Okta example: "0oa1abc2def3ghi4j5k6"
+  # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
   OIDC_CLIENT_ID: ""
-  # CLI client ID for flytectl / uctl (public OAuth app, PKCE flow)
-  # Example: "0oa7mno8pqr9stu0v1w2"
+
+  # OAuth2 client ID for the CLI/SDK app (public client, PKCE flow).
+  # Used by flytectl, uctl, and the Flyte SDK for interactive authentication.
+  # Okta example: "0oa7mno8pqr9stu0v1w2"
+  # Entra ID example: "3df10225-18a5-4636-b1ef-582e5a8ea21c"
   CLI_CLIENT_ID: ""
+
+  # Allowed JWT audiences for access token validation.
+  # Flyteadmin checks the access token "aud" claim against this list.
+  # When empty, defaults to ["https://{UNION_HOST}"] (the deployment domain).
+  # Override for IdPs that use different audience formats in access tokens.
+  # Okta: typically uses the auth server issuer URL (leave empty to use default).
+  # Entra ID example: ["api://my-app-name", "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"]
+  OIDC_ALLOWED_AUDIENCE: []
+
+  # OAuth2 resource scope for the flyteadmin app.
+  # When set, this scope is requested during browser login and CLI PKCE flows
+  # so the IdP returns access tokens scoped to your app (correct audience).
+  # Without this, some IdPs (notably Entra ID) return generic access tokens
+  # with the wrong audience, causing access token validation to fail.
+  # Okta: leave empty (Okta scopes are configured on the auth server).
+  # Entra ID example: "api://my-app-name/all"
+  OIDC_APP_SCOPE: ""
+
+  # Audience identifier for the CLI/SDK PKCE flow.
+  # Some IdPs require an explicit audience parameter in the authorization request.
+  # Okta: leave empty (derived from auth server).
+  # Entra ID example: "api://my-app-name"
+  OIDC_APP_AUDIENCE: ""
+
   # INTERNAL_CLIENT_ID and AUTH_TOKEN_URL are defined in the base values.yaml.
   # Set them in your environment-specific overlay (Terraform-generated values).
+  # INTERNAL_CLIENT_ID: OAuth2 client ID for service-to-service calls (client_credentials).
+  # AUTH_TOKEN_URL: Token endpoint for service-to-service authentication.
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Image Tag Overrides
