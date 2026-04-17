@@ -706,6 +706,52 @@ services:
           enrichIdentities: false
           clusterCacheConfig:
             ttl: 10m
+  identity:
+    fullnameOverride: "identity"
+    args:
+      - cloudidentity
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      identity:
+        app:
+          identityProviderConfig:
+            # Identity provider for the User Management page.
+            # Supported values:
+            #   noop  — returns empty results (default; no external IDP required)
+            #   azure — Azure/Entra ID via Microsoft Graph API
+            #   okta  — Okta (Union Cloud managed deployments only)
+            provider: "noop"
+            # Azure/Entra ID provider configuration.
+            # Required when provider is "azure". Requires a dedicated Entra app registration
+            # with Application permissions (not Delegated): User.Read.All,
+            # GroupMember.Read.All, Application.ReadWrite.All; admin consent granted.
+            #
+            # Store the client secret in the KUBERNETES_SECRET_NAME K8s secret under
+            # the key referenced by clientSecretName (e.g. "azure_client_secret").
+            # The value is read from /etc/secrets/union/<clientSecretName> at runtime.
+            # Example ExternalSecret:
+            #   spec.data[].remoteRef.key: <your-secret-manager-path>
+            #   spec.data[].secretKey: azure_client_secret
+            #   spec.target.name: <KUBERNETES_SECRET_NAME>
+            #   spec.target.creationPolicy: Merge
+            #
+            # azure:
+            #   tenantId: ""    # Azure AD tenant (directory) ID
+            #   clientId: ""    # App registration client ID
+            #   clientSecretName: "union/azure_client_secret"
+            #   groupId: ""    # Optional: scope user listing to a specific Entra group
+          adminClient:
+            connection:
+              authorizationHeader: flyte-authorization
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: /etc/secrets/union/client_secret
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              insecure: true
+              scopes:
+                - all
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
   usage:
     fullnameOverride: "usage"
     sharedService:

@@ -138,12 +138,12 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: organizations
+  name: identity
 spec:
   minAvailable: "33%"
   selector:
     matchLabels:
-      app.kubernetes.io/name: organizations
+      app.kubernetes.io/name: identity
       app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/pdb.yaml
@@ -182,6 +182,19 @@ spec:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
 ---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: envoy-gateway
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -195,24 +208,6 @@ metadata:
     #app.kubernetes.io/managed-by: Helm
   annotations: 
     eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
-imagePullSecrets: 
-  - name: union-registry-secret
----
-# Source: controlplane/charts/ingress-nginx/templates/controller-serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx
-  namespace: union
-automountServiceAccountToken: true
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.serviceaccount.yaml
 apiVersion: v1
@@ -245,8 +240,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.4.7
     app.kubernetes.io/managed-by: Helm
-imagePullSecrets: 
-  - name: union-registry-secret
 ---
 # Source: controlplane/templates/console/serviceaccount.yaml
 apiVersion: v1
@@ -313,10 +306,10 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: organizations
+  name: identity
   labels:
     helm.sh/chart: controlplane-2026.4.7
-    app.kubernetes.io/name: organizations
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
@@ -387,7 +380,47 @@ metadata:
   namespace: union
 type: Opaque
 stringData:
-  client_secret: placeholder
+  client_secret: foobar
+---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: envoy-gateway-config
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+data:
+  envoy-gateway.yaml: |
+    apiVersion: gateway.envoyproxy.io/v1alpha1
+    kind: EnvoyGateway
+    extensionApis: {}
+    gateway:
+      controllerName: gateway.envoyproxy.io/gatewayclass-controller
+    logging:
+      level:
+        default: info
+    provider:
+      kubernetes:
+        rateLimitDeployment:
+          container:
+            image: docker.io/envoyproxy/ratelimit:3fb70258
+          patch:
+            type: StrategicMerge
+            value:
+              spec:
+                template:
+                  spec:
+                    containers:
+                    - imagePullPolicy: IfNotPresent
+                      name: envoy-ratelimit
+        shutdownManager:
+          image: docker.io/envoyproxy/gateway:v1.6.4
+      type: Kubernetes
 ---
 # Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
@@ -451,43 +484,28 @@ data:
       type: noop
   server.yaml: | 
     admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/client_secret
-      endpoint: dns:///controlplane-nginx-controller.union.svc.cluster.local
-      insecure: true
+      endpoint: dns:///
+      insecure: false
     auth:
       appAuth:
-        authServerType: External
-        externalAuthServer:
-          allowedAudience:
-          - https://
-          baseUrl: ""
-          metadataUrl: .well-known/oauth-authorization-server
         thirdPartyConfig:
           flyteClient:
-            audience: ""
-            clientId: ""
+            clientId: flytectl
             redirectUri: http://localhost:53593/callback
             scopes:
+            - offline
             - all
       authorizedUris:
+      - https://localhost:30081
       - http://flyteadmin:80
-      - http://flyteadmin.union.svc.cluster.local:80
-      - https://
-      grpcAuthorizationHeader: flyte-authorization
-      httpAuthorizationHeader: flyte-authorization
+      - http://flyteadmin.flyte.svc.cluster.local:80
       userAuth:
-        cookieSetting:
-          domain: ""
-          sameSitePolicy: LaxMode
-        idpQueryParameter: idp
         openId:
-          baseUrl: ""
-          clientId: ""
+          baseUrl: https://accounts.google.com
+          clientId: 657465813211-6eog7ek7li5k7i7fvgv2921075063hpe.apps.googleusercontent.com
           scopes:
           - profile
           - openid
-          - offline_access
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -503,8 +521,8 @@ data:
       enable: false
     connection:
       environment: staging
-      region: ""
-      rootTenantURLPattern: dns:///controlplane-nginx-controller.union.svc.cluster.local
+      region: ''
+      rootTenantURLPattern: dns:///
     flyteadmin:
       eventVersion: 2
       metadataStoragePrefix:
@@ -536,13 +554,11 @@ data:
         allowedOrigins:
         - '*'
         secure: false
-        useAuth: true
+        useAuth: false
     sharedService:
       connectPort: 8089
       httpPort: 8088
       port: 8089
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -558,6 +574,11 @@ data:
         durationMinutes: 3
   storage.yaml: | 
     storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -588,30 +609,6 @@ metadata:
 data: 
   BASE_URL: /console
   CONFIG_DIR: /etc/flyte/config
----
-# Source: controlplane/charts/ingress-nginx/templates/controller-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx-controller
-  namespace: union
-data:
-  allow-snippet-annotations: "true"
-  annotations-risk-level: "Critical"
-  grpc-connect-timeout: "1200"
-  grpc-read-timeout: "604800"
-  grpc-send-timeout: "604800"
-  proxy-connect-timeout: "60"
-  proxy-read-timeout: "3600"
-  proxy-send-timeout: "3600"
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -674,6 +671,11 @@ data:
         urlPattern: '_SERVICE_.union.svc.cluster.local:80'
   storage.yaml: | 
     storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -695,11 +697,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -709,31 +706,12 @@ data:
         grpcConfig:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
-      bootstrap:
-        adminUsers: []
-        domains:
-        - development
-        - staging
-        - production
-        maxRetries: 30
-        organization: ""
-        projects: []
-        retryInterval: 5s
-        serviceAccounts: []
       externalClient:
         forwardHeaders:
         - authorization
         - flyte-authorization
-      internalCommunicationConfig:
-        enabled: false
       type: Noop
       useExternalIdentity: 'false'
-      userCloudsClient:
-        clientID: 'union-authz-client'
-        clientSecretName: union/client_secret
-        enableLogging: true
-        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
-        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -752,8 +730,6 @@ data:
       connectPort: 8081
       metrics:
         scope: 'authorizer:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -764,16 +740,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -792,11 +761,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -841,8 +805,6 @@ data:
       connectPort: 8081
       metrics:
         scope: 'cluster:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -853,16 +815,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -881,11 +836,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -918,8 +868,6 @@ data:
     sharedService:
       metrics:
         scope: 'dataproxy:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -930,16 +878,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -958,11 +899,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -996,17 +932,6 @@ data:
     eventsProxy:
       recorderType: RunService
     executions:
-      app:
-        adminClient:
-          connection:
-            authorizationHeader: flyte-authorization
-            clientId: 'test-internal-client-id'
-            clientSecretLocation: /etc/secrets/union/client_secret
-            endpoint: flyteadmin.union.svc.cluster.local:81
-            insecure: true
-            scopes:
-            - 'all'
-            tokenUrl: 'https://test.example.com/oauth2/v1/token'
       apps:
         enrichIdentities: false
         publicURLPattern: https://%s.apps.
@@ -1027,8 +952,6 @@ data:
     sharedService:
       metrics:
         scope: 'executions:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1039,16 +962,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -1060,20 +976,15 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: organizations
+  name: identity
   labels:
     helm.sh/chart: controlplane-2026.4.7
-    app.kubernetes.io/name: organizations
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1092,16 +1003,20 @@ data:
       environment: staging
       region: us-east-2
       rootTenantURLPattern: dns:///fake-host.domain
-    db:
-      connectionPool:
-        maxConnectionLifetime: 1m
-        maxIdleConnections: 20
-        maxOpenConnections: 20
-      dbname: ''
-      host: ''
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
+    identity:
+      app:
+        adminClient:
+          connection:
+            authorizationHeader: flyte-authorization
+            clientId: 'test-internal-client-id'
+            clientSecretLocation: /etc/secrets/union/client_secret
+            endpoint: ''
+            insecure: true
+            scopes:
+            - all
+            tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        identityProviderConfig:
+          provider: noop
     logger:
       formatter:
         type: json
@@ -1110,11 +1025,6 @@ data:
     otel:
       type: noop
     sharedService:
-      connectPort: 8081
-      metrics:
-        scope: 'organizations:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1125,16 +1035,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -1153,11 +1056,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1196,8 +1094,6 @@ data:
     sharedService:
       metrics:
         scope: 'queue:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1208,16 +1104,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -1236,11 +1125,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1279,8 +1163,6 @@ data:
     sharedService:
       metrics:
         scope: 'run-scheduler:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1291,16 +1173,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -1319,11 +1194,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union.svc.cluster.local:81
-      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1357,8 +1227,6 @@ data:
       connectPort: 8081
       metrics:
         scope: 'usage:'
-      security:
-        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1369,16 +1237,9 @@ data:
         clientSecretLocation: /etc/secrets/union/client_secret
         enable: true
         scopes:
-        - 'all'
+        - all
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
-      connection:
-        insecure: false
-        insecureSkipVerify: true
-        trustedIdentityClaims:
-          enabled: true
-          externalIdentityClaim: ""
-          externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
         urlPattern: _SERVICE_.union.svc.cluster.local:80
@@ -2553,7 +2414,7 @@ data:
             "y": 33
           },
           "id": 300,
-          "title": "FlyteAdmin",
+          "title": "FlyteAdmin (V1 + V2)",
           "type": "row",
           "panels": [
             {
@@ -2812,7 +2673,7 @@ data:
             "y": 34
           },
           "id": 400,
-          "title": "Executions",
+          "title": "Executions (V1 + V2)",
           "type": "row",
           "panels": [
             {
@@ -3318,7 +3179,7 @@ data:
             "y": 34
           },
           "id": 500,
-          "title": "Queue / Run-Scheduler",
+          "title": "Queue / Run-Scheduler (V2)",
           "type": "row",
           "panels": [
             {
@@ -3735,7 +3596,7 @@ data:
             "y": 35
           },
           "id": 600,
-          "title": "Cluster Service",
+          "title": "Cluster Service (V1 + V2)",
           "type": "row",
           "panels": [
             {
@@ -3810,12 +3671,12 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "cluster:svc:update_status:success_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:update_status:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
                   "legendFormat": "UpdateStatus p95",
                   "refId": "A"
                 },
                 {
-                  "expr": "cluster:svc:heartbeat:success_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:heartbeat:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
                   "legendFormat": "Heartbeat p95",
                   "refId": "B"
                 }
@@ -4059,7 +3920,7 @@ data:
             "y": 36
           },
           "id": 900,
-          "title": "CacheService",
+          "title": "CacheService (V1 + V2)",
           "type": "row",
           "panels": [
             {
@@ -4092,17 +3953,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(flyte:cacheservice:cache:cache_hit_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:cache_hit{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Hits",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:not_found_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:not_found{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Misses",
                   "refId": "B"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:get_failure_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:get_failure{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Get failures",
                   "refId": "C"
                 }
@@ -4139,17 +4000,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(flyte:cacheservice:cache:reservation_contention_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:reservation_contention{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Contention",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:get_reservation_success_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:get_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Reservation acquired",
                   "refId": "B"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:release_reservation_success_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:release_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Reservation released",
                   "refId": "C"
                 }
@@ -4167,566 +4028,397 @@ data:
             "y": 36
           },
           "id": 750,
-          "title": "Authorizer",
+          "title": "Authorizer (V1 + V2)",
           "type": "row",
           "panels": [
             {
-              "id": 760,
-              "title": "Authorizer Mode",
-              "type": "stat",
-              "gridPos": {
-                "h": 4,
-                "w": 4,
-                "x": 0,
-                "y": 37
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "mappings": [],
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      }
-                    ]
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "colorMode": "value",
-                "graphMode": "none",
-                "justifyMode": "auto",
-                "orientation": "auto",
-                "textMode": "name",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ],
-                  "fields": "",
-                  "values": false
-                }
-              },
-              "targets": [
-                {
-                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authz_type_info{namespace=\"$namespace\"} == 1",
-                  "legendFormat": "{{type}}",
-                  "refId": "A"
-                }
-              ],
               "datasource": {
                 "type": "prometheus",
                 "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 751,
-              "title": "Allow / Deny Rate",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 10,
-                "x": 4,
-                "y": 37
               },
               "fieldConfig": {
                 "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
                   "custom": {
                     "drawStyle": "line",
                     "fillOpacity": 10,
-                    "spanNulls": false
+                    "lineWidth": 1,
+                    "showPoints": "never"
                   },
-                  "noValue": "0",
-                  "unit": "ops",
-                  "decimals": 2
-                },
-                "overrides": [
-                  {
-                    "matcher": {
-                      "id": "byRegexp",
-                      "options": ".*denied.*"
-                    },
-                    "properties": [
-                      {
-                        "id": "color",
-                        "value": {
-                          "fixedColor": "red",
-                          "mode": "fixed"
-                        }
-                      }
-                    ]
-                  },
-                  {
-                    "matcher": {
-                      "id": "byRegexp",
-                      "options": ".*allowed.*"
-                    },
-                    "properties": [
-                      {
-                        "id": "color",
-                        "value": {
-                          "fixedColor": "green",
-                          "mode": "fixed"
-                        }
-                      }
-                    ]
-                  }
-                ]
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "mean"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi"
+                  "unit": "ops"
                 }
               },
-              "targets": [
-                {
-                  "expr": "sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "allowed ({{identity_type}})",
-                  "refId": "A"
-                },
-                {
-                  "expr": "sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "denied ({{identity_type}})",
-                  "refId": "B"
-                }
-              ],
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 753,
-              "title": "Deny Rate (%)",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 10,
-                "x": 14,
-                "y": 37
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "unit": "percentunit",
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "yellow",
-                        "value": 0.1
-                      },
-                      {
-                        "color": "red",
-                        "value": 0.5
-                      }
-                    ]
-                  },
-                  "noValue": "0",
-                  "decimals": 1,
-                  "min": 0,
-                  "max": 1
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
-                }
-              },
-              "targets": [
-                {
-                  "expr": "(sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)) / clamp_min((sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])) + sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))), 1e-10)",
-                  "legendFormat": "{{identity_type}}",
-                  "refId": "A"
-                }
-              ],
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 752,
-              "title": "Authorize Latency (service)",
-              "type": "timeseries",
               "gridPos": {
                 "h": 8,
                 "w": 8,
                 "x": 0,
-                "y": 45
+                "y": 15
+              },
+              "id": 751,
+              "title": "Allow / Deny Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Allowed",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Denied",
+                  "refId": "B"
+                }
+              ],
+              "description": "Authorization decision rate. Allow/deny ratio indicates auth health. High deny rate may signal misconfigured policies. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
               },
               "fieldConfig": {
                 "defaults": {
-                  "unit": "ms",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
                   "custom": {
                     "drawStyle": "line",
-                    "fillOpacity": 10
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
                   },
-                  "noValue": "0",
-                  "decimals": 1,
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "yellow",
-                        "value": 50
-                      },
-                      {
-                        "color": "red",
-                        "value": 200
-                      }
-                    ]
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
+                  "unit": "ms"
                 }
               },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 15
+              },
+              "id": 752,
+              "title": "Authorize Latency",
+              "type": "timeseries",
               "targets": [
                 {
-                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.5\"}",
                   "legendFormat": "p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.9\"}",
                   "legendFormat": "p90",
                   "refId": "B"
                 },
                 {
-                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.99\"}",
                   "legendFormat": "p99",
                   "refId": "C"
                 }
               ],
+              "description": "End-to-end Authorize() latency including identity resolution and backend authorization check. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
               "datasource": {
                 "type": "prometheus",
                 "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 761,
-              "title": "Backend Latency",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 45
               },
               "fieldConfig": {
                 "defaults": {
-                  "unit": "ms",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
                   "custom": {
                     "drawStyle": "line",
-                    "fillOpacity": 10
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
                   },
-                  "noValue": "0",
-                  "decimals": 1,
+                  "unit": "percentunit"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 15
+              },
+              "id": 753,
+              "title": "Deny Rate (%)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]) / (rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]) + rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "Deny %",
+                  "refId": "A"
+                }
+              ],
+              "description": "Percentage of authorization decisions that denied access. Spikes indicate policy changes or auth issues. [Metrics pending: requires cloud service instrumentation to be deployed]"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
                   "thresholds": {
-                    "mode": "absolute",
                     "steps": [
                       {
                         "color": "green",
                         "value": null
-                      },
-                      {
-                        "color": "yellow",
-                        "value": 50
-                      },
-                      {
-                        "color": "red",
-                        "value": 200
                       }
                     ]
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "noop": { "text": "Noop", "index": 0 },
+                        "userclouds": { "text": "UserClouds", "index": 1 },
+                        "external": { "text": "External", "index": 2 },
+                        "authorizer": { "text": "Authorizer", "index": 3 }
+                      }
+                    }
+                  ]
                 }
               },
+              "gridPos": {
+                "h": 8,
+                "w": 4,
+                "x": 0,
+                "y": 23
+              },
+              "id": 760,
+              "options": {
+                "colorMode": "background",
+                "graphMode": "none",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "/^type$/"
+                },
+                "textMode": "value"
+              },
+              "title": "Authorizer Mode",
+              "type": "stat",
               "targets": [
                 {
-                  "expr": "histogram_quantile(0.50, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authz_type_info{namespace=\"$namespace\"} == 1",
+                  "legendFormat": "{{ type }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Currently active authorizer backend type (Noop, UserClouds, External, Authorizer)."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ms"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 4,
+                "y": 23
+              },
+              "id": 761,
+              "title": "External Backend Latency",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.50, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
                   "legendFormat": "p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "histogram_quantile(0.95, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "expr": "histogram_quantile(0.95, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
                   "legendFormat": "p95",
                   "refId": "B"
                 },
                 {
-                  "expr": "histogram_quantile(0.99, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+                  "expr": "histogram_quantile(0.99, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
                   "legendFormat": "p99",
                   "refId": "C"
                 }
               ],
+              "description": "Latency of calls to the external authorization backend (p50/p95/p99)."
+            },
+            {
               "datasource": {
                 "type": "prometheus",
                 "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 764,
-              "title": "Decisions by Action",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 45
               },
               "fieldConfig": {
                 "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
                   "custom": {
-                    "drawStyle": "bars",
-                    "fillOpacity": 50,
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 12,
+                "y": 23
+              },
+              "id": 762,
+              "title": "External Errors by gRPC Code",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (grpc_code) (rate(authorizer:authorizer:cloudauthorizer:connect:external:errors{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ grpc_code }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Error rate from the external authorization backend, broken down by gRPC status code."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 6,
+                "x": 18,
+                "y": 23
+              },
+              "id": 763,
+              "title": "Fail-Open Activations",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:external:fail_open_activated{namespace=\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Fail-Open",
+                  "refId": "A"
+                }
+              ],
+              "description": "Rate of fail-open activations. Non-zero means the external backend is unreachable and requests are being allowed without authorization."
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
                     "stacking": {
                       "mode": "normal"
                     }
                   },
-                  "noValue": "0",
-                  "unit": "ops",
-                  "decimals": 2
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "sum"
-                  ]
-                },
-                "tooltip": {
-                  "mode": "multi"
+                  "unit": "ops"
                 }
               },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 31
+              },
+              "id": 764,
+              "title": "Decisions by Action",
+              "type": "timeseries",
               "targets": [
                 {
-                  "expr": "sum by (action, identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "{{action}} {{identity_type}} (allowed)",
+                  "expr": "sum by (action) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "allowed: {{ action }}",
                   "refId": "A"
                 },
                 {
-                  "expr": "sum by (action, identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "{{action}} {{identity_type}} (denied)",
+                  "expr": "sum by (action) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "denied: {{ action }}",
                   "refId": "B"
                 }
               ],
+              "description": "Authorization decisions broken down by action (e.g. read, write, execute). Stacked to show total volume."
+            },
+            {
               "datasource": {
                 "type": "prometheus",
                 "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 762,
-              "title": "Backend Errors",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 53
               },
               "fieldConfig": {
                 "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
                   "custom": {
                     "drawStyle": "line",
-                    "fillOpacity": 10
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
                   },
-                  "noValue": "0",
-                  "unit": "ops",
-                  "decimals": 2,
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "red",
-                        "value": 0.01
-                      }
-                    ]
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
+                  "unit": "ops"
                 }
               },
-              "targets": [
-                {
-                  "expr": "sum by (error_type) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_errors{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)",
-                  "legendFormat": "{{error_type}}",
-                  "refId": "A"
-                }
-              ],
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            },
-            {
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 31
+              },
               "id": 765,
               "title": "Error Attribution",
               "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 53
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10
-                  },
-                  "noValue": "0",
-                  "unit": "ops",
-                  "decimals": 2,
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "red",
-                        "value": 0.01
-                      }
-                    ]
-                  }
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
-                }
-              },
               "targets": [
                 {
-                  "expr": "sum by (error_source) (rate(authorizer:authorizer:cloudauthorizer:connect:authorize_errors_total{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)",
-                  "legendFormat": "{{error_source}}",
+                  "expr": "sum by (error_source) (rate(authorizer:authorizer:cloudauthorizer:connect:authorize_errors_total{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ error_source }}",
                   "refId": "A"
                 }
               ],
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            },
-            {
-              "id": 763,
-              "title": "Fail-Open Activations",
-              "type": "timeseries",
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 53
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10
-                  },
-                  "thresholds": {
-                    "mode": "absolute",
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "red",
-                        "value": 0.001
-                      }
-                    ]
-                  },
-                  "noValue": "0",
-                  "unit": "ops",
-                  "decimals": 2
-                },
-                "overrides": []
-              },
-              "options": {
-                "legend": {
-                  "displayMode": "list",
-                  "placement": "bottom"
-                },
-                "tooltip": {
-                  "mode": "multi"
-                }
-              },
-              "targets": [
-                {
-                  "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:external:fail_open_activated{namespace=\"$namespace\"}[$__rate_interval]) or vector(0)",
-                  "legendFormat": "fail-open",
-                  "refId": "A"
-                }
-              ],
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
+              "description": "Authorization errors attributed by source (e.g. identity resolution, backend, policy evaluation)."
             }
           ]
         },
@@ -5046,17 +4738,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.5\"}",
                   "legendFormat": "p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.9\"}",
                   "legendFormat": "p90",
                   "refId": "B"
                 },
                 {
-                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.99\"}",
                   "legendFormat": "p99",
                   "refId": "C"
                 }
@@ -5255,8 +4947,143 @@ metadata:
   name: scylladb
 provisioner: ebs.csi.eks.amazonaws.com
 volumeBindingMode: WaitForFirstConsumer
+parameters:
+  fsType: ext4
+  type: gp2
 reclaimPolicy: Delete
 allowVolumeExpansion: true
+---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  creationTimestamp: null
+  name: release-name-envoy-gateway-envoy-gateway-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gatewayclasses/status
+  verbs:
+  - update
+- apiGroups:
+  - multicluster.x-k8s.io
+  resources:
+  - serviceimports
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  - secrets
+  - services
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.envoyproxy.io
+  resources:
+  - envoyproxies
+  - envoypatchpolicies
+  - clienttrafficpolicies
+  - backendtrafficpolicies
+  - securitypolicies
+  - envoyextensionpolicies
+  - backends
+  - httproutefilters
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.envoyproxy.io
+  resources:
+  - envoypatchpolicies/status
+  - clienttrafficpolicies/status
+  - backendtrafficpolicies/status
+  - securitypolicies/status
+  - envoyextensionpolicies/status
+  - backends/status
+  verbs:
+  - update
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways
+  - grpcroutes
+  - httproutes
+  - referencegrants
+  - tcproutes
+  - tlsroutes
+  - udproutes
+  - backendtlspolicies
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - gateways/status
+  - grpcroutes/status
+  - httproutes/status
+  - tcproutes/status
+  - tlsroutes/status
+  - udproutes/status
+  - backendtlspolicies/status
+  verbs:
+  - update
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - pods/binding
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5288,90 +5115,6 @@ rules:
     - limitranges
   verbs: 
     - '*'
----
-# Source: controlplane/charts/ingress-nginx/templates/clusterrole.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-  name: controlplane-nginx
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-      - endpoints
-      - nodes
-      - pods
-      - secrets
-      - namespaces
-    verbs:
-      - list
-      - watch
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - nodes
-    verbs:
-      - get
-  - apiGroups:
-      - ""
-    resources:
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses/status
-    verbs:
-      - update
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingressclasses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - discovery.k8s.io
-    resources:
-      - endpointslices
-    verbs:
-      - list
-      - watch
-      - get
 ---
 # Source: controlplane/charts/scylla-operator/templates/edit_clusterrole.yaml
 kind: ClusterRole
@@ -6007,6 +5750,20 @@ rules:
   - list
   - watch
 ---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-envoy-gateway-envoy-gateway-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-envoy-gateway-envoy-gateway-role
+subjects:
+- kind: ServiceAccount
+  name: 'envoy-gateway'
+  namespace: 'union'
+---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -6026,27 +5783,6 @@ subjects:
   name: flyteadmin
   namespace: union
 ---
-# Source: controlplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-  name: controlplane-nginx
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: controlplane-nginx
-subjects:
-  - kind: ServiceAccount
-    name: controlplane-nginx
-    namespace: union
----
 # Source: controlplane/charts/scylla-operator/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -6061,99 +5797,109 @@ subjects:
   name: scylla-operator
   namespace: scylla-operator
 ---
-# Source: controlplane/charts/ingress-nginx/templates/controller-role.yaml
+# Source: controlplane/charts/envoy-gateway/templates/infra-manager-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
+  name: release-name-envoy-gateway-infra-manager
+  namespace: 'union'
   labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "v1.6.4"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx
-  namespace: union
 rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - get
-  - apiGroups:
-      - ""
-    resources:
-      - configmaps
-      - pods
-      - secrets
-      - endpoints
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - ""
-    resources:
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  # Omit Ingress status permissions if `--update-status` is disabled.
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingresses/status
-    verbs:
-      - update
-  - apiGroups:
-      - networking.k8s.io
-    resources:
-      - ingressclasses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    resourceNames:
-      - controlplane-nginx-leader
-    verbs:
-      - get
-      - update
-  - apiGroups:
-      - coordination.k8s.io
-    resources:
-      - leases
-    verbs:
-      - create
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - patch
-  - apiGroups:
-      - discovery.k8s.io
-    resources:
-      - endpointslices
-    verbs:
-      - list
-      - watch
-      - get
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  - services
+  - configmaps
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  - daemonsets
+  verbs:
+  - create
+  - get
+  - delete
+  - deletecollection
+  - patch
+- apiGroups:
+  - autoscaling
+  - policy
+  resources:
+  - horizontalpodautoscalers
+  - poddisruptionbudgets
+  verbs:
+  - create
+  - get
+  - list
+  - delete
+  - deletecollection
+  - patch
+- apiGroups:
+  - certificates.k8s.io
+  resources:
+  - clustertrustbundles
+  verbs:
+  - list
+  - get
+  - watch
+---
+# Source: controlplane/charts/envoy-gateway/templates/leader-election-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-envoy-gateway-leader-election-role
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - coordination.k8s.io
+  resources:
+  - leases
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6186,28 +5932,47 @@ rules:
     verbs:
       - '*'
 ---
-# Source: controlplane/charts/ingress-nginx/templates/controller-rolebinding.yaml
+# Source: controlplane/charts/envoy-gateway/templates/infra-manager-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
+  name: release-name-envoy-gateway-infra-manager
+  namespace: 'union'
   labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/version: "v1.6.4"
     app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx
-  namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: controlplane-nginx
+  name: 'release-name-envoy-gateway-infra-manager'
 subjects:
-  - kind: ServiceAccount
-    name: controlplane-nginx
-    namespace: union
+- kind: ServiceAccount
+  name: 'envoy-gateway'
+  namespace: 'union'
+---
+# Source: controlplane/charts/envoy-gateway/templates/leader-election-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-envoy-gateway-leader-election-rolebinding
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: 'release-name-envoy-gateway-leader-election-role'
+subjects:
+- kind: ServiceAccount
+  name: 'envoy-gateway'
+  namespace: 'union'
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6228,6 +5993,42 @@ subjects:
   - kind: ServiceAccount
     name: flyteadmin
     namespace: union
+---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: envoy-gateway
+  namespace: 'union'
+  labels:
+    control-plane: envoy-gateway
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    control-plane: envoy-gateway
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+  ports:
+  - name: grpc
+    port: 18000
+    targetPort: 18000
+  - name: ratelimit
+    port: 18001
+    targetPort: 18001
+  - name: wasm
+    port: 18002
+    targetPort: 18002
+  - name: metrics
+    port: 19001
+    targetPort: 19001
+  - name: webhook
+    port: 9443
+    targetPort: 9443
 ---
 # Source: controlplane/charts/flyte/templates/admin/service.yaml
 apiVersion: v1
@@ -6287,68 +6088,6 @@ spec:
   selector: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
----
-# Source: controlplane/charts/ingress-nginx/templates/controller-service-metrics.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx-controller-metrics
-  namespace: union
-spec:
-  type: ClusterIP
-  ports:
-    - name: metrics
-      port: 10254
-      protocol: TCP
-      targetPort: metrics
-  selector:
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: controller
----
-# Source: controlplane/charts/ingress-nginx/templates/controller-service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  annotations:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx-controller
-  namespace: union
-spec:
-  type: ClusterIP
-  ipFamilyPolicy: SingleStack
-  ipFamilies: 
-    - IPv4
-  ports:
-    - name: http
-      port: 80
-      protocol: TCP
-      targetPort: http
-      appProtocol: http
-    - name: https
-      port: 443
-      protocol: TCP
-      targetPort: https
-      appProtocol: https
-  selector:
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/component: controller
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.service.yaml
 apiVersion: v1
@@ -6578,11 +6317,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: organizations
+  name: identity
   labels:
     platform.union.ai/prometheus-group: "union-services"
     helm.sh/chart: controlplane-2026.4.7
-    app.kubernetes.io/name: organizations
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
@@ -6591,10 +6330,6 @@ spec:
   ports:
     - name: grpc
       port: 80
-      protocol: TCP
-      targetPort: connect
-    - name: grpc-native
-      port: 8080
       protocol: TCP
       targetPort: grpc
     - name: connect
@@ -6610,7 +6345,7 @@ spec:
       protocol: TCP
       targetPort: debug
   selector:
-    app.kubernetes.io/name: organizations
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/service.yaml
@@ -6722,6 +6457,110 @@ spec:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
 ---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: envoy-gateway
+  namespace: 'union'
+  labels:
+    control-plane: envoy-gateway
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      control-plane: envoy-gateway
+      app.kubernetes.io/name: envoy-gateway
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        prometheus.io/port: "19001"
+        prometheus.io/scrape: "true"
+      labels:
+        control-plane: envoy-gateway
+        app.kubernetes.io/name: envoy-gateway
+        app.kubernetes.io/instance: release-name
+    spec:
+      containers:
+      - args:
+        - server
+        - --config-path=/config/envoy-gateway.yaml
+        env:
+        - name: ENVOY_GATEWAY_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: cluster.local
+        image: docker.io/envoyproxy/gateway:v1.6.4
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        name: envoy-gateway
+        ports:
+        - containerPort: 18000
+          name: grpc
+        - containerPort: 18001
+          name: ratelimit
+        - containerPort: 18002
+          name: wasm
+        - containerPort: 19001
+          name: metrics
+        - name: webhook
+          containerPort: 9443
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        resources:
+          limits:
+            memory: 1024Mi
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          privileged: false
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
+        volumeMounts:
+        - mountPath: /config
+          name: envoy-gateway-config
+          readOnly: true
+        - mountPath: /certs
+          name: certs
+          readOnly: true
+      imagePullSecrets: []
+      serviceAccountName: envoy-gateway
+      terminationGracePeriodSeconds: 10
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: envoy-gateway-config
+        name: envoy-gateway-config
+      - name: certs
+        secret:
+          secretName: envoy-gateway
+---
 # Source: controlplane/charts/flyte/templates/admin/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -6746,7 +6585,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "e56d2e9baec9a850c9f9b60ee81a5e7c1d2eb2616658fef33c896ac3ad4c742"
+        configChecksum: "3a00ceff1f54edcec0a2092a580a6c8bc4d380283641fa53f9dced3264ba98d"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -6768,7 +6607,7 @@ spec:
           - /etc/flyte/config/*.yaml
           - migrate
           - run
-          image: "registry.unionai.cloud/controlplane/services:"
+          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
           imagePullPolicy: "IfNotPresent"
           name: run-migrations
           securityContext:
@@ -6788,7 +6627,7 @@ spec:
           - seed-projects
           - union-health-monitoring
           - flytesnacks
-          image: "registry.unionai.cloud/controlplane/services:"
+          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
           imagePullPolicy: "IfNotPresent"
           name: seed-projects
           securityContext:
@@ -6801,7 +6640,7 @@ spec:
           - mountPath: /etc/flyte/config
             name: base-config-volume
         - name: generate-secrets
-          image: "registry.unionai.cloud/controlplane/services:"
+          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
           imagePullPolicy: "IfNotPresent"
           command: ["/bin/sh", "-c"]
           args:
@@ -6828,7 +6667,7 @@ spec:
         - --config
         - /etc/flyte/config/*.yaml
         - serve
-        image: "registry.unionai.cloud/controlplane/services:"
+        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
         imagePullPolicy: "IfNotPresent"
         name: flyteadmin
         ports:
@@ -6935,8 +6774,6 @@ spec:
         helm.sh/chart: flyte-v1.16.1
         app.kubernetes.io/managed-by: Helm
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       securityContext: 
         fsGroupChangePolicy: OnRootMismatch
         runAsNonRoot: true
@@ -6944,7 +6781,7 @@ spec:
         seLinuxOptions:
           type: spc_t
       containers:
-      - image: "registry.unionai.cloud/controlplane/flyteconsole:"
+      - image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flyteconsole:"
         imagePullPolicy: "IfNotPresent"
         name: flyteconsole
         envFrom:
@@ -6976,121 +6813,6 @@ spec:
       volumes:
       - emptyDir: {}
         name: shared-data
----
-# Source: controlplane/charts/ingress-nginx/templates/controller-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane-nginx-controller
-  namespace: union
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: ingress-nginx
-      app.kubernetes.io/instance: release-name
-      app.kubernetes.io/component: controller
-  replicas: 1
-  revisionHistoryLimit: 10
-  minReadySeconds: 0
-  template:
-    metadata:
-      labels:
-        helm.sh/chart: ingress-nginx-4.12.3
-        app.kubernetes.io/name: ingress-nginx
-        app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "1.12.3"
-        app.kubernetes.io/part-of: ingress-nginx
-        app.kubernetes.io/managed-by: Helm
-        app.kubernetes.io/component: controller
-    spec:
-      dnsPolicy: ClusterFirst
-      containers:
-        - name: controller
-          image: registry.k8s.io/ingress-nginx/controller:v1.12.3@sha256:ac444cd9515af325ba577b596fe4f27a34be1aa330538e8b317ad9d6c8fb94ee
-          imagePullPolicy: IfNotPresent
-          lifecycle: 
-            preStop:
-              exec:
-                command:
-                - /wait-shutdown
-          args: 
-            - /nginx-ingress-controller
-            - --publish-service=$(POD_NAMESPACE)/controlplane-nginx-controller
-            - --election-id=controlplane-nginx-leader
-            - --controller-class=union.ai/controlplane
-            - --ingress-class=nginx
-            - --configmap=$(POD_NAMESPACE)/controlplane-nginx-controller
-            - --enable-metrics=true
-          securityContext: 
-            runAsNonRoot: true
-            runAsUser: 101
-            runAsGroup: 82
-            allowPrivilegeEscalation: false
-            seccompProfile: 
-              type: RuntimeDefault
-            capabilities:
-              drop:
-              - ALL
-              add:
-              - NET_BIND_SERVICE
-            readOnlyRootFilesystem: false
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: LD_PRELOAD
-              value: /usr/local/lib/libmimalloc.so
-          livenessProbe: 
-            failureThreshold: 5
-            httpGet:
-              path: /healthz
-              port: 10254
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            successThreshold: 1
-            timeoutSeconds: 1
-          readinessProbe: 
-            failureThreshold: 3
-            httpGet:
-              path: /healthz
-              port: 10254
-              scheme: HTTP
-            initialDelaySeconds: 10
-            periodSeconds: 10
-            successThreshold: 1
-            timeoutSeconds: 1
-          ports:
-            - name: http
-              containerPort: 80
-              protocol: TCP
-            - name: https
-              containerPort: 443
-              protocol: TCP
-            - name: metrics
-              containerPort: 10254
-              protocol: TCP
-          resources: 
-            requests:
-              cpu: 100m
-              memory: 90Mi
-      nodeSelector: 
-        kubernetes.io/os: linux
-      serviceAccountName: controlplane-nginx
-      terminationGracePeriodSeconds: 300
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.deployment.yaml
 apiVersion: apps/v1
@@ -7242,7 +6964,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9cc1443a3602745c7c15fc1c3ab5f2742d34a170e66340f04e4ced50fda172a"
+        configChecksum: "197f4097faabcce1c83bbd79953460800854d6b92837333f3dd60c6c1bfa14a"
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -7269,7 +6991,7 @@ spec:
         - /etc/cacheservice/config/*.yaml
         - migrate
         - run
-        image: "registry.unionai.cloud/controlplane/services:"
+        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
         imagePullPolicy: "IfNotPresent"
         name: run-migrations
         volumeMounts:
@@ -7287,7 +7009,7 @@ spec:
         - --config
         - /etc/cacheservice/config/*.yaml
         - serve
-        image: "registry.unionai.cloud/controlplane/services:"
+        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
         imagePullPolicy: "IfNotPresent"
         name: cacheservice
         ports:
@@ -7372,8 +7094,6 @@ spec:
         app.kubernetes.io/name: unionconsole
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: unionconsole
       securityContext:
         fsGroupChangePolicy: OnRootMismatch
@@ -7388,7 +7108,7 @@ spec:
           capabilities:
             drop:
             - ALL
-        image: "registry.unionai.cloud/controlplane/unionconsole:2026.4.7"
+        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/unionconsole:2026.4.7"
         imagePullPolicy: IfNotPresent
         ports:
         - name: http
@@ -7397,9 +7117,6 @@ spec:
         - name: http-metrics
           containerPort: 8081
           protocol: TCP
-        env:
-          - name: UNION_ORG_OVERRIDE
-            value: ''
         resources:
           limits:
             cpu: 500m
@@ -7442,8 +7159,6 @@ spec:
         app.kubernetes.io/name: authorizer
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: authorizer
       volumes:
       - name: secrets
@@ -7457,7 +7172,7 @@ spec:
           name: authorizer
       containers:
         - name: authorizer
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - authorizer
@@ -7558,8 +7273,6 @@ spec:
         app.kubernetes.io/name: cluster
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: cluster
       volumes:
       - name: secrets
@@ -7573,7 +7286,7 @@ spec:
           name: cluster
       initContainers:
         - name: cluster-migrate
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudcluster
@@ -7589,7 +7302,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: cluster
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudcluster
@@ -7690,8 +7403,6 @@ spec:
         app.kubernetes.io/name: dataproxy
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: dataproxy
       volumes:
       - name: secrets
@@ -7705,7 +7416,7 @@ spec:
           name: dataproxy
       containers:
         - name: dataproxy
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - dataproxy
@@ -7803,8 +7514,6 @@ spec:
         app.kubernetes.io/name: executions
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: executions
       volumes:
       - name: secrets
@@ -7818,7 +7527,7 @@ spec:
           name: executions
       initContainers:
         - name: executions-migrate
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudpropeller
@@ -7834,7 +7543,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: executions
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudpropeller
@@ -7903,17 +7612,17 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: organizations
+  name: identity
   labels:
     helm.sh/chart: controlplane-2026.4.7
-    app.kubernetes.io/name: organizations
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
 spec:
   selector:
     matchLabels:
-      app.kubernetes.io/name: organizations
+      app.kubernetes.io/name: identity
       app.kubernetes.io/instance: release-name
   strategy:
     rollingUpdate:
@@ -7923,18 +7632,16 @@ spec:
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/default-container: organizations
+        kubectl.kubernetes.io/default-container: identity
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
         prometheus.io/scrape: "true"
       labels:
-        app.kubernetes.io/name: organizations
+        app.kubernetes.io/name: identity
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
-      serviceAccountName: organizations
+      serviceAccountName: identity
       volumes:
       - name: secrets
         secret:
@@ -7944,29 +7651,13 @@ spec:
           secretName: 
       - name: config
         configMap:
-          name: organizations
-      initContainers:
-        - name: organizations-migrate
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
-          imagePullPolicy: IfNotPresent
-          args:
-          - cloudorganizations
-          - migrate
-          - --config
-          - /etc/config/*.yaml
-          volumeMounts:
-          - name: db-pass
-            mountPath: /etc/db
-          - name: secrets
-            mountPath: /etc/secrets/union
-          - name: config
-            mountPath: /etc/config/
+          name: identity
       containers:
-        - name: organizations
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+        - name: identity
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
-            - cloudorganizations
+            - cloudidentity
             - serve
             - --config
             - /etc/config/*.yaml
@@ -7979,9 +7670,6 @@ spec:
               protocol: TCP
             - name: debug
               containerPort: 10254
-              protocol: TCP
-            - name: connect
-              containerPort: 8081
               protocol: TCP
           volumeMounts:
             - name: db-pass
@@ -8027,7 +7715,7 @@ spec:
               podAffinityTerm:
                 labelSelector:
                   matchLabels:
-                    app.kubernetes.io/name: organizations
+                    app.kubernetes.io/name: identity
                     app.kubernetes.io/instance: release-name
                 topologyKey: "kubernetes.io/hostname"
 ---
@@ -8065,8 +7753,6 @@ spec:
         app.kubernetes.io/name: queue
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: queue
       volumes:
       - name: secrets
@@ -8080,7 +7766,7 @@ spec:
           name: queue
       initContainers:
         - name: queue-migrate
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - queue
@@ -8096,7 +7782,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: queue
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - queue
@@ -8194,8 +7880,6 @@ spec:
         app.kubernetes.io/name: run-scheduler
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: run-scheduler
       volumes:
       - name: secrets
@@ -8209,7 +7893,7 @@ spec:
           name: run-scheduler
       initContainers:
         - name: run-scheduler-migrate
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudpropeller
@@ -8225,7 +7909,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: run-scheduler
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudpropeller
@@ -8324,8 +8008,6 @@ spec:
         app.kubernetes.io/name: usage
         app.kubernetes.io/instance: release-name
     spec:
-      imagePullSecrets:
-        - name: union-registry-secret
       serviceAccountName: usage
       volumes:
       - name: secrets
@@ -8339,7 +8021,7 @@ spec:
           name: usage
       containers:
         - name: usage
-          image: registry.unionai.cloud/controlplane/services:2026.4.7
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - usage
@@ -8575,12 +8257,12 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: organizations
+  name: identity
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: organizations
+    name: identity
   minReplicas: 1
   maxReplicas: 1
   metrics:
@@ -8650,22 +8332,6 @@ spec:
           type: Utilization
           averageUtilization: 80
 ---
-# Source: controlplane/charts/ingress-nginx/templates/controller-ingressclass.yaml
-apiVersion: networking.k8s.io/v1
-kind: IngressClass
-metadata:
-  labels:
-    helm.sh/chart: ingress-nginx-4.12.3
-    app.kubernetes.io/name: ingress-nginx
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "1.12.3"
-    app.kubernetes.io/part-of: ingress-nginx
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/component: controller
-  name: controlplane
-spec:
-  controller: union.ai/controlplane
----
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -8680,7 +8346,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8741,7 +8406,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8762,26 +8426,6 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
     nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
@@ -8815,7 +8459,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8870,7 +8513,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9288,7 +8930,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9309,26 +8950,6 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -10048,7 +9669,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10069,26 +9689,6 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -10425,7 +10025,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10632,7 +10231,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10718,7 +10316,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10768,7 +10365,6 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10936,10 +10532,6 @@ webhooks:
     - scylladbmanagerclusterregistrations
     - scylladbmanagertasks
 ---
-# Source: controlplane/charts/ingress-nginx/templates/controller-poddisruptionbudget.yaml
-# PDB is not supported for DaemonSets.
-# https://github.com/kubernetes/kubernetes/issues/108124
----
 # Source: controlplane/templates/secret.yaml
 ---
 ---
@@ -11011,3 +10603,217 @@ spec:
       storage:
         capacity: 100Gi
         storageClassName: scylladb
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-envoy-gateway-certgen
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: 'release-name-envoy-gateway-certgen:union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
+rules:
+  - apiGroups:
+    - admissionregistration.k8s.io
+    resources:
+    - mutatingwebhookconfigurations
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+      - admissionregistration.k8s.io
+    resources:
+      - mutatingwebhookconfigurations
+    resourceNames:
+      - 'envoy-gateway-topology-injector.union'
+    verbs:
+      - update
+      - patch
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: 'release-name-envoy-gateway-certgen:union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: 'release-name-envoy-gateway-certgen:union'
+subjects:
+  - kind: ServiceAccount
+    name: 'release-name-envoy-gateway-certgen'
+    namespace: 'union'
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-envoy-gateway-certgen
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - secrets
+  verbs:
+  - get
+  - create
+  - update
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-envoy-gateway-certgen
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: 'release-name-envoy-gateway-certgen'
+subjects:
+- kind: ServiceAccount
+  name: 'release-name-envoy-gateway-certgen'
+  namespace: 'union'
+---
+# Source: controlplane/charts/envoy-gateway/templates/certgen.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-name-envoy-gateway-certgen
+  namespace: 'union'
+  labels:
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+spec:
+  backoffLimit: 1
+  completions: 1
+  parallelism: 1
+  template:
+    metadata:
+      labels:
+        app: certgen
+    spec:
+      containers:
+      - command:
+        - envoy-gateway
+        - certgen
+        env:
+        - name: ENVOY_GATEWAY_NAMESPACE
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.namespace
+        - name: KUBERNETES_CLUSTER_DOMAIN
+          value: cluster.local
+        image: docker.io/envoyproxy/gateway:v1.6.4
+        imagePullPolicy: IfNotPresent
+        name: envoy-gateway-certgen
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+          privileged: false
+          readOnlyRootFilesystem: true
+          runAsGroup: 65532
+          runAsNonRoot: true
+          runAsUser: 65532
+          seccompProfile:
+            type: RuntimeDefault
+      imagePullSecrets: []
+      restartPolicy: Never
+      serviceAccountName: release-name-envoy-gateway-certgen
+  ttlSecondsAfterFinished: 30
+---
+# Source: controlplane/charts/envoy-gateway/templates/envoy-proxy-topology-injector-webhook.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: 'envoy-gateway-topology-injector.union'
+  annotations:
+    "helm.sh/hook": pre-install, pre-upgrade
+    "helm.sh/hook-weight": "-1"
+  labels:
+    app.kubernetes.io/component: topology-injector
+    helm.sh/chart: envoy-gateway-v1.6.4
+    app.kubernetes.io/name: envoy-gateway
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/managed-by: Helm
+webhooks:
+  - name: topology.webhook.gateway.envoyproxy.io
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    clientConfig:
+      service:
+        name: envoy-gateway
+        namespace: 'union'
+        path: "/inject-pod-topology"
+        port: 9443
+    failurePolicy: Ignore
+    rules:
+      - operations: ["CREATE"]
+        apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods/binding"]
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: In
+          values:
+            - union
