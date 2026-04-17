@@ -253,6 +253,31 @@ ingress:
     nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
     nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
+    # For gRPC backends (backend-protocol: GRPC), nginx uses grpc_pass instead
+    # of proxy_pass. The auth-response-headers annotation only sets proxy headers,
+    # not gRPC headers. This configuration-snippet bridges identity headers from
+    # the auth subrequest response into the upstream gRPC request so backend
+    # services receive the caller's identity.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
 
 envoyGateway:
   # GatewayClass name for Envoy Gateway. Used when INGRESS_PROVIDER is "envoy" or "both".
