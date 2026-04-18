@@ -1042,7 +1042,7 @@
         "y": 33
       },
       "id": 300,
-      "title": "FlyteAdmin (V1 + V2)",
+      "title": "FlyteAdmin",
       "type": "row",
       "panels": [
         {
@@ -1301,7 +1301,7 @@
         "y": 34
       },
       "id": 400,
-      "title": "Executions (V1 + V2)",
+      "title": "Executions",
       "type": "row",
       "panels": [
         {
@@ -1807,7 +1807,7 @@
         "y": 34
       },
       "id": 500,
-      "title": "Queue / Run-Scheduler (V2)",
+      "title": "Queue / Run-Scheduler",
       "type": "row",
       "panels": [
         {
@@ -2224,7 +2224,7 @@
         "y": 35
       },
       "id": 600,
-      "title": "Cluster Service (V1 + V2)",
+      "title": "Cluster Service",
       "type": "row",
       "panels": [
         {
@@ -2548,7 +2548,7 @@
         "y": 36
       },
       "id": 900,
-      "title": "CacheService (V1 + V2)",
+      "title": "CacheService",
       "type": "row",
       "panels": [
         {
@@ -2656,79 +2656,253 @@
         "y": 36
       },
       "id": 750,
-      "title": "Authorizer (V1 + V2)",
+      "title": "Authorizer",
       "type": "row",
       "panels": [
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
+          "id": 760,
+          "title": "Authorizer Mode",
+          "type": "stat",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 37
           },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "colorMode": "value",
+            "graphMode": "none",
+            "justifyMode": "auto",
+            "orientation": "auto",
+            "textMode": "name",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            }
+          },
+          "targets": [
+            {
+              "expr": "authorizer:authorizer:cloudauthorizer:connect:authz_type_info{namespace=\"$namespace\"} == 1",
+              "legendFormat": "{{type}}",
+              "refId": "A"
+            }
+          ],
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 751,
+          "title": "Allow / Deny Rate",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 10,
+            "x": 4,
+            "y": 37
+          },
+          "fieldConfig": {
+            "defaults": {
               "custom": {
                 "drawStyle": "line",
                 "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
+                "spanNulls": false
               },
-              "unit": "ops"
+              "noValue": "0",
+              "unit": "ops",
+              "decimals": 2
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*denied.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "red",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byRegexp",
+                  "options": ".*allowed.*"
+                },
+                "properties": [
+                  {
+                    "id": "color",
+                    "value": {
+                      "fixedColor": "green",
+                      "mode": "fixed"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "mean"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
             }
           },
+          "targets": [
+            {
+              "expr": "sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "allowed ({{identity_type}})",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "denied ({{identity_type}})",
+              "refId": "B"
+            }
+          ],
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 753,
+          "title": "Deny Rate (%)",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 10,
+            "x": 14,
+            "y": 37
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.1
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.5
+                  }
+                ]
+              },
+              "noValue": "0",
+              "decimals": 1,
+              "min": 0,
+              "max": 1
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "(sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)) / clamp_min((sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])) + sum by (identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))), 1e-10)",
+              "legendFormat": "{{identity_type}}",
+              "refId": "A"
+            }
+          ],
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 752,
+          "title": "Authorize Latency (service)",
+          "type": "timeseries",
           "gridPos": {
             "h": 8,
             "w": 8,
             "x": 0,
-            "y": 15
-          },
-          "id": 751,
-          "title": "Allow / Deny Rate",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])",
-              "legendFormat": "Allowed",
-              "refId": "A"
-            },
-            {
-              "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
-              "legendFormat": "Denied",
-              "refId": "B"
-            }
-          ],
-          "description": "Authorization decision rate. Allow/deny ratio indicates auth health. High deny rate may signal misconfigured policies. [Metrics pending: requires cloud service instrumentation to be deployed]"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
+            "y": 45
           },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
+              "unit": "ms",
               "custom": {
                 "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
+                "fillOpacity": 10
               },
-              "unit": "ms"
+              "noValue": "0",
+              "decimals": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 50
+                  },
+                  {
+                    "color": "red",
+                    "value": 200
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
             }
           },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 8,
-            "y": 15
-          },
-          "id": 752,
-          "title": "Authorize Latency",
-          "type": "timeseries",
           "targets": [
             {
               "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
@@ -2746,311 +2920,302 @@
               "refId": "C"
             }
           ],
-          "description": "End-to-end Authorize() latency including identity resolution and backend authorization check. [Metrics pending: requires cloud service instrumentation to be deployed]"
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "percentunit"
-            }
-          },
+          }
+        },
+        {
+          "id": 761,
+          "title": "Backend Latency",
+          "type": "timeseries",
           "gridPos": {
             "h": 8,
             "w": 8,
-            "x": 16,
-            "y": 15
-          },
-          "id": 753,
-          "title": "Deny Rate (%)",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]) / (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]) + rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "Deny %",
-              "refId": "A"
-            }
-          ],
-          "description": "Percentage of authorization decisions that denied access. Spikes indicate policy changes or auth issues. [Metrics pending: requires cloud service instrumentation to be deployed]"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
+            "x": 8,
+            "y": 45
           },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "thresholds"
+              "unit": "ms",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10
               },
+              "noValue": "0",
+              "decimals": 1,
               "thresholds": {
+                "mode": "absolute",
                 "steps": [
                   {
                     "color": "green",
                     "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 50
+                  },
+                  {
+                    "color": "red",
+                    "value": 200
                   }
                 ]
-              },
-              "mappings": [
-                {
-                  "type": "value",
-                  "options": {
-                    "Noop": { "text": "Noop", "index": 0 },
-                    "noop": { "text": "Noop", "index": 1 },
-                    "UserClouds": { "text": "UserClouds", "index": 2 },
-                    "userclouds": { "text": "UserClouds", "index": 3 },
-                    "External": { "text": "External", "index": 4 },
-                    "external": { "text": "External", "index": 5 },
-                    "Authorizer": { "text": "Authorizer", "index": 6 },
-                    "authorizer": { "text": "Authorizer", "index": 7 }
-                  }
-                }
-              ]
-            }
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 4,
-            "x": 0,
-            "y": 23
-          },
-          "id": 760,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ],
-              "fields": "/^type$/"
+              }
             },
-            "textMode": "value"
+            "overrides": []
           },
-          "title": "Authorizer Mode",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "authorizer:authorizer:cloudauthorizer:connect:authz_type_info{namespace=\"$namespace\"} == 1",
-              "legendFormat": "{{ type }}",
-              "refId": "A"
-            }
-          ],
-          "description": "Currently active authorizer backend type (Noop, UserClouds, External, Authorizer)."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "ms"
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
             }
           },
-          "gridPos": {
-            "h": 8,
-            "w": 8,
-            "x": 4,
-            "y": 23
-          },
-          "id": 761,
-          "title": "External Backend Latency",
-          "type": "timeseries",
           "targets": [
             {
-              "expr": "histogram_quantile(0.50, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
               "legendFormat": "p50",
               "refId": "A"
             },
             {
-              "expr": "histogram_quantile(0.95, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
               "legendFormat": "p95",
               "refId": "B"
             },
             {
-              "expr": "histogram_quantile(0.99, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:external:authorize_duration_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_duration_ms_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
               "legendFormat": "p99",
               "refId": "C"
             }
           ],
-          "description": "Latency of calls to the external authorization backend (p50/p95/p99)."
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "ops"
-            }
-          },
+          }
+        },
+        {
+          "id": 764,
+          "title": "Decisions by Action",
+          "type": "timeseries",
           "gridPos": {
             "h": 8,
-            "w": 6,
-            "x": 12,
-            "y": 23
-          },
-          "id": 762,
-          "title": "External Errors by gRPC Code",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "sum by (grpc_code) (rate(authorizer:authorizer:cloudauthorizer:connect:external:errors{namespace=\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "{{ grpc_code }}",
-              "refId": "A"
-            }
-          ],
-          "description": "Error rate from the external authorization backend, broken down by gRPC status code."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
+            "w": 8,
+            "x": 16,
+            "y": 45
           },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
               "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "ops"
-            }
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 6,
-            "x": 18,
-            "y": 23
-          },
-          "id": 763,
-          "title": "Fail-Open Activations",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:external:fail_open_activated{namespace=\"$namespace\"}[$__rate_interval])",
-              "legendFormat": "Fail-Open",
-              "refId": "A"
-            }
-          ],
-          "description": "Rate of fail-open activations. Non-zero means the external backend is unreachable and requests are being allowed without authorization."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never",
+                "drawStyle": "bars",
+                "fillOpacity": 50,
                 "stacking": {
                   "mode": "normal"
                 }
               },
-              "unit": "ops"
+              "noValue": "0",
+              "unit": "ops",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "sum"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi"
             }
           },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 0,
-            "y": 31
-          },
-          "id": 764,
-          "title": "Decisions by Action",
-          "type": "timeseries",
           "targets": [
             {
-              "expr": "sum by (action) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "allowed: {{ action }}",
+              "expr": "sum by (action, identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "{{action}} {{identity_type}} (allowed)",
               "refId": "A"
             },
             {
-              "expr": "sum by (action) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "denied: {{ action }}",
+              "expr": "sum by (action, identity_type) (rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "{{action}} {{identity_type}} (denied)",
               "refId": "B"
             }
           ],
-          "description": "Authorization decisions broken down by action (e.g. read, write, execute). Stacked to show total volume."
-        },
-        {
           "datasource": {
             "type": "prometheus",
             "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 762,
+          "title": "Backend Errors",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 53
           },
           "fieldConfig": {
             "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
               "custom": {
                 "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
+                "fillOpacity": 10
               },
-              "unit": "ops"
+              "noValue": "0",
+              "unit": "ops",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
             }
           },
-          "gridPos": {
-            "h": 8,
-            "w": 12,
-            "x": 12,
-            "y": 31
-          },
-          "id": 765,
-          "title": "Error Attribution",
-          "type": "timeseries",
           "targets": [
             {
-              "expr": "sum by (error_source) (rate(authorizer:authorizer:cloudauthorizer:connect:authorize_errors_total{namespace=\"$namespace\"}[$__rate_interval]))",
-              "legendFormat": "{{ error_source }}",
+              "expr": "sum by (error_type) (rate(authorizer:authorizer:cloudauthorizer:connect:backend_authorize_errors{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)",
+              "legendFormat": "{{error_type}}",
               "refId": "A"
             }
           ],
-          "description": "Authorization errors attributed by source (e.g. identity resolution, backend, policy evaluation)."
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 765,
+          "title": "Error Attribution",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 53
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10
+              },
+              "noValue": "0",
+              "unit": "ops",
+              "decimals": 2,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.01
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "sum by (error_source) (rate(authorizer:authorizer:cloudauthorizer:connect:authorize_errors_total{namespace=\"$namespace\"}[$__rate_interval])) or vector(0)",
+              "legendFormat": "{{error_source}}",
+              "refId": "A"
+            }
+          ],
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
+        },
+        {
+          "id": 763,
+          "title": "Fail-Open Activations",
+          "type": "timeseries",
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 53
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 0.001
+                  }
+                ]
+              },
+              "noValue": "0",
+              "unit": "ops",
+              "decimals": 2
+            },
+            "overrides": []
+          },
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi"
+            }
+          },
+          "targets": [
+            {
+              "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:external:fail_open_activated{namespace=\"$namespace\"}[$__rate_interval]) or vector(0)",
+              "legendFormat": "fail-open",
+              "refId": "A"
+            }
+          ],
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          }
         }
       ]
     },
