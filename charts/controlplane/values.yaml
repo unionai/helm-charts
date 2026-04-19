@@ -69,61 +69,21 @@ global:
   AUTH_TOKEN_URL: ""
 
   # --- OIDC / OAuth2 Authentication ---
-  # Configure your identity provider (Okta, Entra ID, Keycloak, Authentik, etc.)
-  # All globals below have safe defaults for Okta. Override for other IdPs.
+  # Auth configuration is in flyte.configmap.adminServer.auth (see below).
+  # Set auth fields directly in that block or via your values overlay.
+  # The globals below are kept for backward compatibility only.
 
-  # OIDC issuer URL (authorization server base URL).
-  # Okta example: "https://dev-123456.okta.com/oauth2/default"
-  # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.externalAuthServer.baseUrl instead.
   OIDC_BASE_URL: ""
-
-  # OIDC metadata discovery endpoint (relative to OIDC_BASE_URL).
-  # Default: ".well-known/oauth-authorization-server" (RFC 8414, Okta)
-  # Entra ID: ".well-known/openid-configuration"
-  OIDC_METADATA_URL: ".well-known/oauth-authorization-server"
-
-  # OAuth2 client ID for the browser/web UI login (confidential client, authorization_code).
+  # Deprecated: set flyte.configmap.adminServer.auth.userAuth.openId.clientId instead.
   OIDC_CLIENT_ID: ""
-
-  # OAuth2 client ID for CLI/SDK (public client, PKCE flow).
+  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId instead.
   CLI_CLIENT_ID: ""
 
-  # Allowed JWT audiences — set in values overlay (list type, can't be a tpl global).
-  # Default in base chart: ["https://{UNION_HOST}"].
-  # Override: set flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience
-  # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
-
-  # OAuth2 resource scope for CLI/SDK and task pod authentication.
-  # Used in flyteClient.scopes (returned by GetPublicClientConfig RPC).
-  # Okta: leave empty (defaults to "all"). Entra ID: "api://my-app-name/.default"
-  OIDC_APP_SCOPE: ""
-
-  # Audience parameter for CLI/SDK PKCE authorization requests.
-  # Okta: leave empty. Entra ID: "api://my-app-name"
-  OIDC_APP_AUDIENCE: ""
-
-  # OAuth2 scope for browser authorization_code flow (web console login).
-  # Separate from OIDC_APP_SCOPE because Entra rejects /.default for same-app
-  # authorization_code flows (AADSTS90009).
-  # Okta: leave empty. Entra ID: "api://my-app-name/all"
-  OIDC_BROWSER_SCOPE: ""
-
   # OAuth2 scope for service-to-service authentication (client_credentials grant).
+  # Used by configMap.union.auth and executions.adminClient.connection (S2S concern).
   # Okta: leave empty (defaults to "all"). Entra ID: "api://my-app-name/.default"
   OIDC_S2S_SCOPE: ""
-
-  # Subject claim resolution and identity type mapping — set in values overlay
-  # (list/map types, can't be tpl globals).
-  # Override: set flyte.configmap.adminServer.auth.appAuth.subjectClaimNames
-  #           and flyte.configmap.adminServer.auth.appAuth.identityTypeClaimsForApps
-  # Entra ID examples: subjectClaimNames: ["sub", "client_id"]
-  #                    identityTypeClaimsForApps: {idtyp: [app]}
-
-  # Subject ID for trusted internal service-to-service identity.
-  # The JWT "sub" claim value from client_credentials tokens for the internal client.
-  # Default: falls back to INTERNAL_CLIENT_ID (correct for Okta where sub == client_id).
-  # Entra ID: Service Principal Object ID (differs from client_id).
-  INTERNAL_SUBJECT_ID: ""
 
 # ----------------------------------------------------------------------------
 # Additional Configuration
@@ -343,7 +303,7 @@ envoyGateway:
     enabled: false
     requestsPerUnit: 100
     unit: Second
-    
+
 # -- Central logging configuration. All controlplane services pull their log level from here.
 # Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO, 6=DEBUG).
 # Log format options: json, text, gcp
@@ -397,9 +357,12 @@ configMap:
         - '{{ .Values.global.UNION_ORG }}'
   union:
     connection:
+      # Overridden by terraform from authn module trusted_identity_claims output.
+      # Okta: externalIdentityClaim = internal client_id (sub == client_id)
+      # Entra ID: externalIdentityClaim = Service Principal Object ID
       trustedIdentityClaims:
         enabled: true
-        externalIdentityClaim: '{{ default .Values.global.INTERNAL_CLIENT_ID .Values.global.INTERNAL_SUBJECT_ID }}'
+        externalIdentityClaim: ""
         externalIdentityTypeClaim: "app"
     internalConnectionConfig:
       enabled: true
@@ -1335,6 +1298,14 @@ flyte:
       server:
         security:
           useAuth: true
+
+      # --- OIDC Authentication Configuration ---
+      # Configure your identity provider below. Set values directly or via
+      # your values overlay. For Union-managed deployments, the authn Terraform
+      # module generates this block automatically.
+      #
+      # Supported IdPs: Okta, Entra ID (Azure AD), Keycloak, Authentik.
+      # See unionai-docs for provider-specific setup guides.
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
@@ -1342,26 +1313,64 @@ flyte:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+
         appAuth:
           authServerType: "External"
           externalAuthServer:
-            baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
-            metadataUrl: '{{ default ".well-known/oauth-authorization-server" .Values.global.OIDC_METADATA_URL }}'
-            # allowedAudience defaults to ["https://{UNION_HOST}"].
-            # Override via OIDC_ALLOWED_AUDIENCE global or values overlay.
+            # --- OIDC Issuer ---
+            # Okta example: "https://dev-123456.okta.com/oauth2/default"
+            # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+            baseUrl: ""
+            # Metadata discovery endpoint (relative to baseUrl).
+            # Okta: ".well-known/oauth-authorization-server" (default)
+            # Entra ID: ".well-known/openid-configuration"
+            metadataUrl: ".well-known/oauth-authorization-server"
+            # Allowed JWT audiences for access token validation.
+            # Default: ["https://{UNION_HOST}"].
+            # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
             allowedAudience:
               - 'https://{{ .Values.global.UNION_HOST }}'
+
+          # --- Subject claim resolution (FAB-205) ---
+          # Ordered list of JWT claims to try for caller identity.
+          # Only needed for IdPs where client_credentials tokens omit "sub".
+          # Default: uses standard "sub" claim.
+          # Override in values overlay if your IdP requires fallback claims.
+
+          # --- Identity type claim mapping ---
+          # Maps IdP-specific claims to internal identitytype.
+          # Okta: not needed (identitytype claim is native)
+          # Entra ID example (set in values overlay):
+          #   identityTypeClaimsForApps:
+          #     idtyp: ["app"]
+
           thirdPartyConfig:
             flyteClient:
-              clientId: '{{ .Values.global.CLI_CLIENT_ID }}'
+              # --- CLI/SDK PKCE Client ---
+              # Okta example: "0oa7mno8pqr9stu0v1w2"
+              # Entra ID example: "3df10225-18a5-4636-b1ef-582e5a8ea21c"
+              clientId: ""
               redirectUri: "http://localhost:53593/callback"
+              # Resource scope for CLI/SDK and task pod authentication.
+              # Okta: ["all"] (default)
+              # Entra ID: ["api://my-app-name/.default"]
               scopes:
-                - '{{ default "all" .Values.global.OIDC_APP_SCOPE }}'
-              audience: '{{ default "" .Values.global.OIDC_APP_AUDIENCE }}'
+                - "all"
+              # Audience parameter for authorization requests.
+              # Okta: "" (not needed)
+              # Entra ID: "api://my-app-name"
+              audience: ""
+
         userAuth:
           openId:
-            baseUrl: '{{ .Values.global.OIDC_BASE_URL }}'
-            clientId: '{{ .Values.global.OIDC_CLIENT_ID }}'
+            # --- Browser Login ---
+            # Okta example: "0oa1abc2def3ghi4j5k6"
+            # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
+            baseUrl: ""
+            clientId: ""
+            # Browser login scopes.
+            # Okta: ["profile", "openid", "offline_access"] (default)
+            # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
             scopes:
               - profile
               - openid
