@@ -682,12 +682,31 @@ data:
         grpcConfig:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
+      bootstrap:
+        adminUsers: []
+        domains:
+        - development
+        - staging
+        - production
+        maxRetries: 30
+        organization: ""
+        projects: []
+        retryInterval: 5s
+        serviceAccounts: []
       externalClient:
         forwardHeaders:
         - authorization
         - flyte-authorization
+      internalCommunicationConfig:
+        enabled: false
       type: Noop
       useExternalIdentity: 'false'
+      userCloudsClient:
+        clientID: 'union-authz-client'
+        clientSecretName: union/client_secret
+        enableLogging: true
+        tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -3576,12 +3595,12 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:update_status:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "expr": "cluster:svc:update_status:success_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
                   "legendFormat": "UpdateStatus p95",
                   "refId": "A"
                 },
                 {
-                  "expr": "histogram_quantile(0.95, sum by (le) (rate(cluster:svc:heartbeat:success_ms_count{namespace=\"$namespace\"}[$__rate_interval]))) / 1000",
+                  "expr": "cluster:svc:heartbeat:success_ms{namespace=\"$namespace\", quantile=\"0.95\"} / 1000",
                   "legendFormat": "Heartbeat p95",
                   "refId": "B"
                 }
@@ -3858,17 +3877,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(flyte:cacheservice:cache:cache_hit{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:cache_hit_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Hits",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:not_found{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:not_found_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Misses",
                   "refId": "B"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:get_failure{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:get_failure_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Get failures",
                   "refId": "C"
                 }
@@ -3905,17 +3924,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(flyte:cacheservice:cache:reservation_contention{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:reservation_contention_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Contention",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:get_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:get_reservation_success_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Reservation acquired",
                   "refId": "B"
                 },
                 {
-                  "expr": "rate(flyte:cacheservice:cache:release_reservation_success{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(flyte:cacheservice:cache:release_reservation_success_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Reservation released",
                   "refId": "C"
                 }
@@ -3966,12 +3985,12 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Allowed",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Denied",
                   "refId": "B"
                 }
@@ -4008,17 +4027,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
                   "legendFormat": "p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
                   "legendFormat": "p90",
                   "refId": "B"
                 },
                 {
-                  "expr": "authorizer:authorize_duration{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "expr": "authorizer:authorizer:cloudauthorizer:connect:authorize_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
                   "legendFormat": "p99",
                   "refId": "C"
                 }
@@ -4055,7 +4074,7 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]) / (rate(authorizer:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]) + rate(authorizer:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "expr": "rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]) / (rate(authorizer:authorizer:cloudauthorizer:connect:authz_allowed{namespace=\"$namespace\"}[$__rate_interval]) + rate(authorizer:authorizer:cloudauthorizer:connect:authz_denied{namespace=\"$namespace\"}[$__rate_interval]))",
                   "legendFormat": "Deny %",
                   "refId": "A"
                 }
@@ -4084,10 +4103,14 @@ data:
                     {
                       "type": "value",
                       "options": {
-                        "noop": { "text": "Noop", "index": 0 },
-                        "userclouds": { "text": "UserClouds", "index": 1 },
-                        "external": { "text": "External", "index": 2 },
-                        "authorizer": { "text": "Authorizer", "index": 3 }
+                        "Noop": { "text": "Noop", "index": 0 },
+                        "noop": { "text": "Noop", "index": 1 },
+                        "UserClouds": { "text": "UserClouds", "index": 2 },
+                        "userclouds": { "text": "UserClouds", "index": 3 },
+                        "External": { "text": "External", "index": 4 },
+                        "external": { "text": "External", "index": 5 },
+                        "Authorizer": { "text": "Authorizer", "index": 6 },
+                        "authorizer": { "text": "Authorizer", "index": 7 }
                       }
                     }
                   ]
@@ -4643,17 +4666,17 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
                   "legendFormat": "p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
                   "legendFormat": "p90",
                   "refId": "B"
                 },
                 {
-                  "expr": "usage:messages:processing_time{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "expr": "usage:messages:processing_time_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
                   "legendFormat": "p99",
                   "refId": "C"
                 }
