@@ -12,78 +12,42 @@
 
 global:
 
-  # Control plane hostname (FQDN)
-  # Example: "mycompany.union.ai" or "union.example.com"
-  UNION_HOST: ""
+  # --- Deployment Identity ---
+  UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
+  UNION_ORG: ""             # Organization name (must match dataplane)
 
-  # AWS region for all resources
-  # TODO: Will eventually be moved to values.aws.yaml
-  # Example: "us-west-2", "us-east-1", "eu-west-1"
-  AWS_REGION: ""
+  # --- Infrastructure ---
+  DB_HOST: ""               # PostgreSQL endpoint
+  DB_NAME: ""               # PostgreSQL database name
+  DB_USER: ""               # PostgreSQL username
+  BUCKET_NAME: ""           # Object storage bucket for metadata
+  ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
+  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
+  DATAPLANE_ENDPOINT: ""    # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
 
-  # PostgreSQL RDS endpoint
-  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
-  DB_HOST: ""
+  # --- Images ---
+  # Default: Union's customer-facing registry. Requires imagePullSecrets.
+  # Internal deployments: overridden by terraform to private ECR/GCR.
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
-  # PostgreSQL database name
-  # Example: "unionai" or "union_controlplane"
-  DB_NAME: ""
+  # --- Ingress ---
+  INGRESS_PROVIDER: nginx   # Options: "nginx", "envoy", "both"
 
-  # PostgreSQL username
-  # Example: "unionai" or "admin"
-  DB_USER: ""
+  # Cloud-specific globals (AWS_REGION, IAM role ARNs, etc.) are declared
+  # in the cloud overlay (e.g. values.aws.selfhosted-intracluster.yaml).
 
-  # S3 bucket for control plane metadata
-  # Example: "union-controlplane-metadata"
-  BUCKET_NAME: ""
+  # --- Service-to-Service Authentication ---
+  INTERNAL_CLIENT_ID: ""    # OAuth2 client ID for S2S calls (client_credentials)
+  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint for S2S authentication
+  OIDC_S2S_SCOPE: ""        # S2S scope. Okta: leave empty (defaults to "all"). Entra ID: "api://my-app/.default"
 
-  # S3 bucket for artifacts storage
-  # Example: "union-controlplane-artifacts"
-  ARTIFACTS_BUCKET_NAME: ""
-
-  # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
-  # Example: "union-controlplane-secrets"
-  # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: ""
-
-  # Union Private ECR repository prefix for control plane images
-  # Contact Union for controlplane access and distribution.
-  IMAGE_REPOSITORY_PREFIX: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp"
-
-  # Ingress controller provider. Options: "nginx", "envoy", "both"
-  INGRESS_PROVIDER: nginx
-
-  # OAuth2 client ID for service-to-service authentication (client_credentials grant).
-  # Used by controlplane services (executions, queue, cluster) to acquire tokens
-  # for internal calls through nginx. This is OAuth App 3 ("internal/service-to-service")
-  # in the authentication architecture.
-  # Okta example: "0oa3xyz4abc5def6g7h8"
-  # Entra ID example: "dc0ea3fc-f32b-4df4-98c1-3681e5a36bc6"
-  INTERNAL_CLIENT_ID: ""
-
-  # OAuth2 token endpoint URL for service-to-service authentication.
-  # Used with INTERNAL_CLIENT_ID for client_credentials token acquisition.
-  # Okta example: "https://dev-123456.okta.com/oauth2/default/v1/token"
-  # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token"
-  AUTH_TOKEN_URL: ""
-
-  # --- OIDC / OAuth2 Authentication ---
-  # Auth configuration is in flyte.configmap.adminServer.auth (see below).
-  # Set auth fields directly in that block or via your values overlay.
-  # The globals below are kept for backward compatibility only.
-
-  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.externalAuthServer.baseUrl instead.
-  OIDC_BASE_URL: ""
-  # Deprecated: set flyte.configmap.adminServer.auth.userAuth.openId.clientId instead.
-  OIDC_CLIENT_ID: ""
-  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId instead.
-  CLI_CLIENT_ID: ""
-
-  # OAuth2 scope for service-to-service authentication (client_credentials grant).
-  # Used by configMap.union.auth and executions.adminClient.connection (S2S concern).
-  # Okta: leave empty (defaults to "all"). Entra ID: "api://my-app-name/.default"
-  OIDC_S2S_SCOPE: ""
+  # --- OIDC Authentication ---
+  # Full auth configuration is in flyte.configmap.adminServer.auth.
+  # These globals are deprecated — set auth fields directly in that block
+  # or via the authn terraform module outputs (app_auth, user_auth).
+  OIDC_BASE_URL: ""         # Deprecated: use adminServer.auth.appAuth.externalAuthServer.baseUrl
+  OIDC_CLIENT_ID: ""        # Deprecated: use adminServer.auth.userAuth.openId.clientId
+  CLI_CLIENT_ID: ""         # Deprecated: use adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId
 
 # ----------------------------------------------------------------------------
 # Additional Configuration
@@ -164,6 +128,12 @@ strategy:
     maxUnavailable: 1
     maxSurge: 1
 secrets: {}
+
+imagePullSecrets:
+  - name: union-registry-secret
+
+extraObjects: []
+
 podMonitor:
   custom:
     enabled: false
@@ -195,8 +165,12 @@ ingress:
   # Default to the ingress class being created in nginx-ingress chart.
   className: "controlplane"
 
-  # TLS to apply to all ingress objects.
-  # tls:
+  # TLS configuration for intra-cluster HTTPS.
+  tls:
+    - hosts:
+        - localhost
+        - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+      secretName: 'controlplane-selfsigned-tls-secret'
 
   # Host to use for all ingress objects.
   host:  "" # Set the DNS name of the ingress host used by you control plane
@@ -207,6 +181,11 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
+    # Allow DP→CP traffic via intra-cluster DNS to match ingress rules.
+    # Without this, requests from the dataplane to the controlplane nginx
+    # controller service DNS name won't match the ingress host.
+    nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+
     # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/service-upstream: "true"
@@ -296,9 +275,16 @@ ingress:
       proxy_set_header x-request-id $request_id;
       grpc_set_header x-request-id $request_id;
 
+# Envoy Gateway controller installed through external chart.
+envoy-gateway:
+  # Set to true when Envoy Gateway is installed alongside this controlplane.
+  # Automatically set by Terraform when envoy-gateway/revisions.yaml exists.
+  enabled: false
+
 envoyGateway:
-  # GatewayClass name for Envoy Gateway. Used when INGRESS_PROVIDER is "envoy" or "both".
-  gatewayClassName: envoy
+  # GatewayClass name for Envoy Gateway. Must match the gatewayClassName in the
+  # Gateway resource. Uses a distinct name from the dataplane's gateway class.
+  gatewayClassName: controlplane-envoy
   rateLimit:
     enabled: false
     requestsPerUnit: 100
@@ -314,6 +300,14 @@ logging:
     type: json
 
 configMap:
+  # Flyteadmin endpoint for intra-cluster communication.
+  # CP-internal: direct to flyteadmin K8s service (not through ingress).
+  admin:
+    endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
+    insecure: true
+    clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+    clientSecretLocation: "/etc/secrets/union/client_secret"
+
   # Authorization — all non-authorizer services use TypeAuthorizer to route
   # Authorize() calls directly to the in-cluster authorizer service.
   # The authorizer service itself decides the backend (Noop, UserClouds,
@@ -347,16 +341,26 @@ configMap:
       enabled: false
   connection:
     environment: "staging"
-    region: '{{ .Values.global.AWS_REGION }}'
-    rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
+    region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
+    # Use controlplane ingress controller for gRPC routing.
+    rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
+    security:
+      # Single-tenant mode: all requests are for this organization.
+      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
     selfServeConfig:
       legacyHosts:
         - '{{ .Values.global.UNION_ORG }}'
   union:
     connection:
+      # gRPC requires TLS for HTTP/2 with NGINX. Cannot mix HTTP/1.1 and HTTP/2
+      # on the same listener without TLS.
+      insecure: false
+      # Set to true if using self-signed certificates (e.g. cert-manager self-signed issuer).
+      insecureSkipVerify: false
+
       # Overridden by terraform from authn module trusted_identity_claims output.
       # Okta: externalIdentityClaim = internal client_id (sub == client_id)
       # Entra ID: externalIdentityClaim = Service Principal Object ID
@@ -418,11 +422,12 @@ services:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
             container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            # Storage backend config — cloud-specific, set in overlay.
+            # AWS: stow/s3 with auth_type: iam
+            # GCP: stow/google with json_key
             stow:
-              config:
-                auth_type: iam
-                region: '{{ .Values.global.AWS_REGION }}'
-              kind: s3
+              config: {}
+              kind: ""
             type: stow
           artifactDatabaseConfig:
             connMaxLifeTime: 1m
@@ -664,9 +669,8 @@ services:
         app:
           adminClient:
             connection:
-              # TODO(FAB-195): Replace FLYTEADMIN_ENDPOINT with CONTROLPLANE_INTRA_CLUSTER_HOST
-              # so all S2S traffic routes through ingress (auth subrequests, TLS, etc.).
-              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              # CP-internal: direct to flyteadmin K8s service.
+              endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
               insecure: true
               authorizationHeader: "flyte-authorization"
               clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
@@ -957,7 +961,9 @@ console:
       memory: 250Mi
 
   # Environment variables
-  env: []
+  env:
+    - name: UNION_ORG_OVERRIDE
+      value: '{{ .Values.global.UNION_ORG }}'
 
   # Additional environment variables from ConfigMap
   envFrom: []
@@ -975,6 +981,14 @@ console:
       maxUnavailable: 1
 
 flyte:
+  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
+  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
+  # overwritten externally (e.g. via ExternalSecrets from Secrets Manager).
+  secrets:
+    adminOauthClientCredentials:
+      enabled: true
+      clientSecret: "placeholder"
+
   # Database configuration (references globals)
   dbHost: '{{ .Values.global.DB_HOST }}'
   dbName: '{{ .Values.global.DB_NAME }}'
@@ -982,14 +996,13 @@ flyte:
 
   # Storage configuration (references globals)
   bucketName: '{{ .Values.global.BUCKET_NAME }}'
-  region: '{{ .Values.global.AWS_REGION }}'
+  region: ""  # Cloud-specific: set in overlay
 
   flyteadmin:
     # -- Set the image used for flyteadmin
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services"
+      # flyte-core subchart doesn't render templates, must use hardcoded repository.
+      repository: "registry.unionai.cloud/controlplane/services"
       pullPolicy: IfNotPresent
       tag:  ""
 
@@ -1008,8 +1021,12 @@ flyte:
         maxUnavailable: 1
 
     serviceAccount:
-      # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
+      # Cloud-specific IAM annotations (set in cloud overlay):
+      # AWS IRSA: eks.amazonaws.com/role-arn
+      # GCP Workload Identity: iam.gke.io/gcp-service-account
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     podAnnotations:
       kubectl.kubernetes.io/default-container: flyteadmin
     initialProjects:
@@ -1056,11 +1073,12 @@ flyte:
         readOnly: true
   flytescheduler:
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flytescheduler"
+      repository: "registry.unionai.cloud/controlplane/services"
       pullPolicy: IfNotPresent
       tag:  ""
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
 
   workflow_scheduler:
     enabled: false
@@ -1071,9 +1089,7 @@ flyte:
     enabled: false
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/datacatalog" # -- Set the repository for the public datacatalog image"
+      repository: "registry.unionai.cloud/controlplane/datacatalog" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
 
@@ -1097,8 +1113,9 @@ flyte:
         ephemeral-storage: 50Mi
         memory: 50Mi
     serviceAccount:
-      # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     service:
       type: ClusterIP
   flytepropeller:
@@ -1108,10 +1125,10 @@ flyte:
     podEnv: {}
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flyteconsole" # -- Set the repository for the console image"
+      repository: "registry.unionai.cloud/controlplane/flyteconsole" # -- Set the repository for the console image"
       tag: "" # -- Set the tag for the console image
+    imagePullSecrets:
+      - name: union-registry-secret
     resources:
       # flyteconsole service has less memory footprint but cpu goes up depends on traffic, If CPU use is high then we will use HPA
       limits:
@@ -1145,16 +1162,14 @@ flyte:
     enabled: true
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services" # -- Set the repository for the private cacheservice image"
+      repository: "registry.unionai.cloud/controlplane/services" # -- Set the repository for the private cacheservice image"
       tag: "" # -- Set the tag for the private cacheservice datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the private cacheservice  image
     serviceAccount:
-      # -- If the service account is created by you, make this false
       create: true
-      # -- Set the role arn for the cacheservice service account which has access to the S3 bucket
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     resources:
       limits:
         cpu: 1
@@ -1239,11 +1254,10 @@ flyte:
 
   storage:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
-    type: s3
+    # Cloud-specific: set in overlay (AWS: s3, GCP: gcs)
+    type: ""
     # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
     bucketName: '{{ .Values.global.BUCKET_NAME }}'
-    s3:
-      region: "{{ .Values.global.AWS_REGION }}"
     cache:
       maxSizeMBs: 1024
   db:
@@ -1381,8 +1395,11 @@ flyte:
           idpQueryParameter: "idp"
 
       admin:
-        endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
-        insecure: false
+        # CP-internal: through controlplane ingress controller for gRPC routing.
+        endpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        insecure: true
+        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+        clientSecretLocation: "/etc/secrets/client_secret"
       # flyteadmin routes authorization to the in-cluster authorizer service.
       authorizer:
         type: "Authorizer"
@@ -1402,8 +1419,8 @@ flyte:
         enable: false
       connection:
         environment: "staging"
-        region: '{{ .Values.global.AWS_REGION }}'
-        rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
+        region: ""  # Cloud-specific: set in overlay
+        rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
       flyteadmin:
         metricsKeys:
           - phase
@@ -1432,6 +1449,8 @@ flyte:
         connectPort: 8089
         httpPort: 8088
         port: 8089
+        security:
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
         selfServeConfig:
           legacyHosts:
             - '{{ .Values.global.UNION_ORG }}'
@@ -1502,30 +1521,44 @@ objectstore:
   controlPlane:
     enabled: false
 
-# Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
-  enabled: false
+  enabled: true
+
+  # Consistent service naming — used by server-alias and intra-cluster routing.
+  fullnameOverride: controlplane-nginx
 
   controller:
+    service:
+      # ClusterIP for intra-cluster only (no external access).
+      # Override to LoadBalancer in cloud overlay for internet-facing deployments.
+      type: ClusterIP
+      ports:
+        http: 80
+        https: 443
 
-    # Disable admission webhooks for simplicity
+    # TLS certificate for all HTTPS connections.
+    # The nginx-ingress subchart does not support Helm templating in extraArgs,
+    # so the TLS secret reference must be set as a literal value in your
+    # environment-specific values overlay.
+    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
+    extraArgs: {}
+
     admissionWebhooks:
-      enabled: true
+      enabled: false
+      patch:
+        enabled: false
 
-    # Snippet annotations are required
+    # Snippet annotations are required for gRPC identity header forwarding.
     allowSnippetAnnotations: true
     config:
       annotations-risk-level: "Critical"
       grpc-connect-timeout: "1200"
       grpc-read-timeout: "604800"
       grpc-send-timeout: "604800"
+      proxy-read-timeout: "3600"
+      proxy-send-timeout: "3600"
+      proxy-connect-timeout: "60"
 
-      # HTTP proxy timeouts (in seconds) - for long-running Watch streams
-      proxy-read-timeout: "3600"   # 1 hour
-      proxy-send-timeout: "3600"   # 1 hour
-      proxy-connect-timeout: "60"  # 60 seconds
-
-    # Enable metrics endpoint for Prometheus scraping (port 10254).
     metrics:
       enabled: true
       serviceMonitor:
@@ -1533,8 +1566,7 @@ ingress-nginx:
 
     ingressClassResource:
       enabled: true
-      default: false # Assume shared with dataplane and require explicit ingress class assignment.
-
+      default: false
       name: controlplane
       controllerValue: union.ai/controlplane
 
@@ -1562,14 +1594,13 @@ scylla:
   # ScyllaDB cluster configuration
   fullnameOverride: scylla
 
-  # Storage class configuration
+  # Storage class configuration — cloud-specific provisioner set in overlay.
+  # AWS: ebs.csi.eks.amazonaws.com, GCP: pd.csi.storage.gke.io
   storageClass:
-    create: true # TODO set to false if you have an existing storage class
-    name: "scylladb" # arbitrary name for the storage class
-    provisioner: "ebs.csi.eks.amazonaws.com"
-    parameters:
-      type: gp2
-      fsType: ext4
+    create: true
+    name: "scylladb"
+    provisioner: ""  # Set in cloud overlay
+    parameters: {}   # Set in cloud overlay (AWS: type: gp2, GCP: type: pd-standard)
     reclaimPolicy: Delete
     volumeBindingMode: WaitForFirstConsumer
     allowVolumeExpansion: true
@@ -1818,6 +1849,25 @@ extraObjectsOverrides: []
 #   helm install prometheus-crds prometheus-community/prometheus-operator-crds
 monitoring:
   enabled: false
+
+  # Managed Kubernetes (EKS, GKE, AKS) runs controller-manager, scheduler, etcd,
+  # and kube-proxy internally. Their metrics endpoints are inaccessible from within
+  # the cluster. Disable scraping to avoid false-positive TargetDown alerts.
+  kubeControllerManager:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
 
   # The following flags control Union monitoring resources independently
   # of the kube-prometheus-stack subchart (monitoring.enabled). This allows

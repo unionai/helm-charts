@@ -1,448 +1,82 @@
 # ============================================================================
-# Union Control Plane Configuration for Self-Hosted Intra-Cluster Deployment
+# GCP Self-Hosted Intra-Cluster Overlay
 # ============================================================================
-# This configuration is for deploying Union control plane in the SAME
-# Kubernetes cluster as the Union dataplane (co-located deployment).
+# This overlay provides GCP-specific configuration on top of the base
+# values.yaml. Replace all empty "" values with your deployment config.
 #
-# IMPORTANT: This file is SELF-CONTAINED and can be used standalone:
-#   helm install ... -f values.gcp.selfhosted-intracluster.yaml
+# Base values.yaml provides: ingress, nginx, auth, monitoring, image repos,
+# imagePullSecrets, namespace-derived FQDNs, and all non-cloud-specific config.
 #
-# Key differences from standard deployment:
-# - Uses intra-cluster communication (internal Kubernetes networking)
-# - Requires TLS certificates for gRPC/HTTP2 with NGINX
-# - Single-tenant mode with explicit organization configuration
-# - Direct communication between control plane and dataplane services
-#
-# NOTE: Common configuration that is not cloud-specific is being migrated
-# to values.yaml over time (e.g. selfServeConfig.legacyHosts). Cloud-specific
-# overrides (storage, IAM, regions) will remain in this file.
-# - Includes all GCP-specific configuration (CloudSQL, GCS, GCP service accounts)
+# This overlay provides: GCP globals (region, CloudSQL, GCS, IAM), Workload
+# Identity annotations, GCS storage config, and dataplane endpoint.
 # ============================================================================
-
-# ----------------------------------------------------------------------------
-# Configuration Variables to Replace
-# ----------------------------------------------------------------------------
-# Configure ALL variables below for your self-hosted intra-cluster deployment.
-# This file includes both GCP infrastructure configuration AND intra-cluster
-# specific settings. Replace all empty "" values with your actual configuration.
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration
-# ----------------------------------------------------------------------------
-# Configure all global variables for your self-hosted intra-cluster deployment.
 
 global:
+  # --- Deployment Identity ---
+  UNION_HOST: ""              # Control plane FQDN (e.g. "mycompany.union.ai")
+  UNION_ORG: ""               # Organization name (must match dataplane)
 
-  # Controls which ingress controller is active for this deployment.
-  # nginx  - ingress-nginx Ingress objects only (default)
-  # envoy  - Envoy Gateway API resources only
-  # both   - both sets rendered simultaneously (parallel-run migration phase)
-  # Automatically set to "both" by Terraform when envoy-gateway/revisions.yaml
-  # exists in the environment directory.
-  INGRESS_PROVIDER: nginx
+  # --- GCP Infrastructure ---
+  GCP_REGION: "us-central1"   # e.g. "us-central1", "europe-west1"
+  GOOGLE_PROJECT_ID: ""       # GCP project ID
+  DB_HOST: ""                 # CloudSQL Private IP (e.g. "10.247.0.3")
+  DB_NAME: ""                 # Database name (e.g. "unionai")
+  DB_USER: ""                 # Database username (e.g. "unionai")
+  BUCKET_NAME: ""             # GCS bucket for metadata
+  ARTIFACTS_BUCKET_NAME: ""   # GCS bucket for artifacts
+  KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password (must contain "pass.txt" key)
+  DATAPLANE_ENDPOINT: ""      # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
 
-  # Region for all resources
-  # Example for GCP: "us-central1", "us-east1", "europe-west1"
-  GCP_REGION: "us-central1"
+  # --- GCP IAM (Workload Identity) ---
+  ARTIFACT_IAM_ROLE_ARN: ""   # GCP SA for artifacts (e.g. "artifacts@PROJECT.iam.gserviceaccount.com")
+  FLYTEADMIN_IAM_ROLE_ARN: "" # GCP SA for flyteadmin, datacatalog, cacheservice
 
-  # PostgreSQL database endpoint (CloudSQL for GCP)
-  # Example: "10.247.0.3" (Private IP)
-  DB_HOST: ""
-
-  # PostgreSQL database name
-  # Example: "unionai"
-  DB_NAME: ""
-
-  # PostgreSQL username
-  # Example: "unionai"
-  DB_USER: ""
-
-  # GCS bucket for control plane metadata
-  # Example: "union-controlplane-metadata"
-  BUCKET_NAME: ""
-
-  # GCS bucket for artifacts storage
-  # Example: "union-controlplane-artifacts"
-  ARTIFACTS_BUCKET_NAME: ""
-
-  # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # This name is fixed and should not be changed (see values.yaml fix)
-  # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: "union-controlplane-secrets"
-
-  # GCP service account for artifacts service (Workload Identity)
-  # Leave empty if artifacts service is disabled
-  # Example: "artifacts@PROJECT_ID.iam.gserviceaccount.com"
-  ARTIFACT_IAM_ROLE_ARN: ""
-
-  # GCP service account for Flyte services (Workload Identity)
-  # Example: "flyteadmin@PROJECT_ID.iam.gserviceaccount.com"
-  # Note: Used by flyteadmin, datacatalog, and cacheservice
-  FLYTEADMIN_IAM_ROLE_ARN: ""
-
-  # Organization name (must match dataplane orgName)
-  # Example: "acme-corp" or "my-organization"
-  UNION_ORG: ""
-
-  # Internal Flyteadmin service endpoint
-  # Default assumes standard naming in union-cp namespace
-  # Override if using different namespace or service name
-  FLYTEADMIN_ENDPOINT: "flyteadmin.union-cp.svc.cluster.local:81"
-
-  # Control plane ingress controller FQDN (for intra-cluster routing)
-  # Default assumes standard naming in union-cp namespace
-  # Override if using different namespace or service name
-  CONTROLPLANE_INTRA_CLUSTER_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
-
-  # TLS secret configuration
-  # Default assumes standard naming in union-cp namespace
-  # Override if using different namespace or secret name
-  TLS_SECRET_NAMESPACE: "union-cp"
-  TLS_SECRET_NAME: "controlplane-tls-cert"
-
-  # Dataplane ingress controller URL
-  # Default assumes standard naming in union namespace
-  # Override if using different namespace or service name
-  DATAPLANE_ENDPOINT: "http://dataplane-nginx-controller.union.svc.cluster.local:80"
-
-  # GCP project ID for GCS and other GCP resources
-  # Example: "my-project-id"
-  GOOGLE_PROJECT_ID: ""
-
-  # Union registry repository prefix for control plane images
-  # For self-hosted intra-cluster deployments, this uses Union's private registry
-  # Example: "registry.unionai.cloud/controlplane"
-  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
-
-  # --- Authentication Configuration ---
-  # All OIDC/OAuth2 globals are defined in the base values.yaml with documentation.
-  # Set them in your environment-specific values overlay generated by Terraform.
-  # INTERNAL_CLIENT_ID and AUTH_TOKEN_URL are also in the base values.yaml.
-  # AUTH_TOKEN_URL: Token endpoint for service-to-service authentication.
+  # --- Service-to-Service Authentication ---
+  # Configure your OAuth2/OIDC provider. See flyte.configmap.adminServer.auth
+  # in values.yaml for full auth configuration with Okta/Entra ID examples.
+  INTERNAL_CLIENT_ID: ""      # OAuth2 client ID for S2S calls
+  AUTH_TOKEN_URL: ""          # OAuth2 token endpoint for S2S authentication
+  OIDC_S2S_SCOPE: ""          # S2S scope. Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Image Tag Overrides
+# SECTION 2: GCP Cloud Configuration
 # ----------------------------------------------------------------------------
-# Override image tags for union services (executions, artifacts, etc.)
-
-imagePullSecrets:
-  - name: union-registry-secret
-
-# ----------------------------------------------------------------------------
-# SECTION 3: Core Configuration Overrides
-# ----------------------------------------------------------------------------
-# These settings configure intra-cluster communication and single-tenant mode.
+# GCS storage and Workload Identity annotations.
 
 configMap:
-  # Flyteadmin endpoint for intra-cluster communication
-  admin:
-    endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
-    insecure: true
-    clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
-    clientSecretLocation: "/etc/secrets/union/client_secret"
-
-  # Control plane connection configuration
   connection:
-    # Use control plane ingress controller for intra-cluster routing
-    # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
-    rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
-
-  # Shared service security configuration
-  sharedService:
-    security:
-      # NOTE: Temporary configuration for single-tenant mode
-      # Subject to removal in the future
-      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
-
-  # Union service connection configuration
-  union:
-    connection:
-      # gRPC requires TLS for HTTP/2 with NGINX
-      # Cannot mix HTTP/1.1 and HTTP/2 on same listener without TLS
-      insecure: false
-
-      # Skip SSL verification if using self-signed certificates
-      insecureSkipVerify: true
-
-    # union.auth is defined in base values.yaml using global.INTERNAL_CLIENT_ID
-    # and global.AUTH_TOKEN_URL. No override needed here.
-
-# ----------------------------------------------------------------------------
-# SECTION 3: Console Configuration
-# ----------------------------------------------------------------------------
-
-console:
-  image:
-    repository: "registry.unionai.cloud/controlplane/unionconsole"
-  env:
-    # Single-tenant organization override
-    - name: UNION_ORG_OVERRIDE
-      value: '{{ .Values.global.UNION_ORG }}'
-
-# ----------------------------------------------------------------------------
-# SECTION 4: Extra Kubernetes Objects (OPTIONAL)
-# ----------------------------------------------------------------------------
-# Additional Kubernetes resources to deploy with the control plane.
-
-extraObjects: []
-
-# Example 1: Create a basic Kubernetes secret (requires manual data population)
-# - apiVersion: "v1"
-#   kind: "Secret"
-#   metadata:
-#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
-
-# Example 2: Use External Secrets Operator with AWS Secrets Manager
-# Automatically syncs RDS credentials from AWS Secrets Manager
-# Note: GCP_REGION and GCP_MANAGED_DB_SECRET_NAME should be added to globals
-# - apiVersion: "external-secrets.io/v1"
-#   kind: "SecretStore"
-#   metadata:
-#     name: "default"
-#   spec:
-#     provider:
-#       aws:
-#         region: '{{ .Values.global.GCP_REGION }}'
-#         service: "SecretsManager"
-#
-# - apiVersion: "external-secrets.io/v1"
-#   kind: "ExternalSecret"
-#   metadata:
-#     name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
-#   spec:
-#     data:
-#     - remoteRef:
-#         key: '{{ .Values.global.GCP_MANAGED_DB_SECRET_NAME }}'
-#         property: "password"
-#       secretKey: "pass.txt"
-#     refreshInterval: "1h"
-#     secretStoreRef:
-#       kind: "SecretStore"
-#       name: "default"
-#     target:
-#       name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
-
-# Example 3: Use cert-manager for TLS certificate management
-# Creates a self-signed certificate for intra-cluster TLS
-# Requires cert-manager and a ClusterIssuer to be pre-installed
-# - apiVersion: "cert-manager.io/v1"
-#   kind: "Certificate"
-#   metadata:
-#     name: "controlplane-selfsigned-tls"
-#   spec:
-#     dnsNames:
-#     - "localhost"
-#     - '{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
-#     ipAddresses:
-#     - "127.0.0.1"
-#     issuerRef:
-#       group: "cert-manager.io"
-#       kind: "ClusterIssuer"
-#       name: "selfsigned-issuer"
-#     secretName: '{{ .Values.global.TLS_SECRET_NAME }}'
-
-# If you are layering multiple values files (e.g. a Terraform-generated base
-# values.yaml and a manual values-overrides.yaml), be aware that Helm replaces
-# arrays on merge rather than appending. Defining extraObjects in a later file
-# will silently discard all entries from earlier files.
-#
-# Use extraObjectsOverrides in your override file to add extra objects without
-# clobbering the base extraObjects list. Both lists are rendered independently.
-extraObjectsOverrides: []
-
-# ----------------------------------------------------------------------------
-# SECTION 5: Flyte Core Configuration
-# ----------------------------------------------------------------------------
+    region: '{{ .Values.global.GCP_REGION }}'
 
 flyte:
-  # Override region to use GCP_REGION (which has GCP value)
   region: '{{ .Values.global.GCP_REGION }}'
-
-  # Override storage from s3 to gcs
   storage:
     type: gcs
-    bucketName: '{{ .Values.global.BUCKET_NAME }}'
     gcs:
       projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
-
   configmap:
     adminServer:
-      admin:
-        # Flyteadmin endpoint via control plane ingress
-        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
-        endpoint: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
-        insecure: false  # Changed: using TLS with self-signed cert
-        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
-        clientSecretLocation: "/etc/secrets/client_secret"
-
       connection:
-        # Control plane connection pattern
-        # Port 443 required for gRPC (HTTP/2 requires TLS with nginx)
-        rootTenantURLPattern: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}:443'
+        region: '{{ .Values.global.GCP_REGION }}'
 
-      sharedService:
-        security:
-          # NOTE: Temporary configuration for single-tenant mode
-          # Subject to removal in the future
-          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
-
-      # adminServer.auth is now fully configured in the base values.yaml
-      # using globals. No overlay-specific auth config needed.
-
-  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
-  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
-  # overwritten externally (e.g. via ExternalSecrets) with the real credential.
-  secrets:
-    adminOauthClientCredentials:
-      enabled: true
-      clientSecret: "placeholder"
-
+  # --- GCP Workload Identity Annotations ---
   flyteadmin:
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "registry.unionai.cloud/controlplane/services"
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
-      imagePullSecrets:
-        - name: union-registry-secret
-
-  flytescheduler:
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "registry.unionai.cloud/controlplane/services"
-    serviceAccount:
-      imagePullSecrets:
-        - name: union-registry-secret
-
   datacatalog:
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "registry.unionai.cloud/controlplane/datacatalog"
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
-      imagePullSecrets:
-        - name: union-registry-secret
-
-  flyteconsole:
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "registry.unionai.cloud/controlplane/flyteconsole"
-    imagePullSecrets:
-      - name: union-registry-secret
-
   cacheservice:
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository
-      repository: "registry.unionai.cloud/controlplane/services"
     serviceAccount:
       annotations:
         iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
-      imagePullSecrets:
-        - name: union-registry-secret
 
 # ----------------------------------------------------------------------------
-# SECTION 6: Ingress Configuration
-# ----------------------------------------------------------------------------
-
-ingress:
-  className: controlplane
-  tls:
-    # TLS configuration for intra-cluster HTTPS
-    - hosts:
-        - localhost
-        - "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
-      secretName: "{{ .Values.global.TLS_SECRET_NAME }}"
-
-  # --- Ingress Annotations (shared across all ingress objects) ---
-  annotations:
-    # Allow the nginx controller's internal DNS to match ingress rules so that
-    # intra-cluster traffic (DP → CP via nginx service DNS) is routed through
-    # the same auth subrequest as external traffic.
-    nginx.ingress.kubernetes.io/server-alias: "{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
-
-  # Protected ingress auth annotations are defined in the base values.yaml.
-  # Override here only if you need to customize auth behavior for this deployment mode.
-
-# ----------------------------------------------------------------------------
-# SECTION 7: Envoy Gateway Configuration
-# ----------------------------------------------------------------------------
-# Envoy Gateway is installed as a separate Helm release (via the envoy-gateway
-# ArgoCD ApplicationSet) and is NOT a sub-chart of the controlplane chart.
-# This section configures how the controlplane chart interacts with Envoy Gateway
-# when it is present in the cluster.
-#
-# Automatically enabled by Terraform when envoy-gateway/revisions.yaml exists
-# in the environment directory. Manual override possible by setting enabled: true.
-
-# Envoy Gateway controller installed through external chart.
-envoy-gateway:
-  # Set to true when Envoy Gateway is installed alongside this controlplane.
-  # Automatically set by Terraform when envoy-gateway/revisions.yaml exists.
-  enabled: false
-
-# Configuration for the controlplane chart to use Envoy Gateway.
-envoyGateway:
-  # GatewayClass name created by the Envoy Gateway installation.
-  # Must match the gatewayClassName in the Gateway resource rendered by the
-  # controlplane chart when global.ingressProvider is "envoy" or "both".
-  # Uses a distinct name from the dataplane's gateway class to avoid conflicts.
-  gatewayClassName: controlplane-envoy
-
-# ----------------------------------------------------------------------------
-# SECTION 8: NGINX Ingress Controller
-# ----------------------------------------------------------------------------
-
-ingress-nginx:
-  enabled: true
-
-  # Consistent service naming
-  fullnameOverride: controlplane-nginx
-
-  controller:
-    service:
-      # ClusterIP for intra-cluster only (no external access)
-      # Change to LoadBalancer or NodePort for external access
-      type: ClusterIP
-      ports:
-        http: 80
-        https: 443
-
-    # Apply TLS certificate to all HTTPS connections
-    extraArgs:
-      # TODO (DIRECTLY CONFIGURE): Set to the values of {{ .Values.global.TLS_SECRET_NAMESPACE }}/{{ .Values.global.TLS_SECRET_NAME }}
-      # nginx-ingress subchart does not support templating here directly.
-      default-ssl-certificate: 'union-cp/controlplane-tls-cert'
-
-    # Admission webhooks configuration
-    admissionWebhooks:
-      enabled: false
-
-      # Optional: Enable with cert-manager
-      # enabled: true
-      # certManager:
-      #   enabled: true
-      #   issuerRef:
-      #     group: "cert-manager.io"
-      #     kind: "ClusterIssuer"
-      #     name: "selfsigned-issuer"
-
-      patch:
-        enabled: false
-
-    ingressClassResource:
-      # Separate ingress class from dataplane
-      name: controlplane
-
-# ----------------------------------------------------------------------------
-# SECTION 8: Service-Specific Configuration
+# SECTION 3: Service-Specific Configuration
 # ----------------------------------------------------------------------------
 
 services:
-
-  # Artifacts service configuration
   artifacts:
     serviceAccount:
       annotations:
@@ -458,46 +92,14 @@ services:
                 projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
             type: stow
 
-  # Dataproxy service configuration
   dataproxy:
     configMap:
       dataproxy:
-        # Connect to dataplane ingress controller
         secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
 
-# ----------------------------------------------------------------------------
-# SECTION 9: ScyllaDB Configuration
-# ----------------------------------------------------------------------------
+# --- GCP ScyllaDB Storage Class ---
 scylla:
-  enabled: true
-  # Datacenter NAME (string, not object)
-  datacenter: dc1
-
-  # Replication factor (must match members)
-  replicationFactor: 3
-
-  # Rack configuration
-  racks:
-    - name: rack1
-      members: 3
-      storage:
-        capacity: 100Gi
-      resources:
-        limits:
-          cpu: "500m"
-          memory: "1Gi"
-        requests:
-          cpu: "200m"
-          memory: "512Mi"
-
-  developerMode: true
-
   storageClass:
-    provisioner: pd.csi.storage.gke.io
+    provisioner: "pd.csi.storage.gke.io"
     parameters:
       type: pd-standard
-
-
-scylla-operator:
-  enabled: true
-
