@@ -412,19 +412,8 @@ services:
       #
       # Supported types:
       #   - "Noop"       — no enforcement (default)
-      #   - "UserClouds" — Union Cloud's authorization backend
+      #   - "UserClouds" — Union RBAC (just set type, defaults are pre-configured)
       #   - "External"   — customer-provided gRPC authorization server (selfhosted)
-      #
-      # --- Union Cloud (UserClouds) ---
-      # For Union Cloud deployments, set type to "UserClouds":
-      #   authorizer:
-      #     type: "UserClouds"
-      #     userCloudsClient:
-      #       tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
-      #       tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
-      #       clientID: '{{ .Values.union.authz.clientID }}'
-      #       clientSecretName: 'union/client_secret'
-      #       enableLogging: true
       #
       # --- External Authorization (selfhosted) ---
       # For selfhosted deployments with a customer-provided authz server:
@@ -467,6 +456,31 @@ services:
           forwardHeaders:
             - authorization
             - flyte-authorization
+        # --- UserClouds client defaults (pre-configured) ---
+        # These defaults are used when type is set to "UserClouds" (Union RBAC).
+        # They are ignored when type is "Noop" or "External".
+        # To enable Union RBAC, just change type to "UserClouds" — no other
+        # configuration is needed. Override individual fields only if your
+        # deployment uses non-standard naming or secrets.
+        userCloudsClient:
+          tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
+          tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+          clientID: '{{ .Values.union.authz.clientID }}'
+          clientSecretName: 'union/client_secret'
+          enableLogging: true
+        internalCommunicationConfig:
+          enabled: false
+        bootstrap:
+          organization: ""
+          domains:
+            - development
+            - staging
+            - production
+          projects: []
+          serviceAccounts: []
+          adminUsers: []
+          retryInterval: 5s
+          maxRetries: 30
       sharedService:
         connectPort: 8081
         metrics:
