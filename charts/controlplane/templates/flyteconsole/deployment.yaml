@@ -1,0 +1,96 @@
+{{- if .Values.flyte.useDirectTemplates }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "flyteconsole.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  labels: {{ include "flyteconsole.labels" . | nindent 4 }}
+  {{- if .Values.flyte.flyteconsole.annotations }}
+  annotations:
+    {{- with .Values.flyte.flyteconsole.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  replicas: {{ .Values.flyte.flyteconsole.replicaCount }}
+  selector:
+    matchLabels: {{ include "flyteconsole.selectorLabels" . | nindent 6 }}
+  {{- with .Values.flyte.flyteconsole.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/flyteconsole/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.flyte.flyteconsole.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels: {{ include "flyteconsole.podLabels" . | nindent 8 }}
+    spec:
+    {{- with .Values.flyte.flyteconsole.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      {{- with .Values.flyte.flyteconsole.securityContext }}
+      securityContext: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- if .Values.flyte.flyteconsole.priorityClassName }}
+      priorityClassName: {{ .Values.flyte.flyteconsole.priorityClassName }}
+      {{- end }}
+      containers:
+      - image: "{{ .Values.flyte.flyteconsole.image.repository }}:{{ .Values.flyte.flyteconsole.image.tag }}"
+        imagePullPolicy: "{{ .Values.flyte.flyteconsole.image.pullPolicy }}"
+        name: flyteconsole
+        envFrom:
+        - configMapRef:
+            name: flyte-console-config
+        ports:
+        - containerPort: 8080
+        {{- if .Values.flyte.flyteconsole.serviceMonitor.enabled  }}
+        - containerPort: 8081
+          name: http-metrics
+          protocol: TCP
+        {{- end }}
+        {{- if or .Values.flyte.flyteconsole.ga.enabled .Values.flyte.flyteconsole.podEnv }}
+        env:
+        {{- end }}
+        {{- if .Values.flyte.flyteconsole.ga.enabled }}
+        - name: ENABLE_GA
+          value: "{{ .Values.flyte.flyteconsole.ga.enabled }}"
+        - name: GA_TRACKING_ID
+          value: "{{ .Values.flyte.flyteconsole.ga.tracking_id }}"
+        {{- end }}
+        {{- if .Values.flyte.flyteconsole.podEnv -}}
+        {{- with .Values.flyte.flyteconsole.podEnv }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- end }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources: {{ toYaml .Values.flyte.flyteconsole.resources | nindent 10 }}
+        volumeMounts:
+        - mountPath: /srv/flyte
+          name: shared-data
+        {{- with .Values.flyte.flyteconsole.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+        {{- with .Values.flyte.flyteconsole.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      volumes:
+      - emptyDir: {}
+        name: shared-data
+      {{- with .Values.flyte.flyteconsole.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.flyteconsole.affinity }}
+      affinity: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.flyteconsole.tolerations }}
+      tolerations: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- end }}

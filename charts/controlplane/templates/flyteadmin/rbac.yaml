@@ -1,0 +1,57 @@
+{{- if .Values.flyte.useDirectTemplates }}
+{{- /*
+Determine the role/binding scoping.
+Default: "cluster" (ClusterRole + ClusterRoleBinding).
+Set rbacScope: "namespace" for namespace-scoped Role + RoleBinding.
+
+Note: The controlplane chart also defines a namespace-scoped Role in
+templates/rbac/_flyteadmin.yaml which overrides the subchart's ClusterRole.
+Both render — the namespace Role takes precedence for in-namespace resources.
+*/}}
+{{- $roleType := "ClusterRole" }}
+{{- if eq (default "cluster" .Values.flyte.flyteadmin.serviceAccount.rbacScope) "namespace" }}
+  {{- $roleType = "Role" }}
+{{- end }}
+
+{{- if .Values.flyte.flyteadmin.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ template "flyteadmin.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  labels: {{ include "flyteadmin.labels" . | nindent 4 }}
+  {{- with .Values.flyte.flyteadmin.serviceAccount.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+{{- with .Values.flyte.flyteadmin.serviceAccount.imagePullSecrets }}
+imagePullSecrets: {{ tpl (toYaml .) $ | nindent 2 }}
+{{- end }}
+{{- end }}
+
+---
+{{- if .Values.flyte.flyteadmin.serviceAccount.rbac }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ $roleType }}
+metadata:
+  name: {{ template "flyte.namespace" . -}}-{{- template "flyteadmin.name" . }}
+  labels: {{ include "flyteadmin.labels" . | nindent 4 }}
+rules:
+- apiGroups: {{ toYaml .Values.flyte.flyteadmin.serviceAccount.rbacRules.apiGroups | nindent 4 }}
+  resources: {{ toYaml .Values.flyte.flyteadmin.serviceAccount.rbacRules.resources | nindent 4 }}
+  verbs: {{ toYaml .Values.flyte.flyteadmin.serviceAccount.rbacRules.verbs | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ $roleType }}Binding
+metadata:
+  name: {{ template "flyte.namespace" . -}}-{{- template "flyteadmin.name" . }}-binding
+  labels: {{ include "flyteadmin.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ $roleType }}
+  name: {{ template "flyte.namespace" . -}}-{{- template "flyteadmin.name" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ template "flyteadmin.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+{{- end }}
+{{- end }}
