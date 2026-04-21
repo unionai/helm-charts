@@ -68,6 +68,23 @@ global:
   # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/oauth2/v2.0/token"
   AUTH_TOKEN_URL: ""
 
+  # --- OIDC / OAuth2 Authentication ---
+  # Auth configuration is in flyte.configmap.adminServer.auth (see below).
+  # Set auth fields directly in that block or via your values overlay.
+  # The globals below are kept for backward compatibility only.
+
+  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.externalAuthServer.baseUrl instead.
+  OIDC_BASE_URL: ""
+  # Deprecated: set flyte.configmap.adminServer.auth.userAuth.openId.clientId instead.
+  OIDC_CLIENT_ID: ""
+  # Deprecated: set flyte.configmap.adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId instead.
+  CLI_CLIENT_ID: ""
+
+  # OAuth2 scope for service-to-service authentication (client_credentials grant).
+  # Used by configMap.union.auth and executions.adminClient.connection (S2S concern).
+  # Okta: leave empty (defaults to "all"). Entra ID: "api://my-app-name/.default"
+  OIDC_S2S_SCOPE: ""
+
 # ----------------------------------------------------------------------------
 # Additional Configuration
 # ----------------------------------------------------------------------------
@@ -286,7 +303,7 @@ envoyGateway:
     enabled: false
     requestsPerUnit: 100
     unit: Second
-    
+
 # -- Central logging configuration. All controlplane services pull their log level from here.
 # Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO, 6=DEBUG).
 # Log format options: json, text, gcp
@@ -339,6 +356,14 @@ configMap:
       legacyHosts:
         - '{{ .Values.global.UNION_ORG }}'
   union:
+    connection:
+      # Overridden by terraform from authn module trusted_identity_claims output.
+      # Okta: externalIdentityClaim = internal client_id (sub == client_id)
+      # Entra ID: externalIdentityClaim = Service Principal Object ID
+      trustedIdentityClaims:
+        enabled: true
+        externalIdentityClaim: ""
+        externalIdentityTypeClaim: "app"
     internalConnectionConfig:
       enabled: true
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
@@ -350,7 +375,7 @@ configMap:
       tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
       authorizationMetadataKey: flyte-authorization
       scopes:
-        - all
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
 services:
   artifacts:
@@ -636,18 +661,19 @@ services:
       eventsProxy:
         recorderType: RunService
       executions:
-
-        # app:
-          # adminClient:
-            # connection:
-              # -- Override rootTenantURLPattern for adminClient to point to control plane service.
-              # endpoint: ""
-
-              # -- Insecure should be true only for local testing with self-signed certs.
-              # insecure: true|false
-
-              # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
-              # insecureSkipVerify: true|false
+        app:
+          adminClient:
+            connection:
+              # TODO(FAB-195): Replace FLYTEADMIN_ENDPOINT with CONTROLPLANE_INTRA_CLUSTER_HOST
+              # so all S2S traffic routes through ingress (auth subrequests, TLS, etc.).
+              endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+              insecure: true
+              authorizationHeader: "flyte-authorization"
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: "/etc/secrets/union/client_secret"
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+              scopes:
+              - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
         apps:
           # Enrich "Owned By" display with name/email from a remote identity service.
@@ -1269,24 +1295,90 @@ flyte:
     #     template: "{{ project }}-{{ domain }}"
 
     adminServer:
-      # --- Subject Claim Resolution (FAB-205) ---
-      # When flyteadmin validates a JWT access token, it resolves the caller's subject
-      # from JWT claims. By default it reads the standard "sub" claim. Some IdPs omit
-      # "sub" from client credentials tokens or use a different claim for the client
-      # identity (e.g. "client_id").
+      server:
+        security:
+          useAuth: true
+
+      # --- OIDC Authentication Configuration ---
+      # Configure your identity provider below. Set values directly or via
+      # your values overlay. For Union-managed deployments, the authn Terraform
+      # module generates this block automatically.
       #
-      # When subjectClaimNames is configured under auth.appAuth, it becomes the
-      # authoritative ordered list of claims to try. The first non-empty value wins
-      # and is used as the subject for all downstream identity resolution (including
-      # /me, authorization middleware, and internal service-to-service calls).
-      #
-      # When not configured, the standard "sub" claim is used (default behavior).
-      #
-      # auth:
-      #   appAuth:
-      #     subjectClaimNames:
-      #     - sub
-      #     - client_id    # Common alternative for client credentials tokens
+      # Supported IdPs: Okta, Entra ID (Azure AD), Keycloak, Authentik.
+      # See unionai-docs for provider-specific setup guides.
+      auth:
+        httpAuthorizationHeader: "flyte-authorization"
+        grpcAuthorizationHeader: "flyte-authorization"
+        authorizedUris:
+          - "http://flyteadmin:80"
+          - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
+          - 'https://{{ .Values.global.UNION_HOST }}'
+
+        appAuth:
+          authServerType: "External"
+          externalAuthServer:
+            # --- OIDC Issuer ---
+            # Okta example: "https://dev-123456.okta.com/oauth2/default"
+            # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+            baseUrl: ""
+            # Metadata discovery endpoint (relative to baseUrl).
+            # Okta: ".well-known/oauth-authorization-server" (default)
+            # Entra ID: ".well-known/openid-configuration"
+            metadataUrl: ".well-known/oauth-authorization-server"
+            # Allowed JWT audiences for access token validation.
+            # Default: ["https://{UNION_HOST}"].
+            # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            allowedAudience:
+              - 'https://{{ .Values.global.UNION_HOST }}'
+
+          # --- Subject claim resolution (FAB-205) ---
+          # Ordered list of JWT claims to try for caller identity.
+          # Only needed for IdPs where client_credentials tokens omit "sub".
+          # Default: uses standard "sub" claim.
+          # Override in values overlay if your IdP requires fallback claims.
+
+          # --- Identity type claim mapping ---
+          # Maps IdP-specific claims to internal identitytype.
+          # Okta: not needed (identitytype claim is native)
+          # Entra ID example (set in values overlay):
+          #   identityTypeClaimsForApps:
+          #     idtyp: ["app"]
+
+          thirdPartyConfig:
+            flyteClient:
+              # --- CLI/SDK PKCE Client ---
+              # Okta example: "0oa7mno8pqr9stu0v1w2"
+              # Entra ID example: "3df10225-18a5-4636-b1ef-582e5a8ea21c"
+              clientId: ""
+              redirectUri: "http://localhost:53593/callback"
+              # Resource scope for CLI/SDK and task pod authentication.
+              # Okta: ["all"] (default)
+              # Entra ID: ["api://my-app-name/.default"]
+              scopes:
+                - "all"
+              # Audience parameter for authorization requests.
+              # Okta: "" (not needed)
+              # Entra ID: "api://my-app-name"
+              audience: ""
+
+        userAuth:
+          openId:
+            # --- Browser Login ---
+            # Okta example: "0oa1abc2def3ghi4j5k6"
+            # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
+            baseUrl: ""
+            clientId: ""
+            # Browser login scopes.
+            # Okta: ["profile", "openid", "offline_access"] (default)
+            # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
+            scopes:
+              - profile
+              - openid
+              - offline_access
+          cookieSetting:
+            sameSitePolicy: "LaxMode"
+            domain: ""
+          idpQueryParameter: "idp"
 
       admin:
         endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
@@ -1329,7 +1421,7 @@ flyte:
           populateUserFields: false
       server:
         security:
-          useAuth: false
+          useAuth: true
       union:
         internalConnectionConfig:
           enabled: true
