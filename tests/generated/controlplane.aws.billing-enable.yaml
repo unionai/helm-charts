@@ -182,19 +182,6 @@ spec:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: envoy-gateway
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
----
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -208,6 +195,24 @@ metadata:
     #app.kubernetes.io/managed-by: Helm
   annotations: 
     eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
+imagePullSecrets: 
+  - name: union-registry-secret
+---
+# Source: controlplane/charts/ingress-nginx/templates/controller-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx
+  namespace: union
+automountServiceAccountToken: true
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.serviceaccount.yaml
 apiVersion: v1
@@ -240,6 +245,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.4.7
     app.kubernetes.io/managed-by: Helm
+imagePullSecrets: 
+  - name: union-registry-secret
 ---
 # Source: controlplane/templates/console/serviceaccount.yaml
 apiVersion: v1
@@ -380,47 +387,7 @@ metadata:
   namespace: union
 type: Opaque
 stringData:
-  client_secret: foobar
----
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-config.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: envoy-gateway-config
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-data:
-  envoy-gateway.yaml: |
-    apiVersion: gateway.envoyproxy.io/v1alpha1
-    kind: EnvoyGateway
-    extensionApis: {}
-    gateway:
-      controllerName: gateway.envoyproxy.io/gatewayclass-controller
-    logging:
-      level:
-        default: info
-    provider:
-      kubernetes:
-        rateLimitDeployment:
-          container:
-            image: docker.io/envoyproxy/ratelimit:3fb70258
-          patch:
-            type: StrategicMerge
-            value:
-              spec:
-                template:
-                  spec:
-                    containers:
-                    - imagePullPolicy: IfNotPresent
-                      name: envoy-ratelimit
-        shutdownManager:
-          image: docker.io/envoyproxy/gateway:v1.6.4
-      type: Kubernetes
+  client_secret: placeholder
 ---
 # Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
@@ -484,8 +451,10 @@ data:
       type: noop
   server.yaml: | 
     admin:
-      endpoint: dns:///
-      insecure: false
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/client_secret
+      endpoint: dns:///controlplane-nginx-controller.union.svc.cluster.local
+      insecure: true
     auth:
       appAuth:
         authServerType: External
@@ -534,8 +503,8 @@ data:
       enable: false
     connection:
       environment: staging
-      region: ''
-      rootTenantURLPattern: dns:///
+      region: ""
+      rootTenantURLPattern: dns:///controlplane-nginx-controller.union.svc.cluster.local
     flyteadmin:
       eventVersion: 2
       metadataStoragePrefix:
@@ -572,6 +541,8 @@ data:
       connectPort: 8089
       httpPort: 8088
       port: 8089
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -587,11 +558,6 @@ data:
         durationMinutes: 3
   storage.yaml: | 
     storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -622,6 +588,30 @@ metadata:
 data: 
   BASE_URL: /console
   CONFIG_DIR: /etc/flyte/config
+---
+# Source: controlplane/charts/ingress-nginx/templates/controller-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx-controller
+  namespace: union
+data:
+  allow-snippet-annotations: "true"
+  annotations-risk-level: "Critical"
+  grpc-connect-timeout: "1200"
+  grpc-read-timeout: "604800"
+  grpc-send-timeout: "604800"
+  proxy-connect-timeout: "60"
+  proxy-read-timeout: "3600"
+  proxy-send-timeout: "3600"
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -684,11 +674,6 @@ data:
         urlPattern: '_SERVICE_.union.svc.cluster.local:80'
   storage.yaml: | 
     storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -710,6 +695,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -762,6 +752,8 @@ data:
       connectPort: 8081
       metrics:
         scope: 'authorizer:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -776,6 +768,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -798,6 +792,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -842,6 +841,8 @@ data:
       connectPort: 8081
       metrics:
         scope: 'cluster:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -856,6 +857,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -878,6 +881,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -910,6 +918,8 @@ data:
     sharedService:
       metrics:
         scope: 'dataproxy:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -924,6 +934,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -946,6 +958,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -985,7 +1002,7 @@ data:
             authorizationHeader: flyte-authorization
             clientId: 'test-internal-client-id'
             clientSecretLocation: /etc/secrets/union/client_secret
-            endpoint: ''
+            endpoint: flyteadmin.union.svc.cluster.local:81
             insecure: true
             scopes:
             - 'all'
@@ -1010,6 +1027,8 @@ data:
     sharedService:
       metrics:
         scope: 'executions:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1024,6 +1043,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -1048,6 +1069,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1087,6 +1113,8 @@ data:
       connectPort: 8081
       metrics:
         scope: 'organizations:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1101,6 +1129,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -1123,6 +1153,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1161,6 +1196,8 @@ data:
     sharedService:
       metrics:
         scope: 'queue:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1175,6 +1212,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -1197,6 +1236,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1235,6 +1279,8 @@ data:
     sharedService:
       metrics:
         scope: 'run-scheduler:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1249,6 +1295,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -1271,6 +1319,11 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 data:
   config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
     authorizer:
       authorizerClient:
         forwardHeaders:
@@ -1304,6 +1357,8 @@ data:
       connectPort: 8081
       metrics:
         scope: 'usage:'
+      security:
+        singleTenantOrgID: ''
       selfServeConfig:
         legacyHosts:
         - ''
@@ -1318,6 +1373,8 @@ data:
         tokenUrl: 'https://test.example.com/oauth2/v1/token'
         type: ClientSecret
       connection:
+        insecure: false
+        insecureSkipVerify: false
         trustedIdentityClaims:
           enabled: true
           externalIdentityClaim: ""
@@ -5033,143 +5090,8 @@ metadata:
   name: scylladb
 provisioner: ebs.csi.eks.amazonaws.com
 volumeBindingMode: WaitForFirstConsumer
-parameters:
-  fsType: ext4
-  type: gp2
 reclaimPolicy: Delete
 allowVolumeExpansion: true
----
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  creationTimestamp: null
-  name: release-name-envoy-gateway-envoy-gateway-role
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  - namespaces
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - gatewayclasses
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - gatewayclasses/status
-  verbs:
-  - update
-- apiGroups:
-  - multicluster.x-k8s.io
-  resources:
-  - serviceimports
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  - secrets
-  - services
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - daemonsets
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - discovery.k8s.io
-  resources:
-  - endpointslices
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - gateway.envoyproxy.io
-  resources:
-  - envoyproxies
-  - envoypatchpolicies
-  - clienttrafficpolicies
-  - backendtrafficpolicies
-  - securitypolicies
-  - envoyextensionpolicies
-  - backends
-  - httproutefilters
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - gateway.envoyproxy.io
-  resources:
-  - envoypatchpolicies/status
-  - clienttrafficpolicies/status
-  - backendtrafficpolicies/status
-  - securitypolicies/status
-  - envoyextensionpolicies/status
-  - backends/status
-  verbs:
-  - update
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - gateways
-  - grpcroutes
-  - httproutes
-  - referencegrants
-  - tcproutes
-  - tlsroutes
-  - udproutes
-  - backendtlspolicies
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - gateway.networking.k8s.io
-  resources:
-  - gateways/status
-  - grpcroutes/status
-  - httproutes/status
-  - tcproutes/status
-  - tlsroutes/status
-  - udproutes/status
-  - backendtlspolicies/status
-  verbs:
-  - update
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  - pods/binding
-  verbs:
-  - get
-  - list
-  - patch
-  - update
-  - watch
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5201,6 +5123,90 @@ rules:
     - limitranges
   verbs: 
     - '*'
+---
+# Source: controlplane/charts/ingress-nginx/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+  name: controlplane-nginx
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - endpoints
+      - nodes
+      - pods
+      - secrets
+      - namespaces
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+      - get
 ---
 # Source: controlplane/charts/scylla-operator/templates/edit_clusterrole.yaml
 kind: ClusterRole
@@ -5836,20 +5842,6 @@ rules:
   - list
   - watch
 ---
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: release-name-envoy-gateway-envoy-gateway-rolebinding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: release-name-envoy-gateway-envoy-gateway-role
-subjects:
-- kind: ServiceAccount
-  name: 'envoy-gateway'
-  namespace: 'union'
----
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5869,6 +5861,27 @@ subjects:
   name: flyteadmin
   namespace: union
 ---
+# Source: controlplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+  name: controlplane-nginx
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: controlplane-nginx
+subjects:
+  - kind: ServiceAccount
+    name: controlplane-nginx
+    namespace: union
+---
 # Source: controlplane/charts/scylla-operator/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5883,109 +5896,99 @@ subjects:
   name: scylla-operator
   namespace: scylla-operator
 ---
-# Source: controlplane/charts/envoy-gateway/templates/infra-manager-rbac.yaml
+# Source: controlplane/charts/ingress-nginx/templates/controller-role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: release-name-envoy-gateway-infra-manager
-  namespace: 'union'
   labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx
+  namespace: union
 rules:
-- apiGroups:
-  - ""
-  resources:
-  - serviceaccounts
-  - services
-  - configmaps
-  verbs:
-  - create
-  - get
-  - list
-  - delete
-  - deletecollection
-  - patch
-- apiGroups:
-  - apps
-  resources:
-  - deployments
-  - daemonsets
-  verbs:
-  - create
-  - get
-  - delete
-  - deletecollection
-  - patch
-- apiGroups:
-  - autoscaling
-  - policy
-  resources:
-  - horizontalpodautoscalers
-  - poddisruptionbudgets
-  verbs:
-  - create
-  - get
-  - list
-  - delete
-  - deletecollection
-  - patch
-- apiGroups:
-  - certificates.k8s.io
-  resources:
-  - clustertrustbundles
-  verbs:
-  - list
-  - get
-  - watch
----
-# Source: controlplane/charts/envoy-gateway/templates/leader-election-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-envoy-gateway-leader-election-role
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - configmaps
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
-- apiGroups:
-  - coordination.k8s.io
-  resources:
-  - leases
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - patch
-  - delete
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - patch
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - pods
+      - secrets
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  # Omit Ingress status permissions if `--update-status` is disabled.
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    resourceNames:
+      - controlplane-nginx-leader
+    verbs:
+      - get
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+      - get
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6018,47 +6021,28 @@ rules:
     verbs:
       - '*'
 ---
-# Source: controlplane/charts/envoy-gateway/templates/infra-manager-rbac.yaml
+# Source: controlplane/charts/ingress-nginx/templates/controller-rolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: release-name-envoy-gateway-infra-manager
-  namespace: 'union'
   labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
     app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx
+  namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: 'release-name-envoy-gateway-infra-manager'
+  name: controlplane-nginx
 subjects:
-- kind: ServiceAccount
-  name: 'envoy-gateway'
-  namespace: 'union'
----
-# Source: controlplane/charts/envoy-gateway/templates/leader-election-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-envoy-gateway-leader-election-rolebinding
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: 'release-name-envoy-gateway-leader-election-role'
-subjects:
-- kind: ServiceAccount
-  name: 'envoy-gateway'
-  namespace: 'union'
+  - kind: ServiceAccount
+    name: controlplane-nginx
+    namespace: union
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6079,42 +6063,6 @@ subjects:
   - kind: ServiceAccount
     name: flyteadmin
     namespace: union
----
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: envoy-gateway
-  namespace: 'union'
-  labels:
-    control-plane: envoy-gateway
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  selector:
-    control-plane: envoy-gateway
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-  ports:
-  - name: grpc
-    port: 18000
-    targetPort: 18000
-  - name: ratelimit
-    port: 18001
-    targetPort: 18001
-  - name: wasm
-    port: 18002
-    targetPort: 18002
-  - name: metrics
-    port: 19001
-    targetPort: 19001
-  - name: webhook
-    port: 9443
-    targetPort: 9443
 ---
 # Source: controlplane/charts/flyte/templates/admin/service.yaml
 apiVersion: v1
@@ -6174,6 +6122,68 @@ spec:
   selector: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/charts/ingress-nginx/templates/controller-service-metrics.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx-controller-metrics
+  namespace: union
+spec:
+  type: ClusterIP
+  ports:
+    - name: metrics
+      port: 10254
+      protocol: TCP
+      targetPort: metrics
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: controller
+---
+# Source: controlplane/charts/ingress-nginx/templates/controller-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx-controller
+  namespace: union
+spec:
+  type: ClusterIP
+  ipFamilyPolicy: SingleStack
+  ipFamilies: 
+    - IPv4
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+      appProtocol: http
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: https
+      appProtocol: https
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: controller
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.service.yaml
 apiVersion: v1
@@ -6547,110 +6557,6 @@ spec:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/envoy-gateway/templates/envoy-gateway-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: envoy-gateway
-  namespace: 'union'
-  labels:
-    control-plane: envoy-gateway
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      control-plane: envoy-gateway
-      app.kubernetes.io/name: envoy-gateway
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        prometheus.io/port: "19001"
-        prometheus.io/scrape: "true"
-      labels:
-        control-plane: envoy-gateway
-        app.kubernetes.io/name: envoy-gateway
-        app.kubernetes.io/instance: release-name
-    spec:
-      containers:
-      - args:
-        - server
-        - --config-path=/config/envoy-gateway.yaml
-        env:
-        - name: ENVOY_GATEWAY_NAMESPACE
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: metadata.namespace
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: cluster.local
-        image: docker.io/envoyproxy/gateway:v1.6.4
-        imagePullPolicy: IfNotPresent
-        livenessProbe:
-          httpGet:
-            path: /healthz
-            port: 8081
-          initialDelaySeconds: 15
-          periodSeconds: 20
-        name: envoy-gateway
-        ports:
-        - containerPort: 18000
-          name: grpc
-        - containerPort: 18001
-          name: ratelimit
-        - containerPort: 18002
-          name: wasm
-        - containerPort: 19001
-          name: metrics
-        - name: webhook
-          containerPort: 9443
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 8081
-          initialDelaySeconds: 5
-          periodSeconds: 10
-        resources:
-          limits:
-            memory: 1024Mi
-          requests:
-            cpu: 100m
-            memory: 256Mi
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          privileged: false
-          runAsGroup: 65532
-          runAsNonRoot: true
-          runAsUser: 65532
-          seccompProfile:
-            type: RuntimeDefault
-        volumeMounts:
-        - mountPath: /config
-          name: envoy-gateway-config
-          readOnly: true
-        - mountPath: /certs
-          name: certs
-          readOnly: true
-      imagePullSecrets: []
-      serviceAccountName: envoy-gateway
-      terminationGracePeriodSeconds: 10
-      volumes:
-      - configMap:
-          defaultMode: 420
-          name: envoy-gateway-config
-        name: envoy-gateway-config
-      - name: certs
-        secret:
-          secretName: envoy-gateway
----
 # Source: controlplane/charts/flyte/templates/admin/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -6675,7 +6581,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "2d23ab5e52493cb9873cbd258a2c056a727ded4495ad9c88c5a4e15efd3d1cd"
+        configChecksum: "e56d2e9baec9a850c9f9b60ee81a5e7c1d2eb2616658fef33c896ac3ad4c742"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -6697,7 +6603,7 @@ spec:
           - /etc/flyte/config/*.yaml
           - migrate
           - run
-          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+          image: "registry.unionai.cloud/controlplane/services:"
           imagePullPolicy: "IfNotPresent"
           name: run-migrations
           securityContext:
@@ -6717,7 +6623,7 @@ spec:
           - seed-projects
           - union-health-monitoring
           - flytesnacks
-          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+          image: "registry.unionai.cloud/controlplane/services:"
           imagePullPolicy: "IfNotPresent"
           name: seed-projects
           securityContext:
@@ -6730,7 +6636,7 @@ spec:
           - mountPath: /etc/flyte/config
             name: base-config-volume
         - name: generate-secrets
-          image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+          image: "registry.unionai.cloud/controlplane/services:"
           imagePullPolicy: "IfNotPresent"
           command: ["/bin/sh", "-c"]
           args:
@@ -6757,7 +6663,7 @@ spec:
         - --config
         - /etc/flyte/config/*.yaml
         - serve
-        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+        image: "registry.unionai.cloud/controlplane/services:"
         imagePullPolicy: "IfNotPresent"
         name: flyteadmin
         ports:
@@ -6864,6 +6770,8 @@ spec:
         helm.sh/chart: flyte-v1.16.1
         app.kubernetes.io/managed-by: Helm
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       securityContext: 
         fsGroupChangePolicy: OnRootMismatch
         runAsNonRoot: true
@@ -6871,7 +6779,7 @@ spec:
         seLinuxOptions:
           type: spc_t
       containers:
-      - image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flyteconsole:"
+      - image: "registry.unionai.cloud/controlplane/flyteconsole:"
         imagePullPolicy: "IfNotPresent"
         name: flyteconsole
         envFrom:
@@ -6903,6 +6811,121 @@ spec:
       volumes:
       - emptyDir: {}
         name: shared-data
+---
+# Source: controlplane/charts/ingress-nginx/templates/controller-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane-nginx-controller
+  namespace: union
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: controller
+  replicas: 1
+  revisionHistoryLimit: 10
+  minReadySeconds: 0
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: ingress-nginx-4.12.3
+        app.kubernetes.io/name: ingress-nginx
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "1.12.3"
+        app.kubernetes.io/part-of: ingress-nginx
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: controller
+    spec:
+      dnsPolicy: ClusterFirst
+      containers:
+        - name: controller
+          image: registry.k8s.io/ingress-nginx/controller:v1.12.3@sha256:ac444cd9515af325ba577b596fe4f27a34be1aa330538e8b317ad9d6c8fb94ee
+          imagePullPolicy: IfNotPresent
+          lifecycle: 
+            preStop:
+              exec:
+                command:
+                - /wait-shutdown
+          args: 
+            - /nginx-ingress-controller
+            - --publish-service=$(POD_NAMESPACE)/controlplane-nginx-controller
+            - --election-id=controlplane-nginx-leader
+            - --controller-class=union.ai/controlplane
+            - --ingress-class=nginx
+            - --configmap=$(POD_NAMESPACE)/controlplane-nginx-controller
+            - --enable-metrics=true
+          securityContext: 
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 82
+            allowPrivilegeEscalation: false
+            seccompProfile: 
+              type: RuntimeDefault
+            capabilities:
+              drop:
+              - ALL
+              add:
+              - NET_BIND_SERVICE
+            readOnlyRootFilesystem: false
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LD_PRELOAD
+              value: /usr/local/lib/libmimalloc.so
+          livenessProbe: 
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: 10254
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe: 
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: 10254
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              protocol: TCP
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          resources: 
+            requests:
+              cpu: 100m
+              memory: 90Mi
+      nodeSelector: 
+        kubernetes.io/os: linux
+      serviceAccountName: controlplane-nginx
+      terminationGracePeriodSeconds: 300
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.deployment.yaml
 apiVersion: apps/v1
@@ -7054,7 +7077,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "197f4097faabcce1c83bbd79953460800854d6b92837333f3dd60c6c1bfa14a"
+        configChecksum: "9cc1443a3602745c7c15fc1c3ab5f2742d34a170e66340f04e4ced50fda172a"
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -7080,7 +7103,7 @@ spec:
         - /etc/cacheservice/config/*.yaml
         - migrate
         - run
-        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+        image: "registry.unionai.cloud/controlplane/services:"
         imagePullPolicy: "IfNotPresent"
         name: run-migrations
         volumeMounts:
@@ -7098,7 +7121,7 @@ spec:
         - --config
         - /etc/cacheservice/config/*.yaml
         - serve
-        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:"
+        image: "registry.unionai.cloud/controlplane/services:"
         imagePullPolicy: "IfNotPresent"
         name: cacheservice
         ports:
@@ -7182,6 +7205,8 @@ spec:
         app.kubernetes.io/name: unionconsole
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: unionconsole
       securityContext:
         fsGroupChangePolicy: OnRootMismatch
@@ -7196,7 +7221,7 @@ spec:
           capabilities:
             drop:
             - ALL
-        image: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/unionconsole:2026.4.7"
+        image: "registry.unionai.cloud/controlplane/unionconsole:2026.4.7"
         imagePullPolicy: IfNotPresent
         ports:
         - name: http
@@ -7205,6 +7230,9 @@ spec:
         - name: http-metrics
           containerPort: 8081
           protocol: TCP
+        env:
+          - name: UNION_ORG_OVERRIDE
+            value: ''
         resources:
           limits:
             cpu: 500m
@@ -7246,6 +7274,8 @@ spec:
         app.kubernetes.io/name: authorizer
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: authorizer
       volumes:
       - name: secrets
@@ -7259,7 +7289,7 @@ spec:
           name: authorizer
       containers:
         - name: authorizer
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - authorizer
@@ -7359,6 +7389,8 @@ spec:
         app.kubernetes.io/name: cluster
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: cluster
       volumes:
       - name: secrets
@@ -7372,7 +7404,7 @@ spec:
           name: cluster
       initContainers:
         - name: cluster-migrate
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudcluster
@@ -7388,7 +7420,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: cluster
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudcluster
@@ -7488,6 +7520,8 @@ spec:
         app.kubernetes.io/name: dataproxy
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: dataproxy
       volumes:
       - name: secrets
@@ -7501,7 +7535,7 @@ spec:
           name: dataproxy
       containers:
         - name: dataproxy
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - dataproxy
@@ -7598,6 +7632,8 @@ spec:
         app.kubernetes.io/name: executions
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: executions
       volumes:
       - name: secrets
@@ -7611,7 +7647,7 @@ spec:
           name: executions
       initContainers:
         - name: executions-migrate
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudpropeller
@@ -7627,7 +7663,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: executions
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudpropeller
@@ -7724,6 +7760,8 @@ spec:
         app.kubernetes.io/name: organizations
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: organizations
       volumes:
       - name: secrets
@@ -7737,7 +7775,7 @@ spec:
           name: organizations
       initContainers:
         - name: organizations-migrate
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudorganizations
@@ -7753,7 +7791,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: organizations
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudorganizations
@@ -7854,6 +7892,8 @@ spec:
         app.kubernetes.io/name: queue
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: queue
       volumes:
       - name: secrets
@@ -7867,7 +7907,7 @@ spec:
           name: queue
       initContainers:
         - name: queue-migrate
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - queue
@@ -7883,7 +7923,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: queue
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - queue
@@ -7980,6 +8020,8 @@ spec:
         app.kubernetes.io/name: run-scheduler
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: run-scheduler
       volumes:
       - name: secrets
@@ -7993,7 +8035,7 @@ spec:
           name: run-scheduler
       initContainers:
         - name: run-scheduler-migrate
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
           - cloudpropeller
@@ -8009,7 +8051,7 @@ spec:
             mountPath: /etc/config/
       containers:
         - name: run-scheduler
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - cloudpropeller
@@ -8107,6 +8149,8 @@ spec:
         app.kubernetes.io/name: usage
         app.kubernetes.io/instance: release-name
     spec:
+      imagePullSecrets:
+        - name: union-registry-secret
       serviceAccountName: usage
       volumes:
       - name: secrets
@@ -8120,7 +8164,7 @@ spec:
           name: usage
       containers:
         - name: usage
-          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          image: registry.unionai.cloud/controlplane/services:2026.4.7
           imagePullPolicy: IfNotPresent
           args:
             - usage
@@ -8437,6 +8481,22 @@ spec:
           type: Utilization
           averageUtilization: 80
 ---
+# Source: controlplane/charts/ingress-nginx/templates/controller-ingressclass.yaml
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: controlplane
+spec:
+  controller: union.ai/controlplane
+---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -8451,6 +8511,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8474,6 +8535,11 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -8506,6 +8572,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8548,6 +8615,11 @@ metadata:
       grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -8581,6 +8653,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8604,6 +8677,11 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -8637,6 +8715,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8660,6 +8739,11 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -9049,6 +9133,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9091,6 +9176,11 @@ metadata:
       grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -9803,6 +9893,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9845,6 +9936,11 @@ metadata:
       grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -10174,6 +10270,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10192,6 +10289,11 @@ metadata:
     nginx.ingress.kubernetes.io/service-upstream: "true"
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -10375,6 +10477,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10394,6 +10497,11 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -10455,6 +10563,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10474,6 +10583,11 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -10499,6 +10613,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10522,6 +10637,11 @@ metadata:
     nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
+  tls:
+    - hosts:
+      - localhost
+      - controlplane-nginx-controller.union.svc.cluster.local
+      secretName: controlplane-selfsigned-tls-secret
   rules:
     - http:
         paths:
@@ -10661,6 +10781,10 @@ webhooks:
     - scylladbmanagerclusterregistrations
     - scylladbmanagertasks
 ---
+# Source: controlplane/charts/ingress-nginx/templates/controller-poddisruptionbudget.yaml
+# PDB is not supported for DaemonSets.
+# https://github.com/kubernetes/kubernetes/issues/108124
+---
 # Source: controlplane/templates/secret.yaml
 ---
 ---
@@ -10732,217 +10856,3 @@ spec:
       storage:
         capacity: 100Gi
         storageClassName: scylladb
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-envoy-gateway-certgen
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: 'release-name-envoy-gateway-certgen:union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
-rules:
-  - apiGroups:
-    - admissionregistration.k8s.io
-    resources:
-    - mutatingwebhookconfigurations
-    verbs:
-    - get
-    - list
-    - watch
-  - apiGroups:
-      - admissionregistration.k8s.io
-    resources:
-      - mutatingwebhookconfigurations
-    resourceNames:
-      - 'envoy-gateway-topology-injector.union'
-    verbs:
-      - update
-      - patch
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: 'release-name-envoy-gateway-certgen:union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: 'release-name-envoy-gateway-certgen:union'
-subjects:
-  - kind: ServiceAccount
-    name: 'release-name-envoy-gateway-certgen'
-    namespace: 'union'
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-envoy-gateway-certgen
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - secrets
-  verbs:
-  - get
-  - create
-  - update
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen-rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-envoy-gateway-certgen
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"   # Ensure rbac is created before the certgen job when using ArgoCD.
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: 'release-name-envoy-gateway-certgen'
-subjects:
-- kind: ServiceAccount
-  name: 'release-name-envoy-gateway-certgen'
-  namespace: 'union'
----
-# Source: controlplane/charts/envoy-gateway/templates/certgen.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: release-name-envoy-gateway-certgen
-  namespace: 'union'
-  labels:
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-spec:
-  backoffLimit: 1
-  completions: 1
-  parallelism: 1
-  template:
-    metadata:
-      labels:
-        app: certgen
-    spec:
-      containers:
-      - command:
-        - envoy-gateway
-        - certgen
-        env:
-        - name: ENVOY_GATEWAY_NAMESPACE
-          valueFrom:
-            fieldRef:
-              apiVersion: v1
-              fieldPath: metadata.namespace
-        - name: KUBERNETES_CLUSTER_DOMAIN
-          value: cluster.local
-        image: docker.io/envoyproxy/gateway:v1.6.4
-        imagePullPolicy: IfNotPresent
-        name: envoy-gateway-certgen
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-          runAsGroup: 65532
-          runAsNonRoot: true
-          runAsUser: 65532
-          seccompProfile:
-            type: RuntimeDefault
-      imagePullSecrets: []
-      restartPolicy: Never
-      serviceAccountName: release-name-envoy-gateway-certgen
-  ttlSecondsAfterFinished: 30
----
-# Source: controlplane/charts/envoy-gateway/templates/envoy-proxy-topology-injector-webhook.yaml
-apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
-metadata:
-  name: 'envoy-gateway-topology-injector.union'
-  annotations:
-    "helm.sh/hook": pre-install, pre-upgrade
-    "helm.sh/hook-weight": "-1"
-  labels:
-    app.kubernetes.io/component: topology-injector
-    helm.sh/chart: envoy-gateway-v1.6.4
-    app.kubernetes.io/name: envoy-gateway
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "v1.6.4"
-    app.kubernetes.io/managed-by: Helm
-webhooks:
-  - name: topology.webhook.gateway.envoyproxy.io
-    admissionReviewVersions: ["v1"]
-    sideEffects: None
-    clientConfig:
-      service:
-        name: envoy-gateway
-        namespace: 'union'
-        path: "/inject-pod-topology"
-        port: 9443
-    failurePolicy: Ignore
-    rules:
-      - operations: ["CREATE"]
-        apiGroups: [""]
-        apiVersions: ["v1"]
-        resources: ["pods/binding"]
-    namespaceSelector:
-      matchExpressions:
-        - key: kubernetes.io/metadata.name
-          operator: In
-          values:
-            - union
