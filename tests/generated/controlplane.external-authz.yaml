@@ -138,6 +138,18 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
+  name: organizations
+spec:
+  minAvailable: "33%"
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: organizations
+      app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
   name: queue
 spec:
   minAvailable: "33%"
@@ -284,6 +296,18 @@ metadata:
   labels:
     helm.sh/chart: controlplane-2026.4.7
     app.kubernetes.io/name: executions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.7"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: organizations
+  labels:
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/name: organizations
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
@@ -970,6 +994,76 @@ data:
         urlPattern: _SERVICE_.union.svc.cluster.local:80
     workspace:
       enable: false
+---
+# Source: controlplane/templates/configmap.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: organizations
+  labels:
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/name: organizations
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'true'
+    cache:
+      identity:
+        enabled: false
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    db:
+      connectionPool:
+        maxConnectionLifetime: 1m
+        maxIdleConnections: 20
+        maxOpenConnections: 20
+      dbname: ''
+      host: ''
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: ''
+    logger:
+      formatter:
+        type: json
+      level: 6
+      show-source: true
+    otel:
+      type: noop
+    sharedService:
+      connectPort: 8081
+      metrics:
+        scope: 'organizations:'
+      selfServeConfig:
+        legacyHosts:
+        - ''
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'test-internal-client-id'
+        clientSecretLocation: /etc/secrets/union/client_secret
+        enable: true
+        scopes:
+        - all
+        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        type: ClientSecret
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -6250,6 +6344,45 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: organizations
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/name: organizations
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: connect
+    - name: grpc-native
+      port: 8080
+      protocol: TCP
+      targetPort: grpc
+    - name: connect
+      port:  83
+      protocol: TCP
+      targetPort: connect
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: http
+    - name: debug
+      port: 82
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: organizations
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
   name: queue
   labels:
     platform.union.ai/prometheus-group: "union-services"
@@ -7504,6 +7637,135 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: organizations
+  labels:
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/name: organizations
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: organizations
+      app.kubernetes.io/instance: release-name
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: organizations
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: organizations
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: organizations
+      volumes:
+      - name: secrets
+        secret:
+          secretName: 
+      - name: db-pass
+        secret:
+          secretName: 
+      - name: config
+        configMap:
+          name: organizations
+      initContainers:
+        - name: organizations-migrate
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          imagePullPolicy: IfNotPresent
+          args:
+          - cloudorganizations
+          - migrate
+          - --config
+          - /etc/config/*.yaml
+          volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
+          - name: secrets
+            mountPath: /etc/secrets/union
+          - name: config
+            mountPath: /etc/config/
+      containers:
+        - name: organizations
+          image: 643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services:2026.4.7
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudorganizations
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+            - name: connect
+              containerPort: 8081
+              protocol: TCP
+          volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+              limits:
+                cpu: 500m
+                memory: 512Mi
+              requests:
+                cpu: 250m
+                memory: 250Mi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: organizations
+                    app.kubernetes.io/instance: release-name
+                topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: queue
   labels:
     helm.sh/chart: controlplane-2026.4.7
@@ -8038,6 +8300,32 @@ spec:
           averageUtilization: 80
 ---
 # Source: controlplane/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: organizations
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: organizations
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# Source: controlplane/templates/hpa.yaml
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
@@ -8184,6 +8472,26 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
     nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
@@ -8708,6 +9016,26 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -9447,6 +9775,26 @@ metadata:
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
     nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+    
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+    
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+    
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+    
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
