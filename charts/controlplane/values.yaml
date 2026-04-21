@@ -355,11 +355,15 @@ configMap:
         - '{{ .Values.global.UNION_ORG }}'
   union:
     connection:
-      # gRPC requires TLS for HTTP/2 with NGINX. Cannot mix HTTP/1.1 and HTTP/2
-      # on the same listener without TLS.
+      # Internal service-to-service communication goes through the controlplane
+      # nginx ingress to trigger the authentication flow (auth subrequest to /me).
+      # gRPC requires TLS for HTTP/2 with NGINX, so insecure must be false.
+      # However, the TLS certificate on the ingress is typically issued for the
+      # external domain only — the internal FQDN (controlplane-nginx-controller.
+      # <namespace>.svc.cluster.local) won't match. Since traffic is already
+      # within the cluster network, skip TLS certificate verification.
       insecure: false
-      # Set to true if using self-signed certificates (e.g. cert-manager self-signed issuer).
-      insecureSkipVerify: false
+      insecureSkipVerify: true
 
       # Overridden by terraform from authn module trusted_identity_claims output.
       # Okta: externalIdentityClaim = internal client_id (sub == client_id)
