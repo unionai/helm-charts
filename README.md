@@ -4,7 +4,6 @@
 
 ### Assumptions
 * You have a Union organization that has already been created and you know the URL of your control plane host.
-* The Union provided client ID and secret.
 * You have a Kubernetes cluster, running one of the most recent three minor K8s versions. [Learn more](https://kubernetes.io/releases/version-skew-policy/)
 * Object storage provided by a vendor or an S3 compatible platform (such as [Minio](https://min.io).
 
