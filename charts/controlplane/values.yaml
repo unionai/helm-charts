@@ -985,12 +985,20 @@ console:
       maxUnavailable: 1
 
 flyte:
-  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
-  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
+  # When true, flyteadmin and flyteconsole are rendered by controlplane templates
+  # (templates/flyteadmin/, templates/flyteconsole/) instead of the flyte-core subchart.
+  # Set to false + re-enable flyteadmin.enabled/flyteconsole.enabled for legacy behavior.
+  # Requires `helm upgrade --force` when switching (label changes on immutable selectors).
+  useDirectTemplates: true
+
+  # Auth secret for OIDC client credentials (used by flyteadmin).
+  # Set clientSecret: "placeholder" so the template renders the secret — it must be
   # overwritten externally (e.g. via ExternalSecrets from Secrets Manager).
   secrets:
     adminOauthClientCredentials:
-      enabled: true
+      # Subchart rendering disabled when useDirectTemplates: true.
+      # Direct template renders based on clientSecret being non-empty.
+      enabled: false
       clientSecret: "placeholder"
 
   # Database configuration (references globals)
@@ -1003,9 +1011,12 @@ flyte:
   region: ""  # Cloud-specific: set in overlay
 
   flyteadmin:
+    # Subchart rendering disabled when useDirectTemplates: true.
+    # Set enabled: true + useDirectTemplates: false for legacy subchart behavior.
+    enabled: false
+
     # -- Set the image used for flyteadmin
     image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository.
       repository: "registry.unionai.cloud/controlplane/services"
       pullPolicy: IfNotPresent
       tag:  ""
@@ -1125,7 +1136,8 @@ flyte:
   flytepropeller:
     enabled: false
   flyteconsole:
-    enabled: true
+    # Subchart rendering disabled when useDirectTemplates: true.
+    enabled: false
     podEnv: {}
     replicaCount: 1
     image:

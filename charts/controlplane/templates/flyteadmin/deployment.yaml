@@ -1,0 +1,246 @@
+{{- if .Values.flyte.useDirectTemplates }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ template "flyteadmin.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  labels: {{ include "flyteadmin.labels" . | nindent 4 }}
+  {{- if .Values.flyte.flyteadmin.annotations }}
+  annotations:
+    {{- with .Values.flyte.flyteadmin.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  {{- if not .Values.flyte.flyteadmin.autoscaling.enabled }}
+  replicas: {{ .Values.flyte.flyteadmin.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels: {{ include "flyteadmin.selectorLabels" . | nindent 6 }}
+  {{- with .Values.flyte.flyteadmin.strategy }}
+  strategy: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/flyteadmin/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.flyte.flyteadmin.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels: {{ include "flyteadmin.podLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.flyte.flyteadmin.securityContext }}
+      securityContext: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- if .Values.flyte.flyteadmin.priorityClassName }}
+      priorityClassName: {{ .Values.flyte.flyteadmin.priorityClassName }}
+      {{- end }}
+      initContainers:
+        - command:
+          - flyteadmin
+          - --config
+          - {{ .Values.flyte.flyteadmin.configPath }}
+          - migrate
+          - run
+          image: "{{ .Values.flyte.flyteadmin.image.repository }}:{{ .Values.flyte.flyteadmin.image.tag }}"
+          imagePullPolicy: "{{ .Values.flyte.flyteadmin.image.pullPolicy }}"
+          name: run-migrations
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: {{- include "databaseSecret.volumeMount" . | nindent 10 }}
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+          {{- if .Values.flyte.flyteadmin.env }}
+          env:
+            {{- with .Values.flyte.flyteadmin.env -}}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.flyte.flyteadmin.envFrom }}
+          envFrom:
+            {{- with .Values.flyte.flyteadmin.envFrom -}}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+          {{- end }}
+        {{- if .Values.flyte.flyteadmin.initialProjects }}
+        - command:
+          - flyteadmin
+          - --config
+          - {{ .Values.flyte.flyteadmin.configPath }}
+          - migrate
+          - seed-projects
+          {{- range .Values.flyte.flyteadmin.initialProjects }}
+          - {{ . }}
+          {{- end }}
+          image: "{{ .Values.flyte.flyteadmin.image.repository }}:{{ .Values.flyte.flyteadmin.image.tag }}"
+          imagePullPolicy: "{{ .Values.flyte.flyteadmin.image.pullPolicy }}"
+          name: seed-projects
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: {{- include "databaseSecret.volumeMount" . | nindent 10 }}
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+          {{- if .Values.flyte.flyteadmin.env }}
+          env:
+            {{- with .Values.flyte.flyteadmin.env -}}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        {{- if and (.Values.flyte.cluster_resource_manager.enabled) (not .Values.flyte.cluster_resource_manager.standalone_deploy) }}
+        - command:
+          - flyteadmin
+          - --config
+          - {{ .Values.flyte.flyteadmin.configPath }}
+          - clusterresource
+          - sync
+          image: "{{ .Values.flyte.flyteadmin.image.repository }}:{{ .Values.flyte.flyteadmin.image.tag }}"
+          imagePullPolicy: "{{ .Values.flyte.flyteadmin.image.pullPolicy }}"
+          name: sync-cluster-resources
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts: {{- include "databaseSecret.volumeMount" . | nindent 10 }}
+          - mountPath: /etc/flyte/clusterresource/templates
+            name: resource-templates
+          - mountPath: /etc/flyte/config
+            name: clusters-config-volume
+          - mountPath: /etc/secrets/
+            name: admin-secrets
+          {{- if gt (len .Values.flyte.configmap.clusters.labelClusterMap) 0 }}
+          {{- with .Values.flyte.flyteadmin.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 10 }}
+          {{- end }}
+          {{- end }}
+          {{- if .Values.flyte.flyteadmin.env }}
+          env:
+            {{- with .Values.flyte.flyteadmin.env -}}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+            {{- end }}
+        {{- end }}
+        - name: generate-secrets
+          image: "{{ .Values.flyte.flyteadmin.image.repository }}:{{ .Values.flyte.flyteadmin.image.tag }}"
+          imagePullPolicy: "{{ .Values.flyte.flyteadmin.image.pullPolicy }}"
+          command: ["/bin/sh", "-c"]
+          args:
+            [
+                "flyteadmin --config={{ .Values.flyte.flyteadmin.configPath }} secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
+            ]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - mountPath: /etc/flyte/config
+              name: base-config-volume
+            - mountPath: /etc/scratch
+              name: scratch
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- with .Values.flyte.flyteadmin.env -}}
+            {{- tpl (toYaml .) $ | nindent 12 }}
+            {{- end }}
+      containers:
+      - command:
+        - flyteadmin
+        - --config
+        - {{ .Values.flyte.flyteadmin.configPath }}
+        - serve
+        {{- with .Values.flyte.flyteadmin.extraArgs }}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+        {{- if .Values.flyte.flyteadmin.env }}
+        env:
+        {{- with .Values.flyte.flyteadmin.env -}}
+        {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+        {{- end }}
+        image: "{{ .Values.flyte.flyteadmin.image.repository }}:{{ .Values.flyte.flyteadmin.image.tag }}"
+        imagePullPolicy: "{{ .Values.flyte.flyteadmin.image.pullPolicy }}"
+        name: flyteadmin
+        ports:
+        - containerPort: {{ .Values.flyte.configmap.adminServer.server.httpPort }}
+        - containerPort: {{ .Values.flyte.configmap.adminServer.server.grpc.port }}
+        - containerPort: {{ .Values.flyte.configmap.adminServer.flyteadmin.profilerPort }}
+        readinessProbe:
+        {{- with .Values.flyte.flyteadmin.readinessProbe -}}
+        {{- . | nindent 10 }}
+        {{- end }}
+        livenessProbe:
+        {{- with .Values.flyte.flyteadmin.livenessProbe -}}
+        {{- . | nindent 10 }}
+        {{- end }}
+        resources: {{- toYaml .Values.flyte.flyteadmin.resources | nindent 10 }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts: {{- include "databaseSecret.volumeMount" . | nindent 8 }}
+        - mountPath: /srv/flyte
+          name: shared-data
+        - mountPath: /etc/flyte/config
+          name: clusters-config-volume
+        - mountPath: /etc/secrets/
+          name: admin-secrets
+        {{- with .Values.flyte.flyteadmin.additionalVolumeMounts -}}
+        {{ tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+      {{- with .Values.flyte.flyteadmin.additionalContainers -}}
+      {{- tpl (toYaml .) $ | nindent 6}}
+      {{- end }}
+      serviceAccountName: {{ template "flyteadmin.name" . }}
+      volumes: {{- include "databaseSecret.volume" . | nindent 6 }}
+      - emptyDir: {}
+        name: shared-data
+      - emptyDir: {}
+        name: scratch
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+            {{- if .Values.flyte.storage.secretName }}
+            - secret:
+                name: {{ .Values.flyte.storage.secretName }}
+            {{- end }}
+        name: base-config-volume
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+            - configMap:
+                name: flyte-admin-clusters-config
+            {{- if .Values.flyte.storage.secretName }}
+            - secret:
+                name: {{ .Values.flyte.storage.secretName }}
+            {{- end }}
+        name: clusters-config-volume
+      {{- if .Values.flyte.cluster_resource_manager.enabled }}
+      - configMap:
+          name: clusterresource-template
+        name: resource-templates
+      {{- end }}
+      - name: admin-secrets
+        secret:
+          secretName: flyte-admin-secrets
+      {{- with .Values.flyte.flyteadmin.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- with .Values.flyte.flyteadmin.nodeSelector }}
+      nodeSelector: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.flyteadmin.affinity }}
+      affinity: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.flyte.flyteadmin.tolerations }}
+      tolerations: {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+{{- end }}

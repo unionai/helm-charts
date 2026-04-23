@@ -182,22 +182,6 @@ spec:
       app.kubernetes.io/name: usage
       app.kubernetes.io/instance: release-name
 ---
-# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flyteadmin
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-  annotations: 
-    eks.amazonaws.com/role-arn: ''
-imagePullSecrets: 
-  - name: union-registry-secret
----
 # Source: controlplane/charts/ingress-nginx/templates/controller-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -261,6 +245,22 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/flyteadmin/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+  annotations: 
+    eks.amazonaws.com/role-arn: ''
+imagePullSecrets: 
+  - name: union-registry-secret
 ---
 # Source: controlplane/templates/serviceaccount.yaml
 ---
@@ -372,16 +372,7 @@ metadata:
     app.kubernetes.io/version: "2026.4.7"
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: controlplane/charts/flyte/templates/admin/secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: flyte-admin-secrets
-  namespace: union
-type: Opaque
-stringData:
----
-# Source: controlplane/charts/flyte/templates/common/secret-auth.yaml
+# Source: controlplane/templates/flyteadmin/secret-auth.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -391,213 +382,14 @@ type: Opaque
 stringData:
   client_secret: placeholder
 ---
-# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
+# Source: controlplane/templates/flyteadmin/secret.yaml
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
-  name: flyte-admin-clusters-config
+  name: flyte-admin-secrets
   namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-data:
-  clusters.yaml: |
-    clusters:
-      clusterConfigs: []
-      labelClusterMap: {}
----
-# Source: controlplane/charts/flyte/templates/admin/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-admin-base-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-data:
-  db.yaml: | 
-    database:
-      connMaxLifeTime: 120s
-      dbname: flyteadmin
-      host: ''
-      maxIdleConnections: 10
-      maxOpenConnections: 80
-      passwordPath: /etc/db/pass.txt
-      port: 5432
-      username: ''
-  domain.yaml: | 
-    domains:
-    - id: development
-      name: development
-    - id: staging
-      name: staging
-    - id: production
-      name: production
-  otel.yaml: | 
-    otel:
-      file:
-        filename: /tmp/trace.txt
-      jaeger:
-        endpoint: http://localhost:14268/api/traces
-      otlpgrpc:
-        endpoint: http://localhost:4317
-      otlphttp:
-        endpoint: http://localhost:4318/v1/traces
-      sampler:
-        parentSampler: always
-      type: noop
-  server.yaml: | 
-    admin:
-      clientId: 'test-internal-client-id'
-      clientSecretLocation: /etc/secrets/client_secret
-      endpoint: dns:///controlplane-nginx-controller.union.svc.cluster.local
-      insecure: true
-    auth:
-      appAuth:
-        authServerType: External
-        externalAuthServer:
-          allowedAudience:
-          - https://
-          baseUrl: ""
-          metadataUrl: .well-known/oauth-authorization-server
-        identityTypeClaimsForApps:
-          idtyp:
-          - app
-        thirdPartyConfig:
-          flyteClient:
-            audience: ""
-            clientId: ""
-            redirectUri: http://localhost:53593/callback
-            scopes:
-            - all
-      authorizedUris:
-      - http://flyteadmin:80
-      - http://flyteadmin.union.svc.cluster.local:80
-      - https://
-      grpcAuthorizationHeader: flyte-authorization
-      httpAuthorizationHeader: flyte-authorization
-      userAuth:
-        cookieSetting:
-          domain: ""
-          sameSitePolicy: LaxMode
-        idpQueryParameter: idp
-        openId:
-          baseUrl: ""
-          clientId: ""
-          scopes:
-          - profile
-          - openid
-          - offline_access
-    authorizer:
-      authorizerClient:
-        forwardHeaders:
-        - authorization
-        - flyte-authorization
-        - x-user-token
-        grpcConfig:
-          host: dns:///authorizer.union.svc.cluster.local:80
-          insecure: true
-      type: Authorizer
-      useExternalIdentity: 'false'
-    cloudEvents:
-      enable: false
-    connection:
-      environment: staging
-      region: ''
-      rootTenantURLPattern: dns:///controlplane-nginx-controller.union.svc.cluster.local
-    flyteadmin:
-      eventVersion: 2
-      metadataStoragePrefix:
-      - metadata
-      - admin
-      metricsKeys:
-      - phase
-      metricsScope: 'flyte:'
-      profilerPort: 10254
-      roleNameKey: iam.amazonaws.com/role
-      useOffloadedInputs: true
-      useOffloadedWorkflowClosure: true
-    otel:
-      type: noop
-    private:
-      app:
-        cacheProviderConfig:
-          kind: bypass
-        populateUserFields: false
-    server:
-      grpc:
-        port: 8089
-      httpPort: 8088
-      security:
-        allowCors: true
-        allowedHeaders:
-        - Content-Type
-        - flyte-authorization
-        allowedOrigins:
-        - '*'
-        secure: false
-        useAuth: true
-    sharedService:
-      connectPort: 8089
-      httpPort: 8088
-      port: 8089
-      security:
-        singleTenantOrgID: ''
-      selfServeConfig:
-        legacyHosts:
-        - ''
-    union:
-      internalConnectionConfig:
-        enabled: true
-        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
-  remoteData.yaml: | 
-    remoteData:
-      region: us-east-1
-      scheme: local
-      signedUrls:
-        durationMinutes: 3
-  storage.yaml: | 
-    storage:
-      type: s3
-      container: ""
-      connection:
-        auth-type: iam
-        region: 
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 10
-      cache:
-        max_size_mbs: 1024
-        target_gc_percent: 70
-  task_resource_defaults.yaml: | 
-    task_resources:
-      defaults:
-        cpu: 100m
-        memory: 500Mi
-      limits:
-        cpu: 2
-        gpu: 1
-        memory: 1Gi
----
-# Source: controlplane/charts/flyte/templates/console/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-console-config
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteconsole
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-data: 
-  BASE_URL: /console
-  CONFIG_DIR: /etc/flyte/config
+type: Opaque
+stringData:
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-configmap.yaml
 apiVersion: v1
@@ -1512,6 +1304,214 @@ data:
               sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
+---
+# Source: controlplane/templates/flyteadmin/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-clusters-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+data:
+  clusters.yaml: |
+    clusters:
+      clusterConfigs: []
+      labelClusterMap: {}
+---
+# Source: controlplane/templates/flyteadmin/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-base-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+data:
+  db.yaml: | 
+    database:
+      connMaxLifeTime: 120s
+      dbname: flyteadmin
+      host: ''
+      maxIdleConnections: 10
+      maxOpenConnections: 80
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: ''
+  domain.yaml: | 
+    domains:
+    - id: development
+      name: development
+    - id: staging
+      name: staging
+    - id: production
+      name: production
+  otel.yaml: | 
+    otel:
+      file:
+        filename: /tmp/trace.txt
+      jaeger:
+        endpoint: http://localhost:14268/api/traces
+      otlpgrpc:
+        endpoint: http://localhost:4317
+      otlphttp:
+        endpoint: http://localhost:4318/v1/traces
+      sampler:
+        parentSampler: always
+      type: noop
+  server.yaml: | 
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/client_secret
+      endpoint: dns:///controlplane-nginx-controller.union.svc.cluster.local
+      insecure: true
+    auth:
+      appAuth:
+        authServerType: External
+        externalAuthServer:
+          allowedAudience:
+          - https://
+          baseUrl: ""
+          metadataUrl: .well-known/oauth-authorization-server
+        identityTypeClaimsForApps:
+          idtyp:
+          - app
+        thirdPartyConfig:
+          flyteClient:
+            audience: ""
+            clientId: ""
+            redirectUri: http://localhost:53593/callback
+            scopes:
+            - all
+      authorizedUris:
+      - http://flyteadmin:80
+      - http://flyteadmin.union.svc.cluster.local:80
+      - https://
+      grpcAuthorizationHeader: flyte-authorization
+      httpAuthorizationHeader: flyte-authorization
+      userAuth:
+        cookieSetting:
+          domain: ""
+          sameSitePolicy: LaxMode
+        idpQueryParameter: idp
+        openId:
+          baseUrl: ""
+          clientId: ""
+          scopes:
+          - profile
+          - openid
+          - offline_access
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'false'
+    cloudEvents:
+      enable: false
+    connection:
+      environment: staging
+      region: ''
+      rootTenantURLPattern: dns:///controlplane-nginx-controller.union.svc.cluster.local
+    flyteadmin:
+      eventVersion: 2
+      metadataStoragePrefix:
+      - metadata
+      - admin
+      metricsKeys:
+      - phase
+      metricsScope: 'flyte:'
+      profilerPort: 10254
+      roleNameKey: iam.amazonaws.com/role
+      useOffloadedInputs: true
+      useOffloadedWorkflowClosure: true
+    otel:
+      type: noop
+    private:
+      app:
+        cacheProviderConfig:
+          kind: bypass
+        populateUserFields: false
+    server:
+      grpc:
+        port: 8089
+      httpPort: 8088
+      security:
+        allowCors: true
+        allowedHeaders:
+        - Content-Type
+        - flyte-authorization
+        allowedOrigins:
+        - '*'
+        secure: false
+        useAuth: true
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      port: 8089
+      security:
+        singleTenantOrgID: ''
+      selfServeConfig:
+        legacyHosts:
+        - ''
+    union:
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
+  remoteData.yaml: | 
+    remoteData:
+      region: us-east-1
+      scheme: local
+      signedUrls:
+        durationMinutes: 3
+  storage.yaml: | 
+    storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 10
+      cache:
+        max_size_mbs: 1024
+        target_gc_percent: 70
+  task_resource_defaults.yaml: | 
+    task_resources:
+      defaults:
+        cpu: 100m
+        memory: 500Mi
+      limits:
+        cpu: 2
+        gpu: 1
+        memory: 1Gi
+---
+# Source: controlplane/templates/flyteconsole/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-console-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteconsole
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+data: 
+  BASE_URL: /console
+  CONFIG_DIR: /etc/flyte/config
 ---
 # Source: controlplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
@@ -5276,37 +5276,6 @@ parameters:
 reclaimPolicy: Delete
 allowVolumeExpansion: true
 ---
-# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-flyteadmin
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-rules:
-- apiGroups: 
-    - ""
-    - flyte.lyft.com
-    - rbac.authorization.k8s.io
-  resources: 
-    - configmaps
-    - flyteworkflows
-    - namespaces
-    - pods
-    - resourcequotas
-    - roles
-    - rolebindings
-    - secrets
-    - services
-    - serviceaccounts
-    - spark-role
-    - limitranges
-  verbs: 
-    - '*'
----
 # Source: controlplane/charts/ingress-nginx/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -6025,24 +5994,36 @@ rules:
   - list
   - watch
 ---
-# Source: controlplane/charts/flyte/templates/admin/rbac.yaml
+# Source: controlplane/templates/flyteadmin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: ClusterRole
 metadata:
-  name: union-flyteadmin-binding
+  name: union-flyteadmin
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-flyteadmin
-subjects:
-- kind: ServiceAccount
-  name: flyteadmin
-  namespace: union
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: 
+    - ""
+    - flyte.lyft.com
+    - rbac.authorization.k8s.io
+  resources: 
+    - configmaps
+    - flyteworkflows
+    - namespaces
+    - pods
+    - resourcequotas
+    - roles
+    - rolebindings
+    - secrets
+    - services
+    - serviceaccounts
+    - spark-role
+    - limitranges
+  verbs: 
+    - '*'
 ---
 # Source: controlplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6078,6 +6059,25 @@ subjects:
 - kind: ServiceAccount
   name: scylla-operator
   namespace: scylla-operator
+---
+# Source: controlplane/templates/flyteadmin/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-flyteadmin-binding
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-flyteadmin
+subjects:
+- kind: ServiceAccount
+  name: flyteadmin
+  namespace: union
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6183,7 +6183,7 @@ metadata:
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.4.7
-    #app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/managed-by: Helm
 rules:
   - apiGroups:
       - ""
@@ -6237,7 +6237,7 @@ metadata:
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.4.7
-    #app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/managed-by: Helm
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -6246,65 +6246,6 @@ subjects:
   - kind: ServiceAccount
     name: flyteadmin
     namespace: union
----
-# Source: controlplane/charts/flyte/templates/admin/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: flyteadmin
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: http
-      port: 80
-      protocol: TCP
-      targetPort: 8088
-    - name: grpc
-      port: 81
-      protocol: TCP
-      # intentionally set to TCP instead of grpc
-      targetPort: 8089
-    - name: redoc
-      protocol: TCP
-      port: 87
-      targetPort: 8087
-    - name: http-metrics
-      protocol: TCP
-      port: 10254
-  selector: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
----
-# Source: controlplane/charts/flyte/templates/console/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: flyteconsole
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteconsole
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-  annotations: 
-    external-dns.alpha.kubernetes.io/hostname: flyte.example.com
-    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "600"
-spec:
-  type: ClusterIP
-  ports:
-  - name: http
-    port: 80
-    protocol: TCP
-    targetPort: 8080
-  selector: 
-    app.kubernetes.io/name: flyteconsole
-    app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-service-metrics.yaml
 apiVersion: v1
@@ -6441,6 +6382,65 @@ spec:
     name: http-metrics
   selector:
     app.kubernetes.io/name: unionconsole
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/flyteadmin/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8088
+    - name: grpc
+      port: 81
+      protocol: TCP
+      # intentionally set to TCP instead of grpc
+      targetPort: 8089
+    - name: redoc
+      protocol: TCP
+      port: 87
+      targetPort: 8087
+    - name: http-metrics
+      protocol: TCP
+      port: 10254
+  selector: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/flyteconsole/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: flyteconsole
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteconsole
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+  annotations: 
+    external-dns.alpha.kubernetes.io/hostname: flyte.example.com
+    service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "600"
+spec:
+  type: ClusterIP
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    targetPort: 8080
+  selector: 
+    app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
 ---
 # Source: controlplane/templates/service.yaml
@@ -6739,261 +6739,6 @@ spec:
   selector:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
----
-# Source: controlplane/charts/flyte/templates/admin/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flyteadmin
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteadmin
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: flyteadmin
-      app.kubernetes.io/instance: release-name
-  strategy: 
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 1
-    type: RollingUpdate
-  template:
-    metadata:
-      annotations:
-        configChecksum: "df8bae748c22afd0be3f8bdc65fb84ac6ef119accbbaa695f7afaf1454b3155"
-        kubectl.kubernetes.io/default-container: flyteadmin
-      labels: 
-        app.kubernetes.io/name: flyteadmin
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.1
-        #app.kubernetes.io/managed-by: Helm
-    spec:
-      securityContext: 
-        fsGroup: 65534
-        fsGroupChangePolicy: Always
-        runAsNonRoot: true
-        runAsUser: 1001
-        seLinuxOptions:
-          type: spc_t
-      initContainers:
-        - command:
-          - flyteadmin
-          - --config
-          - /etc/flyte/config/*.yaml
-          - migrate
-          - run
-          image: "registry.unionai.cloud/controlplane/services:"
-          imagePullPolicy: "IfNotPresent"
-          name: run-migrations
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-          - mountPath: /etc/db
-            name: union-controlplane-secrets
-          - mountPath: /etc/flyte/config
-            name: base-config-volume
-        - command:
-          - flyteadmin
-          - --config
-          - /etc/flyte/config/*.yaml
-          - migrate
-          - seed-projects
-          - union-health-monitoring
-          - flytesnacks
-          image: "registry.unionai.cloud/controlplane/services:"
-          imagePullPolicy: "IfNotPresent"
-          name: seed-projects
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-          - mountPath: /etc/db
-            name: union-controlplane-secrets
-          - mountPath: /etc/flyte/config
-            name: base-config-volume
-        - name: generate-secrets
-          image: "registry.unionai.cloud/controlplane/services:"
-          imagePullPolicy: "IfNotPresent"
-          command: ["/bin/sh", "-c"]
-          args:
-            [
-                "flyteadmin --config=/etc/flyte/config/*.yaml secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
-            ]
-          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop: ["ALL"]
-          volumeMounts:
-            - mountPath: /etc/flyte/config
-              name: base-config-volume
-            - mountPath: /etc/scratch
-              name: scratch
-          env:
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-      containers:
-      - command:
-        - flyteadmin
-        - --config
-        - /etc/flyte/config/*.yaml
-        - serve
-        image: "registry.unionai.cloud/controlplane/services:"
-        imagePullPolicy: "IfNotPresent"
-        name: flyteadmin
-        ports:
-        - containerPort: 8088
-        - containerPort: 8089
-        - containerPort: 10254
-        readinessProbe:
-          httpGet:
-            path: /healthcheck
-            port: 8088
-          initialDelaySeconds: 15
-          timeoutSeconds: 1
-          periodSeconds: 10
-          successThreshold: 1
-          failureThreshold: 3
-        livenessProbe:
-          httpGet:
-            path: /healthcheck
-            port: 8088
-          initialDelaySeconds: 20
-          timeoutSeconds: 1
-          periodSeconds: 5
-          successThreshold: 1
-          failureThreshold: 3
-        resources:
-          limits:
-            cpu: 2
-            ephemeral-storage: 500Mi
-            memory: 3Gi
-          requests:
-            cpu: 50m
-            ephemeral-storage: 200Mi
-            memory: 500Mi
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        volumeMounts:
-        - mountPath: /etc/db
-          name: union-controlplane-secrets
-        - mountPath: /srv/flyte
-          name: shared-data
-        - mountPath: /etc/flyte/config
-          name: clusters-config-volume
-        - mountPath: /etc/secrets/
-          name: admin-secrets
-        - mountPath: /etc/secrets/union
-          name: union-secrets
-          readOnly: true
-      serviceAccountName: flyteadmin
-      volumes:
-      - name: union-controlplane-secrets
-        secret:
-          secretName: union-controlplane-secrets
-      - emptyDir: {}
-        name: shared-data
-      - emptyDir: {}
-        name: scratch
-      - projected:
-          sources:
-            - configMap:
-                name: flyte-admin-base-config
-        name: base-config-volume
-      - projected:
-          sources:
-            - configMap:
-                name: flyte-admin-base-config
-            - configMap:
-                name: flyte-admin-clusters-config
-        name: clusters-config-volume
-      - name: admin-secrets
-        secret:
-          secretName: flyte-admin-secrets
-      - name: union-secrets
-        secret:
-          secretName: ''
----
-# Source: controlplane/charts/flyte/templates/console/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: flyteconsole
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteconsole
-    app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels: 
-      app.kubernetes.io/name: flyteconsole
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "2620ed20cf30d64460b231bbcf13fc096a23b6d373b46e69ab5f2e051f3d3d1"
-        linkerd.io/inject: disabled
-        prometheus.io/scrape: "false"
-      labels: 
-        app.kubernetes.io/name: flyteconsole
-        app.kubernetes.io/instance: release-name
-        helm.sh/chart: flyte-v1.16.1
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      imagePullSecrets:
-        - name: union-registry-secret
-      securityContext: 
-        fsGroupChangePolicy: OnRootMismatch
-        runAsNonRoot: true
-        runAsUser: 1000
-        seLinuxOptions:
-          type: spc_t
-      containers:
-      - image: "registry.unionai.cloud/controlplane/flyteconsole:"
-        imagePullPolicy: "IfNotPresent"
-        name: flyteconsole
-        envFrom:
-        - configMapRef:
-            name: flyte-console-config
-        ports:
-        - containerPort: 8080
-        env:
-        - name: ENABLE_GA
-          value: "true"
-        - name: GA_TRACKING_ID
-          value: ""
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop: ["ALL"]
-        resources: 
-          limits:
-            cpu: 250m
-            ephemeral-storage: 200Mi
-            memory: 250Mi
-          requests:
-            cpu: 10m
-            ephemeral-storage: 20Mi
-            memory: 50Mi
-        volumeMounts:
-        - mountPath: /srv/flyte
-          name: shared-data
-      volumes:
-      - emptyDir: {}
-        name: shared-data
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-deployment.yaml
 apiVersion: apps/v1
@@ -8415,38 +8160,260 @@ spec:
                     app.kubernetes.io/instance: release-name
                 topologyKey: "kubernetes.io/hostname"
 ---
-# Source: controlplane/charts/flyte/templates/admin/hpa.yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
+# Source: controlplane/templates/flyteadmin/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: flyteadmin
   namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-    helm.sh/chart: flyte-v1.16.1
-    #app.kubernetes.io/managed-by: Helm
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
 spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: flyteadmin
-  minReplicas: 1
-  maxReplicas: 10
-  metrics:
-    
-    - resource:
-        name: cpu
-        target:
-          averageUtilization: 80
-          type: Utilization
-      type: Resource
-    - resource:
-        name: memory
-        target:
-          averageUtilization: 80
-          type: Utilization
-      type: Resource
+  selector:
+    matchLabels: 
+      app.kubernetes.io/name: flyteadmin
+      app.kubernetes.io/instance: release-name
+  strategy: 
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        configChecksum: "92d01a84d79e24b14220ff7e9ca6fd4e0c7318e85d8e2f6193b8d12262c1223"
+        kubectl.kubernetes.io/default-container: flyteadmin
+      labels: 
+        app.kubernetes.io/name: flyteadmin
+        app.kubernetes.io/instance: release-name
+        helm.sh/chart: controlplane-2026.4.7
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      securityContext: 
+        fsGroup: 65534
+        fsGroupChangePolicy: Always
+        runAsNonRoot: true
+        runAsUser: 1001
+        seLinuxOptions:
+          type: spc_t
+      initContainers:
+        - command:
+          - flyteadmin
+          - --config
+          - /etc/flyte/config/*.yaml
+          - migrate
+          - run
+          image: "registry.unionai.cloud/controlplane/services:"
+          imagePullPolicy: "IfNotPresent"
+          name: run-migrations
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+          - mountPath: /etc/db
+            name: union-controlplane-secrets
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+        - command:
+          - flyteadmin
+          - --config
+          - /etc/flyte/config/*.yaml
+          - migrate
+          - seed-projects
+          - union-health-monitoring
+          - flytesnacks
+          image: "registry.unionai.cloud/controlplane/services:"
+          imagePullPolicy: "IfNotPresent"
+          name: seed-projects
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+          - mountPath: /etc/db
+            name: union-controlplane-secrets
+          - mountPath: /etc/flyte/config
+            name: base-config-volume
+        - name: generate-secrets
+          image: "registry.unionai.cloud/controlplane/services:"
+          imagePullPolicy: "IfNotPresent"
+          command: ["/bin/sh", "-c"]
+          args:
+            [
+                "flyteadmin --config=/etc/flyte/config/*.yaml secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
+            ]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - mountPath: /etc/flyte/config
+              name: base-config-volume
+            - mountPath: /etc/scratch
+              name: scratch
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+      containers:
+      - command:
+        - flyteadmin
+        - --config
+        - /etc/flyte/config/*.yaml
+        - serve
+        image: "registry.unionai.cloud/controlplane/services:"
+        imagePullPolicy: "IfNotPresent"
+        name: flyteadmin
+        ports:
+        - containerPort: 8088
+        - containerPort: 8089
+        - containerPort: 10254
+        readinessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8088
+          initialDelaySeconds: 15
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: 8088
+          initialDelaySeconds: 20
+          timeoutSeconds: 1
+          periodSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: 2
+            ephemeral-storage: 500Mi
+            memory: 3Gi
+          requests:
+            cpu: 50m
+            ephemeral-storage: 200Mi
+            memory: 500Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - mountPath: /etc/db
+          name: union-controlplane-secrets
+        - mountPath: /srv/flyte
+          name: shared-data
+        - mountPath: /etc/flyte/config
+          name: clusters-config-volume
+        - mountPath: /etc/secrets/
+          name: admin-secrets
+        - mountPath: /etc/secrets/union
+          name: union-secrets
+          readOnly: true
+      serviceAccountName: flyteadmin
+      volumes:
+      - name: union-controlplane-secrets
+        secret:
+          secretName: union-controlplane-secrets
+      - emptyDir: {}
+        name: shared-data
+      - emptyDir: {}
+        name: scratch
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+        name: base-config-volume
+      - projected:
+          sources:
+            - configMap:
+                name: flyte-admin-base-config
+            - configMap:
+                name: flyte-admin-clusters-config
+        name: clusters-config-volume
+      - name: admin-secrets
+        secret:
+          secretName: flyte-admin-secrets
+      - name: union-secrets
+        secret:
+          secretName: ''
+---
+# Source: controlplane/templates/flyteconsole/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flyteconsole
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteconsole
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels: 
+      app.kubernetes.io/name: flyteconsole
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "5e04b229ef23df7f867187d8034ab80ddf01870b70bdeda08ba4a789e03a250"
+        linkerd.io/inject: disabled
+        prometheus.io/scrape: "false"
+      labels: 
+        app.kubernetes.io/name: flyteconsole
+        app.kubernetes.io/instance: release-name
+        helm.sh/chart: controlplane-2026.4.7
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      securityContext: 
+        fsGroupChangePolicy: OnRootMismatch
+        runAsNonRoot: true
+        runAsUser: 1000
+        seLinuxOptions:
+          type: spc_t
+      containers:
+      - image: "registry.unionai.cloud/controlplane/flyteconsole:"
+        imagePullPolicy: "IfNotPresent"
+        name: flyteconsole
+        envFrom:
+        - configMapRef:
+            name: flyte-console-config
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ENABLE_GA
+          value: "true"
+        - name: GA_TRACKING_ID
+          value: ""
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        resources: 
+          limits:
+            cpu: 250m
+            ephemeral-storage: 200Mi
+            memory: 250Mi
+          requests:
+            cpu: 10m
+            ephemeral-storage: 20Mi
+            memory: 50Mi
+        volumeMounts:
+        - mountPath: /srv/flyte
+          name: shared-data
+      volumes:
+      - emptyDir: {}
+        name: shared-data
 ---
 # Source: controlplane/templates/console/hpa.yaml
 apiVersion: autoscaling/v2
@@ -8479,6 +8446,39 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
+---
+# Source: controlplane/templates/flyteadmin/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.7
+    app.kubernetes.io/managed-by: Helm
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flyteadmin
+  minReplicas: 1
+  maxReplicas: 10
+  metrics:
+    
+    - resource:
+        name: cpu
+        target:
+          averageUtilization: 80
+          type: Utilization
+      type: Resource
+    - resource:
+        name: memory
+        target:
+          averageUtilization: 80
+          type: Utilization
+      type: Resource
 ---
 # Source: controlplane/templates/hpa.yaml
 ---

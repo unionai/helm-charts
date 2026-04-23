@@ -1,0 +1,29 @@
+{{- if .Values.flyte.useDirectTemplates }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ template "flyteconsole.name" . }}
+  namespace: {{ template "flyte.namespace" . }}
+  labels: {{ include "flyteconsole.labels" . | nindent 4 }}
+  {{- with .Values.flyte.flyteconsole.service.annotations }}
+  annotations: {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.flyte.flyteconsole.service.type}}
+  type: {{ . }}
+  {{- end }}
+  ports:
+  - name: http
+    port: 80
+    protocol: TCP
+    {{- if .Values.flyte.flyteconsole.service.appProtocols.enabled }}
+    appProtocol: TCP
+    {{- end }}
+    targetPort: 8080
+    {{- if .Values.flyte.flyteconsole.serviceMonitor.enabled  }}
+  - name: http-metrics
+    port: 8081
+    protocol: TCP
+    {{- end }}
+  selector: {{ include "flyteconsole.selectorLabels" . | nindent 4 }}
+{{- end }}
