@@ -8691,7 +8691,7 @@ spec:
             privileged: true
             runAsNonRoot: false
             runAsUser: 0
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9384,7 +9384,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: IfNotPresent
           command:
             - executorv2
@@ -9490,7 +9490,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9558,7 +9558,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -9623,7 +9623,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9731,7 +9731,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -9910,6 +9910,55 @@ template:
       - name: default
         image: docker.io/rwgrim/docker-noop
 ---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flyte-webhook-cleanup-union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["get", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
 kind: Pod
@@ -9960,6 +10009,36 @@ spec:
             --ignore-not-found=true \
             -n union
 ---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: flyte-webhook-cleanup
+      containers:
+        - name: cleanup
+          image: "alpine/k8s:1.32.3"
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              NS=union
+              kubectl delete mutatingwebhookconfiguration flyte-pod-webhook --ignore-not-found
+              kubectl delete deployment flytepropeller-webhook -n ${NS} --ignore-not-found
+              kubectl delete secret flyte-pod-webhook -n ${NS} --ignore-not-found
+              kubectl delete deployment union-operator-prometheus -n ${NS} --ignore-not-found
+---
 # Source: dataplane/templates/serving/knative-serving.yaml
 apiVersion: operator.knative.dev/v1beta1
 kind: KnativeServing
@@ -9970,10 +10049,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.4.7
+    helm.sh/chart: dataplane-2026.4.8
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.7"
+    app.kubernetes.io/version: "2026.4.8"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -10020,10 +10099,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.4.7
+      helm.sh/chart: dataplane-2026.4.8
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.4.7"
+      app.kubernetes.io/version: "2026.4.8"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:
