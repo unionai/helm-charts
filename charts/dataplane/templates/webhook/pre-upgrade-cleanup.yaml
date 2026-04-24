@@ -1,0 +1,90 @@
+{{- if .Values.flytepropellerwebhook.enabled }}
+{{- if .Values.flytepropellerwebhook.legacyWebhookCleanup.enabled }}
+{{/*
+Pre-upgrade hook that deletes stale flyte-pod-webhook resources left behind from
+old chart versions. These cannot be updated in-place by Kubernetes or Helm:
+  1. MutatingWebhookConfiguration/flyte-pod-webhook — cluster-scoped orphan causing
+     "service not found" errors on pod creation.
+  2. Deployment/flytepropeller-webhook — selector label changed (immutable field).
+  3. Secret/flyte-pod-webhook — marked immutable:true; blocks TLS cert renewal.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["get", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: flyte-webhook-cleanup
+      {{- with .Values.flytepropellerwebhook.legacyWebhookCleanup.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: cleanup
+          image: "{{ .Values.flytepropellerwebhook.legacyWebhookCleanup.image.repository }}:{{ .Values.flytepropellerwebhook.legacyWebhookCleanup.image.tag }}"
+          imagePullPolicy: {{ .Values.flytepropellerwebhook.legacyWebhookCleanup.image.pullPolicy }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              NS={{ .Release.Namespace }}
+              kubectl delete mutatingwebhookconfiguration flyte-pod-webhook --ignore-not-found
+              kubectl delete deployment flytepropeller-webhook -n ${NS} --ignore-not-found
+              kubectl delete secret flyte-pod-webhook -n ${NS} --ignore-not-found
+              kubectl delete deployment union-operator-prometheus -n ${NS} --ignore-not-found
+{{- end }}
+{{- end }}
