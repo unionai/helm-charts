@@ -509,6 +509,52 @@ services:
       #       failOpen: false
       authorizer:
         type: "Noop"
+        # --- Bootstrap (Union/UserClouds mode only) ---
+        # Seeds the authorization database on first start.
+        # Ignored when type is "Noop" or "External".
+        bootstrap:
+          # Organization identifier for this deployment.
+          organization: '{{ .Values.global.UNION_ORG }}'
+
+          # Authorization domains to create. Each domain is an isolation boundary
+          # for workflow executions (e.g. dev vs prod).
+          domains:
+            - development
+            - staging
+            - production
+
+          # Projects to pre-create during bootstrap. Optional — projects can
+          # also be created later via the console or CLI.
+          projects: []
+          # Example:
+          #   - "union-health-monitoring"
+
+          # Internal platform service accounts that need Admin access.
+          # clientId must match the resolved `sub` claim from your IdP's
+          # client_credentials tokens (for Okta this is the Client ID;
+          # for Entra ID this is the Service Principal Object ID).
+          serviceAccounts: []
+          # Example:
+          #   - clientId: "<App 3 sub claim>"
+          #     name: "service-to-service"
+          #     role: "Admin"
+          #   - clientId: "<App 4 sub claim>"
+          #     name: "operator"
+          #     role: "Admin"
+          #   - clientId: "<App 5 sub claim>"
+          #     name: "eager"
+          #     role: "Admin"
+
+          # Human users granted Admin role on bootstrap. These users can
+          # manage RBAC via the console. subject must match the `sub` claim
+          # from your IdP's user tokens.
+          adminUsers: []
+          # Example:
+          #   - name: "admin@example.com"
+          #     subject: "<user sub claim>"
+
+          retryInterval: 5s
+          maxRetries: 30
         # --- External client defaults ---
         # Headers forwarded from the authorizer to the external server on
         # each Authorize() call. These carry the caller's OIDC token so the
@@ -534,17 +580,6 @@ services:
           enableLogging: true
         internalCommunicationConfig:
           enabled: false
-        bootstrap:
-          organization: ""
-          domains:
-            - development
-            - staging
-            - production
-          projects: []
-          serviceAccounts: []
-          adminUsers: []
-          retryInterval: 5s
-          maxRetries: 30
       sharedService:
         connectPort: 8081
         metrics:
