@@ -53,7 +53,12 @@ spec:
         - name: http-metrics
           containerPort: {{ .Values.console.service.metricsPort }}
           protocol: TCP
-        {{- with .Values.console.env }}
+        {{- $envVars := .Values.console.env | default (list) }}
+        {{- $telemetry := .Values.console.telemetry | default dict }}
+        {{- if and (hasKey $telemetry "externalEnabled") (not $telemetry.externalEnabled) }}
+        {{- $envVars = concat $envVars (list (dict "name" "DISABLE_EXTERNAL_TELEMETRY" "value" "true")) }}
+        {{- end }}
+        {{- with $envVars }}
         env:
           {{- tpl (toYaml .) $ | nindent 10 }}
         {{- end }}
