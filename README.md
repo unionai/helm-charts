@@ -82,3 +82,31 @@ uctl get cluster
  ----------- ------- --------------- -----------
 1 rows
 ```
+
+## Debugging Chart Changes
+
+Use `scripts/render-and-diff.sh` to render Helm templates at two git refs and structurally compare the output. This mirrors ArgoCD's exact values layering so you can verify what will change before deploying.
+
+```bash
+# Compare a release tag against main (uses tests/values/controlplane.aws.yaml by default)
+./scripts/render-and-diff.sh controlplane-2026.4.7 main
+
+# With your environment's terraform-generated values
+./scripts/render-and-diff.sh controlplane-2026.4.7 main \
+  --values /path/to/control-plane/values.yaml \
+  --values /path/to/control-plane/values-union.yaml \
+  --values /path/to/gitops/values.yaml
+
+# Compare dataplane chart
+./scripts/render-and-diff.sh dataplane-2026.4.7 main --chart dataplane
+
+# Full text diff instead of structural
+./scripts/render-and-diff.sh controlplane-2026.4.7 main --text
+
+# Diff all resource types, not just ConfigMaps
+./scripts/render-and-diff.sh controlplane-2026.4.7 main --all
+```
+
+The structural diff (`scripts/compare-manifests.py`) parses multi-document YAML, matches resources by `(kind, name)`, and deep-diffs ConfigMap data reporting full key paths — so you see exactly which config values changed rather than sifting through whitespace and annotation noise.
+
+Requires: `helm`, `python3`, `PyYAML` (`pip install pyyaml`).
