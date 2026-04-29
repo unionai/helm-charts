@@ -67,6 +67,27 @@ helm template ...       # Manually inspect rendered output
 All tests must pass before merging. Generated test snapshots (`tests/generated/*.yaml`) should
 be committed alongside template changes.
 
+## Metrics Glossary Maintenance
+
+When modifying any of these files, the metrics glossary may need updating:
+
+- `charts/controlplane/dashboards/*.json` — Grafana dashboard panels
+- `charts/dataplane/dashboards/*.json` — Grafana dashboard panels
+- `charts/*/templates/monitoring/prometheusrule.yaml` — Recording rules and alerts
+
+After changes, regenerate the metrics manifest and commit it:
+
+```bash
+make generate-metrics-manifest
+```
+
+If the manifest diff shows added, removed, or renamed metrics, the customer-facing
+metrics glossary in `unionai-docs` must also be updated:
+
+- `unionai-docs/content/deployment/selfhosted/monitoring/metrics-glossary.md`
+
+The manifest (`metrics-manifest.yaml`) is auto-generated — do not edit it manually.
+
 ## Selfhosted Documentation
 
 Deployment guides are colocated with the charts:
