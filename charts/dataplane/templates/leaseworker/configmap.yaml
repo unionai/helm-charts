@@ -1,0 +1,98 @@
+{{- if .Values.leaseworker.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaseworker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leaseworker.labels" . | nindent 4 }}
+data:
+  {{- with .Values.executor.task_logs }}
+  task_logs.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  webhook.yaml: |
+{{ include "propeller.webhookConfigMinimal" . | nindent 4 }}
+  enabled_plugins.yaml: |
+{{- if .Values.flyteconnector.enabled }}
+{{ tpl (toYaml .Values.config.enabled_plugins) $ | indent 4 }}
+{{- else }}
+    tasks:
+{{ tpl (toYaml .Values.config.enabled_plugins.tasks) $ | indent 6 }}
+{{- end }}
+  config.yaml: |
+    {{- $leaseworkerConfig := deepCopy (.Values.leaseworker.config | default dict) }}
+    {{- $_ := set $leaseworkerConfig "capacity" .Values.leaseworker.capacity }}
+    {{- $_ = set $leaseworkerConfig "dispatcherCount" .Values.leaseworker.dispatcherCount }}
+    {{- $_ = set $leaseworkerConfig "refreshInterval" .Values.leaseworker.refreshInterval }}
+    {{- with .Values.config.task_resource_defaults }}
+    {{- $_ = mustMergeOverwrite $leaseworkerConfig (deepCopy .) }}
+    {{- end }}
+    {{- with (index .Values.config.core.propeller "accelerated-inputs") }}
+    {{- $_ = set $leaseworkerConfig "acceleratedInputs" . }}
+    {{- end }}
+    {{- if and (include "singleNamespace" $) (not (index $leaseworkerConfig "namespace-template")) }}
+    {{- $_ = set $leaseworkerConfig "namespace-template" $.Release.Namespace }}
+    {{- else if not (index $leaseworkerConfig "namespace-template") }}
+    {{- with dig "namespace_mapping" "template" "" .Values.config.namespace_config }}
+    {{- $_ = set $leaseworkerConfig "namespace-template" . }}
+    {{- else }}
+    {{- with .Values.namespace_mapping.template }}
+    {{- $_ = set $leaseworkerConfig "namespace-template" . }}
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- with .Values.leaseworker.raw_config }}
+    {{- $_ = mustMergeOverwrite $leaseworkerConfig (deepCopy .) }}
+    {{- end }}
+    leaseworker:
+      {{- tpl (toYaml $leaseworkerConfig) $ | nindent 6 }}
+    union:
+      {{- with .Values.config.union.connection }}
+      connection:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      {{- with .Values.config.union.auth }}
+      auth:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+    {{- with .Values.config.admin.admin }}
+    admin:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.config.authorizer }}
+    authorizer:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with index .Values.config.catalog "catalog-cache" }}
+    catalog-cache:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.logging }}
+    logger:
+      {{- tpl (omit . "pythonLevel" | toYaml) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.leaseworker.sharedService }}
+    sharedService:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- with .Values.leaseworker.fasttask }}
+    fasttask:
+      {{- tpl (toYaml .) $ | nindent 6 }}
+    {{- end }}
+    {{- $plugins := include "k8s.plugins" . | fromYaml }}
+    {{- $k8sConfig := deepCopy ($plugins.plugins.k8s | default dict) }}
+    {{- with .Values.config.copilot.plugins.k8s }}
+    {{- $_ = mustMergeOverwrite $k8sConfig (deepCopy .) }}
+    {{- end }}
+    {{- with .Values.leaseworker.plugins.k8s }}
+    {{- $_ = mustMergeOverwrite $k8sConfig (deepCopy .) }}
+    {{- end }}
+    plugins:
+      {{- with .Values.leaseworker.plugins.ioutils }}
+      ioutils:
+        {{- tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      k8s:
+        {{- tpl (toYaml $k8sConfig) $ | nindent 8 }}
+    {{- tpl (include "storage" .) $ | nindent 4 }}
+{{- end }}

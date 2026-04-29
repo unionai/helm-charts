@@ -1,0 +1,94 @@
+{{- if .Values.leaseworker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaseworker
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "leaseworker.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "leaseworker.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/leaseworker/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.leaseworker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        platform.union.ai/zone: "dataplane"
+        {{- include "leaseworker.podLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: {{ include "leaseworker.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ .Values.leaseworker.terminationGracePeriodSeconds }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: leaseworker
+        {{- if .Values.secrets.admin.enable }}
+        - name: secret-volume
+          secret:
+            secretName: {{ .Values.operator.secretName }}
+        - name: auth
+          secret:
+            secretName: {{ .Values.operator.secretName }}
+        {{- end }}
+      {{- with .Values.leaseworker.additionalVolumes -}}
+      {{ tpl (toYaml .) $ | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: leaseworker
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          command:
+            - leaseworker
+            - run
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            {{- include "global.podEnvVars" . | nindent 12 }}
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+            {{- with .Values.leaseworker.podEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            limits:
+              cpu:    {{ .Values.leaseworker.resources.limits.cpu | quote }}
+              memory: {{ .Values.leaseworker.resources.limits.memory | quote }}
+            requests:
+              cpu:    {{ .Values.leaseworker.resources.requests.cpu | quote }}
+              memory: {{ .Values.leaseworker.resources.requests.memory | quote }}
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            {{- if .Values.secrets.admin.enable }}
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
+            {{- end }}
+          {{- with .Values.leaseworker.additionalVolumeMounts -}}
+          {{ tpl (toYaml .) $ | nindent 12 }}
+          {{- end }}
+      {{- include "leaseworker.scheduling" . | nindent 6 }}
+      {{- include "additionalPodSpec" . | nindent 6 }}
+{{- end }}
