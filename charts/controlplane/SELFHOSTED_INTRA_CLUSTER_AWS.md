@@ -229,6 +229,32 @@ global:
   AUTH_TOKEN_URL: "https://your-idp.example.com/oauth2/default/v1/token"
 ```
 
+If your cluster's AWS pod identity webhook was installed with a custom `--annotation-prefix`, override each control plane service account annotation key that uses AWS IAM. The key must be `<custom-prefix>/role-arn`:
+
+```yaml
+flyte:
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  datacatalog:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  cacheservice:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+
+services:
+  artifacts:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-artifacts"
+```
+
+When this is layered on top of `values.aws.selfhosted-intracluster.yaml`, Helm may still render the default `eks.amazonaws.com/role-arn` annotation. That extra annotation is ignored by a webhook configured with a different prefix; the custom `<prefix>/role-arn` annotation is the one that controls mutation.
+
 **Important notes:**
 
 - Uses **published chart** (`unionai/controlplane`) from Helm repository
