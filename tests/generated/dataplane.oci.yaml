@@ -813,6 +813,211 @@ data:
         all = true
         keepBytes = "80%"
 ---
+# Source: dataplane/templates/leaseworker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+data:
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-oci/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+  webhook.yaml: |
+
+    
+    webhook:
+      certDir: /etc/webhook/certs
+      disableCreateMutatingWebhookConfig: true
+      embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+      listenPort: '9443'
+      localCert: true
+      secretManagerTypes:
+      - Embedded
+      - K8s
+      secretName: union-pod-webhook
+      serviceName: union-pod-webhook
+      servicePort: '443'
+  enabled_plugins.yaml: |
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          actor: fast-task
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+  config.yaml: |
+    leaseworker:
+      actionsServiceAddress: http://actions-service:8089
+      capacity: 100000
+      cluster: 'union-oci'
+      dispatcherCount: 512
+      leasorAddress: http://leasor-service:8090
+      limit-namespace: union
+      namespace-template: union
+      organization: 'union'
+      refreshInterval: 10s
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 4096
+          gpu: 256
+          memory: 2Ti
+      unionAuth:
+        injectSecret: true
+        secretName: EAGER_API_KEY
+      workerName: 'union-union-oci-worker1'
+    union:
+      connection:
+        host: dns:///union.us-west-2.union.ai
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'clientId'
+        clientSecretLocation: /etc/union/secret/client_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+    admin:
+      clientId: 'clientId'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+    authorizer:
+      type: noop
+    catalog-cache:
+      cache-endpoint: dns:///union.us-west-2.union.ai
+      endpoint: dns:///union.us-west-2.union.ai
+      insecure: false
+      type: cacheservicev2
+      use-admin-auth: true
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+    sharedService:
+      metrics:
+        scope: 'leaseworker:'
+      security:
+        allowCors: true
+        allowLocalhostAccess: true
+        allowedHeaders:
+        - Content-Type
+        allowedOrigins:
+        - '*'
+        secure: false
+        useAuth: false
+    fasttask:
+      additional-worker-args:
+      - --last-ack-grace-period-seconds
+      - "120"
+      callback-uri: http://union-operator-leaseworker.union.svc.cluster.local:15605
+      grace-period-status-not-found: 2m
+    plugins:
+      ioutils:
+        remoteFileOutputPaths:
+          deckFilename: report.html
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+        default-cpus: 200m
+        default-env-vars:
+        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
+        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
+        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
+        - CREATE_UPRIVER_DATA_SOURCE: "true"
+        - SOME_NUMERIC_VAR: "42"
+        - MORE: foo
+        - SOME_CONFIG_BOOL: "true"
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+        disable-inject-owner-references: true
+        inject-finalizer: true
+    storage:
+      container: "bucket"
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: accessKey
+          secret_key: secretKey
+          disable_ssl: false
+          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
+          region: us-ashburn-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
 # Source: dataplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -3395,34 +3600,6 @@ data:
           regex: '^.*?\.u/.*?t=(.*?)/.*?u\..*$'
         - tag_name: target_namespace
           regex: '^.*?\.u/.*?tns=(.*?)/.*?u\..*$'
----
-# Source: dataplane/templates/webhook/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-pod-webhook-config
-  namespace: union
-data:
-  core.yaml: |
-
-    
-    webhook:
-      certDir: /etc/webhook/certs
-      disableCreateMutatingWebhookConfig: true
-      embeddedSecretManagerConfig:
-        imagePullSecrets:
-          enabled: true
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-      listenPort: '9443'
-      localCert: true
-      secretManagerTypes:
-      - Embedded
-      - K8s
-      secretName: union-pod-webhook
-      serviceName: union-pod-webhook
-      servicePort: '443'
 ---
 # Source: dataplane/templates/serving/knative-operator-crds.yaml
 # Copyright 2021 The Knative Authors
@@ -7750,6 +7927,59 @@ rules:
       - "watch"
       - "patch"
 ---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -8107,6 +8337,22 @@ roleRef:
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
 ---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-leaseworker
+subjects:
+- kind: ServiceAccount
+  name: union-system
+  namespace: union
+---
 # Source: dataplane/templates/monitoring/prometheus-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -8432,6 +8678,28 @@ spec:
   selector:
     app.kubernetes.io/name: imagebuilder-buildkit
     app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/leaseworker/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-leaseworker
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    app: leaseworker
+spec:
+  type: ClusterIP
+  ports:
+    - port: 15605
+      targetPort: 15605
+      protocol: TCP
+      name: fasttask
+    - port: 10254
+      targetPort: metrics
+      protocol: TCP
+      name: debug
+  selector:
+    app: leaseworker
 ---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
@@ -9234,6 +9502,121 @@ spec:
                 app.kubernetes.io/instance: release-name
             topologyKey: "kubernetes.io/hostname"
 ---
+# Source: dataplane/templates/leaseworker/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: leaseworker
+  template:
+    metadata:
+      annotations:
+        configChecksum: "a1b2dfd885efb46c6becd2d9feaaaaa69382cf15bc6d6d0f5b4a35bb29884fa"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        
+        app: leaseworker
+        app.kubernetes.io/instance: 'release-name'
+        app.kubernetes.io/name: leaseworker
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: union-system
+      terminationGracePeriodSeconds: 75
+      volumes:
+        - name: config-volume
+          configMap:
+            name: leaseworker
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: leaseworker
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.9"
+          imagePullPolicy: IfNotPresent
+          command:
+            - leaseworker
+            - run
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: "when_required"
+            - name: CREATE_UPRIVER_DATA_SOURCE
+              value: "true"
+            - name: SOME_NUMERIC_VAR
+              value: "42"
+          resources:
+            limits:
+              cpu:    "8"
+              memory: "16Gi"
+            requests:
+              cpu:    "4"
+              memory: "8Gi"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -9651,7 +10034,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "77958aee0464eee4cb43c70036cf5ffa89f47f58c908845b9eeaecc7e32bba4"
+        configChecksum: "a1b2dfd885efb46c6becd2d9feaaaaa69382cf15bc6d6d0f5b4a35bb29884fa"
         
     spec:
       securityContext:
@@ -9731,7 +10114,7 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: union-pod-webhook-config
+            name: leaseworker
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
