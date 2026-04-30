@@ -103,6 +103,18 @@ global:
   AUTH_CLIENT_ID: "<service-to-service-client-id>"
 ```
 
+If your cluster's AWS pod identity webhook was installed with a custom `--annotation-prefix`, also override the identity annotation keys. The key must be `<custom-prefix>/role-arn` for both Union system service accounts and workflow service accounts:
+
+```yaml
+additionalServiceAccountAnnotations:
+  customer.example.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
+
+userRoleAnnotationKey: customer.example.com/role-arn
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
+```
+
+When this is layered on top of `values.aws.selfhosted-intracluster.yaml`, Helm may still render the default `eks.amazonaws.com/role-arn` annotation. That extra annotation is ignored by a webhook configured with a different prefix; the custom `<prefix>/role-arn` annotation is the one that controls mutation.
+
 **Important notes:**
 
 - Uses **published chart** (`unionai/dataplane`) from Helm repository
