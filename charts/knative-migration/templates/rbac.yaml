@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["operator.knative.dev"]
+    resources: ["knativeservings"]
+    verbs: ["get", "patch", "delete"]
+    resourceNames:
+      - {{ .Values.knativeServingName | quote }}
+
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      - knativeservings.operator.knative.dev
+      - knativeeventings.operator.knative.dev
+
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      # Paired ClusterRoleBinding is named "operator-webhook" (no knative- prefix) upstream.
+      - knative-operator-webhook
+      - knative-serving-operator
+      - knative-serving-operator-aggregated
+      - knative-serving-operator-aggregated-stable
+      - knative-eventing-operator
+      - knative-eventing-operator-aggregated
+      - knative-eventing-operator-aggregated-stable
+
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      # Paired ClusterRole is named "knative-operator-webhook" (with knative- prefix) upstream.
+      - operator-webhook
+      - knative-serving-operator
+      - knative-serving-operator-aggregated
+      - knative-serving-operator-aggregated-stable
+      - knative-eventing-operator
+      - knative-eventing-operator-aggregated
+      - knative-eventing-operator-aggregated-stable
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "knative-migration.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "knative-migration.fullname" . }}
+    namespace: {{ .Release.Namespace }}
