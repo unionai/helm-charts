@@ -1,0 +1,58 @@
+# Image for the kubectl runner.
+image:
+  repository: alpine/kubectl
+  tag: "1.33.4"
+  pullPolicy: IfNotPresent
+
+# Common labels applied to all resources (Job, SA, ClusterRole, ClusterRoleBinding).
+# Merged on top of the chart's own standard labels.
+labels: {}
+
+# Common annotations applied to all resources.
+# The caller chooses installation mode by supplying the appropriate hook annotations.
+#
+#   ArgoCD PreSync hook (recommended for the operator-purge migration —
+#   the cleanup must run before ArgoCD attempts to prune the orphaned
+#   KnativeServing CR, otherwise its finalizer deadlocks the Sync phase):
+#     argocd.argoproj.io/hook: PreSync
+#     argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+#
+#   Helm post-install/upgrade hook:
+#     helm.sh/hook: post-install,post-upgrade
+#     helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+#     helm.sh/hook-weight: "10"
+#
+#   Plain resources: leave empty.
+annotations: {}
+
+# Name of the KnativeServing CR whose finalizer should be cleared.
+# The CR is always looked up in the chart release namespace.
+knativeServingName: union-operator-serving
+
+# Job controls.
+job:
+  backoffLimit: 3
+  # 900s = 15 min. Sized to absorb foreground-cascade GC of the
+  # KnativeServing CR's dependents. The activator pod's
+  # terminationGracePeriodSeconds is 600 (upstream Knative default),
+  # which is the long pole; 900 leaves a 5-minute buffer.
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 300
+
+# Pod resources. Defaults are tiny — this Job does a handful of API calls.
+resources:
+  requests:
+    cpu: 10m
+    memory: 32Mi
+  limits:
+    cpu: 500m
+    memory: 128Mi
+
+# Standard placement knobs. All default empty.
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Chart name/fullname overrides (Helm convention).
+nameOverride: ""
+fullnameOverride: ""
