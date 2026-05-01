@@ -240,6 +240,68 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "leaseworker.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.leaseworker.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.affinity" -}}
+{{- with .Values.leaseworker.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.nodeSelector" -}}
+{{- with .Values.leaseworker.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.nodeName" -}}
+{{- with .Values.leaseworker.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.tolerations" -}}
+{{- with .Values.leaseworker.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling" -}}
+{{- if .Values.leaseworker.topologySpreadConstraints }}
+{{- include "leaseworker.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.leaseworker.affinity }}
+{{- include "leaseworker.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.leaseworker.nodeSelector }}
+{{- include "leaseworker.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.leaseworker.nodeName }}
+{{- include "leaseworker.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.leaseworker.tolerations }}
+{{- include "leaseworker.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
 {{- define "flytepropellerwebhook.selectorLabels" -}}
 app.kubernetes.io/name: union-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -1177,6 +1239,32 @@ app: executor
 {{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
 {{- end -}}
 
+{{- define "leaseworker.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.leaseworker.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.selectorLabels" -}}
+{{- if and .Values.leaseworker.selector .Values.leaseworker.selector.matchLabels -}}
+{{- .Values.leaseworker.selector.matchLabels | toYaml }}
+{{- else -}}
+app: leaseworker
+{{- end -}}
+{{- end -}}
+
+{{- define "leaseworker.labels" -}}
+{{- include "leaseworker.selectorLabels" . }}
+{{- end -}}
+
+{{- define "leaseworker.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ $labels := include "leaseworker.labels" . | fromYaml -}}
+{{- $podLabels := .Values.leaseworker.podLabels | default dict -}}
+{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
+{{- end -}}
+
 {{/*
 Webhook certificate helpers
 */}}
@@ -1312,6 +1400,17 @@ executor
 {{- end -}}
 
 {{/*
+Returns the leaseworker service account name, using the common SA when enabled.
+*/}}
+{{- define "leaseworker.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+leaseworker
+{{- end -}}
+{{- end -}}
+
+{{/*
 Returns the webhook service account name, using the common SA when enabled.
 */}}
 {{- define "webhook.serviceAccountName" -}}
@@ -1352,29 +1451,44 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 
 {{/*
+Returns the default container image registry hostname (the portion before
+the first "/" in the repository URL). If imageBuilder.defaultRepository is
+set, the host is parsed from it. Otherwise it is derived from the cloud
+provider, region, and (for Azure) registryName.
+Checks both storage.provider and the top-level provider field (Azure uses storage.provider=custom).
+*/}}
+{{- define "imagebuilder.defaultRegistry" -}}
+{{- if .Values.imageBuilder.defaultRepository -}}
+  {{- splitList "/" (tpl .Values.imageBuilder.defaultRepository .) | first -}}
+{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
+  {{- printf "%s.dkr.ecr.%s.amazonaws.com" $accountId $region -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
+  {{- $region := tpl .Values.storage.region . -}}
+  {{- printf "%s-docker.pkg.dev" $region -}}
+{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
+  {{- printf "%s.azurecr.io" .Values.imageBuilder.registryName -}}
+{{- else -}}
+  {{- .Values.imageBuilder.registryName -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Returns the default container image repository URL.
 If imageBuilder.defaultRepository is set, use it as-is.
-Otherwise, auto-generate from the cloud provider, region, project, and registryName.
-Checks both storage.provider and the top-level provider field (Azure uses storage.provider=custom).
+Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific path.
 */}}
 {{- define "imagebuilder.defaultRepository" -}}
 {{- if .Values.imageBuilder.defaultRepository -}}
   {{- tpl .Values.imageBuilder.defaultRepository . -}}
 {{- else if eq (tpl .Values.storage.provider .) "aws" -}}
-  {{- $region := tpl .Values.storage.region . -}}
-  {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
-  {{- $registryName := .Values.imageBuilder.registryName -}}
-  {{- printf "%s.dkr.ecr.%s.amazonaws.com/%s" $accountId $region $registryName -}}
+  {{- printf "%s/%s" (include "imagebuilder.defaultRegistry" .) .Values.imageBuilder.registryName -}}
 {{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
-  {{- $region := tpl .Values.storage.region . -}}
   {{- $projectId := tpl .Values.storage.gcp.projectId . -}}
-  {{- $registryName := .Values.imageBuilder.registryName -}}
-  {{- printf "%s-docker.pkg.dev/%s/%s" $region $projectId $registryName -}}
-{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
-  {{- $registryName := .Values.imageBuilder.registryName -}}
-  {{- printf "%s.azurecr.io" $registryName -}}
+  {{- printf "%s/%s/%s" (include "imagebuilder.defaultRegistry" .) $projectId .Values.imageBuilder.registryName -}}
 {{- else -}}
-  {{- .Values.imageBuilder.registryName -}}
+  {{- include "imagebuilder.defaultRegistry" . -}}
 {{- end -}}
 {{- end -}}
 

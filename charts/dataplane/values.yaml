@@ -994,6 +994,81 @@ executor:
   # -- nodeName constraints for executor deployment
   nodeName: ""
 
+leaseworker:
+  enabled: true
+  raw_config: {}
+  config:
+    organization: "{{ tpl .Values.orgName . }}"
+    cluster: "{{ tpl .Values.clusterName . }}"
+    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
+    leasorAddress: http://leasor-service:8090
+    actionsServiceAddress: http://actions-service:8089
+    unionAuth:
+      injectSecret: true
+      secretName: EAGER_API_KEY
+  capacity: 100000
+  dispatcherCount: 512
+  refreshInterval: 10s
+  terminationGracePeriodSeconds: 75
+  serviceAccount:
+    annotations: { }
+  resources:
+    limits:
+      cpu: 8
+      memory: 16Gi
+    requests:
+      cpu: 4
+      memory: 8Gi
+  podLabels:
+    app: leaseworker
+    app.kubernetes.io/name: leaseworker
+    app.kubernetes.io/instance: "{{ .Release.Name }}"
+  podAnnotations: { }
+  selector:
+    matchLabels:
+      app: leaseworker
+  sharedService:
+    metrics:
+      scope: "leaseworker:"
+    security:
+      secure: false
+      useAuth: false
+      allowCors: true
+      allowedOrigins:
+        - "*"
+      allowedHeaders:
+        - "Content-Type"
+      allowLocalhostAccess: true
+  fasttask:
+    additional-worker-args:
+      - "--last-ack-grace-period-seconds"
+      - "120"
+    callback-uri: "http://union-operator-leaseworker.{{.Release.Namespace}}.svc.cluster.local:15605"
+    grace-period-status-not-found: 2m
+  plugins:
+    ioutils:
+      remoteFileOutputPaths:
+        deckFilename: report.html
+    k8s:
+      inject-finalizer: true
+      disable-inject-owner-references: true
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []
+  # -- Appends additional environment variables to the leaseworker container's spec.
+  podEnv: []
+  # -- nodeSelector for leaseworker deployment
+  nodeSelector: { }
+  # -- tolerations for leaseworker deployment
+  tolerations: [ ]
+  # -- affinity for leaseworker deployment
+  affinity: { }
+  # -- topologySpreadConstraints for leaseworker deployment
+  topologySpreadConstraints: { }
+  # -- nodeName constraints for leaseworker deployment
+  nodeName: ""
+
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
@@ -1824,7 +1899,7 @@ serving:
   # -- Additional configuration for Knative serving
   extraConfig:
     deployment:
-      registries-skipping-tag-resolving: "managed.cr.union.ai"
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
   # -- Resources for serving components
   resources:
     3scale-kourier-gateway:
