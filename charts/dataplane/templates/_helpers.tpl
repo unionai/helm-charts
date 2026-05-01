@@ -240,6 +240,68 @@ tolerations:
 {{- end }}
 {{- end -}}
 
+{{- define "leaseworker.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.leaseworker.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.affinity" -}}
+{{- with .Values.leaseworker.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.nodeSelector" -}}
+{{- with .Values.leaseworker.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.nodeName" -}}
+{{- with .Values.leaseworker.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling.tolerations" -}}
+{{- with .Values.leaseworker.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.scheduling" -}}
+{{- if .Values.leaseworker.topologySpreadConstraints }}
+{{- include "leaseworker.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.leaseworker.affinity }}
+{{- include "leaseworker.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.leaseworker.nodeSelector }}
+{{- include "leaseworker.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.leaseworker.nodeName }}
+{{- include "leaseworker.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.leaseworker.tolerations }}
+{{- include "leaseworker.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
+
 {{- define "flytepropellerwebhook.selectorLabels" -}}
 app.kubernetes.io/name: union-pod-webhook
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -1177,6 +1239,32 @@ app: executor
 {{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
 {{- end -}}
 
+{{- define "leaseworker.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.leaseworker.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "leaseworker.selectorLabels" -}}
+{{- if and .Values.leaseworker.selector .Values.leaseworker.selector.matchLabels -}}
+{{- .Values.leaseworker.selector.matchLabels | toYaml }}
+{{- else -}}
+app: leaseworker
+{{- end -}}
+{{- end -}}
+
+{{- define "leaseworker.labels" -}}
+{{- include "leaseworker.selectorLabels" . }}
+{{- end -}}
+
+{{- define "leaseworker.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ $labels := include "leaseworker.labels" . | fromYaml -}}
+{{- $podLabels := .Values.leaseworker.podLabels | default dict -}}
+{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
+{{- end -}}
+
 {{/*
 Webhook certificate helpers
 */}}
@@ -1308,6 +1396,17 @@ Returns the executor service account name, using the common SA when enabled.
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 executor
+{{- end -}}
+{{- end -}}
+
+{{/*
+Returns the leaseworker service account name, using the common SA when enabled.
+*/}}
+{{- define "leaseworker.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+leaseworker
 {{- end -}}
 {{- end -}}
 
