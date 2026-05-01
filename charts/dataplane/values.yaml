@@ -1661,6 +1661,30 @@ prometheus:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
+    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          action: keep
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
