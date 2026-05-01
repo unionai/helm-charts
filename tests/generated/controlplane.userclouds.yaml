@@ -1695,6 +1695,24 @@ data:
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
 ---
+# Source: controlplane/templates/flyteadmin-private-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-private-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.9
+    #app.kubernetes.io/managed-by: Helm
+data:
+  private.yaml: |
+    app:
+      cacheProviderConfig:
+        kind: bypass
+      populateUserFields: false
+---
 # Source: controlplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -7168,6 +7186,10 @@ spec:
         - mountPath: /etc/secrets/union
           name: union-secrets
           readOnly: true
+        - mountPath: /etc/flyte/config/private.yaml
+          name: private-config
+          readOnly: true
+          subPath: private.yaml
       serviceAccountName: flyteadmin
       volumes:
       - name: union-controlplane-secrets
@@ -7195,6 +7217,9 @@ spec:
       - name: union-secrets
         secret:
           secretName: ''
+      - configMap:
+          name: flyte-admin-private-config
+        name: private-config
 ---
 # Source: controlplane/charts/flyte/templates/console/deployment.yaml
 apiVersion: apps/v1
