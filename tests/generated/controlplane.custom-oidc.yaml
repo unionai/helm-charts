@@ -54,7 +54,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
 spec:
   minAvailable: 1
   selector:
@@ -66,7 +66,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: datacatalog
-  namespace: union-cp
+  namespace: union
 spec:
   minAvailable: 1
   selector:
@@ -78,7 +78,7 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: cacheservice
-  namespace: union-cp
+  namespace: union
 spec:
   minAvailable: 1
   selector:
@@ -187,12 +187,14 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
     helm.sh/chart: flyte-v1.16.1
     #app.kubernetes.io/managed-by: Helm
+  annotations: 
+    eks.amazonaws.com/role-arn: ''
 imagePullSecrets: 
   - name: union-registry-secret
 ---
@@ -209,7 +211,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx
-  namespace: union-cp
+  namespace: union
 automountServiceAccountToken: true
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.serviceaccount.yaml
@@ -237,12 +239,14 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: cacheservice
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
     helm.sh/chart: controlplane-2026.4.10
     app.kubernetes.io/managed-by: Helm
+  annotations: 
+    eks.amazonaws.com/role-arn: ''
 imagePullSecrets: 
   - name: union-registry-secret
 ---
@@ -360,7 +364,7 @@ apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: union
-  namespace: union-cp
+  namespace: union
   labels:
     helm.sh/chart: controlplane-2026.4.10
     app.kubernetes.io/name: union
@@ -373,7 +377,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: flyte-admin-secrets
-  namespace: union-cp
+  namespace: union
 type: Opaque
 stringData:
 ---
@@ -382,7 +386,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: flyte-secret-auth
-  namespace: union-cp
+  namespace: union
 type: Opaque
 stringData:
   client_secret: placeholder
@@ -392,7 +396,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: flyte-admin-clusters-config
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -409,7 +413,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: flyte-admin-base-config
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -451,7 +455,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/client_secret
-      endpoint: dns:///controlplane-nginx-controller.union-cp.svc.cluster.local
+      endpoint: dns:///controlplane-nginx-controller.union.svc.cluster.local
       insecure: true
     auth:
       appAuth:
@@ -473,7 +477,7 @@ data:
             - all
       authorizedUris:
       - http://flyteadmin:80
-      - http://flyteadmin.union-cp.svc.cluster.local:80
+      - http://flyteadmin.union.svc.cluster.local:80
       - https://test.example.com
       grpcAuthorizationHeader: flyte-authorization
       httpAuthorizationHeader: flyte-authorization
@@ -496,7 +500,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -504,8 +508,8 @@ data:
       enable: false
     connection:
       environment: staging
-      region: ""
-      rootTenantURLPattern: dns:///controlplane-nginx-controller.union-cp.svc.cluster.local
+      region: ''
+      rootTenantURLPattern: dns:///controlplane-nginx-controller.union.svc.cluster.local
     flyteadmin:
       eventVersion: 2
       metadataStoragePrefix:
@@ -550,7 +554,7 @@ data:
     union:
       internalConnectionConfig:
         enabled: true
-        urlPattern: '_SERVICE_.union-cp.svc.cluster.local:80'
+        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
   remoteData.yaml: | 
     remoteData:
       region: us-east-1
@@ -559,6 +563,11 @@ data:
         durationMinutes: 3
   storage.yaml: | 
     storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -580,7 +589,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: flyte-console-config
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
@@ -603,7 +612,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx-controller
-  namespace: union-cp
+  namespace: union
 data:
   allow-snippet-annotations: "true"
   annotations-risk-level: "Critical"
@@ -619,7 +628,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: cacheservice-config
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
@@ -649,7 +658,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -672,9 +681,14 @@ data:
     union:
       internalConnectionConfig:
         enabled: true
-        urlPattern: '_SERVICE_.union-cp.svc.cluster.local:80'
+        urlPattern: '_SERVICE_.union.svc.cluster.local:80'
   storage.yaml: | 
     storage:
+      type: s3
+      container: ""
+      connection:
+        auth-type: iam
+        region: 
       enable-multicontainer: false
       limits:
         maxDownloadMBs: 10
@@ -699,7 +713,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -708,7 +722,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       bootstrap:
         adminUsers: []
@@ -734,7 +748,7 @@ data:
         clientSecretName: union/client_secret
         enableLogging: true
         tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
-        tenantUrl: http://release-name-union-authz.union-cp.svc.cluster.local:8080
+        tenantUrl: http://release-name-union-authz.union.svc.cluster.local:8080
     cache:
       identity:
         enabled: false
@@ -777,7 +791,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -796,7 +810,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -805,7 +819,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -866,7 +880,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -885,7 +899,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -894,7 +908,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -908,7 +922,7 @@ data:
     dataproxy:
       clusterSelector:
         type: local
-      secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80
+      secureTunnelTenantURLPattern: ''
       taskMetrics:
         agentQuery:
           mappings:
@@ -1056,7 +1070,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -1075,7 +1089,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -1084,7 +1098,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -1116,7 +1130,7 @@ data:
             authorizationHeader: flyte-authorization
             clientId: 'test-internal-client-id'
             clientSecretLocation: /etc/secrets/union/client_secret
-            endpoint: flyteadmin.union-cp.svc.cluster.local:81
+            endpoint: flyteadmin.union.svc.cluster.local:81
             insecure: true
             scopes:
             - 'all'
@@ -1165,7 +1179,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
     workspace:
       enable: false
 ---
@@ -1186,7 +1200,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -1195,7 +1209,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -1251,7 +1265,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -1270,7 +1284,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -1279,7 +1293,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -1300,7 +1314,7 @@ data:
     queue:
       db:
         hosts:
-        - 'scylla-client.union-cp.svc.cluster.local'
+        - 'scylla-client.union.svc.cluster.local'
         threadCount: 64
         type: cql
       eventer:
@@ -1334,7 +1348,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -1353,7 +1367,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -1362,7 +1376,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -1417,7 +1431,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -1436,7 +1450,7 @@ data:
     admin:
       clientId: 'test-internal-client-id'
       clientSecretLocation: /etc/secrets/union/client_secret
-      endpoint: flyteadmin.union-cp.svc.cluster.local:81
+      endpoint: flyteadmin.union.svc.cluster.local:81
       insecure: true
     authorizer:
       authorizerClient:
@@ -1445,7 +1459,7 @@ data:
         - flyte-authorization
         - x-user-token
         grpcConfig:
-          host: dns:///authorizer.union-cp.svc.cluster.local:80
+          host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
       useExternalIdentity: 'false'
@@ -1495,7 +1509,7 @@ data:
           externalIdentityTypeClaim: app
       internalConnectionConfig:
         enabled: true
-        urlPattern: _SERVICE_.union-cp.svc.cluster.local:80
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
     usage:
       taskMetrics:
         agentQuery:
@@ -1617,7 +1631,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: release-name-dashboard-union-controlplane-overview
-  namespace: union-cp
+  namespace: union
   labels:
     grafana_dashboard: "1"
     app.kubernetes.io/managed-by: Helm
@@ -5333,8 +5347,8 @@ data:
           {
             "current": {
               "selected": true,
-              "text": "union-cp",
-              "value": "union-cp"
+              "text": "union",
+              "value": "union"
             },
             "hide": 2,
             "label": "Namespace",
@@ -5342,11 +5356,11 @@ data:
             "options": [
               {
                 "selected": true,
-                "text": "union-cp",
-                "value": "union-cp"
+                "text": "union",
+                "value": "union"
               }
             ],
-            "query": "union-cp",
+            "query": "union",
             "type": "constant"
           }
         ]
@@ -5369,6 +5383,9 @@ metadata:
   name: scylladb
 provisioner: ebs.csi.eks.amazonaws.com
 volumeBindingMode: WaitForFirstConsumer
+parameters:
+  fsType: ext4
+  type: gp2
 reclaimPolicy: Delete
 allowVolumeExpansion: true
 ---
@@ -5376,7 +5393,7 @@ allowVolumeExpansion: true
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-cp-flyteadmin
+  name: union-flyteadmin
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6125,7 +6142,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-cp-flyteadmin-binding
+  name: union-flyteadmin-binding
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6134,11 +6151,11 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: union-cp-flyteadmin
+  name: union-flyteadmin
 subjects:
 - kind: ServiceAccount
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
 ---
 # Source: controlplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6159,7 +6176,7 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: controlplane-nginx
-    namespace: union-cp
+    namespace: union
 ---
 # Source: controlplane/charts/scylla-operator/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6188,7 +6205,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx
-  namespace: union-cp
+  namespace: union
 rules:
   - apiGroups:
       - ""
@@ -6274,7 +6291,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6313,7 +6330,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx
-  namespace: union-cp
+  namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -6321,14 +6338,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: controlplane-nginx
-    namespace: union-cp
+    namespace: union
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: flyteadmin-binding
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6341,14 +6358,14 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: flyteadmin
-    namespace: union-cp
+    namespace: union
 ---
 # Source: controlplane/charts/flyte/templates/admin/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6382,7 +6399,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: flyteconsole
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
@@ -6415,7 +6432,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx-controller-metrics
-  namespace: union-cp
+  namespace: union
 spec:
   type: ClusterIP
   ports:
@@ -6442,7 +6459,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx-controller
-  namespace: union-cp
+  namespace: union
 spec:
   type: ClusterIP
   ipFamilyPolicy: SingleStack
@@ -6487,7 +6504,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: cacheservice
-  namespace: union-cp
+  namespace: union
   labels:
     platform.union.ai/prometheus-group: "union-services"
     app.kubernetes.io/name: cacheservice
@@ -6841,7 +6858,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -6860,7 +6877,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "39cf8067ef8e503c015b0cd79077e528a7924291bf8a4e5b26dc28b6faca7c0"
+        configChecksum: "2cd0842cd83229de29ca902232d811d7a31d55e2a8f65180b27b71294f81802"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -7025,7 +7042,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flyteconsole
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
@@ -7040,7 +7057,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "45caf101198a998e1778113c92474400b317a493fe85584dc83e26c5de78acf"
+        configChecksum: "2620ed20cf30d64460b231bbcf13fc096a23b6d373b46e69ab5f2e051f3d3d1"
         linkerd.io/inject: disabled
         prometheus.io/scrape: "false"
       labels: 
@@ -7104,7 +7121,7 @@ metadata:
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
   name: controlplane-nginx-controller
-  namespace: union-cp
+  namespace: union
 spec:
   selector:
     matchLabels:
@@ -7341,7 +7358,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cacheservice
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
@@ -7356,7 +7373,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ca9799b45753ac064dd08bf0e1ea890f5de74b8882383571448e8ed9ffdc728"
+        configChecksum: "23e9aba4e1ac4e950d35b38168be812455e2dea70a6abb6ebe9ce0778ffb9f7"
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -8516,7 +8533,7 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: flyteadmin
-  namespace: union-cp
+  namespace: union
   labels: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
@@ -8781,7 +8798,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-dataproxy
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -8790,7 +8807,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8842,7 +8859,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-usage-grpc
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -8851,7 +8868,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8871,7 +8888,7 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union-cp.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
     nginx.ingress.kubernetes.io/configuration-snippet: |
       auth_request_set $user_id $upstream_http_x_user_subject;
       proxy_set_header X-User-Subject $user_id;
@@ -8916,7 +8933,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-usage
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -8925,7 +8942,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -8971,7 +8988,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-protected
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -8980,7 +8997,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9389,7 +9406,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-protected-grpc
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -9398,7 +9415,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -9418,7 +9435,7 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union-cp.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
     nginx.ingress.kubernetes.io/configuration-snippet: |
       auth_request_set $user_id $upstream_http_x_user_subject;
       proxy_set_header X-User-Subject $user_id;
@@ -10163,7 +10180,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-protected-grpc-streaming
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -10172,7 +10189,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10192,7 +10209,7 @@ metadata:
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
     nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
     nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union-cp.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
     nginx.ingress.kubernetes.io/configuration-snippet: |
       auth_request_set $user_id $upstream_http_x_user_subject;
       proxy_set_header X-User-Subject $user_id;
@@ -10540,7 +10557,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane
-  namespace: union-cp
+  namespace: union
   annotations: 
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -10549,7 +10566,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10747,7 +10764,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-grpc
-  namespace: union-cp
+  namespace: union
   annotations:
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -10756,7 +10773,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10833,7 +10850,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-grpc-streaming
-  namespace: union-cp
+  namespace: union
   annotations:
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -10842,7 +10859,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -10883,7 +10900,7 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: controlplane-console-protected
-  namespace: union-cp
+  namespace: union
   annotations:
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
@@ -10892,7 +10909,7 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union-cp.svc.cluster.local
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.union.svc.cluster.local
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -11104,7 +11121,7 @@ apiVersion: scylla.scylladb.com/v1
 kind: ScyllaCluster
 metadata:
   name: scylla
-  namespace: union-cp
+  namespace: union
 spec:
   version: 2025.1.5
   agentVersion: 3.5.1@sha256:d1b57d08b9949c8faad2048fdf4dc7c502dae81da856c3c6b3a77dd347d5c7fc
