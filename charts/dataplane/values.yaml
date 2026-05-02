@@ -1538,11 +1538,6 @@ prometheus:
   rbac:
     create: false
   
-  #Disables the KSM that comes with the prometheus chart since we are configuring our own scrape config for it. 
-  #This also avoids conflicts with the kube-state-metrics that may be installed by the kube-prometheus-stack chart.
-  kube-state-metrics:
-    enabled: false
-
   # Match the same service name as kube-prometheus-stack mode so that
   # health checks, opencost, and ingress work without changes.
   # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
@@ -1655,12 +1650,36 @@ prometheus:
           namespaces:
             own_namespace: true
       relabel_configs:
-        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_prometheus_group]
           regex: .+
           action: keep
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
+    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          action: keep
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -1724,9 +1743,12 @@ prometheus:
 
   alertmanager:
     enabled: false
-  # kube-state-metrics: use namespace-scoped Role (not ClusterRole) and only watch the release namespace.
+  # kube-state-metrics subchart of the community prometheus chart.
+  # Uses namespace-scoped Role (not ClusterRole) and only watches the release namespace.
   # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
   # (kube_node_*) since nodes are cluster-scoped resources.
+  # When monitoring.enabled=true, the kube-prometheus-stack deploys its own KSM instance
+  # (monitoring-kube-state-metrics) with cluster-wide scope — both can coexist.
   kube-state-metrics:
     enabled: true
     rbac:
@@ -1756,6 +1778,18 @@ prometheus:
 
 # -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
 #  require additional permissions on the cluster. This limits the functionality though.
+#
+# Known tradeoffs when low_privilege is enabled:
+# - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
+#   cluster-scoped node discovery, and kube-state-metrics is limited to the release
+#   namespace (no cross-namespace pod resource metrics for task execution pods).
+#   Console CPU/memory charts for task executions will show "no data."
+# - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
+#   kube-state-metrics instance.
+# - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
+# - There are likely additional features that require cluster-scoped permissions and
+#   will not function in low_privilege mode. This list will be expanded as they are
+#   identified.
 low_privilege: true
 
 # -- When enabled, creates a single shared ServiceAccount for all components
