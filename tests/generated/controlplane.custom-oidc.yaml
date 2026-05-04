@@ -138,6 +138,18 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
+  name: identity
+spec:
+  minAvailable: "33%"
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity
+      app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
   name: organizations
 spec:
   minAvailable: "33%"
@@ -307,6 +319,18 @@ metadata:
   labels:
     helm.sh/chart: controlplane-2026.4.10
     app.kubernetes.io/name: executions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.10"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: identity
+  labels:
+    helm.sh/chart: controlplane-2026.4.10
+    app.kubernetes.io/name: identity
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.4.10"
     app.kubernetes.io/managed-by: Helm
@@ -1188,6 +1212,91 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: identity
+  labels:
+    helm.sh/chart: controlplane-2026.4.10
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.10"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'false'
+    cache:
+      identity:
+        enabled: true
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    identity:
+      app:
+        adminClient:
+          connection:
+            authorizationHeader: flyte-authorization
+            clientId: 'test-internal-client-id'
+            clientSecretLocation: /etc/secrets/union/client_secret
+            insecure: true
+            scopes:
+            - all
+            tokenUrl: 'https://idp.example.com/oauth2/v2.0/token'
+        identityProviderConfig:
+          provider: noop
+    logger:
+      formatter:
+        type: json
+      level: 6
+      show-source: true
+    otel:
+      type: noop
+    sharedService:
+      connectPort: 8081
+      security:
+        singleTenantOrgID: ''
+      selfServeConfig:
+        legacyHosts:
+        - ''
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'test-internal-client-id'
+        clientSecretLocation: /etc/secrets/union/client_secret
+        enable: true
+        scopes:
+        - 'all'
+        tokenUrl: 'https://idp.example.com/oauth2/v2.0/token'
+        type: ClientSecret
+      connection:
+        insecure: false
+        insecureSkipVerify: true
+        trustedIdentityClaims:
+          enabled: true
+          externalIdentityClaim: ""
+          externalIdentityTypeClaim: app
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
+---
+# Source: controlplane/templates/configmap.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: organizations
   labels:
     helm.sh/chart: controlplane-2026.4.10
@@ -1625,6 +1734,24 @@ data:
               sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
       workers: 10
+---
+# Source: controlplane/templates/flyteadmin-private-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-admin-private-config
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.4.10
+    #app.kubernetes.io/managed-by: Helm
+data:
+  private.yaml: |
+    app:
+      cacheProviderConfig:
+        kind: bypass
+      populateUserFields: false
 ---
 # Source: controlplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
@@ -6709,6 +6836,41 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: identity
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.4.10
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.10"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: connect
+    - name: grpc-native
+      port: 8080
+      protocol: TCP
+      targetPort: grpc
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: http
+    - name: debug
+      port: 82
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
   name: organizations
   labels:
     platform.union.ai/prometheus-group: "union-services"
@@ -6896,7 +7058,7 @@ spec:
         - command:
           - flyteadmin
           - --config
-          - /etc/flyte/config/*.yaml
+          - /etc/flyte/*/*.yaml
           - migrate
           - run
           image: "registry.unionai.cloud/controlplane/services:"
@@ -6914,7 +7076,7 @@ spec:
         - command:
           - flyteadmin
           - --config
-          - /etc/flyte/config/*.yaml
+          - /etc/flyte/*/*.yaml
           - migrate
           - seed-projects
           - union-health-monitoring
@@ -6937,7 +7099,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             [
-                "flyteadmin --config=/etc/flyte/config/*.yaml secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
+                "flyteadmin --config=/etc/flyte/*/*.yaml secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
             ]
           securityContext:
             allowPrivilegeEscalation: false
@@ -6957,7 +7119,7 @@ spec:
       - command:
         - flyteadmin
         - --config
-        - /etc/flyte/config/*.yaml
+        - /etc/flyte/*/*.yaml
         - serve
         image: "registry.unionai.cloud/controlplane/services:"
         imagePullPolicy: "IfNotPresent"
@@ -7009,6 +7171,9 @@ spec:
         - mountPath: /etc/secrets/union
           name: union-secrets
           readOnly: true
+        - mountPath: /etc/flyte/private
+          name: private-config
+          readOnly: true
       serviceAccountName: flyteadmin
       volumes:
       - name: union-controlplane-secrets
@@ -7036,6 +7201,9 @@ spec:
       - name: union-secrets
         secret:
           secretName: ''
+      - configMap:
+          name: flyte-admin-private-config
+        name: private-config
 ---
 # Source: controlplane/charts/flyte/templates/console/deployment.yaml
 apiVersion: apps/v1
@@ -8028,6 +8196,121 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: identity
+  labels:
+    helm.sh/chart: controlplane-2026.4.10
+    app.kubernetes.io/name: identity
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.4.10"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: identity
+      app.kubernetes.io/instance: release-name
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: identity
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: identity
+        app.kubernetes.io/instance: release-name
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: identity
+      volumes:
+      - name: secrets
+        secret:
+          secretName: 
+      - name: db-pass
+        secret:
+          secretName: 
+      - name: config
+        configMap:
+          name: identity
+      containers:
+        - name: identity
+          image: registry.unionai.cloud/controlplane/services:2026.4.10
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudidentity
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+            - name: connect
+              containerPort: 8081
+              protocol: TCP
+          volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+              limits:
+                cpu: 500m
+                memory: 512Mi
+              requests:
+                cpu: 250m
+                memory: 250Mi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: identity
+                    app.kubernetes.io/instance: release-name
+                topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: organizations
   labels:
     helm.sh/chart: controlplane-2026.4.10
@@ -8682,6 +8965,32 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: executions
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+---
+# Source: controlplane/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: identity
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: identity
   minReplicas: 1
   maxReplicas: 1
   metrics:
@@ -11080,6 +11389,9 @@ webhooks:
 # Source: controlplane/charts/ingress-nginx/templates/controller-poddisruptionbudget.yaml
 # PDB is not supported for DaemonSets.
 # https://github.com/kubernetes/kubernetes/issues/108124
+---
+# Source: controlplane/templates/secret.yaml
+---
 ---
 # Source: controlplane/templates/secret.yaml
 ---

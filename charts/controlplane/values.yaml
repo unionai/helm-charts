@@ -855,6 +855,63 @@ services:
           enrichIdentities: false
           clusterCacheConfig:
             ttl: 10m
+  identity:
+    fullnameOverride: "identity"
+    service:
+      type: ClusterIP
+      grpcport: 80
+      httpport: 81
+      debugport: 82
+    sharedService:
+      connectPort: 8081
+    args:
+      - cloudidentity
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      cache:
+        identity:
+          enabled: true
+      sharedService:
+        connectPort: 8081
+      identity:
+        app:
+          identityProviderConfig:
+            # Identity provider for the User Management page.
+            # Supported values:
+            #   noop  — returns empty results (default; no external IDP required)
+            #   azure — Azure/Entra ID via Microsoft Graph API
+            #   okta  — Okta (Union Cloud managed deployments only)
+            provider: "noop"
+            # Azure/Entra ID provider configuration.
+            # Required when provider is "azure". Requires a dedicated Entra app registration
+            # with Application permissions (not Delegated): User.Read.All,
+            # GroupMember.Read.All, Application.ReadWrite.All; admin consent granted.
+            #
+            # Store the client secret in the KUBERNETES_SECRET_NAME K8s secret under
+            # the key referenced by clientSecretName (e.g. "azure_client_secret").
+            # The value is read from /etc/secrets/union/<clientSecretName> at runtime.
+            # Example ExternalSecret:
+            #   spec.data[].remoteRef.key: <your-secret-manager-path>
+            #   spec.data[].secretKey: azure_client_secret
+            #   spec.target.name: <KUBERNETES_SECRET_NAME>
+            #   spec.target.creationPolicy: Merge
+            #
+            # azure:
+            #   tenantId: ""    # Azure AD tenant (directory) ID
+            #   clientId: ""    # App registration client ID
+            #   clientSecretName: "azure_client_secret"
+            #   groupId: ""    # Optional: scope user listing to a specific Entra group
+          adminClient:
+            connection:
+              authorizationHeader: flyte-authorization
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: /etc/secrets/union/client_secret
+              insecure: true
+              scopes:
+                - all
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
   usage:
     fullnameOverride: "usage"
     sharedService:
@@ -1216,13 +1273,23 @@ flyte:
     # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
     # can read client_secret from union/client_secret. The flyte-core subchart does not
     # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
+    # -- Mounts flyte-admin-private-config ConfigMap for Union-specific flyteadmin config
+    # (private.yaml) that isn't supported by the upstream flyte-core chart.
     additionalVolumes:
       - name: union-secrets
         secret:
           secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+      - name: private-config
+        configMap:
+          name: flyte-admin-private-config
+    # Override configPath to include both config directories
+    configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
       - name: union-secrets
         mountPath: /etc/secrets/union
+        readOnly: true
+      - name: private-config
+        mountPath: /etc/flyte/private
         readOnly: true
   flytescheduler:
     image:

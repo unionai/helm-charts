@@ -97,6 +97,57 @@ services:
       dataproxy:
         secureTunnelTenantURLPattern: '{{ .Values.global.DATAPLANE_ENDPOINT }}'
 
+  # Identity service configuration
+  # The identity service powers the User Management page in the Union console.
+  # When using Azure/Entra ID as the identity provider, override the defaults
+  # below with values from the authn/entraid Terraform module outputs:
+  #   tenantId    = module.authn.entra_tenant_id
+  #   clientId    = module.authn.identity_service_client_id
+  #   clientSecret stored in GCP Secret Manager; referenced via clientSecretName
+  #
+  # The client secret must be present in the KUBERNETES_SECRET_NAME K8s secret
+  # under the key matching clientSecretName (e.g. "azure_client_secret"). The
+  # identity service resolves this to /etc/secrets/union/<clientSecretName> at
+  # runtime (the shared secret is mounted at /etc/secrets/union/).
+  # Use the extraObjectsOverrides ExternalSecret example below to provision it.
+  #
+  # identity:
+  #   configMap:
+  #     identity:
+  #       app:
+  #         identityProviderConfig:
+  #           provider: "azure"
+  #           azure:
+  #             tenantId: ""        # module.authn.entra_tenant_id
+  #             clientId: ""        # module.authn.identity_service_client_id
+  #             clientSecretName: "azure_client_secret"
+  #             groupId: ""         # optional: scope user listing to an Entra group
+
+# The ExternalSecret below merges the Graph API client secret from GCP Secret
+# Manager into the shared KUBERNETES_SECRET_NAME secret so it is available to
+# the identity service at /etc/secrets/union/azure_client_secret.
+#
+# Add this to extraObjectsOverrides in your environment-specific override file
+# (not here, to avoid overwriting the base extraObjects list).
+#
+# extraObjectsOverrides:
+# - apiVersion: "external-secrets.io/v1"
+#   kind: "ExternalSecret"
+#   metadata:
+#     name: "identity-azure-client-secret"
+#   spec:
+#     refreshInterval: "1h"
+#     secretStoreRef:
+#       kind: "SecretStore"
+#       name: "default"
+#     data:
+#     - secretKey: "azure_client_secret"
+#       remoteRef:
+#         key: "<your-gcp-secret-manager-secret-name>"  # e.g. "<org>-identity-service-client-secret"
+#     target:
+#       name: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+#       creationPolicy: Merge
+
 # --- GCP ScyllaDB Storage Class ---
 scylla:
   storageClass:
