@@ -1,0 +1,237 @@
+---
+# Source: knative-migration/templates/rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-knative-migration
+  namespace: union
+  labels:
+    helm.sh/chart: knative-migration-2026.5.0
+    app.kubernetes.io/name: knative-migration
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+---
+# Source: knative-migration/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-knative-migration
+  labels:
+    helm.sh/chart: knative-migration-2026.5.0
+    app.kubernetes.io/name: knative-migration
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+rules:
+  - apiGroups: ["operator.knative.dev"]
+    resources: ["knativeservings"]
+    verbs: ["get", "patch", "delete"]
+    resourceNames:
+      - "union-operator-serving"
+
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      - knativeservings.operator.knative.dev
+      - knativeeventings.operator.knative.dev
+
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      # Paired ClusterRoleBinding is named "operator-webhook" (no knative- prefix) upstream.
+      - knative-operator-webhook
+      - knative-serving-operator
+      - knative-serving-operator-aggregated
+      - knative-serving-operator-aggregated-stable
+      - knative-eventing-operator
+      - knative-eventing-operator-aggregated
+      - knative-eventing-operator-aggregated-stable
+
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["get", "delete"]
+    resourceNames:
+      # Paired ClusterRole is named "knative-operator-webhook" (with knative- prefix) upstream.
+      - operator-webhook
+      - knative-serving-operator
+      - knative-serving-operator-aggregated
+      - knative-serving-operator-aggregated-stable
+      - knative-eventing-operator
+      - knative-eventing-operator-aggregated
+      - knative-eventing-operator-aggregated-stable
+---
+# Source: knative-migration/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-knative-migration
+  labels:
+    helm.sh/chart: knative-migration-2026.5.0
+    app.kubernetes.io/name: knative-migration
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-knative-migration
+subjects:
+  - kind: ServiceAccount
+    name: release-name-knative-migration
+    namespace: union
+---
+# Source: knative-migration/templates/job.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-name-knative-migration
+  namespace: union
+  labels:
+    helm.sh/chart: knative-migration-2026.5.0
+    app.kubernetes.io/name: knative-migration
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.1.0"
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded,BeforeHookCreation
+spec:
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: knative-migration-2026.5.0
+        app.kubernetes.io/name: knative-migration
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: "0.1.0"
+    spec:
+      serviceAccountName: release-name-knative-migration
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cleanup
+          image: "alpine/kubectl:1.33.4"
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            limits:
+              cpu: 500m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+
+              NS="union"
+              CR="union-operator-serving"
+
+              # Both helpers pass --wait=false because kubectl's built-in wait
+              # opens a watcher that needs list/watch verbs, and RBAC cannot
+              # scope list/watch by resourceName.
+
+              # delete_wait blocks until the resource AND every dependent it
+              # owns are gone. --cascade=foreground tells the API server to
+              # add a `foregroundDeletion` finalizer that the GC controller
+              # only removes once all dependents are reaped, so polling on
+              # `kubectl get` naturally waits for the full cascade. Used for
+              # the KnativeServing CR, whose dependents are the operator-
+              # managed activator / autoscaler / controller / webhook /
+              # net-kourier-controller / 3scale-kourier-gateway Deployments
+              # and their Services, ConfigMaps, HPAs, and PDBs. Worst case
+              # is bounded by the activator's terminationGracePeriodSeconds
+              # (upstream sets 600s); 360 iterations × 2s = 720s gives a
+              # 2-minute buffer above that ceiling.
+              delete_wait() {
+                local kind=$1 name=$2
+                kubectl delete "$@" --cascade=foreground --ignore-not-found --wait=false
+                for _ in $(seq 1 360); do
+                  kubectl get "$@" >/dev/null 2>&1 || return 0
+                  sleep 2
+                done
+                echo "timed out waiting for $kind/$name to be deleted" >&2
+                return 1
+              }
+
+              # delete_no_wait fires the delete and returns. Safe for
+              # resources with no finalizers, or where we've already confirmed
+              # their blocking dependencies are gone.
+              delete_no_wait() {
+                kubectl delete "$@" --ignore-not-found --wait=false
+              }
+
+              # 1. Remove the stuck operator finalizer and delete the KnativeServing
+              #    CR. We wait for the CR to be fully gone before deleting its CRD,
+              #    because the CRD's apiextensions `customresourcecleanup` finalizer
+              #    blocks on remaining instances.
+              #
+              #    The finalizer patch uses --type=json with a `test` op so it only
+              #    runs when the finalizer list is exactly the operator's — we don't
+              #    want to clobber unrelated finalizers added by other controllers.
+              if kubectl get knativeserving "$CR" -n "$NS" >/dev/null 2>&1; then
+                if ! kubectl patch knativeserving "$CR" -n "$NS" --type=json \
+                  --patch '[{"op":"test","path":"/metadata/finalizers","value":["knativeservings.operator.knative.dev"]},{"op":"remove","path":"/metadata/finalizers"}]'; then
+                  echo "finalizers on KnativeServing/$CR differ from expected [knativeservings.operator.knative.dev] — skipping patch, attempting delete anyway" >&2
+                fi
+                delete_wait knativeserving "$CR" -n "$NS"
+              fi
+
+              # 2. Delete the two operator-only CRDs. Fire-and-forget: step 1
+              #    removed the only known CR instance, so the CRDs have nothing to
+              #    clean up.
+              delete_no_wait crd knativeservings.operator.knative.dev
+              delete_no_wait crd knativeeventings.operator.knative.dev
+
+              # 3. Delete leftover cluster-scoped RBAC. Fire-and-forget: these have
+              #    no finalizers. The ClusterRole and ClusterRoleBinding share a
+              #    name for every operator pair except the webhook, which upstream
+              #    names `knative-operator-webhook` / `operator-webhook`.
+              for name in \
+                knative-serving-operator \
+                knative-serving-operator-aggregated \
+                knative-serving-operator-aggregated-stable \
+                knative-eventing-operator \
+                knative-eventing-operator-aggregated \
+                knative-eventing-operator-aggregated-stable; do
+                delete_no_wait clusterrole        "$name"
+                delete_no_wait clusterrolebinding "$name"
+              done
+              delete_no_wait clusterrole    knative-operator-webhook
+              delete_no_wait clusterrolebinding operator-webhook
+      volumes:
+        - name: tmp
+          emptyDir: {}
