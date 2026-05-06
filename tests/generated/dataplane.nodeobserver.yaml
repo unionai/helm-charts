@@ -615,12 +615,36 @@ data:
           namespaces:
             own_namespace: true
       relabel_configs:
-        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_prometheus_group]
           regex: .+
           action: keep
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
+    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          action: keep
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -807,6 +831,203 @@ data:
         all = true
         keepBytes = "80%"
 ---
+# Source: dataplane/templates/leaseworker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+data:
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+  webhook.yaml: |
+
+    
+    webhook:
+      certDir: /etc/webhook/certs
+      disableCreateMutatingWebhookConfig: true
+      embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+      listenPort: '9443'
+      localCert: true
+      secretManagerTypes:
+      - Embedded
+      - K8s
+      secretName: union-pod-webhook
+      serviceName: union-pod-webhook
+      servicePort: '443'
+  enabled_plugins.yaml: |
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          actor: fast-task
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+  config.yaml: |
+    leaseworker:
+      actionsServiceAddress: http://actions-service:8089
+      capacity: 100000
+      cluster: ''
+      dispatcherCount: 512
+      leasorAddress: http://leasor-service:8090
+      limit-namespace: union
+      namespace-template: union
+      organization: ''
+      refreshInterval: 10s
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 4096
+          gpu: 256
+          memory: 2Ti
+      unionAuth:
+        injectSecret: true
+        secretName: EAGER_API_KEY
+      workerName: '--worker1'
+    union:
+      connection:
+        host: dns:///
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'dataplane-operator'
+        clientSecretLocation: /etc/union/secret/client_secret
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+    admin:
+      clientId: 'dataplane-operator'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: dns:///
+      insecure: false
+    authorizer:
+      type: noop
+    catalog-cache:
+      cache-endpoint: dns:///
+      endpoint: dns:///
+      insecure: false
+      type: cacheservicev2
+      use-admin-auth: true
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+    sharedService:
+      metrics:
+        scope: 'leaseworker:'
+      security:
+        allowCors: true
+        allowLocalhostAccess: true
+        allowedHeaders:
+        - Content-Type
+        allowedOrigins:
+        - '*'
+        secure: false
+        useAuth: false
+    fasttask:
+      additional-worker-args:
+      - --last-ack-grace-period-seconds
+      - "120"
+      callback-uri: http://union-operator-leaseworker.union.svc.cluster.local:15605
+      grace-period-status-not-found: 2m
+    plugins:
+      ioutils:
+        remoteFileOutputPaths:
+          deckFilename: report.html
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+        disable-inject-owner-references: true
+        inject-finalizer: true
+    storage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: false
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
 # Source: dataplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -964,63 +1185,6 @@ data:
           "fieldConfig": {
             "defaults": {
               "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "yellow",
-                    "value": 10
-                  },
-                  {
-                    "color": "red",
-                    "value": 50
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 18,
-            "y": 1
-          },
-          "id": 8,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "area",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "auto"
-          },
-          "title": "Active Workflows",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "sum(flyte:propeller:all:execstats:active_workflow_executions{namespace=\"$namespace\"})",
-              "legendFormat": "Workflows",
-              "refId": "A"
-            }
-          ],
-          "description": "Current active FlyteWorkflow CRD count managed by Propeller."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
                 "mode": "palette-classic"
               },
               "custom": {
@@ -1042,8 +1206,9 @@ data:
           "options": {
             "legend": {
               "calcs": [
-                "mean",
-                "max"
+                "min",
+                "max",
+                "lastNotNull"
               ],
               "displayMode": "table",
               "placement": "bottom"
@@ -1073,59 +1238,6 @@ data:
             }
           ],
           "description": "Current count of active workflow, node, and task executions tracked by FlyteAdmin."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 12,
-            "x": 12,
-            "y": 5
-          },
-          "id": 7,
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "title": "Queue Depth",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "sum(flyte:propeller:all:main_depth{namespace=\"$namespace\"})",
-              "legendFormat": "Main",
-              "refId": "A"
-            },
-            {
-              "expr": "sum(flyte:propeller:all:sub_depth{namespace=\"$namespace\"})",
-              "legendFormat": "Sub",
-              "refId": "B"
-            }
-          ],
-          "description": "Main and sub workqueue depth over time."
         },
         {
           "datasource": {
@@ -1412,7 +1524,7 @@ data:
             "y": 10
           },
           "id": 1204,
-          "title": "Propeller Latency p99",
+          "title": "Executor Evaluate Duration p99",
           "type": "stat",
           "options": {
             "colorMode": "background",
@@ -1426,8 +1538,13 @@ data:
           },
           "targets": [
             {
-              "expr": "(union:dp:slo:propeller_round_latency_p99 or flyte:propeller:all:round:round_time_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.99\"} / 1000)",
-              "refId": "A"
+              "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
+              "legendFormat": "p99",
+              "refId": "A",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
             }
           ],
           "description": "Propeller round p99 latency in seconds. Falls back to raw metric if SLO rules not enabled."
@@ -1472,7 +1589,18 @@ data:
               "refId": "B"
             }
           ],
-          "description": "DP service availability over time with SLO target line."
+          "description": "DP service availability over time with SLO target line.",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "min",
+                "max",
+                "lastNotNull"
+              ]
+            }
+          }
         },
         {
           "datasource": {
@@ -1516,7 +1644,18 @@ data:
               "refId": "B"
             }
           ],
-          "description": "DP error budget remaining over time. Requires monitoring.slos.enabled."
+          "description": "DP error budget remaining over time. Requires monitoring.slos.enabled.",
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "calcs": [
+                "min",
+                "max",
+                "lastNotNull"
+              ]
+            }
+          }
         },
         {
           "collapsed": true,
@@ -1570,7 +1709,18 @@ data:
                   "refId": "B"
                 }
               ],
-              "description": "Operator execution operation processing rate and failure rate."
+              "description": "Operator execution operation processing rate and failure rate.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1627,7 +1777,18 @@ data:
                   "refId": "E"
                 }
               ],
-              "description": "FlyteAdmin error rates: propeller communication failures, model transform errors, notification publish failures."
+              "description": "FlyteAdmin error rates: propeller communication failures, model transform errors, notification publish failures.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1674,7 +1835,18 @@ data:
                   "refId": "C"
                 }
               ],
-              "description": "Breakdown of operator heartbeat computation: capabilities, usages, list workflows."
+              "description": "Breakdown of operator heartbeat computation: capabilities, usages, list workflows.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1721,7 +1893,18 @@ data:
                   "refId": "C"
                 }
               ],
-              "description": "Config sync cycle rate, errors, and propeller ConfigMap update count."
+              "description": "Config sync cycle rate, errors, and propeller ConfigMap update count.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1763,7 +1946,18 @@ data:
                   "refId": "B"
                 }
               ],
-              "description": "Billing collection cycle rate and errors. Failures mean billing data may be delayed."
+              "description": "Billing collection cycle rate and errors. Failures mean billing data may be delayed.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1862,17 +2056,28 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "executor:active_actions_count{namespace=\"$namespace\"}",
+                  "expr": "executor::v2:active_actions_count{namespace=\"$namespace\"}",
                   "legendFormat": "Active actions",
                   "refId": "A"
                 },
                 {
-                  "expr": "executor:available_capacity{namespace=\"$namespace\"}",
+                  "expr": "executor::v2:available_capacity{namespace=\"$namespace\"}",
                   "legendFormat": "Available capacity",
                   "refId": "B"
                 }
               ],
-              "description": "V2 executor active actions vs available capacity. Capacity=0 means executor is saturated."
+              "description": "V2 executor active actions vs available capacity. Capacity=0 means executor is saturated.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1904,17 +2109,28 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(executor:discovery_miss_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:discovery_miss_count{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Miss",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(executor:discovery_put_success_count{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:discovery_put_success_count{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Put success",
                   "refId": "B"
                 }
               ],
-              "description": "V2 executor cache discovery miss/put rates for task output caching."
+              "description": "V2 executor cache discovery miss/put rates for task output caching.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1949,12 +2165,23 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "sum by (phase) (rate(executor:actions_terminated{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "expr": "sum by (phase) (rate(executor::v2:actions_terminated{namespace=\"$namespace\"}[$__rate_interval]))",
                   "legendFormat": "{{ phase }}",
                   "refId": "A"
                 }
               ],
-              "description": "Task completion rate by outcome: succeeded, failed, aborted. Key V2 SLI for task health. [Metrics pending: requires cloud service instrumentation to be deployed]"
+              "description": "Task completion rate by outcome: succeeded, failed, aborted. Key V2 SLI for task health. [Metrics pending: requires cloud service instrumentation to be deployed]",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -1986,22 +2213,33 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "executor:evaluator:evaluate_duration{namespace=\"$namespace\", quantile=\"0.5\"}",
+                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
                   "legendFormat": "Evaluate p50",
                   "refId": "A"
                 },
                 {
-                  "expr": "executor:evaluator:evaluate_duration{namespace=\"$namespace\", quantile=\"0.9\"}",
+                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
                   "legendFormat": "Evaluate p90",
                   "refId": "B"
                 },
                 {
-                  "expr": "executor:evaluator:evaluate_duration{namespace=\"$namespace\", quantile=\"0.99\"}",
+                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
                   "legendFormat": "Evaluate p99",
                   "refId": "C"
                 }
               ],
-              "description": "Time spent in RecursiveNodeHandler (pod creation). Dominant component of V2 task latency. [Metrics pending: requires cloud service instrumentation to be deployed]"
+              "description": "Time spent in RecursiveNodeHandler (pod creation). Dominant component of V2 task latency. [Metrics pending: requires cloud service instrumentation to be deployed]",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -2033,585 +2271,38 @@ data:
               "type": "timeseries",
               "targets": [
                 {
-                  "expr": "rate(executor:system_failures{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:system_failures{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "System failures",
                   "refId": "A"
                 },
                 {
-                  "expr": "rate(executor:system_failures_exhausted{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:system_failures_exhausted{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Exhausted retries",
                   "refId": "B"
                 },
                 {
-                  "expr": "rate(executor:invalid_leases{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:invalid_leases{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Invalid leases",
                   "refId": "C"
                 },
                 {
-                  "expr": "rate(executor:evaluator:evaluate_errors{namespace=\"$namespace\"}[$__rate_interval])",
+                  "expr": "rate(executor::v2:evaluator:evaluate_errors{namespace=\"$namespace\"}[$__rate_interval])",
                   "legendFormat": "Evaluate errors",
                   "refId": "D"
                 }
               ],
-              "description": "Executor error rates. System failures retry; exhausted means task permanently failed. Invalid leases = malformed from queue service. [Metrics pending: requires cloud service instrumentation to be deployed]"
-            }
-          ]
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 33
-          },
-          "id": 100,
-          "title": "Flyte Propeller (V1)",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
+              "description": "Executor error rates. System failures retry; exhausted means task permanently failed. Invalid leases = malformed from queue service. [Metrics pending: requires cloud service instrumentation to be deployed]",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
                 }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 12
-              },
-              "id": 101,
-              "title": "Round Time (p50 / p90 / p99)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "flyte:propeller:all:round:round_time_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
-                  "legendFormat": "p50",
-                  "refId": "A"
-                },
-                {
-                  "expr": "flyte:propeller:all:round:round_time_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "flyte:propeller:all:round:round_time_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-                  "legendFormat": "p99",
-                  "refId": "C"
-                }
-              ],
-              "description": "Propeller reconciliation round time. One round = one FlyteWorkflow CRD processed."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 12
-              },
-              "id": 102,
-              "title": "Round Success / Error Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(flyte:propeller:all:round:success_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Success",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:round:error_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Errors",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:round:panic_unlabeled{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Panics",
-                  "refId": "C"
-                }
-              ],
-              "description": "Propeller round outcomes: success, errors, and panics per second."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 12
-              },
-              "id": 103,
-              "title": "Free Workers",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum(flyte:propeller:all:free_workers_count{namespace=\"$namespace\"})",
-                  "legendFormat": "Free workers",
-                  "refId": "A"
-                }
-              ],
-              "description": "Idle propeller worker goroutines. Zero = all workers busy processing workflows."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 20
-              },
-              "id": 104,
-              "title": "Queue Add Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(flyte:propeller:all:main_adds{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Main adds",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:sub_adds{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Sub adds",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:main_retries{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Main retries",
-                  "refId": "C"
-                }
-              ],
-              "description": "Items enqueued to propeller's main/sub workqueues, plus retry rate."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 20
-              },
-              "id": 105,
-              "title": "Workflow Updates",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(flyte:propeller:all:wf_updated{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Updated",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:wf_update_failed{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Failed",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:wf_too_large{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Too large",
-                  "refId": "C"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:wf_update_conflict{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Conflict",
-                  "refId": "D"
-                }
-              ],
-              "description": "etcd write outcomes: successful updates, failures, too-large (>1.5MB), optimistic concurrency conflicts."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 20
-              },
-              "id": 106,
-              "title": "Workflow Update Latency",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "flyte:propeller:all:wf_update_latency_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
-                  "legendFormat": "p50",
-                  "refId": "A"
-                },
-                {
-                  "expr": "flyte:propeller:all:wf_update_latency_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "flyte:propeller:all:wf_update_latency_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-                  "legendFormat": "p99",
-                  "refId": "C"
-                }
-              ],
-              "description": "etcd write latency for FlyteWorkflow status updates."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 28
-              },
-              "id": 107,
-              "title": "Node Queueing & Execution Latency",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "flyte:propeller:all:node:queueing_latency_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
-                  "legendFormat": "Queue p50",
-                  "refId": "A"
-                },
-                {
-                  "expr": "flyte:propeller:all:node:queueing_latency_unlabeled_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "Queue p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "flyte:propeller:all:node:node_exec_latency_unlabeled_us{namespace=\"$namespace\", quantile=\"0.9\"} / 1000",
-                  "legendFormat": "Exec p90 (ms)",
-                  "refId": "C"
-                }
-              ],
-              "description": "Node lifecycle: queueing latency (queued\u2192running) and execution latency (time in handler)."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "percentunit"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 28
-              },
-              "id": 108,
-              "title": "Metastore Cache Hit Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(flyte:propeller:all:metastore:cache_hit{namespace=\"$namespace\"}[$__rate_interval]) / (rate(flyte:propeller:all:metastore:cache_hit{namespace=\"$namespace\"}[$__rate_interval]) + rate(flyte:propeller:all:metastore:cache_miss{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "Hit rate",
-                  "refId": "A"
-                }
-              ],
-              "description": "In-memory cache effectiveness for object store (S3/GCS) reads. Low hit rate = excessive storage calls."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 36
-              },
-              "id": 109,
-              "title": "Event Recording (DP \u2192 CP)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum(rate(flyte:propeller:all:task:event_recording:success_duration_ms_count{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "Task success",
-                  "refId": "A"
-                },
-                {
-                  "expr": "sum(rate(flyte:propeller:all:node:event_recording:success_duration_ms_count{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "Node success",
-                  "refId": "B"
-                },
-                {
-                  "expr": "sum(rate(flyte:propeller:all:task:event_recording:failure_duration_ms_count{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "Task failure",
-                  "refId": "C"
-                },
-                {
-                  "expr": "sum(rate(flyte:propeller:all:node:event_recording:failure_duration_ms_count{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "Node failure",
-                  "refId": "D"
-                }
-              ],
-              "description": "Task/node event recording rate from propeller to FlyteAdmin. Failures indicate CP connectivity issues."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 36
-              },
-              "id": 110,
-              "title": "Cache Discovery (hit/miss/skip)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(flyte:propeller:all:discovery_hit_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Hits",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:discovery_miss_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Misses",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:discovery_skip_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Skips",
-                  "refId": "C"
-                },
-                {
-                  "expr": "rate(flyte:propeller:all:discovery_get_failure_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Get failures",
-                  "refId": "D"
-                }
-              ],
-              "description": "V2 executor cache discovery miss/put rates for task output caching."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "reqps"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 44
-              },
-              "id": 111,
-              "title": "K8s API Client Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum(rate(k8s_client_request_total_unlabeled{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "K8s requests/s",
-                  "refId": "A"
-                }
-              ],
-              "description": "Propeller's K8s API request rate. High rates may indicate excessive pod watches or creates."
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "s"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 44
-              },
-              "id": 112,
-              "title": "K8s API Client Latency (p90)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "histogram_quantile(0.90, sum by (le) (rate(k8s_client_request_latency_unlabeled_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-                  "legendFormat": "Request p90",
-                  "refId": "A"
-                },
-                {
-                  "expr": "histogram_quantile(0.90, sum by (le) (rate(k8s_client_rate_limiter_latency_unlabeled_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-                  "legendFormat": "Rate limiter p90",
-                  "refId": "B"
-                }
-              ],
-              "description": "K8s API request latency and client-side rate limiter wait time at p90."
+              }
             }
           ]
         },
@@ -2662,7 +2353,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP\u2192CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent)."
+              "description": "DP\u2192CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent).",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -2699,7 +2401,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP\u2192CP gRPC errors by method and code. Non-OK responses from the control plane."
+              "description": "DP\u2192CP gRPC errors by method and code. Non-OK responses from the control plane.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -2736,7 +2449,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP\u2192CP gRPC call latency at p95. High latency = slow control plane or network issues."
+              "description": "DP\u2192CP gRPC call latency at p95. High latency = slow control plane or network issues.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             }
           ]
         },
@@ -2768,7 +2492,7 @@ data:
                     "lineWidth": 1,
                     "showPoints": "never",
                     "stacking": {
-                      "mode": "normal"
+                      "mode": "none"
                     }
                   },
                   "unit": "short"
@@ -2790,7 +2514,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "CPU usage in cores per container, stacked. Identifies resource-heavy services."
+              "description": "CPU usage in cores per container, stacked. Identifies resource-heavy services.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -2808,7 +2543,7 @@ data:
                     "lineWidth": 1,
                     "showPoints": "never",
                     "stacking": {
-                      "mode": "normal"
+                      "mode": "none"
                     }
                   },
                   "unit": "bytes"
@@ -2830,7 +2565,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "Working set memory per container, stacked. Watch for approaching limits."
+              "description": "Working set memory per container. Watch for approaching limits.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             },
             {
               "datasource": {
@@ -2867,7 +2613,18 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "Per-container restart events. Spikes indicate crashes or OOM kills."
+              "description": "Per-container restart events. Spikes indicate crashes or OOM kills.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
             }
           ]
         }
@@ -2919,7 +2676,7 @@ data:
       "timepicker": {},
       "timezone": "browser",
       "title": "Union Dataplane Overview",
-      "uid": "union-dp-overview",
+      "uid": "union-dataplane-overview",
       "version": 1
     }
 ---
@@ -2933,7 +2690,716 @@ metadata:
     release: release-name
 data:
   recording_rules.yml: |
-    groups: []
+    groups:
+      - name: cost_calculations_15s
+        interval: 15s
+        rules:
+          - record: pod_gpu_allocation
+            expr: |
+              sum by (namespace, pod) (DCGM_FI_DEV_GPU_UTIL >= bool 0) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+          - record: execution_info # A join metric to look up execution-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_entity_name, label_execution_id, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          flyte:propeller:all:round:execution_info{domain!="", project!="", workflow_name!="", execution_id!=""}, # filter for workflow/task executions
+                          "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                        ), "label_entity_name", "$1", "workflow_name", "(.*)" # set label_entity_name to the workflow/task name from the workflow_execution_id
+                      ),
+                      "label_execution_id", "$1", "execution_id", "(.*)"
+                    ),
+                    "label_project", "$1", "project", "(.*)" # project
+                  ),
+                  "label_domain", "$1", "domain", "(.*)" # domain
+                )
+              )
+          - record: app_info # A join metric to look up app-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_app_name, label_app_version, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                      }, # this filters for apps
+                      "label_app_name", "$1", "label_serving_unionai_dev_app_name", "(.*)" # rename to cleanup
+                    ),
+                    "label_app_version", "$1", "label_serving_knative_dev_revision", "(.*)" # the app_version is equivalent to an execution_id for workflows (lowest level of granularity)
+                  ),
+                  "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # join key
+                )
+              )
+          - record: workspace_info # A join metric to look up workspace info. Used to disambiguate workflow/task executions, apps, and workspaces.
+            expr: |
+              max by (label_domain, label_project, label_workspace_name, label_entity_id)(
+                label_replace(
+                  label_replace(
+                    kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # filter for workspaces
+                    "label_entity_id", "$1", "label_node_id", "(.*)" # join key
+                  ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
+                )
+              )
+          - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
+                # First, calculate the allocated memory for each pod
+                max by (namespace, pod) ( # this is the case where consumed (the memory working set) exceeds requested memory
+                  (
+                    sum by (namespace, pod) (
+                      container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                    )
+                    > sum by (namespace, pod) (
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"}
+                    )
+                  )
+                  or sum by (namespace, pod) ( # this is the case where memory requests are <= consumed memory
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"} # needed to add node!="" to dedupe
+                  )
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:cpu_usage_per_node:sum # Allocated cpu (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, calculate the allocated cpu for each pod
+                max by (namespace, pod) ( # this is the case where consumed (the cpu usage seconds total) exceeds requested cpu
+                  (
+                    sum by (namespace, pod) (
+                      irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                    )
+                    > sum by (namespace, pod) (
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                    )
+                  )
+                  or sum by (namespace, pod) ( # this is the case where cpu requests are <= consumed cpu
+                      kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                  )
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:gpu_usage_per_node:sum # Allocated gpu aggregated per node and entity, where entity is either a task/workflow execution or an app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+                max by (namespace, pod) (
+                  pod_gpu_allocation
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+                # Now join in node identifiers which are used for subsequent overhead calculations
+                * on (namespace, pod) group_left(node) (
+                  max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+                )
+              )
+          - record: entity_id:used_mem_bytes:sum # the sum of used memory across all containers in an entity (numerator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity
+                # First, calculate the used memory for each pod
+                sum by (namespace, pod) (
+                  container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:allocated_mem_bytes:sum # the sum of allocated memory across all containers in an entity (denominator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+                entity_id:mem_usage_bytes_total_per_node:sum
+              )
+          - record: entity_id:used_cpu:sum # the sum of used cpu across all containers in an entity (numerator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) (
+                sum by (namespace, pod) (
+                  irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:allocated_cpu:sum # the sum of allocated cpu across all containers in an entity (denominator for aggregate utilization calculations)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+                entity_id:cpu_usage_per_node:sum
+              )
+          - record: entity_id:sm_occupancy:avg # the simple average of SM occupancy (a good generic measure of GPU utilization) per entity
+            expr: |
+              avg by (label_entity_type, label_domain, label_project, label_entity_id) (
+                # First, grab the SM occupancy for each pod
+                max by (namespace, pod) (
+                  DCGM_FI_PROF_SM_OCCUPANCY # SM occupancy is a good proxy for actual GPU usage
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:gpu_count:sum # the count of running gpu pods per entity (need this to weight the gpu utilization when aggregating upwards - i.e. project-level)
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+                # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+                max by (namespace, pod) (
+                  pod_gpu_allocation
+                )
+                # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+                * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                            "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                          ),
+                          "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                    label_replace(
+                      label_replace(
+                        kube_pod_labels{
+                          label_domain!="",
+                          label_project!="",
+                          label_serving_unionai_dev_app_name!="",
+                          label_serving_knative_dev_revision!=""
+                          }, # this filters for apps only
+                        "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                      ),
+                      "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                    )
+                  )
+                  or
+                  max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          label_replace(
+                            kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                            "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                          ),
+                          "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                        ),
+                        "label_domain", "$1", "label_domain", "(.*)"
+                      ),
+                      "label_project", "$1", "label_project", "(.*)"
+                    )
+                  )
+                )
+                # Then filter for pods only in the "Running" or "Pending" phase
+                * on (namespace, pod) group_left() (
+                  max by (namespace, pod) (
+                    kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                  )
+                )
+              )
+          - record: entity_id:weighted_sm_occupancy:sum # product of SM occupancy and allocated GPU count (something like "used memory", numerator of weighted calcs)
+            expr: |
+              entity_id:sm_occupancy:avg
+              * on (label_domain, label_project, label_entity_type, label_entity_id) entity_id:gpu_count:sum
+          - record: entity_id:allocated_mem_cost:sum # Allocated cost of memory for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type) (
+                entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_cpu_cost:sum # Allocated cost of cpu for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+                entity_id:cpu_usage_per_node:sum
+                * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_gpu_cost:sum # Allocated cost of gpu for each workflow/task execution and app.
+            expr: |
+              sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+                entity_id:gpu_usage_per_node:sum
+                * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+              )
+          - record: entity_id:allocated_cost:sum # Allocated cost of memory, cpu, and gpu for each workflow/task execution and app.
+            expr: |
+              label_replace(
+                sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                  entity_id:allocated_mem_cost:sum
+                  or
+                  entity_id:allocated_cpu_cost:sum
+                  or
+                  entity_id:allocated_gpu_cost:sum
+                ),
+                "type", "allocated", "", "" # add type info
+              )
+          - record: entity_id:overhead_cost:sum # The amount of overhead costs (node costs that we can't allocate with container resources) to allocate to each entity (workflow/task execution or app)
+            expr: |
+              label_replace(
+                sum by (label_entity_type, label_entity_id, label_domain, label_project)( # Aggregate the per-node metrics up to workflow/task execution or app (label_entity_id)
+                  # Start with each execution's and app's allocated cost per node
+                  sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                    entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                    * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:cpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:gpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  )
+                  # Then divide out the total allocated cost per node to get the proportion of allocated cost associated with each entity
+                  / on (node) group_left()(
+                    sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                      entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                      * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:cpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:gpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    )
+                    > 0 # need to avoid dividing by zero, or gaps in the data can cause NaNs to proliferate, borking all charts
+                  )
+                  # Then multiply by the overhead cost per node
+                  * on (node) group_left() (
+                    # To calculate overhead, start with the true cost of running each node
+                    avg by (node)(kube_node_labels{label_flyte_org_node_role="worker"}) # only look at worker nodes
+                    * on (node) max by (node) (
+                      node_total_hourly_cost{instance_type!=""} # sometimes, the instance_type can be null, causing an unlabeled label to show up in the Compute Costs dashboard charts
+                    ) * (15 / 3600) # convert hourly cost to 15-secondly cost
+                    # Then subtract out the total allocated cost on each node
+                    - on (node) group_left()(
+                      sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                        entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                        * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                        or
+                        entity_id:cpu_usage_per_node:sum
+                        * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                        or
+                        entity_id:gpu_usage_per_node:sum
+                        * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      )
+                    )
+                  )
+                ),
+                "type", "overhead", "", "" # add type info
+              )
+          - record: entity_id:total_cost:sum # Total cost of each entity (workflow/task execution or app), including allocated (from container resources) and overhead (proportion of unallocated node costs)
+            expr: |
+              label_replace(
+                sum by (label_domain, label_project, label_entity_id, label_entity_type) (
+                  entity_id:allocated_cost:sum
+                  or
+                  entity_id:overhead_cost:sum
+                ),
+                "type", "total", "", "" # add type info
+              )
+          - record: node:total_cost:sum # Total cost of all nodes
+            expr: |
+              sum (
+                avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+                * on (node) group_left() node_total_hourly_cost{instance_type!=""} * (15 / 3600) # convert hourly cost to 15-secondly cost
+              )
+          - record: node_type:total_cost:sum # Total cost of nodes grouped by node type
+            expr: |
+              sum by (node_type)(
+                avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+                * on (node) group_left(node_type) label_replace(node_total_hourly_cost{instance_type!=""}, "node_type", "$1", "instance_type", "(.*)") * (15 / 3600) # convert hourly cost to 15-secondly cost and rename label
+              )
+          - record: node_type:uptime_hours:sum # Total uptime of nodes grouped by node type
+            expr: |
+              sum by (node_type)(
+                avg by (node, node_type)( # dedupe
+                  label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)") # relabel
+                )
+              ) * (15 / 3600) # convert to number of hours per 15-second observation      # Aggregate the above into visible metrics
+      - name: cost_rollup_15m
+        interval: 15m
+        rules:
+          - record: execution_info15m
+            expr: |
+              max_over_time(execution_info[15m:15s])
+          - record: app_info15m
+            expr: |
+              max_over_time(app_info[15m:15s])
+          - record: workspace_info15m
+            expr: |
+              max_over_time(workspace_info[15m:15s])
+          - record: entity_id:allocated_mem_bytes:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+          - record: entity_id:used_mem_bytes:sum15m
+            expr: |
+              sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+          - record: entity_id:allocated_cpu:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+          - record: entity_id:used_cpu:sum15m
+            expr: |
+              sum_over_time(entity_id:used_cpu:sum[15m:15s])
+          - record: entity_id:weighted_sm_occupancy:sum15m
+            expr: |
+              sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+          - record: entity_id:gpu_count:sum15m
+            expr: |
+              sum_over_time(entity_id:gpu_count:sum[15m:15s])
+          - record: entity_id:allocated_mem_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+          - record: entity_id:allocated_cpu_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_gpu_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+          - record: entity_id:allocated_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+          - record: entity_id:overhead_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+          - record: entity_id:total_cost:sum15m
+            expr: |
+              sum_over_time(entity_id:total_cost:sum[15m:15s])
+          - record: node:total_cost:sum15m
+            expr: |
+              sum_over_time(node:total_cost:sum[15m:15s])
+          - record: node_type:total_cost:sum15m
+            expr: |
+              sum_over_time(node_type:total_cost:sum[15m:15s])
+          - record: node_type:uptime_hours:sum15m
+            expr: |
+              sum_over_time(node_type:uptime_hours:sum[15m:15s])
 ---
 # Source: dataplane/templates/nodeexecutor/configmap.yaml
 apiVersion: v1
@@ -3383,34 +3849,6 @@ data:
           regex: '^.*?\.u/.*?t=(.*?)/.*?u\..*$'
         - tag_name: target_namespace
           regex: '^.*?\.u/.*?tns=(.*?)/.*?u\..*$'
----
-# Source: dataplane/templates/webhook/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-pod-webhook-config
-  namespace: union
-data:
-  core.yaml: |
-
-    
-    webhook:
-      certDir: /etc/webhook/certs
-      disableCreateMutatingWebhookConfig: true
-      embeddedSecretManagerConfig:
-        imagePullSecrets:
-          enabled: true
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-      listenPort: '9443'
-      localCert: true
-      secretManagerTypes:
-      - Embedded
-      - K8s
-      secretName: union-pod-webhook
-      serviceName: union-pod-webhook
-      servicePort: '443'
 ---
 # Source: dataplane/templates/serving/knative-operator-crds.yaml
 # Copyright 2021 The Knative Authors
@@ -7738,130 +8176,58 @@ rules:
       - "watch"
       - "patch"
 ---
-# Source: dataplane/templates/monitoring/prometheus-rbac.yaml
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
+  name: union-leaseworker
   labels:
-    release: release-name
+    app: leaseworker
 rules:
-  # Prometheus server scrape permissions
-  - apiGroups: [""]
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-      - pods
-      - ingresses
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["discovery.k8s.io"]
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
-  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
-  - apiGroups: ["certificates.k8s.io"]
-    resources: ["certificatesigningrequests"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["daemonsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["policy"]
-    resources: ["poddisruptionbudgets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["replicasets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["replicationcontrollers"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["resourcequotas"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["volumeattachments"]
-    verbs: ["list", "watch"]
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8045,6 +8411,131 @@ rules:
       - update
       - delete
 ---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-operator-prometheus-rbac
+  namespace: union
+  labels:
+    release: release-name
+rules:
+  # Prometheus server scrape permissions
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - ingresses
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources:
+      - ingresses/status
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["daemonsets"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["extensions", "apps"]
+    resources: ["replicasets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["replicationcontrollers"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    verbs: ["list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["list", "watch"]
+---
 # Source: dataplane/templates/serving/pre-delete-hook.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -8108,40 +8599,21 @@ roleRef:
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
 ---
-# Source: dataplane/templates/monitoring/prometheus-rbac.yaml
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
+  name: union-leaseworker
   labels:
-    release: release-name
-subjects:
-  - kind: ServiceAccount
-    name: union-operator-prometheus
-    namespace: union
+    app: leaseworker
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: union-operator-prometheus-rbac
----
-# Source: dataplane/templates/monitoring/prometheus-rbac.yaml
-# kube-state-metrics service account RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-prometheus-kube-state-metrics
-  namespace: union
-  labels:
-    release: release-name
+  name: union-leaseworker
 subjects:
-  - kind: ServiceAccount
-    name: release-name-prometheus-kube-state-metrics
-    namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-prometheus-rbac
+- kind: ServiceAccount
+  name: union-system
+  namespace: union
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8230,6 +8702,41 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-operator-prometheus-rbac
+  namespace: union
+  labels:
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-prometheus-rbac
+---
+# Source: dataplane/templates/prometheus/rbac.yaml
+# kube-state-metrics service account RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-prometheus-kube-state-metrics
+  namespace: union
+  labels:
+    release: release-name
+subjects:
+  - kind: ServiceAccount
+    name: release-name-prometheus-kube-state-metrics
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-prometheus-rbac
 ---
 # Source: dataplane/templates/serving/pre-delete-hook.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8447,6 +8954,28 @@ spec:
   selector:
     app.kubernetes.io/name: imagebuilder-buildkit
     app.kubernetes.io/instance: release-name
+---
+# Source: dataplane/templates/leaseworker/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-leaseworker
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    app: leaseworker
+spec:
+  type: ClusterIP
+  ports:
+    - port: 15605
+      targetPort: 15605
+      protocol: TCP
+      name: fasttask
+    - port: 10254
+      targetPort: metrics
+      protocol: TCP
+      name: debug
+  selector:
+    app: leaseworker
 ---
 # Source: dataplane/templates/nodeexecutor/service.yaml
 apiVersion: v1
@@ -8691,7 +9220,7 @@ spec:
             privileged: true
             runAsNonRoot: false
             runAsUser: 0
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9344,6 +9873,107 @@ spec:
                 app.kubernetes.io/instance: release-name
             topologyKey: "kubernetes.io/hostname"
 ---
+# Source: dataplane/templates/leaseworker/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: leaseworker
+  template:
+    metadata:
+      annotations:
+        configChecksum: "efe5b5ee319847f43bce7bfed229717330459057e2902cb1a24dc05a96d7d03"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        
+        app: leaseworker
+        app.kubernetes.io/instance: 'release-name'
+        app.kubernetes.io/name: leaseworker
+    spec:
+      securityContext:
+        fsGroup: 1337
+      serviceAccountName: union-system
+      terminationGracePeriodSeconds: 75
+      volumes:
+        - name: config-volume
+          configMap:
+            name: leaseworker
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: leaseworker
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
+          imagePullPolicy: IfNotPresent
+          command:
+            - leaseworker
+            - run
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+          resources:
+            limits:
+              cpu:    "8"
+              memory: "16Gi"
+            requests:
+              cpu:    "4"
+              memory: "8Gi"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
+---
 # Source: dataplane/templates/nodeexecutor/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -9384,7 +10014,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: IfNotPresent
           command:
             - executorv2
@@ -9490,7 +10120,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9558,7 +10188,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -9623,7 +10253,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9719,7 +10349,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "77958aee0464eee4cb43c70036cf5ffa89f47f58c908845b9eeaecc7e32bba4"
+        configChecksum: "efe5b5ee319847f43bce7bfed229717330459057e2902cb1a24dc05a96d7d03"
         
     spec:
       securityContext:
@@ -9731,7 +10361,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.8"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.5.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -9793,7 +10423,7 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: union-pod-webhook-config
+            name: leaseworker
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
@@ -9852,9 +10482,7 @@ webhooks:
         port: 443
     failurePolicy: Fail
     matchPolicy: Equivalent
-    namespaceSelector:
-      matchLabels:
-        kubernetes.io/metadata.name: union
+    namespaceSelector: {}
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
@@ -10049,10 +10677,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.4.8
+    helm.sh/chart: dataplane-2026.5.0
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.4.8"
+    app.kubernetes.io/version: "2026.5.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -10065,7 +10693,7 @@ spec:
       queue-sidecar-memory-limit: "800Mi"
       queue-sidecar-ephemeral-storage-request: "512Mi"
       queue-sidecar-ephemeral-storage-limit: "1024Mi"
-      registries-skipping-tag-resolving: managed.cr.union.ai
+      registries-skipping-tag-resolving: managed.cr.union.ai,ghcr.io,docker.io,union-dataplane
     features:
       kubernetes.podspec-affinity: "enabled"
       kubernetes.podspec-nodeselector: "enabled"
@@ -10099,10 +10727,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.4.8
+      helm.sh/chart: dataplane-2026.5.0
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.4.8"
+      app.kubernetes.io/version: "2026.5.0"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:
