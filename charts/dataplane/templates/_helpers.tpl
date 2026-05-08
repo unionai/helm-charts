@@ -1474,10 +1474,23 @@ Returns the fluentbit service account name, using the common SA when enabled.
 Returns the buildkit service account name, using the common SA when enabled.
 */}}
 {{- define "buildkit.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
+{{- if .Values.imageBuilder.buildkit.serviceAccount.forceDedicated -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- else if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Create the name of OpenShift SecurityContextConstraints to use for buildkit.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftSccName" -}}
+{{- if not .Values.imageBuilder.buildkit.openShift.securityContextConstraints.create -}}
+{{- printf "%s" .Values.imageBuilder.buildkit.openShift.securityContextConstraints.existingName -}}
+{{- else -}}
+{{- printf "%s" (default (printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .)) .Values.imageBuilder.buildkit.openShift.securityContextConstraints.name) -}}
 {{- end -}}
 {{- end -}}
 
