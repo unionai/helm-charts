@@ -1,0 +1,40 @@
+# Zero-trust mode overlay for the Union dataplane chart.
+#
+# Layer this AFTER the BYOC platform overlay (values.{aws,gcp,azure}.yaml)
+# to render the vendored Knative Serving + Kourier + Envoy gateway path
+# under templates/gateway/, instead of the legacy KnativeServing CR managed
+# by the knative-operator subchart.
+#
+# Requirements:
+#   - Applies ONLY to BYOC deployments. Do not layer onto the
+#     values.{aws,gcp}.selfhosted-intracluster.yaml overlays.
+#   - The 12 Knative Serving CRDs ship inline with this chart under
+#     templates/gateway/crds/ when gateway.enable is true, so no
+#     separate CRD-install step is required. (Note: the existing
+#     knative-operator CRDs gating in templates/serving/ remains
+#     unchanged.)
+#
+# What this overlay changes vs. BYOC defaults:
+#   gateway.enable: false -> true
+#   knative-operator.enabled: true -> false
+#
+# What stays at its BYOC default (intentionally):
+#   serving.enabled: true   <- keeps operator RBAC for serving.knative.dev,
+#                              keeps operator-binary apps.enabled,
+#                              keeps Cloudflare tunnel apps-route registration.
+#                              The legacy KnativeServing CR and bootstrap
+#                              configmap under templates/serving/ do not
+#                              render because of the compound predicate
+#                              (not .Values.gateway.enable) on those
+#                              two templates.
+#   ingress.enabled: false  <- BYOC entry is the Cloudflare tunnel.
+#   union.dataproxy.enable: false  <- no-op until the dataproxy follow-up
+#                              vendors the union-dataproxy Deployment+Service
+#                              and wires the gateway extraRoutes/extraClusters
+#                              collectors.
+
+gateway:
+  enable: true
+
+knative-operator:
+  enabled: false
