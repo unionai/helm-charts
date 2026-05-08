@@ -1036,7 +1036,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
     Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
     Path                /var/log/containers/*.log
-    DB                  /var/log/flb_kube.db
+    DB                  {{ .Values.fluentbit.tailDBPath }}
     multiline.parser    docker, cri
     Mem_Buf_Limit       5MB
     Skip_Long_Lines     On
