@@ -1153,6 +1153,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: serving
 {{- end -}}
 
+{{- define "serving.kourierGateway.openShiftSccName" -}}
+{{- default (printf "%s-kourier-gateway" (include "serving.fullname" .)) .Values.serving.openShift.kourierGatewayScc.name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "3scale-kourier-gateway.selectorLabels" -}}
 app.kubernetes.io/name: 3scale-kourier-gateway
 app.kubernetes.io/instance: {{ .Release.Name }}
