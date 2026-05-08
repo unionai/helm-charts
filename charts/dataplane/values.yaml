@@ -2238,3 +2238,279 @@ monitoring:
         requests:
           cpu: "500m"
           memory: "1Gi"
+
+# ----------------------------------------------------------------------------
+# Gateway: vendored Knative Serving + Kourier + Envoy direct manifests.
+# ----------------------------------------------------------------------------
+# When gateway.enable is true (BYOC zero-trust mode only), templates/gateway/
+# renders the vendored manifests; the legacy KnativeServing CR + bootstrap
+# configmap under templates/serving/ do NOT render. When false (default),
+# the legacy operator-managed path is used as today. Selfhosted-intracluster
+# overlays must keep gateway.enable: false.
+gateway:
+  enable: false
+
+  service:
+    httpAppsPort: 80
+    httpStaticPort: 8888
+
+  # -- Enables the Union envoy auth plugin on the kourier-gateway listener.
+  # In zero-trust mode this listener IS the trust boundary. The plugin
+  # verifies session/token against the auth URLs below; when the override
+  # fields are empty, the URLs are derived from .Values.host
+  # (= global.UNION_CONTROL_PLANE_HOST) and .Values.orgName
+  # (= global.ORG_NAME) via the gateway/_helpers.tpl helpers.
+  auth:
+    enable: true
+    tenantAuthURL: ""
+    tenantAuthSignInURL: ""
+    tenantControlPlaneURL: ""
+    organization: ""
+
+  components:
+    envoy:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gateway
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        envoy:
+          # Pinned to the same Union envoy SHA used by today's
+          # serving.registry.override (charts/dataplane/templates/serving/
+          # knative-serving.yaml:58).
+          image:
+            repository: ghcr.io/unionai/envoy
+            tag: "456fed84d4ad9a9dfb186d117d9362e9dc0f7c1f"
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    kourier-controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - net-kourier-controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          # Today's serving.registry.override pins the Kourier controller by
+          # digest (ghcr.io/unionai/kourier@sha256:5804…). The vendored
+          # templates render `repo:tag`, falling back to plain `repo` when
+          # tag is empty, so the digest goes in the repository field with
+          # an empty tag.
+          image:
+            repository: ghcr.io/unionai/kourier@sha256:5804c348d15b3959604e3e3ceed216c3a1c7b32cbe254c7d3eb02a35e62ba9c4
+            tag: ""
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+
+    activator:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - activator
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        activator:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 20
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image: {}
+
+    autoscaler:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler:
+          image: {}
+
+    autoscaler-hpa:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler-hpa
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler-hpa:
+          image: {}
+
+    webhook:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - webhook
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        webhook:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+  config:
+    defaults:
+      # Maximum timeout is limited by Cloudflare tunnel ingress which caps at 6000s
+      max-revision-timeout-seconds: "6000"
+    deployment:
+      progress-deadline: "30m"
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-dnsconfig: "enabled"
+      kubernetes.podspec-dnspolicy: "enabled"
+      kubernetes.podspec-fieldref: "enabled"
+      kubernetes.podspec-hostaliases: "enabled"
+      kubernetes.podspec-init-containers: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-persistent-volume-claim: "enabled"
+      kubernetes.podspec-persistent-volume-write: "enabled"
+      kubernetes.podspec-priorityclassname: "enabled"
+      kubernetes.podspec-runtimeclassname: "enabled"
+      kubernetes.podspec-schedulername: "enabled"
+      kubernetes.podspec-securitycontext: "enabled"
+      kubernetes.podspec-shareprocessnamespace: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-topologyspreadconstraints: "enabled"
+      kubernetes.podspec-volumes-emptydir: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+    kourier: {}
+    autoscaler: {}
+    certmanager: {}
+    domain: {}
+    gc: {}
+    leader-election: {}
+    logging: {}
+    observability: {}
+    tracing: {}
+
+# When true, the gateway envoy adds extraRoutes / extraClusters that fan out
+# dataplane API paths through envoy. Effective only when gateway.enable: true.
+# Default false; today this is a no-op (the contributors are not yet wired).
+# A follow-up vendors the union-dataproxy Deployment+Service and lights this on.
+union:
+  dataproxy:
+    enable: false
