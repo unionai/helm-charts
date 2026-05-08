@@ -30,11 +30,11 @@ Fail the render when auth is enabled but the global is unset, rather than
 silently emitting broken URLs (e.g. https:///me) or an empty override org.
 */}}
 {{- define "gateway.auth.cloudHostName" -}}
-{{- required "global.cloudHostName is required when gateway.auth.enable is true" .Values.global.cloudHostName -}}
+{{- required "host is required when gateway.auth.enable is true" (tpl .Values.host .) -}}
 {{- end }}
 
 {{- define "gateway.auth.organization" -}}
-{{- required "global.organization is required when gateway.auth.enable is true" .Values.global.organization -}}
+{{- required "orgName is required when gateway.auth.enable is true" (tpl .Values.orgName .) -}}
 {{- end }}
 
 {{/*
