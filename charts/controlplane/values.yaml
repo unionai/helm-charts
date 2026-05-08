@@ -20,6 +20,7 @@ global:
   DB_HOST: ""               # PostgreSQL endpoint
   DB_NAME: ""               # PostgreSQL database name
   DB_USER: ""               # PostgreSQL username
+  DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
   BUCKET_NAME: ""           # Object storage bucket for metadata
   ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
@@ -409,6 +410,7 @@ services:
         metrics:
           scope: "artifacts:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         options: sslmode=disable
@@ -607,6 +609,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -760,6 +763,13 @@ services:
           - migrate
           - --config
           - "/etc/config/*.yaml"
+      - name: bootstrap
+        args:
+          - cloudorganizations
+          - bootstrap-tenant
+          - organizations
+          - --config
+          - "/etc/config/*.yaml"
     args:
       - cloudorganizations
       - serve
@@ -770,7 +780,13 @@ services:
         connectPort: 8081
         metrics:
           scope: "organizations:"
+      organizations:
+        bootStrapConfig:
+          organizations:
+            - '{{ .Values.global.UNION_ORG }}'
+          tenantType: "SELF_MANAGED"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         username: '{{ .Values.global.DB_USER }}'
@@ -802,6 +818,7 @@ services:
         metrics:
           scope: "executions:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -1073,6 +1090,7 @@ services:
         metrics:
           scope: "run-scheduler:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
