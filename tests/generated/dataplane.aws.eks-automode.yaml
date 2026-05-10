@@ -3887,6 +3887,182 @@ data:
   image-builder.default-repository: ".dkr.ecr.test-region.amazonaws.com/union-dataplane"
   image-builder.authentication-type: "aws"
 ---
+# Source: dataplane/templates/propeller/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-flytepropeller-config
+  namespace: union
+data:
+  admin.yaml: | 
+    admin:
+      clientId: 'test-client-id'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: dns:///test-controlplane-host
+      insecure: false
+    event:
+      capacity: 1000
+      rate: 500
+      type: admin
+  catalog.yaml: | 
+    catalog-cache:
+      cache-endpoint: dns:///test-controlplane-host
+      endpoint: dns:///test-controlplane-host
+      insecure: false
+      type: cacheservicev2
+      use-admin-auth: true
+  copilot.yaml: | 
+    plugins:
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+  core.yaml: | 
+    propeller:
+      downstream-eval-duration: 30s
+      enable-admin-launcher: true
+      leader-election:
+        enabled: true
+        lease-duration: 15s
+        lock-config-map:
+          name: propeller-leader
+          namespace: 'union'
+        renew-deadline: 10s
+        retry-period: 2s
+      limit-namespace: union
+      literal-offloading-config:
+        enabled: true
+      max-workflow-retries: 30
+      metadata-prefix: metadata/propeller
+      metrics-prefix: flyte
+      prof-port: 10254
+      queue:
+        batch-size: -1
+        batching-interval: 2s
+        queue:
+          base-delay: 5s
+          capacity: 1000
+          max-delay: 120s
+          rate: 100
+          type: maxof
+        sub-queue:
+          capacity: 100
+          rate: 10
+          type: bucket
+        type: batch
+      rawoutput-prefix: 's3://test-metadata-bucket'
+      workers: 4
+      workflow-reeval-duration: 30s
+    webhook:
+      certDir: /etc/webhook/certs
+      disableCreateMutatingWebhookConfig: true
+      embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+      listenPort: '9443'
+      secretManagerTypes:
+      - Embedded
+      - K8s
+      serviceName: union-pod-webhook
+      servicePort: '443'
+  enabled_plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          actor: fast-task
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+  k8s.yaml: | 
+    plugins:
+      k8s:
+        accelerator-device-classes:
+        - NVIDIA_GPU:
+            device-node-label: eks.amazonaws.com/instance-gpu-name
+            pod-template:
+              template:
+                spec:
+                  affinity:
+                    nodeAffinity:
+                      requiredDuringSchedulingIgnoredDuringExecution:
+                        nodeSelectorTerms:
+                        - matchExpressions:
+                          - key: eks.amazonaws.com/instance-gpu-manufacturer
+                            operator: In
+                            values:
+                            - nvidia
+            resource-name: nvidia.com/gpu
+        accelerator-devices:
+        - NVIDIA-TESLA-T4: t4
+        - NVIDIA-TESLA-V100: v100
+        - NVIDIA-TESLA-A100: a100
+        - NVIDIA-A10G: a10g
+        - NVIDIA-TESLA-K80: k80
+        - NVIDIA-H100: h100
+        - NVIDIA-L4: l4
+        - NVIDIA-L40S: l40s
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+  logger.yaml: |
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+  namespace_config.yaml: |
+    namespace_mapping:
+      template: union
+  resource_manager.yaml: | 
+    propeller:
+      resourcemanager:
+        type: noop
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            templateUris:
+            - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
+        kubernetes-enabled: false
+        templates:
+        - displayName: Task Logs
+          scheme: TaskExecution
+          templateUris:
+          - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
+  storage.yaml: | 
+    storage:
+      container: "test-metadata-bucket"
+      type: s3
+      connection:
+        auth-type: iam
+        region: test-region
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
 # Source: dataplane/templates/serving/bootstrap-configmap.yaml
 # We need to copy the default configmap here since knative-operator does not automatically update the
 # address of the `net-kourier-controller` endpoint to use the release namespace. It assumes that the
@@ -10721,7 +10897,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "b799f0912a9df5c5b5ea08a5871d0771a725f81a8fe5c0e2398fda80787b7c4"
+        configChecksum: "3369f4581eaa335c72fec023b8bbad8eacda432ce86343a1f696db874667483"
         
     spec:
       securityContext:
@@ -10795,7 +10971,7 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: leaseworker
+            name: union-flytepropeller-config
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
