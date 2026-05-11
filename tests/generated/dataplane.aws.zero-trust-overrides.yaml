@@ -15257,6 +15257,108 @@ spec:
           emptyDir:
             sizeLimit: 10Gi
 ---
+# Source: dataplane/templates/dataproxy/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-dataproxy
+  labels:
+    app.kubernetes.io/name: union-dataproxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: union-dataproxy
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "c2c635bb863d2af3a0b2cda1f93711171142094cac4dd7595cbdfac1050058d"
+        
+      labels:
+        
+        app.kubernetes.io/name: union-dataproxy
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      serviceAccountName: union-system
+      securityContext:
+        {}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: dataproxy
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.4.10"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 250Mi
+          volumeMounts:
+            - mountPath: /etc/union/config
+              name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
+          args:
+            - dataproxy
+            - serve
+            - --config
+            - /etc/union/config/*.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+---
 # Source: dataplane/templates/flyteconnector/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
