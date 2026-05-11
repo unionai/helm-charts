@@ -46,7 +46,7 @@ NOTE: dataproxy.envoyRoute is a catch-all (prefix "/") and must remain last.
 Place more specific routes above it or they will be shadowed.
 */}}
 {{- define "gateway.extraRoutes" -}}
-{{- if .Values.union.dataproxy.enable }}
+{{- if .Values.dataproxy.enabled }}
 {{- include "dataproxy.envoyRoute" . }}
 {{- end }}
 {{- end -}}
@@ -56,7 +56,7 @@ Collector: aggregates all backend envoy clusters.
 To add a new backend, add a conditional include block here.
 */}}
 {{- define "gateway.extraClusters" -}}
-{{- if .Values.union.dataproxy.enable }}
+{{- if .Values.dataproxy.enabled }}
 {{- include "dataproxy.envoyCluster" . }}
 {{- end }}
 {{- end -}}

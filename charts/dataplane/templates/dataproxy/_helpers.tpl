@@ -9,7 +9,7 @@ Mirrors the cloud repo (operator/deploy/helm/templates/_helpers.tpl):
 
 {{/*
 Envoy route entry for the dataproxy backend.
-Included by gateway.extraRoutes when union.dataproxy.enable is true.
+Included by gateway.extraRoutes when dataproxy.enabled is true.
 NOTE: prefix "/" is a catch-all — must be the last route in the virtual host.
 */}}
 {{- define "dataproxy.envoyRoute" -}}
@@ -22,7 +22,7 @@ NOTE: prefix "/" is a catch-all — must be the last route in the virtual host.
 
 {{/*
 Envoy cluster entry for the dataproxy backend.
-Included by gateway.extraClusters when union.dataproxy.enable is true.
+Included by gateway.extraClusters when dataproxy.enabled is true.
 */}}
 {{- define "dataproxy.envoyCluster" -}}
 - name: dataproxy
@@ -37,7 +37,7 @@ Included by gateway.extraClusters when union.dataproxy.enable is true.
             address:
               socket_address:
                 address: {{ include "dataproxy.fullname" . }}
-                port_value: {{ .Values.union.dataproxy.service.port }}
+                port_value: {{ .Values.dataproxy.service.port }}
   typed_extension_protocol_options:
     envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
       "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
