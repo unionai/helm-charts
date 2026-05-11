@@ -127,6 +127,19 @@ Existing dataplanes running the legacy operator-managed serving path **must** ru
 
 Run `knative-migration` first to strip the finalizer and clean up operator residue. See its README for hook modes (Helm post-install, ArgoCD PreSync, or plain).
 
+### Dataproxy backend
+
+Zero-trust mode deploys the `union-dataproxy` backend by default. The chart renders the Deployment + Service + ServiceAccount under `templates/dataproxy/`, and the gateway envoy bootstrap adds a catch-all `/` route + STRICT_DNS cluster pointing at the Service (`union-operator-dataproxy:8080`). The bundled ServiceMonitor scrapes the standard `debug:10254` port for Prometheus metrics.
+
+To opt out, override:
+
+```yaml
+dataproxy:
+  enabled: false
+```
+
+Setting `dataproxy.enabled: true` without `gateway.enabled: true` renders the workload but no Envoy will route to it (caller error).
+
 ---
 
 ## Logging (FluentBit)

@@ -1,17 +1,18 @@
 # helm-values: values-test-certs.yaml,values.aws.yaml,values.zero-trust.yaml
-# Zero-trust BYOC AWS render exercising two overrides that the base
+# Zero-trust BYOC AWS render exercising an override that the base
 # zero-trust snapshot does not cover:
 #   - .Values.host overridden to a value distinct from
 #     .Values.global.UNION_CONTROL_PLANE_HOST. Locks in that gateway
 #     bootstrap CORS allow_origin and the Envoy listener domain honor
 #     `tpl .Values.host .` (and not the global directly).
-#   - dataproxy.enabled: true. Locks in the full dataproxy port:
-#       (a) gateway envoy bootstrap renders the dataproxy route
-#           (catch-all "/") before the fallback 404, and a STRICT_DNS
-#           cluster pointing at union-operator-dataproxy on
-#           .Values.dataproxy.service.port.
-#       (b) the chart-rendered dataproxy Deployment + Service +
-#           ServiceAccount (union-operator-dataproxy, dataproxy-system).
+#
+# The dataproxy workload itself (Deployment + Service, plus the gateway
+# envoy route/cluster) is exercised by the base zero-trust snapshot —
+# values.zero-trust.yaml flips dataproxy.enabled to true by default.
+# The chart's commonServiceAccount default (low_privilege + single-
+# namespace mode) means the rendered Deployment uses serviceAccountName:
+# union-system; the per-workload dataproxy-system SA template skips
+# rendering, matching every other union-binary workload here.
 
 global:
   UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
@@ -37,6 +38,3 @@ secrets:
 
 # Override host to a value distinct from global.UNION_CONTROL_PLANE_HOST.
 host: "override.example.com"
-
-dataproxy:
-  enabled: true
