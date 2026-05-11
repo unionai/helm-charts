@@ -1,0 +1,42 @@
+# helm-values: values-test-certs.yaml,values.aws.yaml,values.zero-trust.yaml
+# Zero-trust BYOC AWS render exercising two overrides that the base
+# zero-trust snapshot does not cover:
+#   - .Values.host overridden to a value distinct from
+#     .Values.global.UNION_CONTROL_PLANE_HOST. Locks in that gateway
+#     bootstrap CORS allow_origin and the Envoy listener domain honor
+#     `tpl .Values.host .` (and not the global directly).
+#   - union.dataproxy.enable: true. Locks in that the gateway envoy
+#     bootstrap renders the dataproxy route (catch-all "/") before the
+#     fallback 404, and a STRICT_DNS cluster pointing at
+#     union-operator-dataproxy on .Values.union.dataproxy.service.port.
+#     The chart does not vendor the dataproxy Deployment+Service; this
+#     test only verifies the Envoy half.
+
+global:
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+  CLUSTER_NAME: "test-cluster-name"
+  ORG_NAME: "test-org-name"
+  CLIENT_ID: "test-client-id"
+  METADATA_BUCKET: "test-metadata-bucket"
+  FAST_REGISTRATION_BUCKET: "test-fast-registration-bucket"
+  AWS_ACCOUNT_ID: "123456789012"
+  AWS_REGION: "test-region"
+  BACKEND_IAM_ROLE_ARN: "test-backend-iam-role-arn"
+  WORKER_IAM_ROLE_ARN: "test-worker-iam-role-arn"
+
+# Workaround: see dataplane.aws.zero-trust.yaml for context.
+storage:
+  type: "s3"
+  s3:
+    region: "test-region"
+
+secrets:
+  admin:
+    clientSecret: "test-not-real-secret"
+
+# Override host to a value distinct from global.UNION_CONTROL_PLANE_HOST.
+host: "override.example.com"
+
+union:
+  dataproxy:
+    enable: true
