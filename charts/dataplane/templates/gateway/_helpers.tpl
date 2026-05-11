@@ -25,16 +25,18 @@ app.kubernetes.io/version: "1.16.0"
 {{- end }}
 
 {{/*
-Tenant hostname and organization required by gateway auth fallbacks.
-Fail the render when auth is enabled but the global is unset, rather than
-silently emitting broken URLs (e.g. https:///me) or an empty override org.
+Tenant hostname and organization required whenever the gateway is enabled.
+The bootstrap configmap interpolates host for the listener domain and CORS
+allow_origin (rendered regardless of gateway.auth.enable), and the Envoy
+auth env-var fallbacks use both; emitting empty values silently produces
+broken URLs like `https://` or `<cluster>.dp.`.
 */}}
-{{- define "gateway.auth.cloudHostName" -}}
-{{- required "host is required when gateway.auth.enable is true" (tpl .Values.host .) -}}
+{{- define "gateway.host" -}}
+{{- required "host is required when gateway.enable is true" (tpl .Values.host .) -}}
 {{- end }}
 
-{{- define "gateway.auth.organization" -}}
-{{- required "orgName is required when gateway.auth.enable is true" (tpl .Values.orgName .) -}}
+{{- define "gateway.organization" -}}
+{{- required "orgName is required when gateway.enable is true" (tpl .Values.orgName .) -}}
 {{- end }}
 
 {{/*
