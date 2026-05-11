@@ -110,6 +110,25 @@ Expected output: All pods should be in `Running` state, and logs should show suc
 
 ---
 
+## Upgrading to zero-trust mode (BYOC only)
+
+Zero-trust mode replaces the `knative-operator`-managed `KnativeServing` CR with vendored Knative Serving + Kourier + Envoy manifests rendered inline by this chart. Layer `values.zero-trust.yaml` after your BYOC platform overlay (`values.aws.yaml`, `values.gcp.yaml`, etc.) to enable it.
+
+> **Not supported for selfhosted-intracluster deployments.** Do not layer `values.zero-trust.yaml` onto `values.{aws,gcp}.selfhosted-intracluster.yaml`. See the corresponding `SELFHOSTED_INTRA_CLUSTER_*.md` guides.
+
+### Migration prerequisite
+
+Existing dataplanes running the legacy operator-managed serving path **must** run the [`knative-migration`](../knative-migration/README.md) chart **before** upgrading to a chart version with `gateway.enable: true`. Skipping the migration deadlocks the upgrade:
+
+- The upgrade tries to prune the orphaned `KnativeServing` CR.
+- The operator finalizer (`knativeservings.operator.knative.dev`) blocks the delete.
+- The operator itself is being torn down in the same upgrade — nothing releases the finalizer.
+- The upgrade hangs indefinitely.
+
+Run `knative-migration` first to strip the finalizer and clean up operator residue. See its README for hook modes (Helm post-install, ArgoCD PreSync, or plain).
+
+---
+
 ## Logging (FluentBit)
 
 The data plane deploys [FluentBit](https://fluentbit.io/) as a DaemonSet to collect container logs from every node and write them to the `persisted-logs/` path in the configured object store. FluentBit runs under the `fluentbit-system` Kubernetes service account, which must have write access to the storage bucket.
