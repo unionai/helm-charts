@@ -8,7 +8,7 @@ gateway).
 ## When to run it
 
 Run this chart **before** upgrading the `dataplane` chart to a version that
-has `gateway.enable: true` and no longer renders the `KnativeServing` CR. If
+has `gateway.enabled: true` and no longer renders the `KnativeServing` CR. If
 you skip the migration:
 
 - The `dataplane` upgrade tries to prune the orphaned `KnativeServing` CR.

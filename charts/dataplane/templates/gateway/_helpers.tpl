@@ -32,11 +32,11 @@ auth env-var fallbacks use both; emitting empty values silently produces
 broken URLs like `https://` or `<cluster>.dp.`.
 */}}
 {{- define "gateway.host" -}}
-{{- required "host is required when gateway.enable is true" (tpl .Values.host .) -}}
+{{- required "host is required when gateway.enabled is true" (tpl .Values.host .) -}}
 {{- end }}
 
 {{- define "gateway.organization" -}}
-{{- required "orgName is required when gateway.enable is true" (tpl .Values.orgName .) -}}
+{{- required "orgName is required when gateway.enabled is true" (tpl .Values.orgName .) -}}
 {{- end }}
 
 {{/*

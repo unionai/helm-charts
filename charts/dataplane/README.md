@@ -118,7 +118,7 @@ Zero-trust mode replaces the `knative-operator`-managed `KnativeServing` CR with
 
 ### Migration prerequisite
 
-Existing dataplanes running the legacy operator-managed serving path **must** run the [`knative-migration`](../knative-migration/README.md) chart **before** upgrading to a chart version with `gateway.enable: true`. Skipping the migration deadlocks the upgrade:
+Existing dataplanes running the legacy operator-managed serving path **must** run the [`knative-migration`](../knative-migration/README.md) chart **before** upgrading to a chart version with `gateway.enabled: true`. Skipping the migration deadlocks the upgrade:
 
 - The upgrade tries to prune the orphaned `KnativeServing` CR.
 - The operator finalizer (`knativeservings.operator.knative.dev`) blocks the delete.
