@@ -44,3 +44,121 @@ Included by gateway.extraClusters when dataproxy.enabled is true.
       explicit_http_config:
         http2_protocol_options: {}
 {{- end -}}
+
+{{/*
+Selector labels for the dataproxy workload.
+*/}}
+{{- define "dataproxy.selectorLabels" -}}
+app.kubernetes.io/name: union-dataproxy
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{/*
+Full label set for dataproxy resources (Deployment, Service, ServiceAccount).
+*/}}
+{{- define "dataproxy.labels" -}}
+{{- include "dataproxy.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Pod labels: global pod labels + dataproxy labels + user-supplied dataproxy.podLabels.
+*/}}
+{{- define "dataproxy.podLabels" -}}
+{{ include "global.podLabels" . }}
+{{ include "dataproxy.labels" . }}
+{{- with .Values.dataproxy.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+ServiceAccount name. Honors useCommonServiceAccount opt-out; otherwise
+falls back to the chart default "dataproxy-system".
+*/}}
+{{- define "dataproxy.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- default "dataproxy-system" .Values.dataproxy.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+ServiceAccount annotations: global service account annotations + user-supplied.
+*/}}
+{{- define "dataproxy.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.dataproxy.serviceAccount.annotations }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- define "dataproxy.scheduling.topologySpreadConstraints" -}}
+{{- with .Values.dataproxy.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "dataproxy.scheduling.affinity" -}}
+{{- with .Values.dataproxy.affinity }}
+affinity:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "dataproxy.scheduling.nodeSelector" -}}
+{{- with .Values.dataproxy.nodeSelector }}
+nodeSelector:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{- define "dataproxy.scheduling.nodeName" -}}
+{{- with .Values.dataproxy.nodeName }}
+nodeName: {{ toYaml . }}
+{{- end }}
+{{- end }}
+
+{{- define "dataproxy.scheduling.tolerations" -}}
+{{- with .Values.dataproxy.tolerations }}
+tolerations:
+{{ toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+
+{{/*
+Aggregator: per-workload override falls back to global.scheduling.* when
+the per-workload value is empty. Mirrors operator.scheduling /
+leaseworker.scheduling / flytepropellerwebhook.scheduling /
+clusterresourcesync.scheduling.
+*/}}
+{{- define "dataproxy.scheduling" -}}
+{{- if .Values.dataproxy.topologySpreadConstraints }}
+{{- include "dataproxy.scheduling.topologySpreadConstraints" . }}
+{{- else }}
+{{- include "global.scheduling.topologySpreadConstraints" . }}
+{{- end }}
+{{- if .Values.dataproxy.affinity }}
+{{- include "dataproxy.scheduling.affinity" . }}
+{{- else }}
+{{- include "global.scheduling.affinity" . }}
+{{- end }}
+{{- if .Values.dataproxy.nodeSelector }}
+{{- include "dataproxy.scheduling.nodeSelector" . }}
+{{- else }}
+{{- include "global.scheduling.nodeSelector" . }}
+{{- end }}
+{{- if .Values.dataproxy.nodeName }}
+{{- include "dataproxy.scheduling.nodeName" . }}
+{{- else }}
+{{- include "global.scheduling.nodeName" . }}
+{{- end }}
+{{- if .Values.dataproxy.tolerations }}
+{{- include "dataproxy.scheduling.tolerations" . }}
+{{- else }}
+{{- include "global.scheduling.tolerations" . }}
+{{- end }}
+{{- end -}}
