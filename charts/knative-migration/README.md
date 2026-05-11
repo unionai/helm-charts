@@ -41,8 +41,13 @@ steps:
    `operator-webhook` — note the `knative-` prefix on the role only).
 
 Every step is idempotent; re-running on an already-clean cluster is a
-no-op. RBAC is scoped to these exact resource names by `resourceNames` —
-the Job literally cannot affect anything else.
+no-op. RBAC is narrowed by `resourceNames` so the Job cannot delete
+arbitrary resources — only the named operator CRDs and ClusterRoles /
+ClusterRoleBindings listed above. Note that those names are upstream
+Knative-shared: this chart assumes the target cluster has only the
+Union-managed Knative install. Running it on a cluster that also hosts
+an independent Knative Serving or Eventing installation will remove
+resources that install depends on.
 
 ## Install
 
