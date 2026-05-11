@@ -1538,7 +1538,9 @@ union-pod-webhook
 {{- end -}}
 
 {{/*
-  Webhook-only minimal config: core.webhook with serviceName/secretName set to the chart webhook name and localCert true.
+  Webhook-only minimal config: webhook block with serviceName/secretName set to the chart webhook
+  name and localCert true, plus the propeller flags the webhook process needs at runtime
+  (e.g. limit-namespace in singleNamespace mode).
   Used when flytepropeller is disabled but flytepropellerwebhook is enabled.
 */}}
 {{- define "propeller.webhookConfigMinimal" -}}
@@ -1548,6 +1550,10 @@ union-pod-webhook
 {{- $_ := set $webhook "localCert" true }}
 {{- if .Values.low_privilege }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
+{{- end }}
+{{- if include "singleNamespace" . }}
+propeller:
+  limit-namespace: {{ .Release.Namespace }}
 {{- end }}
 webhook:
 {{- tpl (toYaml $webhook) . | nindent 2 }}

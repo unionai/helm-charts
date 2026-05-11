@@ -895,6 +895,8 @@ data:
   webhook.yaml: |
 
     
+    propeller:
+      limit-namespace: union
     webhook:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
@@ -3742,171 +3744,6 @@ data:
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
   image-builder.default-repository: "union-dataplane"
   image-builder.authentication-type: "noop"
----
-# Source: dataplane/templates/propeller/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-flytepropeller-config
-  namespace: union
-data:
-  admin.yaml: | 
-    admin:
-      clientId: 'clientId'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///union.us-west-2.union.ai
-      insecure: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  catalog.yaml: | 
-    catalog-cache:
-      cache-endpoint: dns:///union.us-west-2.union.ai
-      endpoint: dns:///union.us-west-2.union.ai
-      insecure: false
-      type: cacheservicev2
-      use-admin-auth: true
-  copilot.yaml: | 
-    plugins:
-      k8s:
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
-          name: flyte-copilot-
-          start-timeout: 30s
-  core.yaml: | 
-    propeller:
-      downstream-eval-duration: 30s
-      enable-admin-launcher: true
-      leader-election:
-        enabled: true
-        lease-duration: 15s
-        lock-config-map:
-          name: propeller-leader
-          namespace: 'union'
-        renew-deadline: 10s
-        retry-period: 2s
-      limit-namespace: union
-      literal-offloading-config:
-        enabled: true
-      max-workflow-retries: 30
-      metadata-prefix: metadata/propeller
-      metrics-prefix: flyte
-      prof-port: 10254
-      queue:
-        batch-size: -1
-        batching-interval: 2s
-        queue:
-          base-delay: 5s
-          capacity: 1000
-          max-delay: 120s
-          rate: 100
-          type: maxof
-        sub-queue:
-          capacity: 100
-          rate: 10
-          type: bucket
-        type: batch
-      rawoutput-prefix: 's3://bucket'
-      workers: 4
-      workflow-reeval-duration: 30s
-    webhook:
-      certDir: /etc/webhook/certs
-      disableCreateMutatingWebhookConfig: true
-      embeddedSecretManagerConfig:
-        imagePullSecrets:
-          enabled: true
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-      listenPort: '9443'
-      secretManagerTypes:
-      - Embedded
-      - K8s
-      serviceName: union-pod-webhook
-      servicePort: '443'
-  enabled_plugins.yaml: | 
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-  k8s.yaml: | 
-    plugins:
-      k8s:
-        default-cpus: 200m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-        - FLYTE_AWS_ACCESS_KEY_ID: accessKey
-        - FLYTE_AWS_SECRET_ACCESS_KEY: secretKey
-        - AWS_REQUEST_CHECKSUM_CALCULATION: when_required
-        - CREATE_UPRIVER_DATA_SOURCE: "true"
-        - SOME_NUMERIC_VAR: "42"
-        - MORE: foo
-        - SOME_CONFIG_BOOL: "true"
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-  logger.yaml: |
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-  namespace_config.yaml: |
-    namespace_mapping:
-      template: union
-  resource_manager.yaml: | 
-    propeller:
-      resourcemanager:
-        type: noop
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            templateUris:
-            - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
-        kubernetes-enabled: false
-        templates:
-        - displayName: Task Logs
-          scheme: TaskExecution
-          templateUris:
-          - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
-  storage.yaml: | 
-    storage:
-      container: "bucket"
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: accessKey
-          secret_key: secretKey
-          disable_ssl: false
-          endpoint: https://xxxxxxxxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com
-          region: us-ashburn-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
 ---
 # Source: dataplane/templates/serving/bootstrap-configmap.yaml
 # We need to copy the default configmap here since knative-operator does not automatically update the
@@ -9956,7 +9793,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a1b2dfd885efb46c6becd2d9feaaaaa69382cf15bc6d6d0f5b4a35bb29884fa"
+        configChecksum: "5edf37a23cd2954f47b023a27f207b6651bd19622dd7dfef183c649f3c24bbe"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -10470,7 +10307,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "7b158925ec320bcde7bb4191079e16d7c49a7b84e5c9b9b7d9c99f4cac4ac22"
+        configChecksum: "5edf37a23cd2954f47b023a27f207b6651bd19622dd7dfef183c649f3c24bbe"
         
     spec:
       securityContext:
@@ -10549,31 +10386,8 @@ spec:
               readOnly: true
       volumes:
         - name: config-volume
-          projected:
-            sources:
-              - configMap:
-                  name: union-flytepropeller-config
-                  items:
-                    - key: admin.yaml
-                      path: admin.yaml
-                    - key: catalog.yaml
-                      path: catalog.yaml
-                    - key: copilot.yaml
-                      path: copilot.yaml
-                    - key: core.yaml
-                      path: core.yaml
-                    - key: k8s.yaml
-                      path: k8s.yaml
-                    - key: logger.yaml
-                      path: logger.yaml
-                    - key: namespace_config.yaml
-                      path: namespace_config.yaml
-                    - key: resource_manager.yaml
-                      path: resource_manager.yaml
-                    - key: storage.yaml
-                      path: storage.yaml
-              - configMap:
-                  name: leaseworker
+          configMap:
+            name: leaseworker
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook

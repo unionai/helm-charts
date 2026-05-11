@@ -19,7 +19,13 @@ spec:
         platform.union.ai/zone: "dataplane"
         {{- include "flytepropellerwebhook.podLabels" . | nindent 8 }}
       annotations:
-        configChecksum: {{ printf "%s%s" (include (print .Template.BasePath "/propeller/configmap.yaml") .) (include (print .Template.BasePath "/leaseworker/configmap.yaml") .) | sha256sum | trunc 63 | quote }}
+        {{- if .Values.flytepropeller.enabled }}
+        configChecksum: {{ include (print .Template.BasePath "/propeller/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- else if .Values.leaseworker.enabled }}
+        configChecksum: {{ include (print .Template.BasePath "/leaseworker/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- else }}
+        configChecksum: {{ include (print .Template.BasePath "/webhook/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- end }}
         {{- with .Values.flytepropellerwebhook.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -92,68 +98,14 @@ spec:
           {{- end }}
       volumes:
         - name: config-volume
-          {{- if .Values.leaseworker.enabled }}
-          projected:
-            sources:
-              - configMap:
-                  name: union-flytepropeller-config
-                  items:
-                    {{- if .Values.config.admin }}
-                    - key: admin.yaml
-                      path: admin.yaml
-                    {{- end }}
-                    {{- if .Values.config.catalog }}
-                    - key: catalog.yaml
-                      path: catalog.yaml
-                    {{- end }}
-                    {{- if .Values.config.catalog_cache }}
-                    - key: catalog_cache.yaml
-                      path: catalog_cache.yaml
-                    {{- end }}
-                    {{- if .Values.config.copilot }}
-                    - key: copilot.yaml
-                      path: copilot.yaml
-                    {{- end }}
-                    - key: core.yaml
-                      path: core.yaml
-                    - key: k8s.yaml
-                      path: k8s.yaml
-                    {{- if .Values.logging }}
-                    - key: logger.yaml
-                      path: logger.yaml
-                    {{- end }}
-                    {{- if .Values.config.qubole }}
-                    - key: qubole.yaml
-                      path: qubole.yaml
-                    {{- end }}
-                    {{- if or .Values.config.namespace_config (include "singleNamespace" .) (and (not .Values.config.namespace_config) .Values.namespace_mapping) }}
-                    - key: namespace_config.yaml
-                      path: namespace_config.yaml
-                    {{- end }}
-                    {{- if .Values.config.resource_manager }}
-                    - key: resource_manager.yaml
-                      path: resource_manager.yaml
-                    {{- end }}
-                    {{- if and .Values.sparkoperator.enabled .Values.sparkoperator.plugin_config }}
-                    - key: spark.yaml
-                      path: spark.yaml
-                    {{- end }}
-                    {{- if and .Values.databricks.enabled .Values.databricks.plugin_config }}
-                    - key: databricks.yaml
-                      path: databricks.yaml
-                    {{- end }}
-                    {{- if and .Values.flyteagent.enabled .Values.flyteagent.plugin_config }}
-                    - key: agent_service.yaml
-                      path: agent_service.yaml
-                    {{- end }}
-                    - key: storage.yaml
-                      path: storage.yaml
-              - configMap:
-                  name: leaseworker
-          {{- else }}
           configMap:
-            name: union-flytepropeller-config
-          {{- end }}
+            {{- if .Values.flytepropeller.enabled }}
+            name: flyte-propeller-config
+            {{- else if .Values.leaseworker.enabled }}
+            name: leaseworker
+            {{- else }}
+            name: union-pod-webhook-config
+            {{- end }}
         - name: webhook-certs
           secret:
             secretName: {{ include "flytepropellerwebhook.secretName" . }}
