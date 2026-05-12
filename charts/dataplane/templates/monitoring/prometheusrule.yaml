@@ -1,5 +1,5 @@
 {{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1")
-  .Values.cost.enabled (not .Values.low_privilege) .Values.monitoring.enabled }}
+  .Values.cost.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:
@@ -21,7 +21,7 @@ metadata:
     release: {{ .Release.Name }}
 data:
   recording_rules.yml: |
-{{- if and .Values.cost.enabled (not .Values.low_privilege) }}
+{{- if .Values.cost.enabled }}
 {{ .Files.Get "files/recording-rules.yml" | indent 4 }}
 {{- else }}
     groups: []
@@ -74,7 +74,7 @@ spec:
 
         - record: union:dp:executor:active_actions
           expr: |
-            executor:active_actions_count{namespace="{{ .Release.Namespace }}"}
+            executor::v2:active_actions_count{namespace="{{ .Release.Namespace }}"}
 
     {{- if .Values.monitoring.alerting.enabled }}
     # --- Operational alerts (opt-in) ---
@@ -143,8 +143,8 @@ spec:
         - record: union:dp:slo:executor_success_rate
           expr: |
             (
-              sum(rate(executor:actions_terminated{namespace="{{ .Release.Namespace }}", phase="Succeeded"}[5m]))
-              / sum(rate(executor:actions_terminated{namespace="{{ .Release.Namespace }}"}[5m]))
+              sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}", phase="Succeeded"}[5m]))
+              / sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}"}[5m]))
             ) or vector(1)
 
         - record: union:dp:slo:execution_success_rate
