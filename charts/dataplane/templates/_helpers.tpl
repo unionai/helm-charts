@@ -1548,7 +1548,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
-{{- if .Values.low_privilege }}
+{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
 {{- if include "singleNamespace" . }}
