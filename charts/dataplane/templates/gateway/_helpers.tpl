@@ -25,18 +25,23 @@ app.kubernetes.io/version: "1.16.0"
 {{- end }}
 
 {{/*
-Tenant hostname and organization required whenever the gateway is enabled.
-The bootstrap configmap interpolates host for the listener domain and CORS
-allow_origin (rendered regardless of gateway.auth.enable), and the Envoy
-auth env-var fallbacks use both; emitting empty values silently produces
-broken URLs like `https://` or `<cluster>.dp.`.
+Tenant hostname and organization helpers used in the gateway path.
+
+host is consumed unconditionally by the bootstrap configmap (listener
+domain and CORS allow_origin), so it is required whenever the gateway is
+enabled.
+
+organization is consumed only by the Envoy auth fallback path
+(gateway.auth.enable=true with no gateway.auth.organization override),
+so it is required only in that configuration. Emitting empty values for
+either silently produces broken URLs like `https://` or `<cluster>.dp.`.
 */}}
 {{- define "gateway.host" -}}
 {{- required "host is required when gateway.enabled is true" (tpl .Values.host .) -}}
 {{- end }}
 
 {{- define "gateway.organization" -}}
-{{- required "orgName is required when gateway.enabled is true" (tpl .Values.orgName .) -}}
+{{- required "orgName is required when gateway.auth.enable is true and gateway.auth.organization is unset" (tpl .Values.orgName .) -}}
 {{- end }}
 
 {{/*

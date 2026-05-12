@@ -265,12 +265,24 @@ spec:
               # Services, ConfigMaps, HPAs, and PDBs. Worst case is bounded by the
               # activator's terminationGracePeriodSeconds (upstream sets 600s); 360
               # iterations x 2s = 720s gives a 2-minute buffer above that ceiling.
+              #
+              # `kubectl get` failure is only treated as success when stderr matches
+              # NotFound. Other failures (network, RBAC, TLS, apiserver timeout) are
+              # propagated so the Job retries via backoffLimit instead of declaring
+              # success while the resource is still present.
               delete_wait() {
                 local kind=$1 name=$2
+                local err
                 kubectl delete "$@" --cascade=foreground --ignore-not-found --wait=false
                 for _ in $(seq 1 360); do
-                  kubectl get "$@" >/dev/null 2>&1 || return 0
-                  sleep 2
+                  if err=$(kubectl get "$@" 2>&1 >/dev/null); then
+                    sleep 2
+                    continue
+                  fi
+                  case "$err" in
+                    *NotFound*|*"not found"*) return 0 ;;
+                    *) echo "kubectl get $* failed: $err" >&2; return 1 ;;
+                  esac
                 done
                 echo "timed out waiting for $kind/$name to be deleted" >&2
                 return 1
@@ -287,9 +299,22 @@ spec:
               # exists. No-op on a fresh BYOC install where the operator never ran (the
               # 12 Serving CRDs don't exist yet — Helm will create them itself during
               # the dataplane install). Idempotent via --overwrite; safe to retry.
+              #
+              # As in delete_wait, NotFound is the only `kubectl get` failure treated as
+              # "absent". Other failures propagate so the Job retries instead of
+              # silently skipping adoption (which would resurface as an `invalid
+              # ownership metadata` failure on the subsequent dataplane upgrade).
               adopt_if_exists() {
                 local crd=$1
-                kubectl get crd "$crd" >/dev/null 2>&1 || return 0
+                local err
+                if err=$(kubectl get crd "$crd" 2>&1 >/dev/null); then
+                  :
+                else
+                  case "$err" in
+                    *NotFound*|*"not found"*) return 0 ;;
+                    *) echo "kubectl get crd $crd failed: $err" >&2; return 1 ;;
+                  esac
+                fi
                 kubectl annotate crd "$crd" --overwrite \
                   "meta.helm.sh/release-name=$TARGET_RELEASE" \
                   "meta.helm.sh/release-namespace=$TARGET_NAMESPACE"

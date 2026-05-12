@@ -25,9 +25,13 @@ ClusterRole/ClusterRoleBindings.
 
 ## What it does
 
-Renders four resources (a `Job` plus a dedicated `ServiceAccount`,
-`ClusterRole`, and `ClusterRoleBinding`). The Job runs up to four
-idempotent steps:
+Renders six resources (a `Job`, plus a dedicated `ServiceAccount`,
+namespaced `Role` + `RoleBinding` for the `KnativeServing` CR, and a
+`ClusterRole` + `ClusterRoleBinding` for the cluster-scoped cleanup
+targets). The namespaced `Role`/`RoleBinding` split keeps the
+`KnativeServing` patch/delete permission bound to `.Release.Namespace`,
+so a same-named CR in any other namespace cannot be touched by this SA.
+The Job runs up to four idempotent steps:
 
 1. Strips the stuck finalizer on `KnativeServing/<knativeServingName>` (the
    default name `union-operator-serving` matches what the dataplane chart
@@ -135,8 +139,14 @@ annotations:
 ```bash
 helm install unionai-knative-migration unionai/knative-migration \
   --namespace union \
-  --wait
+  --wait --wait-for-jobs --timeout 15m
 ```
+
+`--wait-for-jobs` is required: Helm's `--wait` covers Pods, Services, and
+Deployments but not Jobs, so without it the command would return before
+the migration finishes and a subsequent `helm upgrade dataplane` would
+race the cleanup. The `--timeout 15m` mirrors `job.activeDeadlineSeconds:
+900` so Helm's wait window can't expire before the Job's own deadline.
 
 The Job runs once; the SA and RBAC remain until you `helm uninstall`. The
 Job pod's logs are kept for 5 minutes after success
