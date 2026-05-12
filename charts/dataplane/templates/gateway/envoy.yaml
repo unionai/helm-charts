@@ -38,6 +38,14 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
+        # Envoy's xDS dynamic config is delivered by net-kourier-controller,
+        # but the bootstrap file (gateway.host, auth URLs, extra routes/
+        # clusters) is read at container start. Changes to bootstrap-
+        # configmap.yaml must force a rollout; the checksum annotation
+        # makes the pod-template hash drift when the configmap content
+        # does. Mirrors the legacy serving/knative-serving.yaml workload-
+        # block at .annotations.checksum/bootstrap-config.
+        checksum/bootstrap-config: {{ include (print $.Template.BasePath "/gateway/bootstrap-configmap.yaml") . | sha256sum }}
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"

@@ -57,3 +57,22 @@ block when this helper produces output.
 {{- toYaml . }}
 {{- end }}
 {{- end }}
+
+{{/*
+Adoption target release name. Required when adoption.enabled is true; the
+`required` call fails template rendering with a clear message if missing,
+so the failure surfaces at `helm install knative-migration` time rather
+than as a misleading `helm upgrade dataplane` error after the migration
+has already run.
+*/}}
+{{- define "knative-migration.adoption.targetRelease" -}}
+{{- if .Values.adoption.enabled -}}
+{{- required "adoption.targetRelease is required when adoption.enabled=true (must match the release name used for `helm install/upgrade dataplane`)" .Values.adoption.targetRelease -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "knative-migration.adoption.targetNamespace" -}}
+{{- if .Values.adoption.enabled -}}
+{{- required "adoption.targetNamespace is required when adoption.enabled=true (must match the namespace used for `helm install/upgrade dataplane`)" .Values.adoption.targetNamespace -}}
+{{- end -}}
+{{- end -}}

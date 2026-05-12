@@ -29,6 +29,34 @@ annotations: {}
 # The CR is always looked up in the chart release namespace.
 knativeServingName: union-operator-serving
 
+# Adopt the 12 Knative Serving CRDs left behind by the knative-operator
+# install into a Helm release, by stamping meta.helm.sh/release-name,
+# meta.helm.sh/release-namespace, and app.kubernetes.io/managed-by=Helm.
+#
+# Enable this ONLY if the dataplane chart will be applied via the Helm CLI
+# (or any wrapper around it: Helmfile, Terraform helm_release, etc.). The
+# Helm v3 client refuses to apply CRDs that already exist without those
+# annotations ("invalid ownership metadata; missing key
+# 'meta.helm.sh/release-name'"), and the knative-operator installs the 12
+# Serving CRDs imperatively from its binary, with no Helm metadata. This
+# step writes the metadata so the subsequent `helm upgrade dataplane`
+# succeeds.
+#
+# Leave at false (default) for non-Helm install paths: ArgoCD with a Helm
+# source (uses `helm template` to render and applies via its own SSA
+# controller, bypassing Helm's ownership pre-flight), Pulumi, kustomize,
+# raw `kubectl apply`. Stamping Helm provenance onto resources managed by
+# those tools is incorrect metadata and can trigger drift-correction loops.
+adoption:
+  enabled: false
+  # Required when adoption.enabled is true. Must EXACTLY match the release
+  # name and namespace used for the dataplane chart's `helm install` /
+  # `helm upgrade` invocation. There is no default: a wrong value produces
+  # a silent migration "success" followed by a misleading
+  # `helm upgrade dataplane` failure that blames the wrong release.
+  targetRelease: ""
+  targetNamespace: ""
+
 # Job controls.
 job:
   backoffLimit: 3

@@ -140,6 +140,31 @@ dataproxy:
 
 Setting `dataproxy.enabled: true` without `gateway.enabled: true` renders the workload but no Envoy will route to it (caller error).
 
+### Gateway pod scheduling and annotations
+
+The vendored gateway Deployments (`envoy`, `kourier-controller`, `activator`, `autoscaler`, `autoscaler-hpa`, `controller`, `webhook`) are kept close to upstream Knative + Kourier shape to ease future re-vendoring. As a result they do **not** honor the chart-wide `global.podAnnotations`, `global.podLabels`, `global.scheduling.*`, or `additionalPodSpec` helpers that the rest of the dataplane workloads (`operator`, `leaseworker`, `dataproxy`, etc.) pick up automatically.
+
+Override per component instead:
+
+```yaml
+gateway:
+  components:
+    envoy:
+      annotations:        # pod-template annotations
+      labels:             # pod-template labels
+      affinity:           # pod-template affinity (replaces, does not merge with global)
+      replicas:
+      hpa: { ... }
+      pdb: { ... }
+    kourier-controller:
+      affinity: ...
+    activator:
+      affinity: ...
+    # … similarly for autoscaler, autoscaler-hpa, controller, webhook
+```
+
+If you need gateway pods to share scheduling/placement with the rest of the chart, copy the relevant `global.*` block under each `gateway.components.<name>.affinity` (and `nodeSelector` / `tolerations` if exposed).
+
 ---
 
 ## Logging (FluentBit)

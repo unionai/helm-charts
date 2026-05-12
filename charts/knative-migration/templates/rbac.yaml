@@ -10,10 +10,15 @@ metadata:
     {{- . | nindent 4 }}
   {{- end }}
 ---
+# Namespaced Role for the only namespaced resource the Job touches —
+# the KnativeServing CR. Splitting this off the ClusterRole keeps the
+# resourceNames-scoped permission bound to .Release.Namespace; a same-
+# named CR in any other namespace cannot be patched/deleted by this SA.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
   labels:
     {{- include "knative-migration.labels" . | nindent 4 }}
   {{- with (include "knative-migration.annotations" .) }}
@@ -26,13 +31,71 @@ rules:
     verbs: ["get", "patch", "delete"]
     resourceNames:
       - {{ .Values.knativeServingName | quote }}
-
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "knative-migration.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "knative-migration.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# ClusterRole for the cluster-scoped resources the Job cleans up: the
+# two operator CRDs, optionally the 12 Knative Serving CRDs for adoption,
+# and the operator's ClusterRoles/ClusterRoleBindings.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
     verbs: ["get", "delete"]
     resourceNames:
       - knativeservings.operator.knative.dev
       - knativeeventings.operator.knative.dev
+
+  {{- if .Values.adoption.enabled }}
+  # Adoption: stamp Helm ownership metadata onto the 12 Knative Serving
+  # CRDs installed imperatively by the operator. `patch` covers both
+  # `kubectl annotate` and `kubectl label`. Rule emitted only when
+  # adoption is enabled so the chart's RBAC surface stays minimal for
+  # non-Helm install paths.
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "patch"]
+    resourceNames:
+      - certificates.networking.internal.knative.dev
+      - clusterdomainclaims.networking.internal.knative.dev
+      - configurations.serving.knative.dev
+      - domainmappings.serving.knative.dev
+      - images.caching.internal.knative.dev
+      - ingresses.networking.internal.knative.dev
+      - metrics.autoscaling.internal.knative.dev
+      - podautoscalers.autoscaling.internal.knative.dev
+      - revisions.serving.knative.dev
+      - routes.serving.knative.dev
+      - serverlessservices.networking.internal.knative.dev
+      - services.serving.knative.dev
+  {{- end }}
 
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]

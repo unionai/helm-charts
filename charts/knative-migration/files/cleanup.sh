@@ -1,0 +1,156 @@
+#!/bin/sh
+#
+# Cleanup script for the knative-migration Job. Loaded into job.yaml via
+# .Files.Get so it stays a plain shell script — lintable with shellcheck,
+# no Helm-template escaping issues.
+#
+# Inputs (env, set by the Job template):
+#   NS                - release namespace (where the KnativeServing CR lives)
+#   CR                - name of the KnativeServing CR to clean up
+#   ADOPTION_ENABLED  - "true" to stamp Helm ownership metadata onto the
+#                       12 Knative Serving CRDs left behind by the operator
+#                       (required for the helm-install path; harmless and
+#                       unnecessary for ArgoCD/Pulumi/etc.)
+#   TARGET_RELEASE    - dataplane helm release name (used iff ADOPTION_ENABLED)
+#   TARGET_NAMESPACE  - dataplane helm release namespace (used iff ADOPTION_ENABLED)
+set -euo pipefail
+
+# The 12 Knative Serving CRDs the knative-operator installs imperatively
+# (no Helm metadata). Canonical source of truth is the dataplane chart's
+# charts/dataplane/templates/gateway/crds/ directory; keep this list in
+# sync if upstream Knative Serving adds/removes CRDs.
+SERVING_CRDS="
+certificates.networking.internal.knative.dev
+clusterdomainclaims.networking.internal.knative.dev
+configurations.serving.knative.dev
+domainmappings.serving.knative.dev
+images.caching.internal.knative.dev
+ingresses.networking.internal.knative.dev
+metrics.autoscaling.internal.knative.dev
+podautoscalers.autoscaling.internal.knative.dev
+revisions.serving.knative.dev
+routes.serving.knative.dev
+serverlessservices.networking.internal.knative.dev
+services.serving.knative.dev
+"
+
+# Both helpers pass --wait=false because kubectl's built-in wait opens a
+# watcher that needs list/watch verbs, and RBAC cannot scope list/watch by
+# resourceName.
+
+# delete_wait blocks until the resource AND every dependent it owns are
+# gone. --cascade=foreground tells the API server to add a
+# `foregroundDeletion` finalizer that the GC controller only removes once
+# all dependents are reaped, so polling on `kubectl get` naturally waits
+# for the full cascade. Used for the KnativeServing CR, whose dependents
+# are the operator-managed activator / autoscaler / controller / webhook /
+# net-kourier-controller / 3scale-kourier-gateway Deployments and their
+# Services, ConfigMaps, HPAs, and PDBs. Worst case is bounded by the
+# activator's terminationGracePeriodSeconds (upstream sets 600s); 360
+# iterations x 2s = 720s gives a 2-minute buffer above that ceiling.
+delete_wait() {
+  local kind=$1 name=$2
+  kubectl delete "$@" --cascade=foreground --ignore-not-found --wait=false
+  for _ in $(seq 1 360); do
+    kubectl get "$@" >/dev/null 2>&1 || return 0
+    sleep 2
+  done
+  echo "timed out waiting for $kind/$name to be deleted" >&2
+  return 1
+}
+
+# delete_no_wait fires the delete and returns. Safe for resources with no
+# finalizers, or where we've already confirmed their blocking dependencies
+# are gone.
+delete_no_wait() {
+  kubectl delete "$@" --ignore-not-found --wait=false
+}
+
+# adopt_if_exists stamps Helm release ownership metadata onto a CRD if it
+# exists. No-op on a fresh BYOC install where the operator never ran (the
+# 12 Serving CRDs don't exist yet — Helm will create them itself during
+# the dataplane install). Idempotent via --overwrite; safe to retry.
+adopt_if_exists() {
+  local crd=$1
+  kubectl get crd "$crd" >/dev/null 2>&1 || return 0
+  kubectl annotate crd "$crd" --overwrite \
+    "meta.helm.sh/release-name=$TARGET_RELEASE" \
+    "meta.helm.sh/release-namespace=$TARGET_NAMESPACE"
+  kubectl label crd "$crd" --overwrite \
+    "app.kubernetes.io/managed-by=Helm"
+}
+
+# 1. Remove the stuck operator finalizer and delete the KnativeServing CR.
+#    We wait for the CR to be fully gone before deleting its CRD, because
+#    the CRD's apiextensions `customresourcecleanup` finalizer blocks on
+#    remaining instances.
+#
+#    The finalizer removal targets only the operator's finalizer, not the
+#    whole array. Two states this preserves correctness for:
+#      a) Retry after a partial run: a previous delete_wait already issued
+#         `--cascade=foreground`, so the API server added
+#         `foregroundDeletion`. The CR carries both finalizers; we strip
+#         operator and let GC remove foregroundDeletion once dependents
+#         are reaped.
+#      b) Foreign finalizers: an unrelated controller added its own
+#         finalizer. We strip operator only; delete_wait then blocks on
+#         the foreign finalizer (loud, correct failure mode instead of
+#         timing out blaming the wrong thing).
+#    If the operator finalizer is absent (already stripped, or CR is
+#    mid-cascade with only foregroundDeletion remaining), no patch is
+#    applied and delete_wait polls until GC finishes.
+operator_finalizer="knativeservings.operator.knative.dev"
+if kubectl get knativeserving "$CR" -n "$NS" >/dev/null 2>&1; then
+  # Locate the operator finalizer's index, then atomically test-and-remove
+  # that specific element. The `test` op guards against TOCTOU: if another
+  # controller shifted the finalizers array between our `get` and `patch`,
+  # the test fails and the patch is rejected (loud failure, Job retries).
+  # Finalizers are a set in the k8s API, so at most one match.
+  idx=$(kubectl get knativeserving "$CR" -n "$NS" \
+    -o go-template='{{range $i, $f := .metadata.finalizers}}{{if eq $f "'"$operator_finalizer"'"}}{{$i}}{{"\n"}}{{end}}{{end}}' \
+    | head -n1)
+  if [ -n "$idx" ]; then
+    kubectl patch knativeserving "$CR" -n "$NS" --type=json --patch \
+      '[{"op":"test","path":"/metadata/finalizers/'"$idx"'","value":"'"$operator_finalizer"'"},{"op":"remove","path":"/metadata/finalizers/'"$idx"'"}]'
+  else
+    echo "operator finalizer not present on KnativeServing/$CR - already stripped or mid-cascade, attempting delete" >&2
+  fi
+  delete_wait knativeserving "$CR" -n "$NS"
+fi
+
+# 2. Adopt the 12 Knative Serving CRDs into the dataplane Helm release.
+#    Only meaningful when the dataplane chart is being applied via the
+#    Helm CLI (or any wrapper around it): the operator installed these
+#    CRDs imperatively with no Helm metadata, so Helm's pre-flight
+#    ownership check refuses to apply them on `helm upgrade`. Stamping
+#    the metadata here lets the subsequent upgrade proceed. Non-Helm
+#    install paths (ArgoCD, Pulumi, kustomize) leave ADOPTION_ENABLED
+#    false; this step is then a no-op, avoiding incorrect provenance
+#    metadata on resources managed by other tools.
+if [ "$ADOPTION_ENABLED" = "true" ]; then
+  for crd in $SERVING_CRDS; do
+    adopt_if_exists "$crd"
+  done
+fi
+
+# 3. Delete the two operator-only CRDs. Fire-and-forget: step 1 removed
+#    the only known CR instance, so the CRDs have nothing to clean up.
+delete_no_wait crd knativeservings.operator.knative.dev
+delete_no_wait crd knativeeventings.operator.knative.dev
+
+# 4. Delete leftover cluster-scoped RBAC. Fire-and-forget: these have no
+#    finalizers. The ClusterRole and ClusterRoleBinding share a name for
+#    every operator pair except the webhook, which upstream names
+#    `knative-operator-webhook` / `operator-webhook`.
+for name in \
+  knative-serving-operator \
+  knative-serving-operator-aggregated \
+  knative-serving-operator-aggregated-stable \
+  knative-eventing-operator \
+  knative-eventing-operator-aggregated \
+  knative-eventing-operator-aggregated-stable; do
+  delete_no_wait clusterrole        "$name"
+  delete_no_wait clusterrolebinding "$name"
+done
+delete_no_wait clusterrole    knative-operator-webhook
+delete_no_wait clusterrolebinding operator-webhook
