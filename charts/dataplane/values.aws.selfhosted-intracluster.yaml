@@ -607,7 +607,25 @@ flytepropellerwebhook: {}
 # ----------------------------------------------------------------------------
 
 # In selfhosted-intracluster the control plane owns the kube-prometheus-stack
-# subchart, so disable it here. The EKS-specific kube-* component disables
-# live in values.aws.yaml (applied before this overlay).
+# subchart, so disable it here. EKS-managed control-plane components
+# (controller-manager, scheduler, etcd, kube-proxy) are also disabled so
+# any sidecar Prometheus pointed at this namespace doesn't trip false-positive
+# TargetDown alerts on inaccessible endpoints. Mirrors values.aws.yaml — each
+# overlay file is self-contained per the chart's design.
 monitoring:
   enabled: false
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
