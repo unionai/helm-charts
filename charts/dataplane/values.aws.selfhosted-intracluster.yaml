@@ -373,8 +373,9 @@ operator:
 # monitoring.alerting.enabled to true in your environment-specific
 # values overlay. This should be paired with AlertManager configuration
 # to route alerts to Grafana or another notification target.
-monitoring:
-  enabled: false
+#
+# The full `monitoring:` block (kube-prometheus-stack subchart) is configured
+# at the bottom of this file under "Monitoring Configuration (AWS/EKS specific)".
 
 # Union-features Prometheus for metrics collection and cost tracking
 prometheus:
@@ -605,11 +606,20 @@ flytepropellerwebhook: {}
 # Monitoring Configuration (AWS/EKS specific)
 # ----------------------------------------------------------------------------
 
-# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
-# Their metrics endpoints are not accessible from within the cluster.
-# Disable scraping and alerting rules for these components to avoid
-# false-positive TargetDown and *Down alerts.
+# The kube-prometheus-stack subchart is disabled here because in
+# selfhosted-intracluster the control plane owns the monitoring stack
+# (see `controlplane/values.aws.selfhosted-intracluster.yaml` for the
+# enabled-side configuration).
+#
+# EKS additionally manages controller-manager, scheduler, etcd, and
+# kube-proxy internally; their metrics endpoints aren't reachable from
+# within the cluster. Disable the ServiceMonitors + default alerting rules
+# for those components — even though the parent subchart is off, leaving
+# them at chart defaults would render `Endpoints: <none>` services and
+# trigger false-positive `TargetDown` alerts on any operator that does
+# point a Prometheus instance at this namespace.
 monitoring:
+  enabled: false
   kubeControllerManager:
     enabled: false
   kubeScheduler:
