@@ -1,5 +1,12 @@
 # Work in progress: GCP specific overrides for dataplane chart
 
+# Image Builder Authentication (OPTIONAL)
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "google" if you want the builder to authenticate to Artifact Registry / GCR
+# via the GCP provider credential chain (Workload Identity / GKE metadata).
+# imageBuilder:
+#   authenticationType: google
+
 # DCGM Exporter
 dcgm-exporter:
   enabled: true
@@ -159,3 +166,28 @@ executor:
           - spark.kubernetes.driver.connectionTimeout: "30000"
           - spark.kubernetes.driver.requestTimeout: "30000"
         spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (GCP/GKE specific)
+# ----------------------------------------------------------------------------
+
+# GKE manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts. Mirrors values.aws.yaml.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
