@@ -277,6 +277,15 @@ config:
       authorizationMetadataKey: "flyte-authorization"
       tokenRefreshWindow: "5m"
 
+  # Identify the AWS Secrets Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is AWS.
+  proxy:
+    smConfig:
+      awsConfig:
+        account: '{{ .Values.global.AWS_ACCOUNT_ID }}'
+        region: '{{ .Values.global.AWS_REGION }}'
+
   operator:
     # Disable Cloudflare tunnel (not needed for intra-cluster)
     enableTunnelService: false
@@ -373,8 +382,9 @@ operator:
 # monitoring.alerting.enabled to true in your environment-specific
 # values overlay. This should be paired with AlertManager configuration
 # to route alerts to Grafana or another notification target.
-monitoring:
-  enabled: false
+#
+# The full `monitoring:` block (kube-prometheus-stack subchart) is configured
+# at the bottom of this file under "Monitoring Configuration (AWS/EKS specific)".
 
 # Union-features Prometheus for metrics collection and cost tracking
 prometheus:
@@ -593,6 +603,10 @@ dcgm-exporter:
 # so rootless buildkit fails with "no space left on device" (ENOSPC from the
 # kernel when user namespace creation is denied). Use privileged mode instead.
 imageBuilder:
+  # Image builder defaults to authenticationType: "noop". Uncomment to
+  # authenticate to ECR via the AWS provider credential chain
+  # (IRSA / EC2 instance profile).
+  # authenticationType: aws
   buildkit:
     rootless: false
 
@@ -605,11 +619,14 @@ flytepropellerwebhook: {}
 # Monitoring Configuration (AWS/EKS specific)
 # ----------------------------------------------------------------------------
 
-# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
-# Their metrics endpoints are not accessible from within the cluster.
-# Disable scraping and alerting rules for these components to avoid
-# false-positive TargetDown and *Down alerts.
+# In selfhosted-intracluster the control plane owns the kube-prometheus-stack
+# subchart, so disable it here. EKS-managed control-plane components
+# (controller-manager, scheduler, etcd, kube-proxy) are also disabled so
+# any sidecar Prometheus pointed at this namespace doesn't trip false-positive
+# TargetDown alerts on inaccessible endpoints. Mirrors values.aws.yaml — each
+# overlay file is self-contained per the chart's design.
 monitoring:
+  enabled: false
   kubeControllerManager:
     enabled: false
   kubeScheduler:

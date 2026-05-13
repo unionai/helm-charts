@@ -119,6 +119,10 @@ global:
   # Service-to-service OAuth client ID (client_credentials flow)
   # Example: "0oa3xyz4abc5def6g7h8"
   AUTH_CLIENT_ID: ""
+  # OAuth2 scope for service-to-service client_credentials grant.
+  # Okta: leave empty (defaults to "all").
+  # Entra ID: "api://my-app-name/.default"
+  OIDC_S2S_SCOPE: ""
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)
@@ -157,6 +161,15 @@ image:
   union:
     repository: "public.ecr.aws/p0i0a9q8/unionoperator"
     # tag will be set from Chart.AppVersion or can be overridden
+
+# ----------------------------------------------------------------------------
+# Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "google" if you want the builder to authenticate to Artifact Registry / GCR
+# via the GCP provider credential chain (Workload Identity / GKE metadata).
+# imageBuilder:
+#   authenticationType: google
 
 # ----------------------------------------------------------------------------
 # SECTION 5: Workload Identity (REQUIRED for GCP)
@@ -200,6 +213,8 @@ clusterresourcesync:
         clientSecretLocation: "/etc/union/secret/client_secret"
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: "5m"
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Core Service Configuration
@@ -282,6 +297,14 @@ config:
       clientSecretLocation: "/etc/union/secret/client_secret"
       authorizationMetadataKey: "flyte-authorization"
       tokenRefreshWindow: "5m"
+
+  # Identify the GCP Secret Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is GCP.
+  proxy:
+    smConfig:
+      gcpConfig:
+        project: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
 
   operator:
     # Disable Cloudflare tunnel (not needed for intra-cluster)
@@ -388,6 +411,26 @@ operator:
 # to route alerts to Grafana or another notification target.
 monitoring:
   enabled: false
+  # GKE manages control-plane components (controller-manager, scheduler,
+  # etcd, kube-proxy) — their metrics endpoints aren't reachable. Disable
+  # the kube-prometheus-stack ServiceMonitors + alerting rules so any
+  # sidecar Prometheus pointed at this namespace doesn't trip false-positive
+  # TargetDown alerts. Mirrors values.aws.selfhosted-intracluster.yaml.
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
 
 # Union-features Prometheus for metrics collection and cost tracking
 prometheus:
