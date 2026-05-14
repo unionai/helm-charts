@@ -1414,6 +1414,13 @@ image:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
     pullPolicy: IfNotPresent
+  # -- Union envoy build for the zero-trust gateway. Built and pushed
+  # alongside the operator image, on the same release cadence, so the
+  # empty tag falls back to .Chart.AppVersion just like .image.union.
+  envoy:
+    repository: public.ecr.aws/p0i0a9q8/envoy
+    tag: ""
+    pullPolicy: IfNotPresent
 
 metrics-server:
   enabled: false
@@ -2352,12 +2359,13 @@ gateway:
               weight: 100
       containers:
         envoy:
-          # Pinned to the same Union envoy SHA used by today's
-          # serving.registry.override (charts/dataplane/templates/serving/
-          # knative-serving.yaml:58).
+          # Union envoy build for zero-trust (see .Values.image.envoy).
+          # Tagged on the same cadence as the operator image; the gateway
+          # templates run repository/tag through `tpl`, so cross-references
+          # to other .Values entries work here.
           image:
-            repository: ghcr.io/unionai/envoy
-            tag: "456fed84d4ad9a9dfb186d117d9362e9dc0f7c1f"
+            repository: '{{ .Values.image.envoy.repository }}'
+            tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
           resources:
             limits:
               cpu: "2"
@@ -2398,14 +2406,12 @@ gateway:
               weight: 100
       containers:
         controller:
-          # Today's serving.registry.override pins the Kourier controller by
-          # digest (ghcr.io/unionai/kourier@sha256:5804…). The vendored
-          # templates render `repo:tag`, falling back to plain `repo` when
-          # tag is empty, so the digest goes in the repository field with
-          # an empty tag.
+          # Use the same union operator image as the rest of the dataplane
+          # workload (see .Values.image.union). The gateway templates run
+          # repository/tag through `tpl`, so cross-references work here.
           image:
-            repository: ghcr.io/unionai/kourier@sha256:5804c348d15b3959604e3e3ceed216c3a1c7b32cbe254c7d3eb02a35e62ba9c4
-            tag: ""
+            repository: '{{ .Values.image.union.repository }}'
+            tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
           resources:
             limits:
               cpu: "1"
