@@ -29,8 +29,23 @@ data:
       enableTunnelService: {{ .Values.config.operator.enableTunnelService }}
       #  enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
-        enableDirectToAppIngress: {{ .Values.serving.enabled }}
+        enableDirectToAppIngress: {{ and .Values.serving.enabled .Values.tunnelService.apps.enableGlobalIngress }}
         deploymentToRestart: union-operator-proxy
+        {{- if .Values.tunnelService.apps.originURL }}
+        appIngressOriginURL: {{ .Values.tunnelService.apps.originURL | quote }}
+        {{- else if .Values.gateway.enabled }}
+        appIngressOriginURL: "http://{{ include "gateway.fullname" . }}:{{ .Values.gateway.service.httpAppsPort }}"
+        {{- else }}
+        appIngressOriginURL: "http://kourier-internal"
+        {{- end }}
+        {{- if and .Values.gateway.enabled .Values.tunnelService.dataplane.enableIngress }}
+        enableDataplaneIngress: true
+        {{- with .Values.tunnelService.dataplane.originURL }}
+        dataplaneIngressOriginURL: {{ . | quote }}
+        {{- else }}
+        dataplaneIngressOriginURL: "http://{{ include "gateway.fullname" . }}:{{ .Values.gateway.service.httpStaticPort }}"
+        {{- end }}
+        {{- end }}
       {{- if .Values.config.operator.limitNamespace }}
       limitNamespace: {{ tpl (toYaml .Values.config.operator.limitNamespace) $ }}
       {{- else if include "singleNamespace" . }}
