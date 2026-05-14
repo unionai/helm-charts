@@ -69,3 +69,7 @@ lint-dataplane-crds:
 .PHONY: lint-sandbox
 lint-sandbox:
 	helm lint charts/sandbox
+
+.PHONY: generate-metrics-manifest
+generate-metrics-manifest:
+	python3 scripts/extract-metrics.py > metrics-manifest.yaml
