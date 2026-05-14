@@ -338,6 +338,48 @@ executor:
       injectSecret: true
       secretName: "EAGER_API_KEY"
 
+  # --- Task log links (GCP Cloud Logging) ---
+  # GKE ships container logs to Google Cloud Logging via the cluster's
+  # built-in logging agent (enabled by default in the
+  # selfmanaged/gcp/infra module — `logging.googleapis.com/kubernetes`
+  # with `SYSTEM_COMPONENTS` + `WORKLOADS`). These templates emit
+  # Cloud Console links the UI surfaces for task pods.
+  #
+  # `roles/logging.viewer` is granted to `union_backend_sa` (the GSA
+  # mapped to proxy + operator via Workload Identity) in
+  # `selfmanaged/gcp/dataplane/union_iam.tf` so the dataplane backend
+  # can serve log entries to the console. End users viewing logs via
+  # the Cloud Console link separately need `roles/logging.viewer` on
+  # the project. Mirrors the BYOC pattern in
+  # `cloud/deploy/dataplane/values-gcp.yaml` +
+  # `cloud/deploy/dataplane/template-gcp.yaml` (FAB-179).
+  task_logs:
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        templates:
+          - displayName: GCP Logs
+            templateUris:
+              - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.podRFC3339StartTime}}`}};endTime={{`{{.podRFC3339FinishTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            templates:
+              - displayName: GCP Logs
+                templateUris:
+                  - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          templates:
+            - displayName: GCP Logs
+              templateUris:
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+
 # ----------------------------------------------------------------------------
 # Ingress Configuration
 # ----------------------------------------------------------------------------
