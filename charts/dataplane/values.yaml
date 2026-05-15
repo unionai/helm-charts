@@ -1414,9 +1414,7 @@ image:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
     pullPolicy: IfNotPresent
-  # -- Union envoy build for the zero-trust gateway. Built and pushed
-  # alongside the operator image, on the same release cadence, so the
-  # empty tag falls back to .Chart.AppVersion just like .image.union.
+  # -- Union envoy build for the zero-trust gateway.
   envoy:
     repository: public.ecr.aws/p0i0a9q8/envoy
     tag: ""
@@ -1958,33 +1956,13 @@ storage:
   gcp:
     projectId: ""
 
-# -- Tunnel-service ingress config consumed by the union-operator's tunnel
-# sidecar. Mirrors cloud/operator/deploy/helm/values.yaml's
-# union.tunnelService block (the union/ prefix exists in cloud because it
-# nests under a union: top-level key that helm-charts does not have).
+# -- Tunnel-service ingress config consumed by the union-operator's tunnel sidecar.
 tunnelService:
   dataplane:
-    # -- Route inbound dataplane traffic through the operator's tunnel
-    # sidecar into the gateway. AND-ed with gateway.enabled in the
-    # operator configmap, so this only takes effect under zero-trust.
     enableIngress: false
-    # -- Override the upstream URL the operator uses for dataplane ingress.
-    # Defaults to the gateway Service on gateway.service.httpStaticPort
-    # when gateway.enabled, otherwise points at the gateway URL placeholder.
     originURL: ""
   apps:
-    # -- Route inbound apps traffic through the operator's tunnel sidecar.
-    # AND-ed with serving.enabled to derive enableDirectToAppIngress in the
-    # operator configmap. NOTE: helm-charts defaults this to true to preserve
-    # the historical behavior where enableDirectToAppIngress mirrored
-    # serving.enabled; the cloud operator chart defaults the equivalent value
-    # to false and relies on overlays (values-apps.yaml) to opt in. Cloud
-    # GitOps deployments always set this explicitly so the divergence is
-    # invisible there.
     enableGlobalIngress: true
-    # -- Override the upstream URL the operator uses for apps ingress.
-    # Defaults to the gateway Service on gateway.service.httpAppsPort
-    # when gateway.enabled, otherwise to kourier-internal.
     originURL: ""
 
 # -- Configure app serving and knative.
@@ -2338,14 +2316,7 @@ monitoring:
           cpu: "500m"
           memory: "1Gi"
 
-# ----------------------------------------------------------------------------
-# Gateway: vendored Knative Serving + Kourier + Envoy direct manifests.
-# ----------------------------------------------------------------------------
-# When gateway.enabled is true (BYOC zero-trust mode only), templates/gateway/
-# renders the vendored manifests; the legacy KnativeServing CR + bootstrap
-# configmap under templates/serving/ do NOT render. When false (default),
-# the legacy operator-managed path is used as today. Selfhosted-intracluster
-# overlays must keep gateway.enabled: false.
+# -- Vendored Knative Serving + Kourier + Envoy gateway. BYOC zero-trust mode only.
 gateway:
   enabled: false
 
@@ -2354,19 +2325,6 @@ gateway:
     httpStaticPort: 8888
 
   # -- Enables Union's auth integration across the kourier-gateway.
-  # In zero-trust mode this listener IS the trust boundary. Toggling this
-  # flag controls two coupled mechanisms (both required for end-to-end
-  # auth — they don't make sense independently):
-  #   1. The Union envoy auth plugin on the kourier-gateway listener.
-  #      The plugin verifies session/token against the auth URLs below;
-  #      when the override fields are empty, the URLs are derived from
-  #      .Values.host (= global.UNION_CONTROL_PLANE_HOST) and
-  #      .Values.orgName (= global.ORG_NAME) via gateway/_helpers.tpl.
-  #   2. The KOURIER_UNION_APPS_ENABLED env var on net-kourier-controller
-  #      (renamed from the earlier KOURIER_UNION_AUTHZ_ENABLED in the
-  #      Union Kourier fork; same semantics, new name). The operator-
-  #      managed serving path under templates/serving/ wires the same
-  #      env var so both paths track the fork's current naming.
   auth:
     enable: true
     tenantAuthURL: ""
@@ -2388,10 +2346,6 @@ gateway:
               weight: 100
       containers:
         envoy:
-          # Union envoy build for zero-trust (see .Values.image.envoy).
-          # Tagged on the same cadence as the operator image; the gateway
-          # templates run repository/tag through `tpl`, so cross-references
-          # to other .Values entries work here.
           image:
             repository: '{{ .Values.image.envoy.repository }}'
             tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
@@ -2435,9 +2389,6 @@ gateway:
               weight: 100
       containers:
         controller:
-          # Use the same union operator image as the rest of the dataplane
-          # workload (see .Values.image.union). The gateway templates run
-          # repository/tag through `tpl`, so cross-references work here.
           image:
             repository: '{{ .Values.image.union.repository }}'
             tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
@@ -2573,7 +2524,6 @@ gateway:
 
   config:
     defaults:
-      # Maximum timeout is limited by Cloudflare tunnel ingress which caps at 6000s
       max-revision-timeout-seconds: "6000"
     deployment:
       progress-deadline: "30m"
@@ -2583,10 +2533,6 @@ gateway:
       queue-sidecar-memory-limit: "800Mi"
       queue-sidecar-ephemeral-storage-request: "512Mi"
       queue-sidecar-ephemeral-storage-limit: "1024Mi"
-      # Skip tag→digest resolution for these registries. Mirrors what the
-      # legacy serving.extraConfig.deployment block set on the operator-
-      # managed KnativeServing CR. Templated through tpl, so the image-
-      # builder registry helper resolves to the active provider URL.
       registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
     features:
       kubernetes.podspec-affinity: "enabled"
@@ -2618,13 +2564,7 @@ gateway:
     observability: {}
     tracing: {}
 
-# Optional union-dataproxy backend. Used when the zero-trust gateway is
-# enabled (gateway.enabled: true). When dataproxy.enabled is true the
-# chart renders the Deployment + Service + ServiceAccount, and the
-# gateway envoy bootstrap adds a "/" catch-all route + STRICT_DNS cluster
-# pointing at this service. Setting enabled: true without
-# gateway.enabled: true leaves the workload orphaned (no envoy will route
-# to it).
+# -- union-dataproxy backend. Used when the zero-trust gateway is enabled.
 dataproxy:
   serviceAccount:
     create: true

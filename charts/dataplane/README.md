@@ -110,60 +110,40 @@ Expected output: All pods should be in `Running` state, and logs should show suc
 
 ---
 
-## Upgrading to zero-trust mode (BYOC only)
+## Zero-trust mode (BYOC only)
 
-Zero-trust mode replaces the `knative-operator`-managed `KnativeServing` CR with vendored Knative Serving + Kourier + Envoy manifests rendered inline by this chart. Layer `values.zero-trust.yaml` after your BYOC platform overlay (`values.aws.yaml`, `values.gcp.yaml`, etc.) to enable it.
+To enable zero-trust mode, layer `values.zero-trust.yaml` after your BYOC platform overlay (e.g. `values.aws.yaml`):
 
-> **Not supported for selfhosted-intracluster deployments.** Do not layer `values.zero-trust.yaml` onto `values.{aws,gcp}.selfhosted-intracluster.yaml`. See the corresponding `SELFHOSTED_INTRA_CLUSTER_*.md` guides.
-
-### Migration prerequisite
-
-Existing dataplanes running the legacy operator-managed serving path **must** run the [`knative-migration`](../knative-migration/README.md) chart **before** upgrading to a chart version with `gateway.enabled: true`. Skipping the migration deadlocks the upgrade:
-
-- The upgrade tries to prune the orphaned `KnativeServing` CR.
-- The operator finalizer (`knativeservings.operator.knative.dev`) blocks the delete.
-- The operator itself is being torn down in the same upgrade — nothing releases the finalizer.
-- The upgrade hangs indefinitely.
-
-Run `knative-migration` first to strip the finalizer and clean up operator residue. See its README for hook modes (Helm post-install, ArgoCD PreSync, or plain).
-
-### Dataproxy backend
-
-Zero-trust mode deploys the `union-dataproxy` backend by default. The chart renders the Deployment + Service + ServiceAccount under `templates/dataproxy/`, and the gateway envoy bootstrap adds a catch-all `/` route + STRICT_DNS cluster pointing at the Service (`union-operator-dataproxy:8080`). The bundled ServiceMonitor scrapes the standard `debug:10254` port for Prometheus metrics.
-
-To opt out, override:
-
-```yaml
-dataproxy:
-  enabled: false
+```bash
+helm upgrade --install unionai-dataplane unionai/dataplane \
+  --namespace union \
+  --values values.aws.yaml \
+  --values values.zero-trust.yaml \
+  --wait
 ```
 
-Setting `dataproxy.enabled: true` without `gateway.enabled: true` renders the workload but no Envoy will route to it (caller error).
+> **Not supported for selfhosted-intracluster deployments.**
 
-### Gateway pod scheduling and annotations
+### Before you upgrade
 
-The vendored gateway Deployments (`envoy`, `kourier-controller`, `activator`, `autoscaler`, `autoscaler-hpa`, `controller`, `webhook`) are kept close to upstream Knative + Kourier shape to ease future re-vendoring. As a result they do **not** honor the chart-wide `global.podAnnotations`, `global.podLabels`, `global.scheduling.*`, or `additionalPodSpec` helpers that the rest of the dataplane workloads (`operator`, `leaseworker`, `dataproxy`, etc.) pick up automatically.
+Existing dataplanes **must** run the [`knative-migration`](../knative-migration/README.md) chart before upgrading. Skipping this step deadlocks the upgrade.
 
-Override per component instead:
+### Gateway pod scheduling
+
+Gateway components do **not** honor the chart-wide `global.podAnnotations`, `global.podLabels`, `global.scheduling.*`, or `additionalPodSpec` helpers. Set placement per component:
 
 ```yaml
 gateway:
   components:
     envoy:
-      annotations:        # pod-template annotations
-      labels:             # pod-template labels
-      affinity:           # pod-template affinity (replaces, does not merge with global)
-      replicas:
-      hpa: { ... }
-      pdb: { ... }
+      annotations: {}
+      labels: {}
+      affinity: {}
+      replicas: 2
     kourier-controller:
-      affinity: ...
-    activator:
-      affinity: ...
-    # … similarly for autoscaler, autoscaler-hpa, controller, webhook
+      affinity: {}
+    # activator, autoscaler, autoscaler-hpa, controller, webhook
 ```
-
-If you need gateway pods to share scheduling/placement with the rest of the chart, copy the relevant `global.*` block under each `gateway.components.<name>.affinity` (and `nodeSelector` / `tolerations` if exposed).
 
 ---
 

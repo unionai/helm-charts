@@ -1,38 +1,3 @@
-# Zero-trust mode overlay for the Union dataplane chart.
-#
-# Layer this AFTER the BYOC platform overlay (values.{aws,gcp,azure}.yaml)
-# to render the vendored Knative Serving + Kourier + Envoy gateway path
-# under templates/gateway/, instead of the legacy KnativeServing CR managed
-# by the knative-operator subchart.
-#
-# Requirements:
-#   - Applies ONLY to BYOC deployments. Do not layer onto the
-#     values.{aws,gcp}.selfhosted-intracluster.yaml overlays.
-#   - The 12 Knative Serving CRDs ship inline with this chart under
-#     templates/gateway/crds/ when gateway.enabled is true, so no
-#     separate CRD-install step is required. (Note: the existing
-#     knative-operator CRDs gating in templates/serving/ remains
-#     unchanged.)
-#
-# What this overlay changes vs. BYOC defaults:
-#   gateway.enabled: false -> true
-#   knative-operator.enabled: true -> false
-#   dataproxy.enabled: false -> true   <- deploys the dataproxy Deployment +
-#                                         Service + ServiceAccount AND wires
-#                                         the Envoy route/cluster. Override
-#                                         to false to opt out.
-#
-# What stays at its BYOC default (intentionally):
-#   serving.enabled: true   <- keeps operator RBAC for serving.knative.dev,
-#                              keeps operator-binary apps.enabled,
-#                              keeps Cloudflare tunnel apps-route registration.
-#                              The legacy KnativeServing CR and bootstrap
-#                              configmap under templates/serving/ do not
-#                              render because of the compound predicate
-#                              (not .Values.gateway.enabled) on those
-#                              two templates.
-#   ingress.enabled: false  <- BYOC entry is the Cloudflare tunnel.
-
 gateway:
   enabled: true
 
@@ -42,9 +7,6 @@ knative-operator:
 dataproxy:
   enabled: true
 
-# Route inbound dataplane traffic through the operator's tunnel sidecar into
-# the gateway (mirrors cloud/deploy/dataplane/values-zero-trust.yaml's
-# union.tunnelService.dataplane.enableIngress).
 tunnelService:
   dataplane:
     enableIngress: true
