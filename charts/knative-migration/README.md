@@ -1,27 +1,30 @@
 # knative-migration
 
-One-shot cleanup of `knative-operator` residue on Union dataplane clusters
-after the `dataplane` chart migrates from operator-managed `KnativeServing`
-to directly-rendered Knative Serving + Kourier manifests (the "zero trust"
-gateway).
+One-shot preparation step for migrating a Union dataplane cluster from
+operator-managed `KnativeServing` to the directly-rendered Knative Serving
++ Kourier manifests in the `dataplane` chart's zero-trust gateway mode.
 
 ## When to run it
 
 Run this chart **before** upgrading the `dataplane` chart to a version that
-has `gateway.enabled: true` and no longer renders the `KnativeServing` CR. If
-you skip the migration:
+has `gateway.enabled: true` and no longer renders the `KnativeServing` CR.
 
-- The `dataplane` upgrade tries to prune the orphaned `KnativeServing` CR.
-- The operator finalizer (`knativeservings.operator.knative.dev`) blocks the
-  delete.
-- The operator itself is being torn down in the same upgrade, so nothing
-  releases the finalizer.
-- The upgrade hangs indefinitely.
+The migration is a deletion of the `KnativeServing` CR while the
+`knative-operator` is still alive. The operator's finalizer runs and tears
+down everything it installed from the KnativeServing manifest — Deployments
+(activator, autoscaler, controller, webhook, net-kourier-controller,
+3scale-kourier-gateway), their Services, ConfigMaps, HPAs, PDBs, and the
+cluster-scoped ClusterRoles, ClusterRoleBindings, and WebhookConfigurations
+upstream Knative Serving owns. Doing this **after** the operator is gone
+would orphan all of the above; the operator is the only thing that knows
+which cluster-scoped resources belong to its CR.
 
-Running this chart first strips the finalizer, removes the CR (including
-all its operator-managed Deployments, Services, ConfigMaps, HPAs, and PDBs
-via foreground-cascade delete), and deletes the operator's CRDs and
-ClusterRole/ClusterRoleBindings.
+What the operator's finalizer does *not* delete: the 12 Knative Serving
+CRDs (`certificates.networking.internal.knative.dev`,
+`routes.serving.knative.dev`, etc.) — these are global infrastructure with
+no owner reference. This chart adopts them into the dataplane Helm release
+in step 2 so the subsequent `helm upgrade dataplane` can claim them
+without an `invalid ownership metadata` failure.
 
 ## What it does
 
@@ -29,36 +32,62 @@ Renders six resources (a `Job`, plus a dedicated `ServiceAccount`,
 namespaced `Role` + `RoleBinding` for the `KnativeServing` CR, and a
 `ClusterRole` + `ClusterRoleBinding` for the cluster-scoped cleanup
 targets). The namespaced `Role`/`RoleBinding` split keeps the
-`KnativeServing` patch/delete permission bound to `.Release.Namespace`,
-so a same-named CR in any other namespace cannot be touched by this SA.
-The Job runs up to four idempotent steps:
+`KnativeServing` delete permission bound to `.Release.Namespace`, so a
+same-named CR in any other namespace cannot be touched by this SA.
+The Job runs three idempotent steps:
 
-1. Strips the stuck finalizer on `KnativeServing/<knativeServingName>` (the
-   default name `union-operator-serving` matches what the dataplane chart
-   creates), then deletes the CR with `--cascade=foreground`. Polls for up
-   to 12 minutes (360 × 2 s) for all dependents to be reaped.
+1. Deletes `KnativeServing/<knativeServingName>` (default
+   `union-operator-serving`) with `kubectl delete --wait=true --timeout=720s`.
+   The running operator processes the deletion via its finalizer, tearing
+   down all Deployments/Services/ConfigMaps/HPAs/PDBs/ClusterRoles/
+   ClusterRoleBindings/WebhookConfigurations it installed. `--wait=true`
+   blocks until the API server reaps the CR, which only happens after every
+   finalizer (including the operator's) completes. The 720s timeout covers
+   the activator pod's 600s `terminationGracePeriodSeconds` plus margin.
 2. **(helm-install path only, opt-in via `adoption.enabled: true`)** Stamps
    Helm release ownership metadata onto the 12 Knative Serving CRDs left
-   behind by the operator (`certificates.networking.internal.knative.dev`,
-   `routes.serving.knative.dev`, etc.). Required when the dataplane chart
-   will be applied via `helm install` / `helm upgrade` (or any wrapper:
-   Helmfile, Terraform `helm_release`). See [Adoption](#adoption) below.
+   behind by the operator. Required when the dataplane chart will be
+   applied via `helm install` / `helm upgrade` (or any wrapper: Helmfile,
+   Terraform `helm_release`). See [Adoption](#adoption) below. User
+   CRs of these types (e.g. Knative Services in domain namespaces) are
+   preserved — adoption only mutates CRD metadata, not instances.
 3. Deletes the `knativeservings.operator.knative.dev` and
-   `knativeeventings.operator.knative.dev` CRDs.
-4. Deletes 7 `knative-*-operator*` ClusterRoles and 7 ClusterRoleBindings
-   (6 with names matching the ClusterRoles, plus the asymmetric webhook
-   pair: ClusterRole `knative-operator-webhook` and ClusterRoleBinding
-   `operator-webhook` — note the `knative-` prefix on the role only).
+   `knativeeventings.operator.knative.dev` CRDs. The operator's finalizer
+   does not delete CRDs, so these are removed explicitly. By this point
+   step 1 has confirmed there are no remaining `KnativeServing` instances,
+   so the CRDs have nothing left to GC.
+
+The 7 ClusterRoles + 7 ClusterRoleBindings that scope the operator binary
+itself (`knative-serving-operator`, `knative-operator-webhook`,
+`operator-webhook`, etc.) and the operator Deployments are pruned by Helm
+when the `knative-operator` subchart is disabled in the subsequent
+`helm upgrade dataplane` — they are part of the dataplane Helm release's
+manifest from the prior install, so Helm tracks and removes them. This
+chart does not need to enumerate them.
 
 Every step is idempotent; re-running on an already-clean cluster is a
 no-op. RBAC is narrowed by `resourceNames` so the Job cannot delete or
-patch arbitrary resources — only the named operator CRDs, the 12 Knative
-Serving CRDs (when adoption is enabled), and the ClusterRoles /
-ClusterRoleBindings listed above. Note that those names are upstream
-Knative-shared: this chart assumes the target cluster has only the
-Union-managed Knative install. Running it on a cluster that also hosts
-an independent Knative Serving or Eventing installation will remove
-resources that install depends on.
+patch arbitrary resources — only the named `KnativeServing` CR, the 2
+operator CRDs, and the 12 Knative Serving CRDs (when adoption is enabled).
+Note that those names are upstream Knative-shared: this chart assumes the
+target cluster has only the Union-managed Knative install. Running it on a
+cluster that also hosts an independent Knative Serving or Eventing
+installation will remove resources that install depends on.
+
+## Failure mode: operator unhealthy at delete time
+
+If the `knative-operator` Deployment is absent or crash-looping when the
+Job runs, the operator's finalizer never executes; `kubectl delete --wait`
+blocks until the 720s timeout, then exits non-zero. The Job retries via
+`backoffLimit` and ultimately fails. This is intentional: silently
+proceeding without the operator's cleanup would orphan the runtime
+ClusterRoles + WebhookConfigurations the operator installed, which is
+exactly what this design avoids.
+
+Pre-flight check before running the chart: verify
+`kubectl get deploy -n union knative-operator` shows at least one Ready
+replica. If not, restore the operator (`helm rollback` or `helm upgrade`
+the previous revision) before invoking the migration.
 
 ## Adoption
 
@@ -125,8 +154,9 @@ clean up automatically once the Job succeeds. Re-run via `helm upgrade`.
 ### ArgoCD `PreSync` hook
 
 For ArgoCD-managed deployments, the migration must run **before** the Sync
-phase, not after — the orphaned `KnativeServing` finalizer would deadlock
-Sync's prune of the CR, so PostSync hooks would never run.
+phase, not after — the CR deletion must happen while the operator is still
+running, and Sync would tear down the operator at the same time as the
+gateway resources are applied.
 
 ```yaml
 annotations:
@@ -161,32 +191,25 @@ kubectl logs -n union \
   -l app.kubernetes.io/instance=unionai-knative-migration,app.kubernetes.io/name=knative-migration
 ```
 
-Confirm the operator residue is gone:
+Confirm the operator CRDs are gone and the KnativeServing CR is absent:
 
 ```bash
-# CRDs
 kubectl get crd knativeservings.operator.knative.dev knativeeventings.operator.knative.dev 2>&1 \
   | grep -i 'not found'
 
-# ClusterRoles
-for n in knative-serving-operator knative-serving-operator-aggregated \
-         knative-serving-operator-aggregated-stable knative-eventing-operator \
-         knative-eventing-operator-aggregated knative-eventing-operator-aggregated-stable \
-         knative-operator-webhook; do
-  kubectl get clusterrole "$n" 2>&1 | grep -i 'not found'
-done
-
-# ClusterRoleBindings (note the webhook entry is `operator-webhook`, not
-# `knative-operator-webhook`)
-for n in knative-serving-operator knative-serving-operator-aggregated \
-         knative-serving-operator-aggregated-stable knative-eventing-operator \
-         knative-eventing-operator-aggregated knative-eventing-operator-aggregated-stable \
-         operator-webhook; do
-  kubectl get clusterrolebinding "$n" 2>&1 | grep -i 'not found'
-done
+kubectl get knativeserving -n union 2>&1 | grep -E 'No resources|not found'
 ```
 
-Each command should report `NotFound`.
+Both commands should report `NotFound` / `No resources found`.
+
+If `adoption.enabled: true`, confirm the 12 Serving CRDs carry Helm
+ownership metadata:
+
+```bash
+kubectl get crd services.serving.knative.dev \
+  -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}{"\n"}'
+# expected: <your dataplane release name>
+```
 
 ## Removal
 
@@ -205,12 +228,12 @@ After all clusters have run the Job successfully:
 | `image.pullPolicy` | `IfNotPresent` | |
 | `labels` | `{}` | Common labels merged into all four resources. |
 | `annotations` | `{}` | Common annotations; populate to declare install mode. |
-| `knativeServingName` | `union-operator-serving` | `KnativeServing` CR to unstick (release-namespaced). |
+| `knativeServingName` | `union-operator-serving` | `KnativeServing` CR to delete (release-namespaced). |
 | `adoption.enabled` | `false` | Stamp Helm ownership metadata onto the 12 Knative Serving CRDs. Enable only for helm-install paths; see [Adoption](#adoption). |
 | `adoption.targetRelease` | `""` | Required when `adoption.enabled: true`. Helm release name used for `helm install/upgrade dataplane`. |
 | `adoption.targetNamespace` | `""` | Required when `adoption.enabled: true`. Namespace of the dataplane release. |
 | `job.backoffLimit` | `3` | |
-| `job.activeDeadlineSeconds` | `900` | 15 min. Sized to absorb foreground-cascade GC of the CR's dependents (the activator pod's `terminationGracePeriodSeconds: 600` is the long pole). |
+| `job.activeDeadlineSeconds` | `900` | 15 min. Sized to absorb the operator finalizer's cascade GC of the CR's dependents (the activator pod's `terminationGracePeriodSeconds: 600` is the long pole). |
 | `job.ttlSecondsAfterFinished` | `300` | Keeps Pod logs for 5 min after success. |
 | `resources` | small (10m CPU / 32Mi req) | Pod resources. |
 | `nodeSelector` / `tolerations` / `affinity` | empty | Standard placement. |
@@ -222,22 +245,22 @@ After all clusters have run the Job successfully:
 chart's ClusterRole from being created. Verify the user installing the
 chart has permission to create cluster-scoped RBAC.
 
-**Job hangs at step 1 (foreground-cascade-delete the CR).** A pod owned by
-the `KnativeServing` is failing to terminate within
-`terminationGracePeriodSeconds`. Check pod events on `activator`,
-`autoscaler`, etc. The Job's `activeDeadlineSeconds: 900` will eventually
-fail the Job; increase the value if your cluster legitimately needs longer
-to reap pods.
+**Job times out at step 1 (`kubectl delete knativeserving --wait`).**
+Either the operator is unhealthy (so its finalizer never runs — see
+[Failure mode](#failure-mode-operator-unhealthy-at-delete-time)), or a pod
+owned by the KnativeServing is failing to terminate within
+`terminationGracePeriodSeconds`. Check `kubectl get pods -n union` for
+stuck terminating pods on `activator` / `autoscaler` / `controller`, and
+`kubectl logs -n union deploy/knative-operator` for finalizer errors.
+The Job's `activeDeadlineSeconds: 900` will eventually fail the Job;
+investigate before retrying.
 
-**Job hangs at step 1 after a previous run was interrupted.** Step 1 is
-idempotent across retries: the patch removes the operator finalizer by
-index, so it preserves `foregroundDeletion` (added by the API server when
-`delete_wait` issues `--cascade=foreground`) and any finalizers added by
-unrelated controllers. If the operator finalizer is absent on retry, the
-patch is skipped and `delete_wait` polls until GC reaps the remaining
-dependents. If another controller added its own finalizer, `delete_wait`
-will block on it — investigate that controller, not this Job.
+**`helm upgrade dataplane` fails with `invalid ownership metadata` on a
+Knative Serving CRD.** The migration Job ran without `adoption.enabled:
+true`, so the 12 Serving CRDs still lack Helm provenance. Re-run the
+chart with `adoption.enabled: true`, `adoption.targetRelease`, and
+`adoption.targetNamespace` set, then retry the dataplane upgrade. Step 1
+is a no-op on retry (CR already absent).
 
-**Re-running.** All three cleanup steps are idempotent. Re-running on a
-clean cluster is a no-op; re-running after an interrupted previous run
-resumes from wherever it left off.
+**Re-running.** All three steps are idempotent. Re-running on a clean
+cluster is a no-op.

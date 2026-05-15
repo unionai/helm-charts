@@ -12,8 +12,8 @@ metadata:
 ---
 # Namespaced Role for the only namespaced resource the Job touches —
 # the KnativeServing CR. Splitting this off the ClusterRole keeps the
-# resourceNames-scoped permission bound to .Release.Namespace; a same-
-# named CR in any other namespace cannot be patched/deleted by this SA.
+# permission bound to .Release.Namespace; a CR in any other namespace
+# cannot be touched by this SA.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -28,9 +28,7 @@ metadata:
 rules:
   - apiGroups: ["operator.knative.dev"]
     resources: ["knativeservings"]
-    verbs: ["get", "patch", "delete"]
-    resourceNames:
-      - {{ .Values.knativeServingName | quote }}
+    verbs: ["get", "list", "watch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -52,9 +50,13 @@ subjects:
     name: {{ include "knative-migration.fullname" . }}
     namespace: {{ .Release.Namespace }}
 ---
-# ClusterRole for the cluster-scoped resources the Job cleans up: the
-# two operator CRDs, optionally the 12 Knative Serving CRDs for adoption,
-# and the operator's ClusterRoles/ClusterRoleBindings.
+# ClusterRole for the cluster-scoped resources the Job touches: the two
+# operator-binary CRDs (deleted in step 3), and optionally the 12 Knative
+# Serving CRDs (patched for Helm-ownership adoption in step 2).
+#
+# This is a one-shot migration Job; CRD verbs are not scoped by
+# resourceNames. The chart is installed deliberately by an operator,
+# auto-cleaned via helm hooks on success, and runs once per cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -68,60 +70,7 @@ metadata:
 rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      - knativeservings.operator.knative.dev
-      - knativeeventings.operator.knative.dev
-
-  {{- if .Values.adoption.enabled }}
-  # Adoption: stamp Helm ownership metadata onto the 12 Knative Serving
-  # CRDs installed imperatively by the operator. `patch` covers both
-  # `kubectl annotate` and `kubectl label`. Rule emitted only when
-  # adoption is enabled so the chart's RBAC surface stays minimal for
-  # non-Helm install paths.
-  - apiGroups: ["apiextensions.k8s.io"]
-    resources: ["customresourcedefinitions"]
-    verbs: ["get", "patch"]
-    resourceNames:
-      - certificates.networking.internal.knative.dev
-      - clusterdomainclaims.networking.internal.knative.dev
-      - configurations.serving.knative.dev
-      - domainmappings.serving.knative.dev
-      - images.caching.internal.knative.dev
-      - ingresses.networking.internal.knative.dev
-      - metrics.autoscaling.internal.knative.dev
-      - podautoscalers.autoscaling.internal.knative.dev
-      - revisions.serving.knative.dev
-      - routes.serving.knative.dev
-      - serverlessservices.networking.internal.knative.dev
-      - services.serving.knative.dev
-  {{- end }}
-
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterroles"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      # Paired ClusterRoleBinding is named "operator-webhook" (no knative- prefix) upstream.
-      - knative-operator-webhook
-      - knative-serving-operator
-      - knative-serving-operator-aggregated
-      - knative-serving-operator-aggregated-stable
-      - knative-eventing-operator
-      - knative-eventing-operator-aggregated
-      - knative-eventing-operator-aggregated-stable
-
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterrolebindings"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      # Paired ClusterRole is named "knative-operator-webhook" (with knative- prefix) upstream.
-      - operator-webhook
-      - knative-serving-operator
-      - knative-serving-operator-aggregated
-      - knative-serving-operator-aggregated-stable
-      - knative-eventing-operator
-      - knative-eventing-operator-aggregated
-      - knative-eventing-operator-aggregated-stable
+    verbs: ["get", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
