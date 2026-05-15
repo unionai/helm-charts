@@ -1,5 +1,12 @@
 # Work in progress: GCP specific overrides for dataplane chart
 
+# Image Builder Authentication (OPTIONAL)
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "google" if you want the builder to authenticate to Artifact Registry / GCR
+# via the GCP provider credential chain (Workload Identity / GKE metadata).
+# imageBuilder:
+#   authenticationType: google
+
 # DCGM Exporter
 dcgm-exporter:
   enabled: true
@@ -39,6 +46,15 @@ dcgm-exporter:
     allowPrivilegeEscalation: true
     privileged: true
 
+# Identify the GCP Secret Manager backend so the operator can report a canonical
+# secret store identity to the control plane (used for cluster-pool drift detection).
+# These fields are read only when proxy.secretManager.type is GCP.
+config:
+  proxy:
+    smConfig:
+      gcpConfig:
+        project: '{{ .Values.storage.gcp.projectId }}'
+
 executor:
   task_logs:
     plugins:
@@ -46,18 +62,18 @@ executor:
         cloudwatch-enabled: false
         kubernetes-enabled: false
         templates:
-          - displayName: Stackdriver Logs
+          - displayName: GCP Logs
             templateUris:
-              - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.podRFC3339StartTime}}`}};endTime={{`{{.podRFC3339FinishTime}}`}}?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+              - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.podRFC3339StartTime}}`}};endTime={{`{{.podRFC3339FinishTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
       k8s-array:
         logs:
           config:
             cloudwatch-enabled: false
             kubernetes-enabled: false
             templates:
-              - displayName: Stackdriver Logs
+              - displayName: GCP Logs
                 templateUris:
-                  - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+                  - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
       fasttask:
         logs:
           cloudwatch-enabled: false
@@ -69,9 +85,9 @@ executor:
                 templateUris:
                   - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
           templates:
-            - displayName: Stackdriver Logs
+            - displayName: GCP Logs
               templateUris:
-                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
       dask:
         # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
         logs:
@@ -85,10 +101,10 @@ executor:
                 templateUris:
                   - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
           templates:
-            - displayName: "Stackdriver Logs"
+            - displayName: "GCP Logs"
               scheme: TaskExecution
               templateUris:
-                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22job-runner%22?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22job-runner%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
             - displayName: Dask Dashboard
               linkType: dashboard
               scheme: TaskExecution
@@ -111,13 +127,13 @@ executor:
             - displayName: "Stacktrace Logs (Ray All)"
               scheme: TaskExecution
               templateUris:
-                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}%22?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
       spark:
         logs:
           mixed:
             kubernetes-enabled: false
             stackdriver-enabled: true
-            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
             dynamic-log-links:
               - vscode:
                   displayName: VSCode
@@ -132,7 +148,7 @@ executor:
           all-user:
             kubernetes-enabled: false
             stackdriver-enabled: true
-            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.podName}}`}}-exec%22?project={{.Values.storage.gcs.projectId}}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{.Values.storage.gcs.projectId}}"
+            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.podName}}`}}-exec%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
         spark-config-default:
           - spark.driver.cores: "1"
           - spark.eventLog.enabled: "true"
@@ -150,6 +166,22 @@ executor:
           - spark.kubernetes.driver.connectionTimeout: "30000"
           - spark.kubernetes.driver.requestTimeout: "30000"
         spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
+
+# ----------------------------------------------------------------------------
+# Logging Configuration (GCP/GKE specific)
+# ----------------------------------------------------------------------------
+
+# GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
+# includes WORKLOADS) already ship workload container stdout/stderr to Cloud
+# Logging via Google's managed fluentbit-gke DaemonSet in kube-system. Disable
+# the subchart fluentbit to avoid duplicate ingestion; rely on Google's agent,
+# and link out to console.cloud.google.com/logs/query for log viewing
+# (configured in executor.task_logs above).
+#
+# Override back to true at the env-specific values layer if GKE managed Cloud
+# Logging is not enabled for the cluster.
+fluentbit:
+  enabled: false
 
 # ----------------------------------------------------------------------------
 # Monitoring Configuration (GCP/GKE specific)

@@ -163,6 +163,15 @@ image:
     # tag will be set from Chart.AppVersion or can be overridden
 
 # ----------------------------------------------------------------------------
+# Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "google" if you want the builder to authenticate to Artifact Registry / GCR
+# via the GCP provider credential chain (Workload Identity / GKE metadata).
+# imageBuilder:
+#   authenticationType: google
+
+# ----------------------------------------------------------------------------
 # SECTION 5: Workload Identity (REQUIRED for GCP)
 # ----------------------------------------------------------------------------
 # Configure Workload Identity for secure GCP access.
@@ -289,6 +298,27 @@ config:
       authorizationMetadataKey: "flyte-authorization"
       tokenRefreshWindow: "5m"
 
+  # Identify the GCP Secret Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is GCP.
+  proxy:
+    smConfig:
+      gcpConfig:
+        project: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
+    # Persisted log source for the operator-proxy's TailLogs / TailTaskExecutionLogs
+    # handlers (cloud/operator/dataproxy/log_service.go). When the client requests
+    # LogsSource=PERSISTED_ONLY, the proxy reads historical task pod logs from the
+    # Cloud Logging API instead of the (live) Kubernetes pod log stream — which
+    # is what lets the UI keep showing logs after task pods are garbage-collected.
+    #
+    # Requires the operator-proxy GSA to hold roles/logging.viewer on the project.
+    persistedLogs:
+      sourceType: GCPStackdriver
+      gcpLogging:
+        gcp:
+          project: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
   operator:
     # Disable Cloudflare tunnel (not needed for intra-cluster)
     enableTunnelService: false
@@ -320,6 +350,48 @@ executor:
       # for authenticated eager-mode execution.
       injectSecret: true
       secretName: "EAGER_API_KEY"
+
+  # --- Task log links (GCP Cloud Logging) ---
+  # GKE ships container logs to Google Cloud Logging via the cluster's
+  # built-in logging agent (enabled by default in the
+  # selfmanaged/gcp/infra module — `logging.googleapis.com/kubernetes`
+  # with `SYSTEM_COMPONENTS` + `WORKLOADS`). These templates emit
+  # Cloud Console links the UI surfaces for task pods.
+  #
+  # `roles/logging.viewer` is granted to `union_backend_sa` (the GSA
+  # mapped to proxy + operator via Workload Identity) in
+  # `selfmanaged/gcp/dataplane/union_iam.tf` so the dataplane backend
+  # can serve log entries to the console. End users viewing logs via
+  # the Cloud Console link separately need `roles/logging.viewer` on
+  # the project. Mirrors the BYOC pattern in
+  # `cloud/deploy/dataplane/values-gcp.yaml` +
+  # `cloud/deploy/dataplane/template-gcp.yaml` (FAB-179).
+  task_logs:
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        templates:
+          - displayName: GCP Logs
+            templateUris:
+              - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.podRFC3339StartTime}}`}};endTime={{`{{.podRFC3339FinishTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            templates:
+              - displayName: GCP Logs
+                templateUris:
+                  - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          templates:
+            - displayName: GCP Logs
+              templateUris:
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
 
 # ----------------------------------------------------------------------------
 # Ingress Configuration
@@ -459,11 +531,20 @@ serving:
     enabled: false
 
 # ----------------------------------------------------------------------------
-# SECTION 6: Logging Configuration (REQUIRED)
+# SECTION 6: Logging Configuration
 # ----------------------------------------------------------------------------
-# FluentBit collects and forwards logs to the control plane.
+# GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
+# includes WORKLOADS) already ship workload container stdout/stderr to Cloud
+# Logging via Google's managed fluentbit-gke DaemonSet in kube-system. The
+# subchart fluentbit is disabled to avoid duplicate ingestion; log viewing
+# links out to console.cloud.google.com/logs/query (see executor.task_logs).
+#
+# Override back to true at the env-specific values layer if GKE managed Cloud
+# Logging is not enabled for the cluster. ServiceAccount fields below remain
+# documented for that case but are inert while enabled=false.
 
 fluentbit:
+  enabled: false
   serviceAccount:
     name: fluentbit-system
     # GKE Workload Identity annotation to grant FluentBit write access to GCS.

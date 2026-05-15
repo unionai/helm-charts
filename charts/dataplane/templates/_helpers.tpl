@@ -1493,25 +1493,6 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns the image builder authentication type.
-If imageBuilder.authenticationType is explicitly set (non-empty, not "noop"), use it.
-Otherwise, auto-detect from the cloud provider.
-*/}}
-{{- define "imagebuilder.authenticationType" -}}
-{{- if and .Values.imageBuilder.authenticationType (ne .Values.imageBuilder.authenticationType "noop") -}}
-  {{- .Values.imageBuilder.authenticationType -}}
-{{- else if eq (tpl .Values.storage.provider .) "aws" -}}
-  {{- "aws" -}}
-{{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
-  {{- "google" -}}
-{{- else if or (eq (tpl .Values.storage.provider .) "azure") (eq (.Values.provider | default "") "azure") -}}
-  {{- "azure" -}}
-{{- else -}}
-  {{- .Values.imageBuilder.authenticationType | default "noop" -}}
-{{- end -}}
-{{- end -}}
-
-{{/*
 Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
 In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
 namespace_mapping) so users only need to set namespaces.enabled: false.
@@ -1548,7 +1529,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
-{{- if .Values.low_privilege }}
+{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
 {{- if include "singleNamespace" . }}
