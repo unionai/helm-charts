@@ -13,9 +13,13 @@ metadata:
     app.kubernetes.io/version: "0.1.0"
 ---
 # Source: knative-migration/templates/rbac.yaml
-# ClusterRole for the cluster-scoped resources the Job cleans up: the
-# two operator CRDs, optionally the 12 Knative Serving CRDs for adoption,
-# and the operator's ClusterRoles/ClusterRoleBindings.
+# ClusterRole for the cluster-scoped resources the Job touches: the two
+# operator-binary CRDs (deleted in step 3), and optionally the 12 Knative
+# Serving CRDs (patched for Helm-ownership adoption in step 2).
+#
+# This is a one-shot migration Job; CRD verbs are not scoped by
+# resourceNames. The chart is installed deliberately by an operator,
+# auto-cleaned via helm hooks on success, and runs once per cluster.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -29,36 +33,7 @@ metadata:
 rules:
   - apiGroups: ["apiextensions.k8s.io"]
     resources: ["customresourcedefinitions"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      - knativeservings.operator.knative.dev
-      - knativeeventings.operator.knative.dev
-
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterroles"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      # Paired ClusterRoleBinding is named "operator-webhook" (no knative- prefix) upstream.
-      - knative-operator-webhook
-      - knative-serving-operator
-      - knative-serving-operator-aggregated
-      - knative-serving-operator-aggregated-stable
-      - knative-eventing-operator
-      - knative-eventing-operator-aggregated
-      - knative-eventing-operator-aggregated-stable
-
-  - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["clusterrolebindings"]
-    verbs: ["get", "delete"]
-    resourceNames:
-      # Paired ClusterRole is named "knative-operator-webhook" (with knative- prefix) upstream.
-      - operator-webhook
-      - knative-serving-operator
-      - knative-serving-operator-aggregated
-      - knative-serving-operator-aggregated-stable
-      - knative-eventing-operator
-      - knative-eventing-operator-aggregated
-      - knative-eventing-operator-aggregated-stable
+    verbs: ["get", "patch", "delete"]
 ---
 # Source: knative-migration/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -84,8 +59,8 @@ subjects:
 # Source: knative-migration/templates/rbac.yaml
 # Namespaced Role for the only namespaced resource the Job touches —
 # the KnativeServing CR. Splitting this off the ClusterRole keeps the
-# resourceNames-scoped permission bound to .Release.Namespace; a same-
-# named CR in any other namespace cannot be patched/deleted by this SA.
+# permission bound to .Release.Namespace; a CR in any other namespace
+# cannot be touched by this SA.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -100,9 +75,7 @@ metadata:
 rules:
   - apiGroups: ["operator.knative.dev"]
     resources: ["knativeservings"]
-    verbs: ["get", "patch", "delete"]
-    resourceNames:
-      - "union-operator-serving"
+    verbs: ["get", "list", "watch", "delete"]
 ---
 # Source: knative-migration/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -210,6 +183,15 @@ spec:
               #                       unnecessary for ArgoCD/Pulumi/etc.)
               #   TARGET_RELEASE    - dataplane helm release name (used iff ADOPTION_ENABLED)
               #   TARGET_NAMESPACE  - dataplane helm release namespace (used iff ADOPTION_ENABLED)
+              #
+              # Design: the operator is assumed to be alive when this Job runs. Deleting
+              # the KnativeServing CR triggers the operator's finalizer, which removes
+              # every cluster-scoped and namespace-scoped resource the operator installed
+              # from its KnativeServing manifest — runtime ClusterRoles, RoleBindings,
+              # WebhookConfigurations, Deployments, Services, ConfigMaps, HPAs, PDBs.
+              # CRDs are the exception: knative-operator's Uninstall path explicitly
+              # filters them out, so we adopt the 12 Knative Serving CRDs here (step 2)
+              # and delete the 2 operator-binary CRDs (step 3).
               set -euo pipefail
               
               # The 12 Knative Serving CRDs the knative-operator installs imperatively
@@ -231,59 +213,15 @@ spec:
               services.serving.knative.dev
               "
               
-              # Both helpers pass --wait=false because kubectl's built-in wait opens a
-              # watcher that needs list/watch verbs, and RBAC cannot scope list/watch by
-              # resourceName.
-              
-              # delete_wait blocks until the resource AND every dependent it owns are
-              # gone. --cascade=foreground tells the API server to add a
-              # `foregroundDeletion` finalizer that the GC controller only removes once
-              # all dependents are reaped, so polling on `kubectl get` naturally waits
-              # for the full cascade. Used for the KnativeServing CR, whose dependents
-              # are the operator-managed activator / autoscaler / controller / webhook /
-              # net-kourier-controller / 3scale-kourier-gateway Deployments and their
-              # Services, ConfigMaps, HPAs, and PDBs. Worst case is bounded by the
-              # activator's terminationGracePeriodSeconds (upstream sets 600s); 360
-              # iterations x 2s = 720s gives a 2-minute buffer above that ceiling.
-              #
-              # `kubectl get` failure is only treated as success when stderr matches
-              # NotFound. Other failures (network, RBAC, TLS, apiserver timeout) are
-              # propagated so the Job retries via backoffLimit instead of declaring
-              # success while the resource is still present.
-              delete_wait() {
-                local kind=$1 name=$2
-                local err
-                kubectl delete "$@" --cascade=foreground --ignore-not-found --wait=false
-                for _ in $(seq 1 360); do
-                  if err=$(kubectl get "$@" 2>&1 >/dev/null); then
-                    sleep 2
-                    continue
-                  fi
-                  case "$err" in
-                    *NotFound*|*"not found"*) return 0 ;;
-                    *) echo "kubectl get $* failed: $err" >&2; return 1 ;;
-                  esac
-                done
-                echo "timed out waiting for $kind/$name to be deleted" >&2
-                return 1
-              }
-              
-              # delete_no_wait fires the delete and returns. Safe for resources with no
-              # finalizers, or where we've already confirmed their blocking dependencies
-              # are gone.
-              delete_no_wait() {
-                kubectl delete "$@" --ignore-not-found --wait=false
-              }
-              
               # adopt_if_exists stamps Helm release ownership metadata onto a CRD if it
               # exists. No-op on a fresh BYOC install where the operator never ran (the
               # 12 Serving CRDs don't exist yet — Helm will create them itself during
               # the dataplane install). Idempotent via --overwrite; safe to retry.
               #
-              # As in delete_wait, NotFound is the only `kubectl get` failure treated as
-              # "absent". Other failures propagate so the Job retries instead of
-              # silently skipping adoption (which would resurface as an `invalid
-              # ownership metadata` failure on the subsequent dataplane upgrade).
+              # NotFound is the only `kubectl get` failure treated as "absent". Other
+              # failures propagate so the Job retries instead of silently skipping
+              # adoption (which would resurface as an `invalid ownership metadata`
+              # failure on the subsequent dataplane upgrade).
               adopt_if_exists() {
                 local crd=$1
                 local err
@@ -302,43 +240,26 @@ spec:
                   "app.kubernetes.io/managed-by=Helm"
               }
               
-              # 1. Remove the stuck operator finalizer and delete the KnativeServing CR.
-              #    We wait for the CR to be fully gone before deleting its CRD, because
-              #    the CRD's apiextensions `customresourcecleanup` finalizer blocks on
-              #    remaining instances.
+              # 1. Delete the KnativeServing CR and wait for the operator's finalizer
+              #    to complete. The operator's reconciler tears down every Deployment,
+              #    Service, ConfigMap, HPA, PDB, ClusterRole, ClusterRoleBinding, and
+              #    WebhookConfiguration it installed from the KnativeServing manifest,
+              #    then removes its own finalizer. `kubectl delete --wait=true` blocks
+              #    until the API server reaps the CR, which only happens once every
+              #    finalizer is gone — including the operator's. The 720-second timeout
+              #    covers the activator pod's 600s terminationGracePeriodSeconds plus
+              #    margin.
               #
-              #    The finalizer removal targets only the operator's finalizer, not the
-              #    whole array. Two states this preserves correctness for:
-              #      a) Retry after a partial run: a previous delete_wait already issued
-              #         `--cascade=foreground`, so the API server added
-              #         `foregroundDeletion`. The CR carries both finalizers; we strip
-              #         operator and let GC remove foregroundDeletion once dependents
-              #         are reaped.
-              #      b) Foreign finalizers: an unrelated controller added its own
-              #         finalizer. We strip operator only; delete_wait then blocks on
-              #         the foreign finalizer (loud, correct failure mode instead of
-              #         timing out blaming the wrong thing).
-              #    If the operator finalizer is absent (already stripped, or CR is
-              #    mid-cascade with only foregroundDeletion remaining), no patch is
-              #    applied and delete_wait polls until GC finishes.
-              operator_finalizer="knativeservings.operator.knative.dev"
-              if kubectl get knativeserving "$CR" -n "$NS" >/dev/null 2>&1; then
-                # Locate the operator finalizer's index, then atomically test-and-remove
-                # that specific element. The `test` op guards against TOCTOU: if another
-                # controller shifted the finalizers array between our `get` and `patch`,
-                # the test fails and the patch is rejected (loud failure, Job retries).
-                # Finalizers are a set in the k8s API, so at most one match.
-                idx=$(kubectl get knativeserving "$CR" -n "$NS" \
-                  -o go-template='{{range $i, $f := .metadata.finalizers}}{{if eq $f "'"$operator_finalizer"'"}}{{$i}}{{"\n"}}{{end}}{{end}}' \
-                  | head -n1)
-                if [ -n "$idx" ]; then
-                  kubectl patch knativeserving "$CR" -n "$NS" --type=json --patch \
-                    '[{"op":"test","path":"/metadata/finalizers/'"$idx"'","value":"'"$operator_finalizer"'"},{"op":"remove","path":"/metadata/finalizers/'"$idx"'"}]'
-                else
-                  echo "operator finalizer not present on KnativeServing/$CR - already stripped or mid-cascade, attempting delete" >&2
-                fi
-                delete_wait knativeserving "$CR" -n "$NS"
-              fi
+              #    Failure mode: if the operator is unhealthy or absent at delete time,
+              #    the operator finalizer never executes and `kubectl delete --wait`
+              #    blocks until the deadline, then exits non-zero. The Job retries via
+              #    backoffLimit; if it keeps failing, the operator needs investigation
+              #    before the migration can proceed. There is no fallback finalizer-strip
+              #    in this script — proceeding without operator cleanup would leave the
+              #    runtime RBAC and WebhookConfigurations orphaned, which is exactly what
+              #    this design avoids.
+              kubectl delete knativeserving "$CR" -n "$NS" \
+                --wait=true --timeout=720s --ignore-not-found
               
               # 2. Adopt the 12 Knative Serving CRDs into the dataplane Helm release.
               #    Only meaningful when the dataplane chart is being applied via the
@@ -349,33 +270,28 @@ spec:
               #    install paths (ArgoCD, Pulumi, kustomize) leave ADOPTION_ENABLED
               #    false; this step is then a no-op, avoiding incorrect provenance
               #    metadata on resources managed by other tools.
+              #
+              #    User-created CRs of these types (e.g. Knative Services in domain
+              #    namespaces) are preserved: adoption only mutates CRD metadata, and
+              #    the dataplane chart's subsequent upgrade renders the same CRDs (now
+              #    Helm-owned) without disturbing instances.
               if [ "$ADOPTION_ENABLED" = "true" ]; then
                 for crd in $SERVING_CRDS; do
                   adopt_if_exists "$crd"
                 done
               fi
               
-              # 3. Delete the two operator-only CRDs. Fire-and-forget: step 1 removed
-              #    the only known CR instance, so the CRDs have nothing to clean up.
-              delete_no_wait crd knativeservings.operator.knative.dev
-              delete_no_wait crd knativeeventings.operator.knative.dev
-              
-              # 4. Delete leftover cluster-scoped RBAC. Fire-and-forget: these have no
-              #    finalizers. The ClusterRole and ClusterRoleBinding share a name for
-              #    every operator pair except the webhook, which upstream names
-              #    `knative-operator-webhook` / `operator-webhook`.
-              for name in \
-                knative-serving-operator \
-                knative-serving-operator-aggregated \
-                knative-serving-operator-aggregated-stable \
-                knative-eventing-operator \
-                knative-eventing-operator-aggregated \
-                knative-eventing-operator-aggregated-stable; do
-                delete_no_wait clusterrole        "$name"
-                delete_no_wait clusterrolebinding "$name"
-              done
-              delete_no_wait clusterrole    knative-operator-webhook
-              delete_no_wait clusterrolebinding operator-webhook
+              # 3. Delete the two operator-binary CRDs. The operator's finalizer (step 1)
+              #    does not delete CRDs, and the operator's own bootstrap RBAC + the
+              #    operator Deployments are pruned by Helm when the knative-operator
+              #    subchart is disabled in the subsequent dataplane upgrade — but the
+              #    two operator CRDs may live in a separate subchart (knative-operator-crds)
+              #    or persist via helm.sh/resource-policy: keep, so delete them
+              #    explicitly. Fire-and-forget: by this point step 1 has confirmed there
+              #    are no remaining KnativeServing instances, so the CRDs have nothing
+              #    to GC.
+              kubectl delete crd knativeservings.operator.knative.dev --ignore-not-found --wait=false
+              kubectl delete crd knativeeventings.operator.knative.dev --ignore-not-found --wait=false
               
       volumes:
         - name: tmp
