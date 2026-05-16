@@ -276,8 +276,16 @@ spec:
               #    in this script — proceeding without operator cleanup would leave the
               #    runtime RBAC and WebhookConfigurations orphaned, which is exactly what
               #    this design avoids.
-              kubectl delete knativeserving "$CR" -n "$NS" \
-                --wait=true --timeout=720s --ignore-not-found
+              #
+              #    Idempotency guard: on rerun after a successful prior cleanup the
+              #    operator CRD has been deleted by step 3, so `kubectl delete
+              #    knativeserving` fails with "the server doesn't have a resource type"
+              #    before `--ignore-not-found` applies. If the CRD is absent, there is
+              #    by construction no CR left to clean up; skip the delete entirely.
+              if kubectl get crd knativeservings.operator.knative.dev >/dev/null 2>&1; then
+                kubectl delete knativeserving "$CR" -n "$NS" \
+                  --wait=true --timeout=720s --ignore-not-found
+              fi
               
               # 2. Adopt the 12 Knative Serving CRDs into the dataplane Helm release.
               #    Only meaningful when the dataplane chart is being applied via the
