@@ -116,6 +116,8 @@ kubectl get crd knativeservings.operator.knative.dev knativeeventings.operator.k
 
 **`helm upgrade dataplane` fails with `invalid ownership metadata`.** Re-run this chart with `adoption.enabled: true` and the correct `adoption.targetRelease` / `adoption.targetNamespace`, then retry the upgrade.
 
+**First `helm upgrade dataplane` fails on `routing-serving-certs` with `no endpoints available for service "webhook"` (or `x509: certificate signed by unknown authority`).** The Knative Serving webhook isn't ready when the `Certificate` CR is admitted. Wait for `deploy/webhook` to roll out, then re-run the same upgrade — it succeeds idempotently.
+
 ## Uninstall
 
 ```bash
