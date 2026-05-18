@@ -12,56 +12,43 @@
 
 global:
 
-  # Control plane hostname (FQDN)
-  # Example: "mycompany.union.ai" or "union.example.com"
-  UNION_HOST: ""
+  # --- Deployment Identity ---
+  UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
+  UNION_ORG: ""             # Organization name (must match dataplane)
 
-  # AWS region for all resources
-  # TODO: Will eventually be moved to values.aws.yaml
-  # Example: "us-west-2", "us-east-1", "eu-west-1"
-  AWS_REGION: ""
+  # --- Infrastructure ---
+  DB_HOST: ""               # PostgreSQL endpoint
+  DB_NAME: ""               # PostgreSQL database name
+  DB_USER: ""               # PostgreSQL username
+  DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
+  BUCKET_NAME: ""           # Object storage bucket for metadata
+  ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
+  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
+  DATAPLANE_ENDPOINT: ""    # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
 
-  # PostgreSQL RDS endpoint
-  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
-  DB_HOST: ""
+  # --- Images ---
+  # Default: Union's customer-facing registry. Requires imagePullSecrets.
+  # Internal deployments: overridden by terraform to private ECR/GCR.
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
-  # PostgreSQL database name
-  # Example: "unionai" or "union_controlplane"
-  DB_NAME: ""
+  # --- Ingress ---
+  INGRESS_PROVIDER: nginx   # Options: "nginx", "envoy", "both"
 
-  # PostgreSQL username
-  # Example: "unionai" or "admin"
-  DB_USER: ""
+  # Cloud-specific globals (AWS_REGION, IAM role ARNs, etc.) are declared
+  # in the cloud overlay (e.g. values.aws.selfhosted-intracluster.yaml).
 
-  # S3 bucket for control plane metadata
-  # Example: "union-controlplane-metadata"
-  BUCKET_NAME: ""
+  # --- Service-to-Service Authentication ---
+  INTERNAL_CLIENT_ID: ""    # OAuth2 client ID for S2S calls (client_credentials)
+  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint for S2S authentication
+  OIDC_S2S_SCOPE: ""        # S2S scope. Okta: leave empty (defaults to "all"). Entra ID: "api://my-app/.default"
 
-  # S3 bucket for artifacts storage
-  # Example: "union-controlplane-artifacts"
-  ARTIFACTS_BUCKET_NAME: ""
-
-  # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
-  # Example: "union-controlplane-secrets"
-  # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: ""
-
-  # Union Private ECR repository prefix for control plane images
-  # Contact Union for controlplane access and distribution.
-  IMAGE_REPOSITORY_PREFIX: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp"
-
-  # Ingress controller provider. Options: "nginx", "envoy", "both"
-  INGRESS_PROVIDER: nginx
-
-  # OAuth2 client ID for service-to-service authentication (client_credentials flow).
-  # Services use this to acquire tokens for internal calls through nginx.
-  # Example: "0oa3xyz4abc5def6g7h8"
-  INTERNAL_CLIENT_ID: ""
-
-  # OAuth2 token endpoint for service-to-service authentication.
-  # Example: "https://dev-123456.okta.com/oauth2/default/v1/token"
-  AUTH_TOKEN_URL: ""
+  # --- OIDC Authentication ---
+  # Full auth configuration is in flyte.configmap.adminServer.auth.
+  # These globals are deprecated — set auth fields directly in that block
+  # or via the authn terraform module outputs (app_auth, user_auth).
+  OIDC_BASE_URL: ""         # Deprecated: use adminServer.auth.appAuth.externalAuthServer.baseUrl
+  OIDC_CLIENT_ID: ""        # Deprecated: use adminServer.auth.userAuth.openId.clientId
+  CLI_CLIENT_ID: ""         # Deprecated: use adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId
 
 # ----------------------------------------------------------------------------
 # Additional Configuration
@@ -91,7 +78,6 @@ controlplane:
   enabled: true
 
 replicaCount: 1
-imagePullSecrets:
 nameOverride: ""
 # Configuring the fullnameOverride ensures that all deployed resources
 # have predictable names that do not depend on the release name.
@@ -142,6 +128,10 @@ strategy:
     maxUnavailable: 1
     maxSurge: 1
 secrets: {}
+
+imagePullSecrets:
+  - name: union-registry-secret
+
 podMonitor:
   custom:
     enabled: false
@@ -173,8 +163,12 @@ ingress:
   # Default to the ingress class being created in nginx-ingress chart.
   className: "controlplane"
 
-  # TLS to apply to all ingress objects.
-  # tls:
+  # TLS configuration for intra-cluster HTTPS.
+  tls:
+    - hosts:
+        - '{{ .Values.global.UNION_HOST }}'
+        - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+      secretName: 'controlplane-selfsigned-tls-secret'
 
   # Host to use for all ingress objects.
   host:  "" # Set the DNS name of the ingress host used by you control plane
@@ -185,6 +179,11 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
+    # Allow DP→CP traffic via intra-cluster DNS to match ingress rules.
+    # Without this, requests from the dataplane to the controlplane nginx
+    # controller service DNS name won't match the ingress host.
+    nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+
     # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
     nginx.ingress.kubernetes.io/app-root: /v2
     nginx.ingress.kubernetes.io/service-upstream: "true"
@@ -248,15 +247,47 @@ ingress:
     nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
     nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
     nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
+    # For gRPC backends (backend-protocol: GRPC), nginx uses grpc_pass instead
+    # of proxy_pass. The auth-response-headers annotation only sets proxy headers,
+    # not gRPC headers. This configuration-snippet bridges identity headers from
+    # the auth subrequest response into the upstream gRPC request so backend
+    # services receive the caller's identity.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      auth_request_set $user_id $upstream_http_x_user_subject;
+      proxy_set_header X-User-Subject $user_id;
+      grpc_set_header X-User-Subject $user_id;
+
+      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
+
+      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+      proxy_set_header X-User-Claim-userhandle $user_handle;
+      grpc_set_header X-User-Claim-userhandle $user_handle;
+
+      auth_request_set $groups $upstream_http_x_user_claim_groups;
+      proxy_set_header X-User-Claim-groups $groups;
+      grpc_set_header X-User-Claim-groups $groups;
+
+      more_set_headers "x-request-id: $request_id";
+      proxy_set_header x-request-id $request_id;
+      grpc_set_header x-request-id $request_id;
+
+# Envoy Gateway controller installed through external chart.
+envoy-gateway:
+  # Set to true when Envoy Gateway is installed alongside this controlplane.
+  # Automatically set by Terraform when envoy-gateway/revisions.yaml exists.
+  enabled: false
 
 envoyGateway:
-  # GatewayClass name for Envoy Gateway. Used when INGRESS_PROVIDER is "envoy" or "both".
-  gatewayClassName: envoy
+  # GatewayClass name for Envoy Gateway. Must match the gatewayClassName in the
+  # Gateway resource. Uses a distinct name from the dataplane's gateway class.
+  gatewayClassName: controlplane-envoy
   rateLimit:
     enabled: false
     requestsPerUnit: 100
     unit: Second
-    
+
 # -- Central logging configuration. All controlplane services pull their log level from here.
 # Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO, 6=DEBUG).
 # Log format options: json, text, gcp
@@ -267,6 +298,14 @@ logging:
     type: json
 
 configMap:
+  # Flyteadmin endpoint for intra-cluster communication.
+  # CP-internal: direct to flyteadmin K8s service (not through ingress).
+  admin:
+    endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
+    insecure: true
+    clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+    clientSecretLocation: "/etc/secrets/union/client_secret"
+
   # Authorization — all non-authorizer services use TypeAuthorizer to route
   # Authorize() calls directly to the in-cluster authorizer service.
   # The authorizer service itself decides the backend (Noop, UserClouds,
@@ -300,15 +339,37 @@ configMap:
       enabled: false
   connection:
     environment: "staging"
-    region: '{{ .Values.global.AWS_REGION }}'
-    rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
+    region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
+    # Use controlplane ingress controller for gRPC routing.
+    rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
+    security:
+      # Single-tenant mode: all requests are for this organization.
+      singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
     selfServeConfig:
       legacyHosts:
         - '{{ .Values.global.UNION_ORG }}'
   union:
+    connection:
+      # Internal service-to-service communication goes through the controlplane
+      # nginx ingress to trigger the authentication flow (auth subrequest to /me).
+      # gRPC requires TLS for HTTP/2 with NGINX, so insecure must be false.
+      # However, the TLS certificate on the ingress is typically issued for the
+      # external domain only — the internal FQDN (controlplane-nginx-controller.
+      # <namespace>.svc.cluster.local) won't match. Since traffic is already
+      # within the cluster network, skip TLS certificate verification.
+      insecure: false
+      insecureSkipVerify: true
+
+      # Overridden by terraform from authn module trusted_identity_claims output.
+      # Okta: externalIdentityClaim = internal client_id (sub == client_id)
+      # Entra ID: externalIdentityClaim = Service Principal Object ID
+      trustedIdentityClaims:
+        enabled: true
+        externalIdentityClaim: ""
+        externalIdentityTypeClaim: "app"
     internalConnectionConfig:
       enabled: true
       urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
@@ -320,7 +381,7 @@ configMap:
       tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
       authorizationMetadataKey: flyte-authorization
       scopes:
-        - all
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
 services:
   artifacts:
@@ -347,6 +408,7 @@ services:
         metrics:
           scope: "artifacts:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         options: sslmode=disable
@@ -363,11 +425,12 @@ services:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
             container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            # Storage backend config — cloud-specific, set in overlay.
+            # AWS: stow/s3 with auth_type: iam
+            # GCP: stow/google with json_key
             stow:
-              config:
-                auth_type: iam
-                region: '{{ .Values.global.AWS_REGION }}'
-              kind: s3
+              config: {}
+              kind: ""
             type: stow
           artifactDatabaseConfig:
             connMaxLifeTime: 1m
@@ -412,19 +475,8 @@ services:
       #
       # Supported types:
       #   - "Noop"       — no enforcement (default)
-      #   - "UserClouds" — Union Cloud's authorization backend
+      #   - "UserClouds" — Union RBAC (just set type, defaults are pre-configured)
       #   - "External"   — customer-provided gRPC authorization server (selfhosted)
-      #
-      # --- Union Cloud (UserClouds) ---
-      # For Union Cloud deployments, set type to "UserClouds":
-      #   authorizer:
-      #     type: "UserClouds"
-      #     userCloudsClient:
-      #       tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
-      #       tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
-      #       clientID: '{{ .Values.union.authz.clientID }}'
-      #       clientSecretName: 'union/client_secret'
-      #       enableLogging: true
       #
       # --- External Authorization (selfhosted) ---
       # For selfhosted deployments with a customer-provided authz server:
@@ -456,6 +508,52 @@ services:
       #       failOpen: false
       authorizer:
         type: "Noop"
+        # --- Bootstrap (Union/UserClouds mode only) ---
+        # Seeds the authorization database on first start.
+        # Ignored when type is "Noop" or "External".
+        bootstrap:
+          # Organization identifier for this deployment.
+          organization: '{{ .Values.global.UNION_ORG }}'
+
+          # Authorization domains to create. Each domain is an isolation boundary
+          # for workflow executions (e.g. dev vs prod).
+          domains:
+            - development
+            - staging
+            - production
+
+          # Projects to pre-create during bootstrap. Optional — projects can
+          # also be created later via the console or CLI.
+          projects: []
+          # Example:
+          #   - "union-health-monitoring"
+
+          # Internal platform service accounts that need Admin access.
+          # clientId must match the resolved `sub` claim from your IdP's
+          # client_credentials tokens (for Okta this is the Client ID;
+          # for Entra ID this is the Service Principal Object ID).
+          serviceAccounts: []
+          # Example:
+          #   - clientId: "<App 3 sub claim>"
+          #     name: "service-to-service"
+          #     role: "Admin"
+          #   - clientId: "<App 4 sub claim>"
+          #     name: "operator"
+          #     role: "Admin"
+          #   - clientId: "<App 5 sub claim>"
+          #     name: "eager"
+          #     role: "Admin"
+
+          # Human users granted Admin role on bootstrap. These users can
+          # manage RBAC via the console. subject must match the `sub` claim
+          # from your IdP's user tokens.
+          adminUsers: []
+          # Example:
+          #   - name: "admin@example.com"
+          #     subject: "<user sub claim>"
+
+          retryInterval: 5s
+          maxRetries: 30
         # --- External client defaults ---
         # Headers forwarded from the authorizer to the external server on
         # each Authorize() call. These carry the caller's OIDC token so the
@@ -467,6 +565,20 @@ services:
           forwardHeaders:
             - authorization
             - flyte-authorization
+        # --- UserClouds client defaults (pre-configured) ---
+        # These defaults are used when type is set to "UserClouds" (Union RBAC).
+        # They are ignored when type is "Noop" or "External".
+        # To enable Union RBAC, just change type to "UserClouds" — no other
+        # configuration is needed. Override individual fields only if your
+        # deployment uses non-standard naming or secrets.
+        userCloudsClient:
+          tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
+          tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+          clientID: '{{ .Values.union.authz.clientID }}'
+          clientSecretName: 'union/client_secret'
+          enableLogging: true
+        internalCommunicationConfig:
+          enabled: false
       sharedService:
         connectPort: 8081
         metrics:
@@ -495,6 +607,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -522,6 +635,166 @@ services:
         secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
         clusterSelector:
           type: local
+        # Task metrics query templates for GetActionAttemptMetrics / GetAppMetrics RPCs.
+        # Migrated from usage service to dataproxy in cloud #15357.
+        taskMetrics:
+          metricDelayToleranceDuration: 0s
+          promQuery:
+            queries:
+              EXECUTION_METRIC_APP_REQUESTS: |
+                sum(rate((
+                  envoy_cluster_upstream_rq_xx{
+                    job="serving-envoy",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
+                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
+                    name!=""}
+                )[5m:])) by (project, domain, name, envoy_response_code_class)
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
+                histogram_quantile(0.5, sum(rate((
+                  envoy_cluster_upstream_rq_time_bucket{
+                    job="serving-envoy",
+                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
+                    name!=""}
+                )[5m:])) by (project, domain, name, le))
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
+                histogram_quantile(0.90, sum(rate((
+                  envoy_cluster_upstream_rq_time_bucket{
+                    job="serving-envoy",
+                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
+                    name!=""}
+                )[5m:])) by (project, domain, name, le))
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
+                histogram_quantile(0.95, sum(rate((
+                  envoy_cluster_upstream_rq_time_bucket{
+                    job="serving-envoy",
+                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
+                    name!=""}
+                )[5m:])) by (project, domain, name, le))
+              EXECUTION_METRIC_APP_REPLICA_COUNT: |
+                sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
+              EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
+                max by (namespace, pod) (
+                  (
+                    sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) >
+                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
+                  )
+                  or
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
+                ) *
+                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+              EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
+                max by (namespace, pod) (
+                  (
+                    sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) >
+                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
+                  )
+                  or
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
+                ) *
+                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+              EXECUTION_METRIC_CPU_UTILIZATION: |
+                (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) /
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+              EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
+                (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}) /
+                  sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+              EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
+                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
+              EXECUTION_METRIC_GPU_UTILIZATION: |
+                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
+              EXECUTION_METRIC_GPU_SM_ACTIVE: |
+                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
+                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_LIMIT_CPU: |
+                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
+                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_MEMORY_UTILIZATION: |
+                (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) /
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+              EXECUTION_METRIC_REQUEST_CPU: |
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_USED_CPU_AVG: |
+                sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
+                sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+          agentQuery:
+            mappings:
+              dgx_job:
+                queries:
+                  EXECUTION_METRIC_ALLOCATED_CPU_AVG: "CPU_ALLOCATION:MEAN"
+                  EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "MEM_ALLOCATION:MEAN"
+                  EXECUTION_METRIC_CPU_UTILIZATION: "CPU_UTILIZATION:MEAN"
+                  EXECUTION_METRIC_MEMORY_UTILIZATION: "MEM_UTILIZATION:MEAN"
+                  EXECUTION_METRIC_GPU_UTILIZATION: "GPU_UTILIZATION:MEAN"
+  organizations:
+    fullnameOverride: "organizations"
+    sharedService:
+      connectPort: 8081
+    initContainers:
+      - name: migrate
+        args:
+          - cloudorganizations
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+      - name: bootstrap
+        args:
+          - cloudorganizations
+          - bootstrap-tenant
+          - organizations
+          - --config
+          - "/etc/config/*.yaml"
+    args:
+      - cloudorganizations
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        connectPort: 8081
+        metrics:
+          scope: "organizations:"
+      organizations:
+        bootStrapConfig:
+          organizations:
+            - '{{ .Values.global.UNION_ORG }}'
+          tenantType: "SELF_MANAGED"
+      db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        username: '{{ .Values.global.DB_USER }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+
   executions:
     fullnameOverride: "executions"
     initContainers:
@@ -543,6 +816,7 @@ services:
         metrics:
           scope: "executions:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -560,18 +834,18 @@ services:
       eventsProxy:
         recorderType: RunService
       executions:
-
-        # app:
-          # adminClient:
-            # connection:
-              # -- Override rootTenantURLPattern for adminClient to point to control plane service.
-              # endpoint: ""
-
-              # -- Insecure should be true only for local testing with self-signed certs.
-              # insecure: true|false
-
-              # -- Skip TLS verification for self-signed certs. Should be true only for local testing.
-              # insecureSkipVerify: true|false
+        app:
+          adminClient:
+            connection:
+              # CP-internal: direct to flyteadmin K8s service.
+              endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
+              insecure: true
+              authorizationHeader: "flyte-authorization"
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: "/etc/secrets/union/client_secret"
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
+              scopes:
+              - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
         apps:
           # Enrich "Owned By" display with name/email from a remote identity service.
@@ -596,6 +870,63 @@ services:
           enrichIdentities: false
           clusterCacheConfig:
             ttl: 10m
+  identity:
+    fullnameOverride: "identity"
+    service:
+      type: ClusterIP
+      grpcport: 80
+      httpport: 81
+      debugport: 82
+    sharedService:
+      connectPort: 8081
+    args:
+      - cloudidentity
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      cache:
+        identity:
+          enabled: true
+      sharedService:
+        connectPort: 8081
+      identity:
+        app:
+          identityProviderConfig:
+            # Identity provider for the User Management page.
+            # Supported values:
+            #   noop  — returns empty results (default; no external IDP required)
+            #   azure — Azure/Entra ID via Microsoft Graph API
+            #   okta  — Okta (Union Cloud managed deployments only)
+            provider: "noop"
+            # Azure/Entra ID provider configuration.
+            # Required when provider is "azure". Requires a dedicated Entra app registration
+            # with Application permissions (not Delegated): User.Read.All,
+            # GroupMember.Read.All, Application.ReadWrite.All; admin consent granted.
+            #
+            # Store the client secret in the KUBERNETES_SECRET_NAME K8s secret under
+            # the key referenced by clientSecretName (e.g. "azure_client_secret").
+            # The value is read from /etc/secrets/union/<clientSecretName> at runtime.
+            # Example ExternalSecret:
+            #   spec.data[].remoteRef.key: <your-secret-manager-path>
+            #   spec.data[].secretKey: azure_client_secret
+            #   spec.target.name: <KUBERNETES_SECRET_NAME>
+            #   spec.target.creationPolicy: Merge
+            #
+            # azure:
+            #   tenantId: ""    # Azure AD tenant (directory) ID
+            #   clientId: ""    # App registration client ID
+            #   clientSecretName: "azure_client_secret"
+            #   groupId: ""    # Optional: scope user listing to a specific Entra group
+          adminClient:
+            connection:
+              authorizationHeader: flyte-authorization
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: /etc/secrets/union/client_secret
+              insecure: true
+              scopes:
+                - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
   usage:
     fullnameOverride: "usage"
     sharedService:
@@ -757,6 +1088,7 @@ services:
         metrics:
           scope: "run-scheduler:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -855,7 +1187,9 @@ console:
       memory: 250Mi
 
   # Environment variables
-  env: []
+  env:
+    - name: UNION_ORG_OVERRIDE
+      value: '{{ .Values.global.UNION_ORG }}'
 
   # Additional environment variables from ConfigMap
   envFrom: []
@@ -878,6 +1212,14 @@ console:
       maxUnavailable: 1
 
 flyte:
+  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
+  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
+  # overwritten externally (e.g. via ExternalSecrets from Secrets Manager).
+  secrets:
+    adminOauthClientCredentials:
+      enabled: true
+      clientSecret: "placeholder"
+
   # Database configuration (references globals)
   dbHost: '{{ .Values.global.DB_HOST }}'
   dbName: '{{ .Values.global.DB_NAME }}'
@@ -885,14 +1227,13 @@ flyte:
 
   # Storage configuration (references globals)
   bucketName: '{{ .Values.global.BUCKET_NAME }}'
-  region: '{{ .Values.global.AWS_REGION }}'
+  region: ""  # Cloud-specific: set in overlay
 
   flyteadmin:
     # -- Set the image used for flyteadmin
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services"
+      # flyte-core subchart doesn't render templates, must use hardcoded repository.
+      repository: "registry.unionai.cloud/controlplane/services"
       pullPolicy: IfNotPresent
       tag:  ""
 
@@ -911,8 +1252,12 @@ flyte:
         maxUnavailable: 1
 
     serviceAccount:
-      # -- Set the role arn for the flyteadmin service account which has access to the S3 bucket
+      # Cloud-specific IAM annotations (set in cloud overlay):
+      # AWS IRSA: eks.amazonaws.com/role-arn
+      # GCP Workload Identity: iam.gke.io/gcp-service-account
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     podAnnotations:
       kubectl.kubernetes.io/default-container: flyteadmin
     initialProjects:
@@ -949,21 +1294,32 @@ flyte:
     # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
     # can read client_secret from union/client_secret. The flyte-core subchart does not
     # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
+    # -- Mounts flyte-admin-private-config ConfigMap for Union-specific flyteadmin config
+    # (private.yaml) that isn't supported by the upstream flyte-core chart.
     additionalVolumes:
       - name: union-secrets
         secret:
           secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+      - name: private-config
+        configMap:
+          name: flyte-admin-private-config
+    # Override configPath to include both config directories
+    configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
       - name: union-secrets
         mountPath: /etc/secrets/union
         readOnly: true
+      - name: private-config
+        mountPath: /etc/flyte/private
+        readOnly: true
   flytescheduler:
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flytescheduler"
+      repository: "registry.unionai.cloud/controlplane/services"
       pullPolicy: IfNotPresent
       tag:  ""
+    serviceAccount:
+      imagePullSecrets:
+        - name: union-registry-secret
 
   workflow_scheduler:
     enabled: false
@@ -974,9 +1330,7 @@ flyte:
     enabled: false
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/datacatalog" # -- Set the repository for the public datacatalog image"
+      repository: "registry.unionai.cloud/controlplane/datacatalog" # -- Set the repository for the public datacatalog image"
       tag: "" # -- Set the tag for the public datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
 
@@ -1000,8 +1354,9 @@ flyte:
         ephemeral-storage: 50Mi
         memory: 50Mi
     serviceAccount:
-      # -- Set the role arn for the datacatlog service account which has access to the S3 bucket
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     service:
       type: ClusterIP
   flytepropeller:
@@ -1011,10 +1366,10 @@ flyte:
     podEnv: {}
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/flyteconsole" # -- Set the repository for the console image"
+      repository: "registry.unionai.cloud/controlplane/flyteconsole" # -- Set the repository for the console image"
       tag: "" # -- Set the tag for the console image
+    imagePullSecrets:
+      - name: union-registry-secret
     resources:
       # flyteconsole service has less memory footprint but cpu goes up depends on traffic, If CPU use is high then we will use HPA
       limits:
@@ -1048,16 +1403,14 @@ flyte:
     enabled: true
     replicaCount: 1
     image:
-      # TODO flyte-core does not render templated repository and tag correctly.
-      # PR: https://github.com/flyteorg/flyte/pull/6711
-      repository: "643379628101.dkr.ecr.us-east-1.amazonaws.com/union-cp/services" # -- Set the repository for the private cacheservice image"
+      repository: "registry.unionai.cloud/controlplane/services" # -- Set the repository for the private cacheservice image"
       tag: "" # -- Set the tag for the private cacheservice datacatalog image
       pullPolicy: "IfNotPresent" # -- Set the pull policy for the private cacheservice  image
     serviceAccount:
-      # -- If the service account is created by you, make this false
       create: true
-      # -- Set the role arn for the cacheservice service account which has access to the S3 bucket
       annotations: {}
+      imagePullSecrets:
+        - name: union-registry-secret
     resources:
       limits:
         cpu: 1
@@ -1142,11 +1495,10 @@ flyte:
 
   storage:
     # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
-    type: s3
+    # Cloud-specific: set in overlay (AWS: s3, GCP: gcs)
+    type: ""
     # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
     bucketName: '{{ .Values.global.BUCKET_NAME }}'
-    s3:
-      region: "{{ .Values.global.AWS_REGION }}"
     cache:
       maxSizeMBs: 1024
   db:
@@ -1198,28 +1550,97 @@ flyte:
     #     template: "{{ project }}-{{ domain }}"
 
     adminServer:
-      # --- Subject Claim Resolution (FAB-205) ---
-      # When flyteadmin validates a JWT access token, it resolves the caller's subject
-      # from JWT claims. By default it reads the standard "sub" claim. Some IdPs omit
-      # "sub" from client credentials tokens or use a different claim for the client
-      # identity (e.g. "client_id").
+      server:
+        security:
+          useAuth: true
+
+      # --- OIDC Authentication Configuration ---
+      # Configure your identity provider below. Set values directly or via
+      # your values overlay. For Union-managed deployments, the authn Terraform
+      # module generates this block automatically.
       #
-      # When subjectClaimNames is configured under auth.appAuth, it becomes the
-      # authoritative ordered list of claims to try. The first non-empty value wins
-      # and is used as the subject for all downstream identity resolution (including
-      # /me, authorization middleware, and internal service-to-service calls).
-      #
-      # When not configured, the standard "sub" claim is used (default behavior).
-      #
-      # auth:
-      #   appAuth:
-      #     subjectClaimNames:
-      #     - sub
-      #     - client_id    # Common alternative for client credentials tokens
+      # Supported IdPs: Okta, Entra ID (Azure AD), Keycloak, Authentik.
+      # See unionai-docs for provider-specific setup guides.
+      auth:
+        httpAuthorizationHeader: "flyte-authorization"
+        grpcAuthorizationHeader: "flyte-authorization"
+        authorizedUris:
+          - "http://flyteadmin:80"
+          - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
+          - 'https://{{ .Values.global.UNION_HOST }}'
+
+        appAuth:
+          authServerType: "External"
+          externalAuthServer:
+            # --- OIDC Issuer ---
+            # Okta example: "https://dev-123456.okta.com/oauth2/default"
+            # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
+            baseUrl: ""
+            # Metadata discovery endpoint (relative to baseUrl).
+            # Okta: ".well-known/oauth-authorization-server" (default)
+            # Entra ID: ".well-known/openid-configuration"
+            metadataUrl: ".well-known/oauth-authorization-server"
+            # Allowed JWT audiences for access token validation.
+            # Default: ["https://{UNION_HOST}"].
+            # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            allowedAudience:
+              - 'https://{{ .Values.global.UNION_HOST }}'
+
+          # --- Subject claim resolution (FAB-205) ---
+          # Ordered list of JWT claims to try for caller identity.
+          # Only needed for IdPs where client_credentials tokens omit "sub".
+          # Default: uses standard "sub" claim.
+          # Override in values overlay if your IdP requires fallback claims.
+
+          # --- Identity type claim mapping ---
+          # Maps IdP-specific claims to internal identitytype.
+          # Okta: not needed (identitytype claim is native)
+          # Entra ID example (set in values overlay):
+          #   identityTypeClaimsForApps:
+          #     idtyp: ["app"]
+
+          thirdPartyConfig:
+            flyteClient:
+              # --- CLI/SDK PKCE Client ---
+              # Okta example: "0oa7mno8pqr9stu0v1w2"
+              # Entra ID example: "3df10225-18a5-4636-b1ef-582e5a8ea21c"
+              clientId: ""
+              redirectUri: "http://localhost:53593/callback"
+              # Resource scope for CLI/SDK and task pod authentication.
+              # Okta: ["all"] (default)
+              # Entra ID: ["api://my-app-name/.default"]
+              scopes:
+                - "all"
+              # Audience parameter for authorization requests.
+              # Okta: "" (not needed)
+              # Entra ID: "api://my-app-name"
+              audience: ""
+
+        userAuth:
+          openId:
+            # --- Browser Login ---
+            # Okta example: "0oa1abc2def3ghi4j5k6"
+            # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
+            baseUrl: ""
+            clientId: ""
+            # Browser login scopes.
+            # Okta: ["profile", "openid", "offline_access"] (default)
+            # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
+            scopes:
+              - profile
+              - openid
+              - offline_access
+          cookieSetting:
+            sameSitePolicy: "LaxMode"
+            domain: ""
+          idpQueryParameter: "idp"
 
       admin:
-        endpoint: 'dns:///{{ .Values.global.UNION_HOST }}'
-        insecure: false
+        # CP-internal: through controlplane ingress controller for gRPC routing.
+        endpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        insecure: true
+        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+        clientSecretLocation: "/etc/secrets/client_secret"
       # flyteadmin routes authorization to the in-cluster authorizer service.
       authorizer:
         type: "Authorizer"
@@ -1239,8 +1660,8 @@ flyte:
         enable: false
       connection:
         environment: "staging"
-        region: '{{ .Values.global.AWS_REGION }}'
-        rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
+        region: ""  # Cloud-specific: set in overlay
+        rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
       flyteadmin:
         metricsKeys:
           - phase
@@ -1256,9 +1677,6 @@ flyte:
             kind: bypass
           # Don't rely on user API to exists
           populateUserFields: false
-      server:
-        security:
-          useAuth: false
       union:
         internalConnectionConfig:
           enabled: true
@@ -1269,6 +1687,8 @@ flyte:
         connectPort: 8089
         httpPort: 8088
         port: 8089
+        security:
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
         selfServeConfig:
           legacyHosts:
             - '{{ .Values.global.UNION_ORG }}'
@@ -1339,30 +1759,44 @@ objectstore:
   controlPlane:
     enabled: false
 
-# Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
-  enabled: false
+  enabled: true
+
+  # Consistent service naming — used by server-alias and intra-cluster routing.
+  fullnameOverride: controlplane-nginx
 
   controller:
+    service:
+      # ClusterIP for intra-cluster only (no external access).
+      # Override to LoadBalancer in cloud overlay for internet-facing deployments.
+      type: ClusterIP
+      ports:
+        http: 80
+        https: 443
 
-    # Disable admission webhooks for simplicity
+    # TLS certificate for all HTTPS connections.
+    # The nginx-ingress subchart does not support Helm templating in extraArgs,
+    # so the TLS secret reference must be set as a literal value in your
+    # environment-specific values overlay.
+    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
+    extraArgs: {}
+
     admissionWebhooks:
-      enabled: true
+      enabled: false
+      patch:
+        enabled: false
 
-    # Snippet annotations are required
+    # Snippet annotations are required for gRPC identity header forwarding.
     allowSnippetAnnotations: true
     config:
       annotations-risk-level: "Critical"
       grpc-connect-timeout: "1200"
       grpc-read-timeout: "604800"
       grpc-send-timeout: "604800"
+      proxy-read-timeout: "3600"
+      proxy-send-timeout: "3600"
+      proxy-connect-timeout: "60"
 
-      # HTTP proxy timeouts (in seconds) - for long-running Watch streams
-      proxy-read-timeout: "3600"   # 1 hour
-      proxy-send-timeout: "3600"   # 1 hour
-      proxy-connect-timeout: "60"  # 60 seconds
-
-    # Enable metrics endpoint for Prometheus scraping (port 10254).
     metrics:
       enabled: true
       serviceMonitor:
@@ -1370,8 +1804,7 @@ ingress-nginx:
 
     ingressClassResource:
       enabled: true
-      default: false # Assume shared with dataplane and require explicit ingress class assignment.
-
+      default: false
       name: controlplane
       controllerValue: union.ai/controlplane
 
@@ -1399,14 +1832,13 @@ scylla:
   # ScyllaDB cluster configuration
   fullnameOverride: scylla
 
-  # Storage class configuration
+  # Storage class configuration — cloud-specific provisioner set in overlay.
+  # AWS: ebs.csi.eks.amazonaws.com, GCP: pd.csi.storage.gke.io
   storageClass:
-    create: true # TODO set to false if you have an existing storage class
-    name: "scylladb" # arbitrary name for the storage class
-    provisioner: "ebs.csi.eks.amazonaws.com"
-    parameters:
-      type: gp2
-      fsType: ext4
+    create: true
+    name: "scylladb"
+    provisioner: ""  # Set in cloud overlay
+    parameters: {}   # Set in cloud overlay (AWS: type: gp2, GCP: type: pd-standard)
     reclaimPolicy: Delete
     volumeBindingMode: WaitForFirstConsumer
     allowVolumeExpansion: true
@@ -1655,6 +2087,13 @@ extraObjectsOverrides: []
 #   helm install prometheus-crds prometheus-community/prometheus-operator-crds
 monitoring:
   enabled: false
+
+  # kube-prometheus-stack subchart defaults include scraping for
+  # kubeControllerManager, kubeScheduler, kubeEtcd, and kubeProxy. Managed
+  # Kubernetes (EKS, GKE, AKS) hides those control-plane components — the
+  # cloud-specific overlays (values.aws.yaml, values.gcp.yaml,
+  # values.azure.yaml) disable scraping for them to avoid false-positive
+  # TargetDown alerts.
 
   # The following flags control Union monitoring resources independently
   # of the kube-prometheus-stack subchart (monitoring.enabled). This allows
