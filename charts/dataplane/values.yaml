@@ -1414,6 +1414,11 @@ image:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
     pullPolicy: IfNotPresent
+  # -- Union envoy build for the zero-trust gateway.
+  envoy:
+    repository: public.ecr.aws/p0i0a9q8/envoy
+    tag: ""
+    pullPolicy: IfNotPresent
 
 metrics-server:
   enabled: false
@@ -1951,6 +1956,15 @@ storage:
   gcp:
     projectId: ""
 
+# -- Tunnel-service ingress config consumed by the union-operator's tunnel sidecar.
+tunnelService:
+  dataplane:
+    enableIngress: false
+    originURL: ""
+  apps:
+    enableGlobalIngress: true
+    originURL: ""
+
 # -- Configure app serving and knative.
 serving:
   # -- Enables the serving components. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work. Enables app serving in operator.
@@ -2301,3 +2315,290 @@ monitoring:
         requests:
           cpu: "500m"
           memory: "1Gi"
+
+# -- Vendored Knative Serving + Kourier + Envoy gateway. BYOC zero-trust mode only.
+gateway:
+  enabled: false
+
+  service:
+    httpAppsPort: 80
+    httpStaticPort: 8888
+
+  # -- Enables Union's auth integration across the kourier-gateway.
+  auth:
+    enable: true
+    tenantAuthURL: ""
+    tenantAuthSignInURL: ""
+    tenantControlPlaneURL: ""
+    organization: ""
+
+  components:
+    envoy:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gateway
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        envoy:
+          image:
+            repository: '{{ .Values.image.envoy.repository }}'
+            tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    kourier-controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - net-kourier-controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image:
+            repository: '{{ .Values.image.union.repository }}'
+            tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+
+    activator:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - activator
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        activator:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 20
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image: {}
+
+    autoscaler:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler:
+          image: {}
+
+    autoscaler-hpa:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler-hpa
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler-hpa:
+          image: {}
+
+    webhook:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - webhook
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        webhook:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+  config:
+    defaults:
+      max-revision-timeout-seconds: "6000"
+    deployment:
+      progress-deadline: "30m"
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-dnsconfig: "enabled"
+      kubernetes.podspec-dnspolicy: "enabled"
+      kubernetes.podspec-fieldref: "enabled"
+      kubernetes.podspec-hostaliases: "enabled"
+      kubernetes.podspec-init-containers: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-persistent-volume-claim: "enabled"
+      kubernetes.podspec-persistent-volume-write: "enabled"
+      kubernetes.podspec-priorityclassname: "enabled"
+      kubernetes.podspec-runtimeclassname: "enabled"
+      kubernetes.podspec-schedulername: "enabled"
+      kubernetes.podspec-securitycontext: "enabled"
+      kubernetes.podspec-shareprocessnamespace: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-topologyspreadconstraints: "enabled"
+      kubernetes.podspec-volumes-emptydir: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+    kourier: {}
+    autoscaler: {}
+    certmanager: {}
+    domain: {}
+    gc: {}
+    leader-election: {}
+    logging: {}
+    observability: {}
+    tracing: {}
+
+# -- union-dataproxy backend. Used when the zero-trust gateway is enabled.
+dataproxy:
+  serviceAccount:
+    create: true
+    name: dataproxy-system
+    annotations: {}
+  enabled: false
+  replicas: 1
+  service:
+    port: 8080
+  podAnnotations: { }
+  podLabels: { }
+  priorityClassName: ""
+  imagePullSecrets: []
+  podEnv: { }
+  # -- nodeSelector constraints for the dataproxy pods
+  nodeSelector: { }
+  # -- topologySpreadConstraints for the dataproxy pods
+  topologySpreadConstraints: { }
+  # -- tolerations for the dataproxy pods
+  tolerations: [ ]
+  # -- affinity configurations for the dataproxy pods
+  affinity: { }
+  # -- nodeName constraint for the dataproxy pods
+  nodeName: ""
+  podSecurityContext: { }
+  securityContext: { }
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 250Mi
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []

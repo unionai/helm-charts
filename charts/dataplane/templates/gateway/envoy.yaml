@@ -1,0 +1,263 @@
+{{- if .Values.gateway.enabled }}
+{{- $comp := index .Values.gateway.components "envoy" }}
+{{- $container := index $comp.containers "envoy" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- with $comp.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $comp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if not $comp.hpa }}
+  replicas: {{ $comp.replicas | default 1 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: gateway
+        {{- include "gateway.labels" . | nindent 8 }}
+        {{- with $comp.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # Envoy's xDS dynamic config is delivered by net-kourier-controller,
+        # but the bootstrap file (gateway.host, auth URLs, extra routes/
+        # clusters) is read at container start. Changes to bootstrap-
+        # configmap.yaml must force a rollout; the checksum annotation
+        # makes the pod-template hash drift when the configmap content
+        # does. Mirrors the legacy serving/knative-serving.yaml workload-
+        # block at .annotations.checksum/bootstrap-config.
+        checksum/bootstrap-config: {{ include (print $.Template.BasePath "/gateway/bootstrap-configmap.yaml") . | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/stats/prometheus"
+        {{- with $comp.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      containers:
+        - name: kourier-gateway
+          {{- $repo := tpl $container.image.repository $ }}
+          {{- $tag := tpl ($container.image.tag | default "") $ }}
+          {{- if $tag }}
+          image: {{ $repo }}:{{ $tag }}
+          {{- else }}
+          image: {{ $repo }}
+          {{- end }}
+          {{- with $container.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- else }}
+          args:
+            - --base-id 1
+            - -c /tmp/config/envoy-bootstrap.yaml
+            - --log-level info
+            - --drain-time-s 15
+          {{- end }}
+          {{- with $container.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- else }}
+          command:
+            - /usr/local/bin/envoy
+          {{- end }}
+          env:
+            - name: DRAIN_TIME_SECONDS
+              value: "15"
+            {{- if .Values.gateway.auth.enable }}
+            - name: UNION_AUTH_TENANTAUTHURL
+              {{- with .Values.gateway.auth.tenantAuthURL }}
+              value: {{ . | quote }}
+              {{- else }}
+              value: "https://{{ include "gateway.host" $ }}/me"
+              {{- end }}
+            - name: UNION_AUTH_TENANTAUTHSIGNINURL
+              {{- with .Values.gateway.auth.tenantAuthSignInURL }}
+              value: {{ . | quote }}
+              {{- else }}
+              value: "https://{{ include "gateway.host" $ }}/login"
+              {{- end }}
+            - name: UNION_AUTH_TENANTCONTROLPLANEURL
+              {{- with .Values.gateway.auth.tenantControlPlaneURL }}
+              value: {{ . | quote }}
+              {{- else }}
+              value: "https://{{ include "gateway.host" $ }}"
+              {{- end }}
+            - name: UNION_AUTH_OVERRIDENORG
+              {{- with .Values.gateway.auth.organization }}
+              value: {{ . | quote }}
+              {{- else }}
+              value: {{ include "gateway.organization" $ | quote }}
+              {{- end }}
+            {{- end }}
+            {{- with $container.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $container.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - name: http-apps
+              containerPort: 8081
+              protocol: TCP
+            - name: https-apps
+              containerPort: 8444
+              protocol: TCP
+            - name: http-probe
+              containerPort: 8090
+              protocol: TCP
+            - name: https-probe
+              containerPort: 9443
+              protocol: TCP
+            - name: metrics
+              containerPort: 9000
+              protocol: TCP
+            - name: http-static
+              containerPort: 8888
+              protocol: TCP
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+                - ALL
+          {{- with $container.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          readinessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: internalkourier
+              path: /ready
+              port: 8081
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - "/bin/sh"
+                  - "-c"
+                  - "curl -X POST http://localhost:9901/drain_listeners?graceful"
+          volumeMounts:
+            - name: config-volume
+              mountPath: /tmp/config
+      {{- with $comp.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "gateway.fullname" . }}-envoy-bootstrap
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gateway.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: gateway
+  ports:
+    - name: http-apps
+      port: {{ .Values.gateway.service.httpAppsPort }}
+      protocol: TCP
+      targetPort: 8081
+    - name: http-static
+      port: {{ .Values.gateway.service.httpStaticPort }}
+      protocol: TCP
+      targetPort: 8888
+---
+# net-kourier-controller probes endpoints/kourier-internal (name is hardcoded in
+# upstream) to confirm envoy loaded the xDS snapshot. Without this Service the
+# probe fails, KIngress.LoadBalancerReady stays Unknown, and dependent Knative
+# Services never reach Ready=True even though traffic is flowing.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    app: gateway
+  ports:
+    - name: http2
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 8444
+{{- with $comp.hpa }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "gateway.fullname" $ }}-hpa
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "gateway.fullname" $ }}
+  minReplicas: {{ .minReplicas }}
+  maxReplicas: {{ .maxReplicas }}
+  metrics:
+    {{- toYaml .metrics | nindent 4 }}
+{{- end }}
+{{- with $comp.pdb }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "gateway.fullname" $ }}-pdb
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" $ | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app: gateway
+  minAvailable: {{ .minAvailable | quote }}
+{{- end }}
+{{- end }}
