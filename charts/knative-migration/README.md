@@ -116,7 +116,7 @@ kubectl get crd knativeservings.operator.knative.dev knativeeventings.operator.k
 
 **`helm upgrade dataplane` fails with `invalid ownership metadata`.** Re-run this chart with `adoption.enabled: true` and the correct `adoption.targetRelease` / `adoption.targetNamespace`, then retry the upgrade.
 
-**First `helm upgrade dataplane` fails on `routing-serving-certs` with `no endpoints available for service "webhook"` (or `x509: certificate signed by unknown authority`).** The Knative Serving webhook isn't ready when the `Certificate` CR is admitted. Wait for `deploy/webhook` to roll out, then re-run the same upgrade — it succeeds idempotently.
+**First `helm upgrade dataplane` fails on `routing-serving-certs` with `no endpoints available for service "webhook"` or `x509: certificate signed by unknown authority`.** Both errors are the same race: the Knative Serving webhook (`deploy/webhook`) is rolling out in the same release as the `Certificate` CR, so admission either hits an empty `Endpoints` slice or a `MutatingWebhookConfiguration` whose `caBundle` the webhook hasn't yet self-injected. Wait for `deploy/webhook` to become Ready, then re-run the same upgrade. `helm upgrade dataplane` is designed to be rerun until it converges — under ArgoCD, `syncPolicy.retry` swallows this transparently.
 
 ## Uninstall
 
