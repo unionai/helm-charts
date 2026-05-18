@@ -83,6 +83,7 @@
       name: flyteconsole
       port:
         name: http
+{{- if not (default false .Values.ingress.meCors.enabled) }}
 - path: /me
   pathType: ImplementationSpecific
   backend:
@@ -90,6 +91,7 @@
       name: flyteadmin
       port:
         name: http
+{{- end }}
 # Port 87 in FlyteAdmin maps to the redoc container.
 - path: /openapi/*
   pathType: ImplementationSpecific
@@ -250,6 +252,42 @@ spec:
       http:
         paths:
           {{- include "httpRoutes" $ | nindent 10 }}
+{{- if (default false .Values.ingress.meCors.enabled) }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ template "flyte.name" . }}-me
+  namespace: {{ template "flyte.namespace" . }}
+  annotations:
+    {{- with .Values.ingress.annotations }}
+    {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+    {{- with .Values.ingress.meCors.annotations }}
+    {{- tpl (toYaml .) $ | nindent 4 }}
+    {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.ingress.tls }}
+  tls:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  rules:
+    - {{ with .Values.ingress.host -}}
+      host: {{ tpl . $ }}
+      {{ end -}}
+      http:
+        paths:
+          - path: /me
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: flyteadmin
+                port:
+                  name: http
+{{- end }}
 ---
 # Certain ingress controllers like nginx cannot serve HTTP 1 and GRPC with a single ingress because GRPC can only
 # enabled on the ingress object, not on backend services (GRPC annotation is set on the ingress, not on the services).
