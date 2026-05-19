@@ -28,6 +28,23 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 automountServiceAccountToken: false
 ---
+# Source: dataplane/charts/ingress-nginx/templates/controller-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx
+  namespace: union
+automountServiceAccountToken: true
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -128,6 +145,7 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: test-worker-iam-role-arn
 automountServiceAccountToken: true
+
 ---
 # Source: dataplane/templates/flyteconnector/serviceaccount.yaml
 apiVersion: v1
@@ -300,6 +318,28 @@ data:
     DCGM_FI_PROF_PCIE_TX_BYTES,      counter, The number of bytes of active pcie tx data including both header and payload.
     DCGM_FI_PROF_PCIE_RX_BYTES,      counter, The number of bytes of active pcie rx data including both header and payload.
     
+
+---
+# Source: dataplane/charts/ingress-nginx/templates/controller-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx-controller
+  namespace: union
+data:
+  allow-snippet-annotations: "true"
+  annotations-risk-level: "Critical"
+  grpc-connect-timeout: "1200"
+  grpc-read-timeout: "604800"
+  grpc-send-timeout: "604800"
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -590,12 +630,13 @@ data:
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
+        enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'test-client-id'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
       endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
@@ -614,7 +655,7 @@ data:
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
-      use-admin-auth: true
+      use-admin-auth: false
     logger:
       formatter:
         type: json
@@ -648,7 +689,10 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - _U_EP_OVERRIDE: dns:///test-controlplane-host:443
+        - _U_INSECURE: "false"
+        - _U_INSECURE_SKIP_VERIFY: "false"
         default-memory: 100Mi
         default-pod-template-name: task-template
         disable-inject-owner-references: true
@@ -2764,12 +2808,13 @@ data:
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
+        enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'test-client-id'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
       endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
@@ -2788,7 +2833,7 @@ data:
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
-      use-admin-auth: true
+      use-admin-auth: false
     logger:
       formatter:
         type: json
@@ -2823,7 +2868,10 @@ data:
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - _U_EP_OVERRIDE: dns:///test-controlplane-host:443
+        - _U_INSECURE: "false"
+        - _U_INSECURE_SKIP_VERIFY: "false"
         default-memory: 100Mi
         default-pod-template-name: task-template
         co-pilot:
@@ -2859,7 +2907,10 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - _U_EP_OVERRIDE: dns:///test-controlplane-host:443
+        - _U_INSECURE: "false"
+        - _U_INSECURE_SKIP_VERIFY: "false"
         default-memory: 100Mi
         default-pod-template-name: task-template
   config.yaml: |
@@ -2869,14 +2920,17 @@ data:
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
+        enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     sharedService:
       features:
         gatewayV2: true
       port: 8081
+      security:
+        singleTenantOrgID: 'test-org-name'
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
@@ -2887,7 +2941,7 @@ data:
       type: Authorizer
     operator:
       enabled: true
-      enableTunnelService: true
+      enableTunnelService: false
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: true
@@ -2925,6 +2979,7 @@ data:
         enabled: false
         namespaces:
           - union
+          - union-cp
       org:
         namespaceTemplate: "{{ project }}-{{ domain }}"
       imageBuilder:
@@ -2940,6 +2995,9 @@ data:
           prefix: persisted-logs
         sourceType: ObjectStore
       smConfig:
+        awsConfig:
+          account: ''
+          region: 'test-region'
         enabled: 'true'
         k8sConfig:
           namespace: 'union'
@@ -4350,6 +4408,91 @@ rules:
       - list
       - watch
 ---
+# Source: dataplane/charts/ingress-nginx/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+  name: dataplane-nginx
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - endpoints
+      - nodes
+      - pods
+      - secrets
+      - namespaces
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+      - get
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -5185,6 +5328,28 @@ subjects:
     name: fluentbit-system
     namespace: union
 ---
+# Source: dataplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+  name: dataplane-nginx
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: dataplane-nginx
+subjects:
+  - kind: ServiceAccount
+    name: dataplane-nginx
+    namespace: union
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -5352,6 +5517,101 @@ rules:
   resources: ["configmaps"]
   resourceNames: ["exporter-metrics-config-map"]
   verbs: ["get"]
+
+---
+# Source: dataplane/charts/ingress-nginx/templates/controller-role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx
+  namespace: union
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+      - pods
+      - secrets
+      - endpoints
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  # Omit Ingress status permissions if `--update-status` is disabled.
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingresses/status
+    verbs:
+      - update
+  - apiGroups:
+      - networking.k8s.io
+    resources:
+      - ingressclasses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    resourceNames:
+      - dataplane-nginx-leader
+    verbs:
+      - get
+      - update
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - create
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
+      - discovery.k8s.io
+    resources:
+      - endpointslices
+    verbs:
+      - list
+      - watch
+      - get
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -5783,6 +6043,30 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 
 ---
+# Source: dataplane/charts/ingress-nginx/templates/controller-rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: dataplane-nginx
+subjects:
+  - kind: ServiceAccount
+    name: dataplane-nginx
+    namespace: union
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -6025,6 +6309,43 @@ spec:
   selector:
     app.kubernetes.io/name: fluentbit
     app.kubernetes.io/instance: release-name
+
+---
+# Source: dataplane/charts/ingress-nginx/templates/controller-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx-controller
+  namespace: union
+spec:
+  type: ClusterIP
+  ipFamilyPolicy: SingleStack
+  ipFamilies: 
+    - IPv4
+  ports:
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: http
+      appProtocol: http
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: https
+      appProtocol: https
+  selector:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: controller
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -6675,6 +6996,118 @@ spec:
         - operator: Exists
 
 ---
+# Source: dataplane/charts/ingress-nginx/templates/controller-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane-nginx-controller
+  namespace: union
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: controller
+  replicas: 1
+  revisionHistoryLimit: 10
+  minReadySeconds: 0
+  template:
+    metadata:
+      labels:
+        helm.sh/chart: ingress-nginx-4.12.3
+        app.kubernetes.io/name: ingress-nginx
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/version: "1.12.3"
+        app.kubernetes.io/part-of: ingress-nginx
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: controller
+    spec:
+      dnsPolicy: ClusterFirst
+      containers:
+        - name: controller
+          image: registry.k8s.io/ingress-nginx/controller:v1.12.3@sha256:ac444cd9515af325ba577b596fe4f27a34be1aa330538e8b317ad9d6c8fb94ee
+          imagePullPolicy: IfNotPresent
+          lifecycle: 
+            preStop:
+              exec:
+                command:
+                - /wait-shutdown
+          args: 
+            - /nginx-ingress-controller
+            - --publish-service=$(POD_NAMESPACE)/dataplane-nginx-controller
+            - --election-id=dataplane-nginx-leader
+            - --controller-class=union.ai/dataplane
+            - --ingress-class=nginx
+            - --configmap=$(POD_NAMESPACE)/dataplane-nginx-controller
+          securityContext: 
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 82
+            allowPrivilegeEscalation: false
+            seccompProfile: 
+              type: RuntimeDefault
+            capabilities:
+              drop:
+              - ALL
+              add:
+              - NET_BIND_SERVICE
+            readOnlyRootFilesystem: false
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LD_PRELOAD
+              value: /usr/local/lib/libmimalloc.so
+          livenessProbe: 
+            failureThreshold: 5
+            httpGet:
+              path: /healthz
+              port: 10254
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe: 
+            failureThreshold: 3
+            httpGet:
+              path: /healthz
+              port: 10254
+              scheme: HTTP
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+            - name: https
+              containerPort: 443
+              protocol: TCP
+          resources: 
+            requests:
+              cpu: 100m
+              memory: 90Mi
+      nodeSelector: 
+        kubernetes.io/os: linux
+      serviceAccountName: dataplane-nginx
+      terminationGracePeriodSeconds: 300
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -7279,6 +7712,7 @@ spec:
                 app.kubernetes.io/name: imagebuilder-buildkit
                 app.kubernetes.io/instance: release-name
             topologyKey: "kubernetes.io/hostname"
+
 ---
 # Source: dataplane/templates/leaseworker/deployment.yaml
 apiVersion: apps/v1
@@ -7298,7 +7732,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "2d4ea4222763d6dc585b545d53615d292eb30cc9ed07790d0c3322f57a2748f"
+        configChecksum: "785090568b32616fa86d8fb4171059daa488c57ddd969b6423f842b043db287"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7400,7 +7834,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "21fe3a44e0ca0afa03ef7ff4db06d0f0b43876ce402fc64bf45bbcbeed72c4b"
+        configChecksum: "a22e5136d00bf4732fce07946dcf1da6b18e045cc0b1189a9ecc1f5968dc9ab"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7507,7 +7941,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "6a748672b052602fea21d48d477733611e69fae47420594816ed331e0b91cfa"
+        configChecksum: "0ca134b44ef6980399644da87f0ce6398eb33ad517716230ff207a2b0f10928"
         
       labels:
         
@@ -7597,32 +8031,6 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-        - name: "tunnel"
-          securityContext:
-            {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.0"
-          imagePullPolicy: IfNotPresent
-          args:
-            - cloudflared
-            - tunnel
-            - --no-autoupdate
-            - run
-            - --token
-            - $(TUNNEL_TOKEN)
-          env:
-            - name: TUNNEL_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: union-secret-auth
-                  key: tunnel_token
-                  optional: true
-          resources:
-            limits:
-              cpu: "3"
-              memory: 3Gi
-            requests:
-              cpu: 500m
-              memory: 500Mi
       
       
 
@@ -7645,7 +8053,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "6a748672b052602fea21d48d477733611e69fae47420594816ed331e0b91cfa"
+        configChecksum: "0ca134b44ef6980399644da87f0ce6398eb33ad517716230ff207a2b0f10928"
         
       labels:
         
@@ -7771,7 +8179,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "2d4ea4222763d6dc585b545d53615d292eb30cc9ed07790d0c3322f57a2748f"
+        configChecksum: "785090568b32616fa86d8fb4171059daa488c57ddd969b6423f842b043db287"
         
     spec:
       securityContext:
@@ -7883,6 +8291,146 @@ spec:
           averageUtilization: 80
 
 ---
+# Source: dataplane/charts/ingress-nginx/templates/controller-ingressclass.yaml
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  labels:
+    helm.sh/chart: ingress-nginx-4.12.3
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "1.12.3"
+    app.kubernetes.io/part-of: ingress-nginx
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: controller
+  name: dataplane
+spec:
+  controller: union.ai/dataplane
+
+---
+# Source: dataplane/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-dataplane-serving
+  namespace: union
+  labels:
+    app.kubernetes.io/name: dataplane
+    app.kubernetes.io/instance: release-name
+spec:
+  ingressClassName: "dataplane"
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: kourier-internal
+            port:
+              number: 80
+    host: "*.apps."
+---
+# Source: dataplane/templates/common/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-name-dataplane
+  namespace: union
+  labels:
+    app.kubernetes.io/name: dataplane
+    app.kubernetes.io/instance: release-name
+spec:
+  ingressClassName: "dataplane"
+  rules:
+    - http:
+        paths:
+          - path: /api/v1/dataproxy/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /prometheus/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-prometheus
+                port:
+                  number: 80
+          - path: /clickhouse/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /dataplane/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /resourcequota/v1/project_quota
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /spark-history-server/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /secrets/api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /data_plane_object_store/api/v1/
+            pathType: Prefix
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.actor.ActorEnvironmentService/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.logs.dataplane.LogsService/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.objectstore.v1.ObjectStoreService/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+          - path: /cloudidl.imagebuilder.dataplane.ImageService/
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: union-operator-proxy
+                port:
+                  number: 8080
+
+---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
@@ -7956,6 +8504,11 @@ webhooks:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+---
+# Source: dataplane/charts/ingress-nginx/templates/controller-poddisruptionbudget.yaml
+# PDB is not supported for DaemonSets.
+# https://github.com/kubernetes/kubernetes/issues/108124
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -8262,7 +8815,7 @@ spec:
     - container: controller
       envVars:
       - name: KOURIER_UNION_AUTHZ_ENABLED
-        value: "true"
+        value: "false"
     resources:
       - container: controller
         limits:
