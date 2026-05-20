@@ -6,7 +6,7 @@
 #
 # Source of truth for the version is charts/controlplane/Chart.yaml. This
 # script reads it, pulls the matching upstream chart, writes CRD manifests
-# (with the ArgoCD ServerSideApply sync-option annotation injected) into the
+# (verbatim from the upstream chart) into the
 # parent directory, and updates VERSION to match.
 #
 # Drift between any of these is caught by scripts/check.sh, wired into

@@ -40,13 +40,32 @@ helm repo update
 
 #### Step 2: Install Required CRDs
 
-Union requires Custom Resource Definitions to be installed first:
+Union requires Custom Resource Definitions to be installed first.
+
+**Mandatory** — `FlyteWorkflow` (consumed by the operator):
 
 ```bash
-helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
-  --namespace union \
-  --create-namespace
+# From a checkout of unionai/helm-charts
+kubectl apply --server-side --force-conflicts -f crds/flyte-v1/
 ```
+
+(Equivalent legacy path: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is now deprecated; prefer the vendored directory above so the CRDs land via server-side apply and don't trip the 256 KiB `last-applied-configuration` limit on larger CRDs nearby.)
+
+**Optional — install only the sets that match the dataplane features you enable:**
+
+```bash
+# Required when monitoring.enabled=true (default). Skip if your cluster
+# already runs kube-prometheus-stack from another source AND that
+# installation manages these CRDs.
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+
+# Required for App Serving (Knative-backed serving). Skip if App Serving
+# is disabled in your values, or if your cluster already manages the
+# Knative CRDs from another source.
+kubectl apply --server-side --force-conflicts -f crds/knative-operator/
+```
+
+`--force-conflicts` is needed only on the first install (or when adopting CRDs previously owned by a Helm-installed copy) so SSA can transfer field ownership.
 
 #### Step 3: Configure Your Values File
 
@@ -68,9 +87,14 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --create-namespace \
   --values values.aws.yaml \
+  --skip-crds \
   --timeout 10m \
   --wait
 ```
+
+> `--skip-crds` tells Helm not to apply CRDs bundled in any subchart's
+> `crds/` directory. CRDs are installed separately via `kubectl apply
+> --server-side` in Step 2.
 
 #### Step 5: Verify the Installation
 
