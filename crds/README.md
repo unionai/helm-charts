@@ -31,11 +31,13 @@ background on the failure mode.
 
 ## What lives here
 
-| Directory                  | Upstream chart                                      | Used by chart(s)          |
+| Directory                  | Source                                              | Used by                   |
 |----------------------------|-----------------------------------------------------|---------------------------|
 | `kube-prometheus-stack/`   | `prometheus-community/kube-prometheus-stack`        | `controlplane`, `dataplane` |
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
+| `flyte-v1/`                | Union-maintained (no upstream sync)                 | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
+| `knative-operator/`        | `knative/serving` + `knative/operator` releases     | App Serving; replaces `charts/knative-operator-crds` |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
 by ArgoCD — the parent ApplicationSet sets `helm.skipCrds: true` on its
@@ -45,17 +47,22 @@ source so the same CRDs aren't applied twice.
 
 ```
 crds/<name>/
-  VERSION                   # upstream chart version this dir tracks
-  scripts/
+  VERSION                   # upstream chart version this dir tracks (omit for Union-maintained CRDs)
+  scripts/                  # omit for Union-maintained CRDs
     sync.sh                 # re-vendor from upstream + bump VERSION
     check.sh                # CI gate: cross-validate + detect drift
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
-`scripts/sync.sh` is the only thing that should ever write to the `crd-*.yaml`
-files. Hand edits will be overwritten on the next sync; if you need to patch
-a CRD, do it via a downstream layer (kustomize on the ArgoCD source, or a
-helm post-render), not in `crd-*.yaml` directly.
+For upstream-tracked dirs (KPS / scylla / envoy-gateway), `scripts/sync.sh`
+is the only thing that should ever write to the `crd-*.yaml` files. Hand
+edits will be overwritten on the next sync; if you need to patch a CRD, do
+it via a downstream layer (kustomize on the ArgoCD source, or a helm
+post-render), not in `crd-*.yaml` directly.
+
+For Union-maintained dirs (e.g. `flyte-v1/`), `crd-*.yaml` is the source of
+truth — edit it directly. No `scripts/` is needed; the `make vendor-crds`
+loop simply skips dirs that lack a sync script.
 
 ## Adding a new vendored CRD set
 
