@@ -1,0 +1,87 @@
+{{- if .Values.imageBuilder.bootstrap.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-build-image-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,post-rollback
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.imageBuilder.bootstrap.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.imageBuilder.bootstrap.ttlSecondsAfterFinished }}
+  template:
+    {{- if or .Values.imageBuilder.bootstrap.podAnnotations .Values.imageBuilder.bootstrap.podLabels }}
+    metadata:
+      {{- with .Values.imageBuilder.bootstrap.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.imageBuilder.bootstrap.podLabels }}
+      labels:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    spec:
+      restartPolicy: {{ .Values.imageBuilder.bootstrap.restartPolicy }}
+      containers:
+        - name: bootstrap
+          image: {{ .Values.imageBuilder.bootstrap.image | quote }}
+          env:
+            - name: APP_VERSION
+              value: {{ tpl .Values.image.tag . | quote }}
+            - name: UNION_IMAGE_NAME_PREFIX
+              value: {{ .Values.imageBuilder.bootstrap.unionImageNamePrefix | quote }}
+            - name: FLYTECTL_CONFIG
+              value: /etc/flyte/config.yaml
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              pip install --root-user-action=ignore --quiet uv
+              uv pip install --quiet --system flyte kubernetes
+
+              flyte create project \
+                --id   {{ .Values.imageBuilder.bootstrap.project | quote }} \
+                --name "Union system tasks" \
+                --description "Internal tasks registered by the controlplane chart" \
+                || echo "create project returned non-zero; continuing"
+
+              flyte deploy \
+                --version "${APP_VERSION}" \
+                --project {{ .Values.imageBuilder.bootstrap.project | quote }} \
+                --domain  {{ .Values.imageBuilder.bootstrap.domain | quote }} \
+                /etc/build-image-task/build_image_task.py build_image_task_env
+          volumeMounts:
+            - name: bootstrap
+              mountPath: /etc/build-image-task
+              readOnly: true
+            - name: bootstrap-config
+              mountPath: /etc/flyte
+              readOnly: true
+            - name: client-secret
+              mountPath: /etc/secrets/union
+              readOnly: true
+      volumes:
+        - name: bootstrap
+          configMap:
+            name: {{ .Release.Name }}-build-image-bootstrap
+            items:
+              - key: build_image_task.py
+                path: build_image_task.py
+        - name: bootstrap-config
+          configMap:
+            name: {{ .Release.Name }}-build-image-bootstrap
+            items:
+              - key: flyte-config.yaml
+                path: config.yaml
+        - name: client-secret
+          secret:
+            # Same Secret all CP services mount at /etc/secrets/union/
+            # (where the INTERNAL_CLIENT_ID client_secret lives). Reuse the
+            # chart-wide defaults.secretName convention so per-env overrides
+            # of that value flow through automatically.
+            secretName: {{ tpl .Values.defaults.secretName . | quote }}
+{{- end }}
