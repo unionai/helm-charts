@@ -1023,6 +1023,44 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Render RBAC that grants one service account use of an OpenShift SCC.
+*/}}
+{{- define "openshift.sccRbac" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ .name }}
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccountName }}
+    namespace: {{ .root.Release.Namespace }}
+{{- end -}}
+
+{{/*
 Name of the fluentbit configMap
 */}}
 {{- define "fluentbit.configMapName" -}}
@@ -1491,11 +1529,9 @@ Returns the buildkit service account name, using the common SA when enabled.
 Create the name of OpenShift SecurityContextConstraints to use for buildkit.
 */}}
 {{- define "imagebuilder.buildkit.openShiftSccName" -}}
-{{- if not .Values.imageBuilder.buildkit.openShift.securityContextConstraints.create -}}
-{{- printf "%s" .Values.imageBuilder.buildkit.openShift.securityContextConstraints.existingName -}}
-{{- else -}}
-{{- printf "%s" (default (printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .)) .Values.imageBuilder.buildkit.openShift.securityContextConstraints.name) -}}
-{{- end -}}
+{{- $defaultName := printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .) -}}
+{{- $legacyName := .Values.imageBuilder.buildkit.openShift.securityContextConstraints.existingName -}}
+{{- default (default $defaultName $legacyName) .Values.imageBuilder.buildkit.openShift.securityContextConstraints.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
 {{- define "buildkit.serviceAccount.annotations" -}}

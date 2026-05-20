@@ -158,6 +158,16 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
 ---
+# Source: dataplane/templates/imagebuilder/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-imagebuilder
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -419,7 +429,7 @@ data:
         Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
         Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
         Path                /var/log/containers/*.log
-        DB                  /var/log/flb_kube.db
+        DB                  /fluent-bit/state/flb_kube.db
         multiline.parser    docker, cri
         Mem_Buf_Limit       5MB
         Skip_Long_Lines     On
@@ -630,13 +640,13 @@ data:
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: ''
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: ''
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
       endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
@@ -2800,21 +2810,19 @@ data:
           memory: 2Ti
     namespace_mapping:
       template: union
-    namespace_mapping:
-      template: '{{ project }}-{{ domain }}'
     union:
       connection:
         host: 'dns:///test-controlplane-host:443'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: ''
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: ''
+      clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
       endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
@@ -2920,7 +2928,7 @@ data:
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: ''
+        clientId: 'test-client-id'
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
@@ -2981,7 +2989,7 @@ data:
           - union
           - union-cp
       org:
-        namespaceTemplate: "{{ project }}-{{ domain }}"
+        namespaceTemplate: union
       imageBuilder:
         enabled: true
         executionNamespaceLabels:
@@ -5651,6 +5659,27 @@ rules:
       - "watch"
       - "patch"
 ---
+# Source: dataplane/templates/imagebuilder/scc-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-operator-buildkit-rootless
+  namespace: union
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - union-operator-buildkit-rootless
+    verbs:
+      - use
+---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5998,6 +6027,29 @@ rules:
     resources: ["volumeattachments"]
     verbs: ["list", "watch"]
 ---
+# Source: dataplane/templates/serving/kourier-gateway-scc-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-operator-serving-kourier-gateway
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.7.0
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.7.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: serving
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - union-operator-serving-kourier-gateway
+    verbs:
+      - use
+---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6098,6 +6150,27 @@ roleRef:
   kind: Role
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
+---
+# Source: dataplane/templates/imagebuilder/scc-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-operator-buildkit-rootless
+  namespace: union
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-buildkit-rootless
+subjects:
+  - kind: ServiceAccount
+    name: union-imagebuilder
+    namespace: union
+
 ---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6227,6 +6300,29 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-operator-prometheus-rbac
+
+---
+# Source: dataplane/templates/serving/kourier-gateway-scc-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-operator-serving-kourier-gateway
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.7.0
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.7.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: serving
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: union-operator-serving-kourier-gateway
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: union
 
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
@@ -6978,6 +7074,8 @@ spec:
             - mountPath: /etc/machine-id
               name: etcmachineid
               readOnly: true
+            - mountPath: /fluent-bit/state
+              name: fluentbit-state
       volumes:
         - name: config
           configMap:
@@ -6992,6 +7090,8 @@ spec:
             path: /etc/machine-id
             type: File
           name: etcmachineid
+        - emptyDir: {}
+          name: fluentbit-state
       tolerations:
         - operator: Exists
 
@@ -7621,15 +7721,17 @@ spec:
       app.kubernetes.io/instance: release-name
   template:
     metadata:
+      annotations:
+        container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
       labels:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
-      serviceAccountName: "union-system"
+      serviceAccountName: "union-imagebuilder"
       containers:
         - name: "buildkit"
-          image: "docker.io/moby/buildkit:buildx-stable-1"
+          image: "docker.io/moby/buildkit:buildx-stable-1-rootless"
           imagePullPolicy: IfNotPresent
           env:
             - name: POD_NAME
@@ -7664,15 +7766,18 @@ spec:
             - name: KNATIVE_PROXY_SERVICE_URL
               value: http://kourier-internal
           volumeMounts:
+            - mountPath: /home/user/.local/share/buildkit
+              name: buildkitd
             - mountPath: /etc/buildkit
               name: buildkit-config
           args:
             - --config
             - /etc/buildkit/buildkitd.toml
             - --addr
-            - unix:///run//buildkit/buildkitd.sock
+            - unix:///run/user/1000/buildkit/buildkitd.sock
             - --addr
             - tcp://0.0.0.0:1234
+            - --oci-worker-no-process-sandbox
           ports:
             - name: tcp
               containerPort: 1234
@@ -7694,13 +7799,18 @@ spec:
             initialDelaySeconds: 5
             periodSeconds: 30
           securityContext:
-            privileged: true
+            seccompProfile: # Needs Kubernetes >= 1.19
+              type: Unconfined
+            runAsUser: 1000
+            runAsGroup: 1000
           resources:
             requests:
               cpu: 4
               ephemeral-storage: 50Gi
               memory: 4Gi
       volumes:
+      - name: buildkitd
+        emptyDir: {}
       - configMap:
           name: union-operator-buildkit
         name: buildkit-config
@@ -7732,7 +7842,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "785090568b32616fa86d8fb4171059daa488c57ddd969b6423f842b043db287"
+        configChecksum: "16c70d5e56fa5d7bf52c20666631f04e524e84062e4e01ce669830f15a1d04c"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7744,6 +7854,7 @@ spec:
       securityContext:
         fsGroup: 1337
       serviceAccountName: union-system
+      priorityClassName: system-cluster-critical
       terminationGracePeriodSeconds: 75
       volumes:
         - name: config-volume
@@ -7834,7 +7945,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a22e5136d00bf4732fce07946dcf1da6b18e045cc0b1189a9ecc1f5968dc9ab"
+        configChecksum: "cfcb1fd92a4852193ac528a4bbb806cbc8d675724ca91518715efc9ae92f9c4"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7941,7 +8052,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0ca134b44ef6980399644da87f0ce6398eb33ad517716230ff207a2b0f10928"
+        configChecksum: "5732ae17be8ffa83fa21700413202d9aa8dd9f79ac2e9a77dfab5ce0bc16694"
         
       labels:
         
@@ -8053,7 +8164,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0ca134b44ef6980399644da87f0ce6398eb33ad517716230ff207a2b0f10928"
+        configChecksum: "5732ae17be8ffa83fa21700413202d9aa8dd9f79ac2e9a77dfab5ce0bc16694"
         
       labels:
         
@@ -8179,7 +8290,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "785090568b32616fa86d8fb4171059daa488c57ddd969b6423f842b043db287"
+        configChecksum: "16c70d5e56fa5d7bf52c20666631f04e524e84062e4e01ce669830f15a1d04c"
         
     spec:
       securityContext:
@@ -8329,7 +8440,7 @@ spec:
             name: kourier-internal
             port:
               number: 80
-    host: "*.apps."
+    host: "*.apps.test-controlplane-host"
 ---
 # Source: dataplane/templates/common/ingress.yaml
 apiVersion: networking.k8s.io/v1
@@ -8531,131 +8642,12 @@ webhooks:
 ---
 
 ---
-# Source: dataplane/templates/common/task-podtemplate.yaml
-apiVersion: v1
-kind: PodTemplate
-metadata:
-  name: task-template
-  namespace: union
-template:
-  spec:
-    serviceAccountName: union
-    containers:
-      - name: default
-        image: docker.io/rwgrim/docker-noop
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flyte-webhook-cleanup
-  namespace: union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    helm.sh/hook-weight: "-5"
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: flyte-webhook-cleanup-union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    helm.sh/hook-weight: "-5"
-rules:
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "delete"]
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: flyte-webhook-cleanup-union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
-    helm.sh/hook-weight: "-5"
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: flyte-webhook-cleanup-union
-subjects:
-  - kind: ServiceAccount
-    name: flyte-webhook-cleanup
-    namespace: union
----
-# Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: "release-name-fluentbit-test-connection"
-  namespace: union
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    helm.sh/hook: test
-    helm.sh/hook-delete-policy: hook-succeeded
-spec:
-  containers:
-    - name: wget
-      image: "busybox:latest"
-      imagePullPolicy: Always
-      command: ["sh"]
-      args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
-  restartPolicy: Never
-
----
-# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: flyte-webhook-cleanup
-  namespace: union
-  annotations:
-    helm.sh/hook: pre-upgrade
-    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
-    helm.sh/hook-weight: "0"
-spec:
-  template:
-    spec:
-      restartPolicy: OnFailure
-      serviceAccountName: flyte-webhook-cleanup
-      containers:
-        - name: cleanup
-          image: "alpine/k8s:1.32.3"
-          imagePullPolicy: IfNotPresent
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              NS=union
-              kubectl delete mutatingwebhookconfiguration flyte-pod-webhook --ignore-not-found
-              kubectl delete deployment flytepropeller-webhook -n ${NS} --ignore-not-found
-              kubectl delete secret flyte-pod-webhook -n ${NS} --ignore-not-found
-              kubectl delete deployment union-operator-prometheus -n ${NS} --ignore-not-found
-
----
 # Source: dataplane/templates/serving/knative-serving.yaml
 apiVersion: operator.knative.dev/v1beta1
 kind: KnativeServing
 metadata:
   name: union-operator-serving
   namespace: union
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-delete-policy": before-hook-creation
   labels:
     helm.sh/chart: dataplane-2026.7.0
     app.kubernetes.io/name: release-name-dataplane
@@ -8837,4 +8829,210 @@ spec:
                 values:
                 - webhook
             topologyKey: topology.kubernetes.io/zone
+
+---
+# Source: dataplane/templates/common/task-podtemplate.yaml
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: task-template
+  namespace: union
+template:
+  spec:
+    serviceAccountName: union
+    containers:
+      - name: default
+        image: docker.io/rwgrim/docker-noop
+        workingDir: "/tmp"
+
+---
+# Source: dataplane/templates/imagebuilder/scc.yaml
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: union-operator-buildkit-rootless
+  labels:
+    app.kubernetes.io/name: imagebuilder-buildkit
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAllowPrivilegeEscalation: false
+forbiddenSysctls:
+  - "*"
+readOnlyRootFilesystem: false
+requiredDropCapabilities: []
+runAsUser:
+  type: MustRunAs
+  uid: 1000
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - unconfined
+  - runtime/default
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+
+---
+# Source: dataplane/templates/serving/kourier-gateway-scc.yaml
+apiVersion: security.openshift.io/v1
+kind: SecurityContextConstraints
+metadata:
+  name: union-operator-serving-kourier-gateway
+  labels:
+    helm.sh/chart: dataplane-2026.7.0
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.7.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: serving
+allowHostDirVolumePlugin: false
+allowHostIPC: false
+allowHostNetwork: false
+allowHostPID: false
+allowHostPorts: false
+allowPrivilegeEscalation: false
+allowPrivilegedContainer: false
+allowedCapabilities: []
+defaultAddCapabilities: []
+defaultAllowPrivilegeEscalation: false
+forbiddenSysctls:
+  - "*"
+readOnlyRootFilesystem: false
+requiredDropCapabilities:
+  - ALL
+runAsUser:
+  type: MustRunAs
+  uid: 65534
+seLinuxContext:
+  type: MustRunAs
+seccompProfiles:
+  - runtime/default
+fsGroup:
+  type: RunAsAny
+supplementalGroups:
+  type: RunAsAny
+volumes:
+  - configMap
+  - downwardAPI
+  - emptyDir
+  - projected
+  - secret
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flyte-webhook-cleanup-union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    verbs: ["get", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+---
+# Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "release-name-fluentbit-test-connection"
+  namespace: union
+  labels:
+    helm.sh/chart: fluentbit-0.48.9
+    app.kubernetes.io/version: "3.2.8"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: hook-succeeded
+spec:
+  containers:
+    - name: wget
+      image: "busybox:latest"
+      imagePullPolicy: Always
+      command: ["sh"]
+      args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
+  restartPolicy: Never
+
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: flyte-webhook-cleanup
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "0"
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: flyte-webhook-cleanup
+      containers:
+        - name: cleanup
+          image: "alpine/k8s:1.32.3"
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -e
+              NS=union
+              kubectl delete mutatingwebhookconfiguration flyte-pod-webhook --ignore-not-found
+              kubectl delete deployment flytepropeller-webhook -n ${NS} --ignore-not-found
+              kubectl delete secret flyte-pod-webhook -n ${NS} --ignore-not-found
+              kubectl delete deployment union-operator-prometheus -n ${NS} --ignore-not-found
 

@@ -142,9 +142,9 @@ false
 
 {{- define "unionai.serviceAccount.annotations" -}}
 {{- if and (hasKey .config "serviceAccount") (hasKey .config.serviceAccount "annotations") }}
-{{- toYaml .config.serviceAccount.annotations }}
+{{- tpl (toYaml .config.serviceAccount.annotations) . }}
 {{- else if and (hasKey .Values "serviceAccount") (hasKey .Values.serviceAccount "annotations") }}
-{{- toYaml .Values.serviceAccount.annotations }}
+{{- tpl (toYaml .Values.serviceAccount.annotations) . }}
 {{- else }}
 {}
 {{- end }}
