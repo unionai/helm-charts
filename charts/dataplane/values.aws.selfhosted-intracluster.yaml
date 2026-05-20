@@ -71,37 +71,21 @@ global:
   #    Permissions: S3 access, AWS services used by workflows
   WORKER_IAM_ROLE_ARN: ""
 
-  #    CONTROLPLANE_INTRA_CLUSTER_HOST - Control plane ingress controller FQDN
-  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local"
-  #    Example: "controlplane-nginx-controller.union-cp.svc.cluster.local"
-  #    How to find: kubectl get svc -n union-cp | grep nginx-controller
-  #    Note: Used for direct communication with control plane from union operator.
-  #    Currently we need to point it to ingress controller service url instead of
-  #    one of the control plane service url since operator talks to multiple union
-  #    services.(executions for V1, cluster). In the future we will try to avoid going
-  #    through ingress as it enforces Auth for the operator today.
+  #    CONTROLPLANE_HOST - Canonical control plane entrypoint for all DP->CP calls.
+  #    All four legacy endpoint variables below fall back to this value when unset.
+  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local" (no port; nginx routes by
+  #    gRPC service path)
+  #    Example: "controlplane-nginx-controller.controlplane.svc.cluster.local"
+  CONTROLPLANE_HOST: ""
+
+  # --- Legacy endpoint variables (deprecated) ---
+  # Each falls back to CONTROLPLANE_HOST when left empty. Set explicitly only when
+  # a specific call must bypass the CP ingress (e.g. direct port-81 flyteadmin
+  # gRPC for unauthenticated intra-cluster calls).
+
   CONTROLPLANE_INTRA_CLUSTER_HOST: ""
-
-  #    QUEUE_SERVICE_HOST - Queue service FQDN in the controlplane
-  #    Format: "queue.NAMESPACE.svc.cluster.local:80" port 80 is the grpc port
-  #    Example: "queue.union-cp.svc.cluster.local:80"
-  #    How to find: kubectl get svc -n union-cp | grep queue
-  #    Note: Used for direct communication with queue service from worker pods
   QUEUE_SERVICE_HOST: "queue.union-cp.svc.cluster.local:80"
-
-  #    FLYTEADMIN_ENDPOINT - Internal Flyteadmin service endpoint
-  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
-  #    Example: "flyteadmin.union-cp.svc.cluster.local:81"
-  #    How to find: kubectl get svc -n union-cp flyteadmin
   FLYTEADMIN_ENDPOINT: ""
-
-  #    CACHESERVICE_ENDPOINT - Internal Cacheservice endpoint
-  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local:PORT"
-  #    Example: "cacheservice.union-cp.svc.cluster.local:81"
-  #    How to find: kubectl get svc -n union-cp cacheservice
-  #
-  #    Cache service does not support insecure skip verify, there we can overwrite
-  #    the endpoint here to skip nginx as grpc through nginx must use TLS.
   CACHESERVICE_ENDPOINT: ""
 
   # --- Authentication Configuration ---
@@ -175,9 +159,9 @@ clusterresourcesync:
   config:
     union:
       connection:
-        # Control plane host for intra-cluster communication
-        # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-        host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+        # Control plane host for intra-cluster communication.
+        # Falls back to CONTROLPLANE_HOST when CONTROLPLANE_INTRA_CLUSTER_HOST is unset.
+        host: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
         # Skip SSL certificate verification for self-signed certs
         # Set to true for self-signed certificates, false for trusted CA certs
@@ -212,9 +196,11 @@ config:
 
   admin:
     admin:
-      # Flyteadmin endpoint (control plane admin service)
-      # Example: "flyteadmin.union-cp.svc.cluster.local:81"
-      endpoint: '{{ .Values.global.FLYTEADMIN_ENDPOINT }}'
+      # Flyteadmin endpoint (control plane admin service).
+      # Falls back to CONTROLPLANE_HOST (nginx-routed, auth-enforced) when
+      # FLYTEADMIN_ENDPOINT is unset. Set FLYTEADMIN_ENDPOINT explicitly to bypass
+      # nginx with a direct gRPC dial to flyteadmin (e.g. port 81 plaintext).
+      endpoint: '{{ default .Values.global.CONTROLPLANE_HOST .Values.global.FLYTEADMIN_ENDPOINT }}'
 
       # Use insecure (non-TLS) connection for intra-cluster HTTP communication
       insecure: true
@@ -229,9 +215,11 @@ config:
 
       type: "cacheservicev2"
 
-      # Control plane host for catalog service
-      # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-      cache-endpoint: '{{ .Values.global.CACHESERVICE_ENDPOINT }}'
+      # Control plane host for catalog service.
+      # Falls back to CONTROLPLANE_HOST (nginx-routed) when CACHESERVICE_ENDPOINT
+      # is unset. Set CACHESERVICE_ENDPOINT explicitly to bypass nginx with a
+      # direct gRPC dial (e.g. "dns:///cacheservice.{ns}.svc.cluster.local:89").
+      cache-endpoint: '{{ default (printf "dns:///%s" .Values.global.CONTROLPLANE_HOST) .Values.global.CACHESERVICE_ENDPOINT }}'
       endpoint: ""
 
       # Use insecure connection for intra-cluster communication
@@ -248,9 +236,12 @@ config:
           # Optionally increase the log level for all execution pods for debugging
           # - LOG_LEVEL: "10"
 
-          # Bypass ingress authentication layer with intra-cluster communication by communicating
-          # directly with the queue service.
-          - _U_EP_OVERRIDE: 'dns:///{{ .Values.global.QUEUE_SERVICE_HOST }}'
+          # Queue endpoint for task pods. Falls back to CONTROLPLANE_HOST
+          # (nginx-routed) when QUEUE_SERVICE_HOST is unset. Set
+          # QUEUE_SERVICE_HOST explicitly to bypass ingress and dial the queue
+          # service directly (e.g. queue.{ns}.svc.cluster.local:80) — required
+          # today since task pods don't carry OAuth credentials for nginx auth.
+          - _U_EP_OVERRIDE: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.QUEUE_SERVICE_HOST }}'
 
           # Assumed queue service is running with TLS disabled since it's intra-cluster,
           # we can set the following env vars to skip TLS verification for the queue service.
@@ -259,9 +250,9 @@ config:
 
   union:
     connection:
-      # Control plane connection for Union services
-      # Example: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local"
-      host: 'dns:///{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+      # Control plane connection for Union services.
+      # Falls back to CONTROLPLANE_HOST when CONTROLPLANE_INTRA_CLUSTER_HOST is unset.
+      host: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
 
       # Skip SSL verification for self-signed certificates
       insecureSkipVerify: true
@@ -326,7 +317,7 @@ ingress:
   # This is a temporary configuration for intra-cluster deployments.
   serving:
     # Default to using the intra-cluster host for serving
-    hostOverride: "*.apps.{{ .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+    hostOverride: "*.apps.{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
     # Assume the same ingress class as the dataproxy
     class: "dataplane"
 
