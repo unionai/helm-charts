@@ -6,8 +6,7 @@
 #   - knative/serving:  serving-crds.yaml  (12 CRDs: serving + networking + autoscaling + caching)
 #   - knative/operator: operator.yaml      (2 CRDs: knativeservings, knativeeventings — filtered from the full operator manifest)
 #
-# Writes one `crd-<name>.yaml` per CRD with the
-# `argocd.argoproj.io/sync-options: ServerSideApply=true` annotation injected.
+# Writes one `crd-<name>.yaml` per CRD (verbatim from the upstream releases).
 #
 # Bumping Knative:
 #   1. Edit ./VERSION (e.g. v1.17.0).
@@ -76,7 +75,7 @@ write_crd_docs() {
     if [[ -z "${crd_name}" || "${crd_name}" == "null" ]]; then continue; fi
 
     local doc
-    doc="$(yq eval-all "select(document_index == ${i}) | .metadata.annotations[\"argocd.argoproj.io/sync-options\"] = \"ServerSideApply=true\"" "${src}")"
+    doc="$(yq eval-all "select(document_index == ${i})" "${src}")"
 
     local dst="${OUT_DIR}/crd-${crd_name}.yaml"
     {
