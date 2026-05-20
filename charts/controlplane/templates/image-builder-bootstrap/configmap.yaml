@@ -1,0 +1,21 @@
+{{- if .Values.imageBuilder.bootstrap.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-build-image-bootstrap
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade,post-rollback
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation
+data:
+  build_image_task.py: |
+{{ .Files.Get "files/build_image_task.py" | indent 4 }}
+  flyte-config.yaml: |
+    admin:
+      {{- tpl (toYaml .Values.imageBuilder.bootstrap.admin) . | nindent 6 }}
+    task:
+      org: {{ .Values.global.UNION_ORG | default "" | quote }}
+      project: {{ .Values.imageBuilder.bootstrap.project | quote }}
+      domain: {{ .Values.imageBuilder.bootstrap.domain | quote }}
+{{- end }}
