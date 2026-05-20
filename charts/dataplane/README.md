@@ -141,19 +141,34 @@ gateway:
 
 The AWS pod identity webhook mutates pods by reading a service account annotation named `<annotation-prefix>/role-arn`. EKS uses `eks.amazonaws.com` by default, so the AWS values files default to `eks.amazonaws.com/role-arn`.
 
-If your cluster operator installed the webhook with a custom `--annotation-prefix`, make the system service account annotation and workflow service account annotation key match that prefix:
+If your cluster operator installed the webhook with a custom `--annotation-prefix`, set the shared prefix value:
 
 ```yaml
-additionalServiceAccountAnnotations:
-  customer.example.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
-
-userRoleAnnotationKey: customer.example.com/role-arn
-userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
+global:
+  AWS_POD_IDENTITY_ANNOTATION_PREFIX: customer.example.com
 ```
 
-When this is layered on top of an AWS preset values file, Helm may still render the default `eks.amazonaws.com/role-arn` annotation. That extra annotation is ignored by a webhook configured with a different prefix; the custom `<prefix>/role-arn` annotation is the one that controls mutation.
+The AWS values files derive both Union system service account annotations and workflow service account annotations from this prefix.
 
 The IAM role trust policies must still trust the Kubernetes service account subjects used by the rendered service accounts.
+
+---
+
+## OpenShift
+
+For OpenShift clusters, layer `values.openshift.yaml` after your cloud and deployment-mode values file:
+
+```bash
+helm upgrade --install unionai-dataplane unionai/dataplane \
+  --namespace union \
+  --values values.aws.selfhosted-intracluster.yaml \
+  --values values.openshift.yaml \
+  --values values.aws.selfhosted-customer.yaml
+```
+
+This preset enables OpenShift-specific SCC/RBAC for buildkit and Kourier, runs buildkit rootless with a dedicated service account, moves Fluent Bit tail state onto an `emptyDir`, and sets task pods to use `/tmp` as their working directory.
+
+Namespace-specific OpenShift UID, GID, and SELinux category values are not included in the preset. Set those in the environment-specific values file only when your cluster requires them.
 
 ---
 
