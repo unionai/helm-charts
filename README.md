@@ -1,5 +1,8 @@
 # Union Helm Charts
 
+Chart conventions (overlay file naming, what's tested vs. example): see [`charts/CONVENTIONS.md`](./charts/CONVENTIONS.md).
+Migration notes for recent breaking-ish changes: see [`charts/MIGRATION.md`](./charts/MIGRATION.md).
+
 ## Dataplane
 
 ### Assumptions

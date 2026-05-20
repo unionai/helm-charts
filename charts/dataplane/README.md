@@ -4,6 +4,11 @@
 
 Deploys the Union dataplane components to onboard a kubernetes cluster to the Union Cloud.
 
+## Installation guides
+
+- **Selfhosted (CP + DP in one or coordinated clusters)** — see the [self-hosted deployment guide](https://docs.union.ai/union/deployment/selfhosted/) on docs.union.ai. The guide covers cluster prerequisites, ingress + TLS, OIDC/OAuth2 setup, environment overrides, topology options (intracluster / multi-cluster same VPC / BYOC public), and step-by-step install for both AWS and GCP.
+- **Conventions + recent migrations** — chart-level [`CONVENTIONS.md`](../CONVENTIONS.md) and [`MIGRATION.md`](../MIGRATION.md).
+
 ## Quick Start
 
 Choose your cloud provider to get started:

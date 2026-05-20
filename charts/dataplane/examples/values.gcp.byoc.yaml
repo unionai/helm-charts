@@ -1,0 +1,220 @@
+# ============================================================================
+# Example: Union Dataplane GCP partial overrides (legacy WIP, not tested)
+# ============================================================================
+# This file was the previous content of `charts/dataplane/values.gcp.yaml` —
+# a partial set of GCP-specific overrides marked "work in progress". Preserved
+# here for reference. NOT covered by snapshot tests.
+#
+# For supported, actively-tested GCP deployments use `../values.gcp.yaml`.
+# See `charts/MIGRATION.md`.
+# ============================================================================
+
+# Work in progress: GCP specific overrides for dataplane chart
+
+# Image Builder Authentication (OPTIONAL)
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "google" if you want the builder to authenticate to Artifact Registry / GCR
+# via the GCP provider credential chain (Workload Identity / GKE metadata).
+# imageBuilder:
+#   authenticationType: google
+
+# DCGM Exporter
+dcgm-exporter:
+  enabled: true
+
+  # Affinity assuming cloud.google.com/gke-accelerator label is always
+  # associated to Nvidia.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: cloud.google.com/gke-accelerator
+            operator: Exists
+
+  extraEnv:
+  - name: "LD_LIBRARY_PATH"
+    value: "/usr/local/nvidia/lib64"
+  # Set DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE to "device-name" for GCP environments
+  # This ensure pod attribute on the metric is set to the pod name utilizing the GPU
+  # Ref: https://github.com/NVIDIA/dcgm-exporter/issues/27#issuecomment-978027181
+  - name: "DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"
+    value: "device-name"
+
+  extraHostVolumes:
+  - hostPath: "/home/kubernetes/bin/nvidia"
+    name: "nvidia-install-dir-host"
+
+  extraVolumeMounts:
+  - mountPath: "/etc/dcgm-exporter/default-counters.csv"
+    name: "exporter-metrics-volume"
+    subPath: "default-counters.csv"
+  - mountPath: "/usr/local/nvidia"
+    name: "nvidia-install-dir-host"
+
+  # privileged mode provides the necessary permissions to access GPU-to-pod mappings
+  securityContext:
+    allowPrivilegeEscalation: true
+    privileged: true
+
+# Identify the GCP Secret Manager backend so the operator can report a canonical
+# secret store identity to the control plane (used for cluster-pool drift detection).
+# These fields are read only when proxy.secretManager.type is GCP.
+config:
+  proxy:
+    smConfig:
+      gcpConfig:
+        project: '{{ .Values.storage.gcp.projectId }}'
+
+executor:
+  task_logs:
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        templates:
+          - displayName: GCP Logs
+            templateUris:
+              - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.podRFC3339StartTime}}`}};endTime={{`{{.podRFC3339FinishTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            templates:
+              - displayName: GCP Logs
+                templateUris:
+                  - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+          templates:
+            - displayName: GCP Logs
+              templateUris:
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      dask:
+        # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+        logs:
+          # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
+          templates:
+            - displayName: "GCP Logs"
+              scheme: TaskExecution
+              templateUris:
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22job-runner%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+            - displayName: Dask Dashboard
+              linkType: dashboard
+              scheme: TaskExecution
+              templateUris:
+                - "/dataplane/dask/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/status"
+      ray:
+        logs:
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.rayClusterName}}`}}-head/"
+          templates:
+            - displayName: "Ray Dashboard"
+              linkType: dashboard
+              scheme: TaskExecution
+              templateUris:
+                - "/dataplane/ray/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+            - displayName: "Stacktrace Logs (Ray All)"
+              scheme: TaskExecution
+              templateUris:
+                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+      spark:
+        logs:
+          mixed:
+            kubernetes-enabled: false
+            stackdriver-enabled: true
+            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+            dynamic-log-links:
+              - vscode:
+                  displayName: VSCode
+                  linkType: ide
+                  templateUris:
+                    - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
+            templates:
+              - displayName: Spark Driver UI
+                linkType: dashboard
+                templateUris:
+                  - "/dataplane/spark/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+          all-user:
+            kubernetes-enabled: false
+            stackdriver-enabled: true
+            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.podName}}`}}-exec%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
+        spark-config-default:
+          - spark.driver.cores: "1"
+          - spark.eventLog.enabled: "true"
+          - spark.eventLog.dir: "{{.Values.storage.sparkBucketPrefix}}/spark-events"
+          - spark.executorEnv.HTTP2_DISABLE: "true"
+          - spark.hadoop.fs.AbstractFileSystem.gs.impl: com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS
+          - spark.kubernetes.allocation.batch.size: "50"
+          - spark.kubernetes.driverEnv.HTTP2_DISABLE: "true"
+          - spark.network.timeout: 600s
+          - spark.executorEnv.KUBERNETES_REQUEST_TIMEOUT: 100000
+          - spark.executor.heartbeatInterval: 60s
+          - spark.ui.proxyRedirectUri: "{{.Values.cloudUrl}}"
+          - spark.kubernetes.submission.connectionTimeout: "30000"
+          - spark.kubernetes.submission.requestTimeout: "30000"
+          - spark.kubernetes.driver.connectionTimeout: "30000"
+          - spark.kubernetes.driver.requestTimeout: "30000"
+        spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
+
+# ----------------------------------------------------------------------------
+# Logging Configuration (GCP/GKE specific)
+# ----------------------------------------------------------------------------
+
+# GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
+# includes WORKLOADS) already ship workload container stdout/stderr to Cloud
+# Logging via Google's managed fluentbit-gke DaemonSet in kube-system. Disable
+# the subchart fluentbit to avoid duplicate ingestion; rely on Google's agent,
+# and link out to console.cloud.google.com/logs/query for log viewing
+# (configured in executor.task_logs above).
+#
+# Override back to true at the env-specific values layer if GKE managed Cloud
+# Logging is not enabled for the cluster.
+fluentbit:
+  enabled: false
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (GCP/GKE specific)
+# ----------------------------------------------------------------------------
+
+# GKE manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts. Mirrors values.aws.yaml.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

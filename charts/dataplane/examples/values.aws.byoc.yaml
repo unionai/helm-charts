@@ -1,0 +1,473 @@
+# ============================================================================
+# Example: Union Dataplane on AWS (legacy BYOC template, not tested)
+# ============================================================================
+# This file is an example/starting point for a Bring-Your-Own-Cloud (BYOC)
+# style AWS dataplane deployment connecting to Union infrastructure outside
+# the cluster. It is NOT covered by snapshot tests and is not the default
+# the chart ships against.
+#
+# For supported, actively-tested AWS deployments use `../values.aws.yaml`.
+#
+# This file's previous canonical location (`charts/dataplane/values.aws.yaml`)
+# was replaced in chart release 2026.X.Y by the consolidated overlay. The old
+# template is preserved here for reference. See `charts/MIGRATION.md`.
+# ============================================================================
+
+# Before deployment, replace these placeholders in the globals section below.
+# The globals section makes these values accessible to both the chart and
+# future subcharts, ensuring consistent configuration across all components.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values are accessible to both the chart and all potential subcharts.
+
+global:
+
+  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
+  #    Format: "hostname" (no protocol prefix for standard BYOC)
+  #    Example: "mycompany.unionai.cloud" or "union.example.com"
+  #    Source: Provided by Union team for BYOC deployments
+  UNION_CONTROL_PLANE_HOST: ""
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-us-east-1" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 4. CLIENT_ID - Client ID for dataplane authentication
+  #    Format: String provided by Union team
+  #    Example: "dataplane-prod-client"
+  #    Source: Provided by Union team
+  CLIENT_ID: ""
+
+  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-metadata-bucket"
+  #    Note: Bucket must exist before deployment
+  METADATA_BUCKET: ""
+
+  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-fast-registration-bucket"
+  #    Note: Can be same as metadata bucket or separate
+  FAST_REGISTRATION_BUCKET: ""
+
+  # 1. AWS_ACCOUNT_ID - AWS account ID (used for ECR registry URL)
+  #    Format: 12-digit AWS account ID
+  #    Example: "123456789012"
+  AWS_ACCOUNT_ID: ""
+
+  # 2. AWS_REGION - AWS region for S3 buckets
+  #    Format: AWS region code
+  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  AWS_REGION: ""
+
+  # 3. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
+  #    Permissions: S3 access, ECR (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
+  #    Permissions: S3 access, AWS services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
+  # ----------------------------------------------------------------------------
+  # Note: For self-hosted intra-cluster deployments (control plane and dataplane
+  # in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
+  # That file is self-contained and includes all necessary configuration.
+  # ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
+
+# Cloud provider identifier (do not change for AWS)
+provider: aws
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Object Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Configure S3 buckets for workflow metadata and fast registration.
+# These buckets must be created before deployment.
+
+storage:
+  provider: aws
+  authType: iam  # Use IAM roles for pods (IRSA recommended)
+
+  # AWS region for S3 buckets
+  region: '{{ .Values.global.AWS_REGION }}'
+  enableMultiContainer: true
+
+# ----------------------------------------------------------------------------
+# Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "aws" if you want the builder to authenticate to ECR via the AWS provider
+# credential chain (IRSA / EC2 instance profile).
+# imageBuilder:
+#   authenticationType: aws
+
+# ----------------------------------------------------------------------------
+# SECTION 4: IAM Roles (REQUIRED for AWS)
+# ----------------------------------------------------------------------------
+# Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
+# These IAM roles must be created with appropriate trust policies and permissions.
+
+# IAM role for Union backend services (operator, propeller, etc.)
+additionalServiceAccountAnnotations:
+  eks.amazonaws.com/role-arn: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
+
+# IAM role for workflow execution pods
+userRoleAnnotationKey: eks.amazonaws.com/role-arn
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
+
+# Identify the AWS Secrets Manager backend so the operator can report a canonical
+# secret store identity to the control plane (used for cluster-pool drift detection).
+# These fields are read only when proxy.secretManager.type is AWS.
+config:
+  proxy:
+    smConfig:
+      awsConfig:
+        account: '{{ .Values.global.AWS_ACCOUNT_ID }}'
+        region: '{{ .Values.global.AWS_REGION }}'
+
+# ----------------------------------------------------------------------------
+# SECTION 5: Authentication Secrets (REQUIRED)
+# ----------------------------------------------------------------------------
+# Client credentials for authenticating with the Union control plane.
+# These will be provided by the Union team for managed control planes.
+
+secrets:
+  admin:
+    # Client ID for dataplane authentication
+    clientId: '{{ .Values.global.CLIENT_ID }}'
+
+    # Client secret for dataplane authentication (keep this secure!)
+    clientSecret: ""
+
+    # Whether to create the Kubernetes secret
+    # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
+    create: true
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Logging Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# FluentBit collects and forwards logs to the control plane.
+
+fluentbit:
+  serviceAccount:
+    name: fluentbit-system
+    # IRSA annotation to grant FluentBit write access to the S3 metadata bucket.
+    # The IAM role must allow s3:PutObject, s3:GetObject, s3:ListBucket on the bucket.
+    annotations: {}
+    # annotations:
+    #   eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<FLUENTBIT_ROLE_NAME>"
+
+# ----------------------------------------------------------------------------
+# SECTION 7: Task Level Monitoring
+# ----------------------------------------------------------------------------
+
+# DCGM Exporter
+dcgm-exporter:
+  enabled: true
+
+  # Configure AWS specific affinity
+  # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: node.kubernetes.io/instance-type
+                operator: In
+                values:
+                  ## NVIDIA GPU instance types
+                  - g3.4xlarge
+                  - g3.8xlarge
+                  - g3.16xlarge
+                  - g3s.xlarge
+                  - g4ad.2xlarge
+                  - g4ad.4xlarge
+                  - g4ad.8xlarge
+                  - g4ad.16xlarge
+                  - g4ad.xlarge
+                  - g4dn.2xlarge
+                  - g4dn.4xlarge
+                  - g4dn.8xlarge
+                  - g4dn.12xlarge
+                  - g4dn.16xlarge
+                  - g4dn.metal
+                  - g4dn.xlarge
+                  - g5.2xlarge
+                  - g5.4xlarge
+                  - g5.8xlarge
+                  - g5.12xlarge
+                  - g5.16xlarge
+                  - g5.24xlarge
+                  - g5.48xlarge
+                  - g5.xlarge
+                  - g5g.2xlarge
+                  - g5g.4xlarge
+                  - g5g.8xlarge
+                  - g5g.16xlarge
+                  - g5g.metal
+                  - g5g.xlarge
+                  - g6.2xlarge
+                  - g6.4xlarge
+                  - g6.8xlarge
+                  - g6.12xlarge
+                  - g6.16xlarge
+                  - g6.24xlarge
+                  - g6.48xlarge
+                  - g6.xlarge
+                  - g6e.2xlarge
+                  - g6e.4xlarge
+                  - g6e.8xlarge
+                  - g6e.12xlarge
+                  - g6e.16xlarge
+                  - g6e.24xlarge
+                  - g6e.48xlarge
+                  - g6e.xlarge
+                  - gr6.4xlarge
+                  - gr6.8xlarge
+                  - p2.8xlarge
+                  - p2.16xlarge
+                  - p2.xlarge
+                  - p3.2xlarge
+                  - p3.8xlarge
+                  - p3.16xlarge
+                  - p3dn.24xlarge
+                  - p4d.24xlarge
+                  - p4de.24xlarge
+                  - p5.48xlarge
+                  - p5e.48xlarge
+                  - p5en.48xlarge
+                  - ml.g3.4xlarge
+                  - ml.g3.8xlarge
+                  - ml.g3.16xlarge
+                  - ml.g3s.xlarge
+                  - ml.g4ad.2xlarge
+                  - ml.g4ad.4xlarge
+                  - ml.g4ad.8xlarge
+                  - ml.g4ad.16xlarge
+                  - ml.g4ad.xlarge
+                  - ml.g4dn.2xlarge
+                  - ml.g4dn.4xlarge
+                  - ml.g4dn.8xlarge
+                  - ml.g4dn.12xlarge
+                  - ml.g4dn.16xlarge
+                  - ml.g4dn.metal
+                  - ml.g4dn.xlarge
+                  - ml.g5.2xlarge
+                  - ml.g5.4xlarge
+                  - ml.g5.8xlarge
+                  - ml.g5.12xlarge
+                  - ml.g5.16xlarge
+                  - ml.g5.24xlarge
+                  - ml.g5.48xlarge
+                  - ml.g5.xlarge
+                  - ml.g5g.2xlarge
+                  - ml.g5g.4xlarge
+                  - ml.g5g.8xlarge
+                  - ml.g5g.16xlarge
+                  - ml.g5g.metal
+                  - ml.g5g.xlarge
+                  - ml.g6.2xlarge
+                  - ml.g6.4xlarge
+                  - ml.g6.8xlarge
+                  - ml.g6.12xlarge
+                  - ml.g6.16xlarge
+                  - ml.g6.24xlarge
+                  - ml.g6.48xlarge
+                  - ml.g6.xlarge
+                  - ml.g6e.2xlarge
+                  - ml.g6e.4xlarge
+                  - ml.g6e.8xlarge
+                  - ml.g6e.12xlarge
+                  - ml.g6e.16xlarge
+                  - ml.g6e.24xlarge
+                  - ml.g6e.48xlarge
+                  - ml.g6e.xlarge
+                  - ml.gr6.4xlarge
+                  - ml.gr6.8xlarge
+                  - ml.p2.8xlarge
+                  - ml.p2.16xlarge
+                  - ml.p2.xlarge
+                  - ml.p3.2xlarge
+                  - ml.p3.8xlarge
+                  - ml.p3.16xlarge
+                  - ml.p3dn.24xlarge
+                  - ml.p4d.24xlarge
+                  - ml.p4de.24xlarge
+                  - ml.p5.48xlarge
+                  - ml.p5e.48xlarge
+                  - ml.p5en.48xlarge
+              - key: eks.amazonaws.com/compute-type
+                operator: NotIn
+                values:
+                  - fargate
+
+  # -- It's common practice to taint accelerator nodes to ensure non accelerator workloads
+  #
+  #    tolerations to ensure it only runs on GPU nodes.
+  # tolerations: []
+
+executor:
+  task_logs:
+    plugins:
+      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+      logs:
+        cloudwatch-enabled: false
+        kubernetes-enabled: false
+        templates:
+          - displayName: Cloudwatch Logs
+            templateUris:
+              - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}'
+      k8s-array:
+        logs:
+          config:
+            cloudwatch-enabled: false
+            kubernetes-enabled: false
+            templates:
+              - displayName: Cloudwatch Logs
+                templateUris:
+                  - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}'
+      fasttask:
+        logs:
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+          templates:
+            - displayName: Cloudwatch Logs
+              templateUris:
+                - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}$3Fstart$3D{{`{{.taskStartTimeUnixMs}}`}}$26end$3D{{`{{.taskEndTimeUnixMs}}`}}'
+      dask:
+        # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
+        logs:
+          # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
+          cloudwatch-enabled: false
+          kubernetes-enabled: false
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
+          templates:
+            - displayName: "Cloudwatch Logs"
+              scheme: TaskExecution
+              templateUris:
+                - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-job-runner'
+            - displayName: Dask Dashboard
+              linkType: dashboard
+              scheme: TaskExecution
+              templateUris:
+                - "/dataplane/dask/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/status"
+      ray:
+        logs:
+          dynamic-log-links:
+            - vscode:
+                displayName: VSCode
+                linkType: ide
+                templateUris:
+                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.rayClusterName}}`}}-head/"
+          templates:
+            - displayName: "Ray Dashboard"
+              linkType: dashboard
+              scheme: TaskExecution
+              templateUris:
+                - "/dataplane/ray/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+            - displayName: "Cloudwatch Logs (Ray All)"
+              scheme: TaskExecution
+              templateUris:
+                - 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask$3FlogStreamNameFilter$3Dkube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}'
+      spark:
+        logs:
+          mixed:
+            cloudwatch-enabled: true
+            kubernetes-enabled: false
+            cloudwatch-template-uri: 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-spark-kubernetes-driver'
+            dynamic-log-links:
+              - vscode:
+                  displayName: VSCode
+                  linkType: ide
+                  templateUris:
+                    - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
+            templates:
+              - displayName: Spark Driver UI
+                linkType: dashboard
+                templateUris:
+                  - "/dataplane/spark/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
+          all-user:
+            cloudwatch-enabled: true
+            kubernetes-enabled: false
+            cloudwatch-template-uri: 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask$3FlogStreamNameFilter$3Dkube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}'
+        spark-config-default:
+          # We override the default credentials chain provider for Hadoop so that
+          # it can use the serviceAccount based IAM role or ec2 metadata based.
+          # This is more in line with how AWS works
+          - spark.hadoop.fs.s3a.aws.credentials.provider: "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
+          - spark.eventLog.enabled: "true"
+          - spark.eventLog.dir: "{{.Values.storage.sparkBucketPrefix}}/spark-events"
+          - spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version: "2"
+          - spark.kubernetes.allocation.batch.size: "50"
+          - spark.hadoop.fs.s3a.acl.default: "BucketOwnerFullControl"
+          - spark.hadoop.fs.s3n.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+          - spark.hadoop.fs.AbstractFileSystem.s3n.impl: "org.apache.hadoop.fs.s3a.S3A"
+          - spark.hadoop.fs.s3.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+          - spark.hadoop.fs.AbstractFileSystem.s3.impl: "org.apache.hadoop.fs.s3a.S3A"
+          - spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
+          - spark.hadoop.fs.AbstractFileSystem.s3a.impl: "org.apache.hadoop.fs.s3a.S3A"
+          - spark.hadoop.fs.s3a.multipart.threshold: "536870912"
+          - spark.blacklist.enabled: "true"
+          - spark.blacklist.timeout: "5m"
+          - spark.task.maxfailures: "8"
+          - spark.ui.proxyRedirectUri: "{{.Values.cloudUrl}}"
+          - spark.kubernetes.submission.connectionTimeout: "30000"
+          - spark.kubernetes.submission.requestTimeout: "30000"
+          - spark.kubernetes.driver.connectionTimeout: "30000"
+          - spark.kubernetes.driver.requestTimeout: "30000"
+        spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (AWS/EKS specific)
+# ----------------------------------------------------------------------------
+
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

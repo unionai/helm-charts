@@ -1,110 +1,125 @@
 # ============================================================================
-# Union Control Plane Configuration for AWS
+# Union Control Plane — AWS overlay (canonical)
 # ============================================================================
-# This file provides a production-ready template for deploying Union control
-# plane on AWS EKS. Replace the placeholder values below with your actual
-# configuration.
+# This is the actively-tested AWS overlay shipped with the chart. CP and DP
+# topology is decided by the canonical host indirection (CONTROLPLANE_HOST /
+# DATAPLANE_HOST) and by cloud-provider Service annotations / DNS that the
+# env layer (terraform) supplies — same overlay serves intracluster,
+# multi-cluster-same-VPC, and BYOC public topologies.
 #
-# For more details, see: https://docs.union.ai/deployment/
+# Base values.yaml provides: ingress, nginx, auth, monitoring, image repos,
+# imagePullSecrets, namespace-derived FQDNs, and all non-cloud-specific config.
+#
+# This overlay provides: AWS globals (region, RDS, S3, IAM), IRSA annotations,
+# DP host indirection, and authentication credentials.
+#
+# Previously named `values.aws.selfhosted-intracluster.yaml`. That filename
+# still works as a deprecated shim — see charts/MIGRATION.md.
 # ============================================================================
-
-# ----------------------------------------------------------------------------
-# Configuration Variables to Replace
-# ----------------------------------------------------------------------------
-# Configure the global variables below for your AWS deployment.
-# These values override the defaults in values.yaml and provide AWS-specific
-# configuration (RDS endpoints, S3 buckets, IAM roles, etc.).
-#
-# Note: For self-hosted intra-cluster deployments (control plane and dataplane
-# in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
-# That file is self-contained and includes all necessary configuration.
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 1: AWS-Specific Global Configuration
-# ----------------------------------------------------------------------------
-# Override global values from values.yaml with AWS-specific settings.
 
 global:
+  # --- Deployment Identity ---
+  UNION_HOST: ""              # Control plane FQDN (e.g. "mycompany.union.ai")
+  UNION_ORG: ""               # Organization name (must match dataplane)
 
-  # Control plane hostname (FQDN)
-  # Example: "mycompany.union.ai" or "union.example.com"
-  UNION_HOST: ""
+  # --- AWS Infrastructure ---
+  AWS_REGION: ""              # e.g. "us-west-2"
+  DB_HOST: ""                 # RDS endpoint (e.g. "mydb.abc123.us-west-2.rds.amazonaws.com")
+  DB_NAME: ""                 # Database name (e.g. "unionai")
+  DB_USER: ""                 # Database username (e.g. "unionai")
+  BUCKET_NAME: ""             # S3 bucket for metadata
+  ARTIFACTS_BUCKET_NAME: ""   # S3 bucket for artifacts
+  KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password (must contain "pass.txt" key)
+  # Canonical DP entrypoint for all CP->DP calls.
+  DATAPLANE_HOST: ""          # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
+  DATAPLANE_ENDPOINT: ""      # Deprecated: falls back to DATAPLANE_HOST when unset.
 
-  # AWS region for all resources
-  # Example: "us-west-2", "us-east-1", "eu-west-1"
-  AWS_REGION: ""
+  # --- AWS IAM (IRSA) ---
+  ARTIFACT_IAM_ROLE_ARN: ""   # IAM role for artifacts service
+  FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role for flyteadmin, datacatalog, cacheservice
 
-  # PostgreSQL RDS endpoint
-  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
-  DB_HOST: ""
-
-  # PostgreSQL database name
-  # Example: "unionai" or "union_controlplane"
-  DB_NAME: ""
-
-  # PostgreSQL username
-  # Example: "unionai" or "admin"
-  DB_USER: ""
-
-  # S3 bucket for control plane metadata
-  # Example: "union-controlplane-metadata"
-  BUCKET_NAME: ""
-
-  # S3 bucket for artifacts storage
-  # Example: "union-controlplane-artifacts"
-  ARTIFACTS_BUCKET_NAME: ""
-
-  # Name of Kubernetes secret containing the DB password and other service specific secrets.
-  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
-  # Example: "union-controlplane-secrets"
-  # Note: Secret must contain "pass.txt" key
-  KUBERNETES_SECRET_NAME: ""
-
-  # IAM role ARN for artifacts service (IRSA)
-  # Leave empty if artifacts service is disabled
-  # Example: "arn:aws:iam::123456789012:role/union-artifacts-role"
-  ARTIFACT_IAM_ROLE_ARN: ""
-
-  # IAM role ARN for Flyte services (IRSA)
-  # Example: "arn:aws:iam::123456789012:role/union-flyteadmin-role"
-  # Note: Used by flyteadmin, datacatalog, and cacheservice
-  FLYTEADMIN_IAM_ROLE_ARN: ""
+  # --- Service-to-Service Authentication ---
+  # Configure your OAuth2/OIDC provider. See flyte.configmap.adminServer.auth
+  # in values.yaml for full auth configuration with Okta/Entra ID examples.
+  INTERNAL_CLIENT_ID: ""      # OAuth2 client ID for S2S calls
+  AUTH_TOKEN_URL: ""          # OAuth2 token endpoint for S2S authentication
+  OIDC_S2S_SCOPE: ""          # S2S scope. Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: AWS Specific Role configuration
+# SECTION 2: Flyte IRSA Annotations (AWS-specific)
 # ----------------------------------------------------------------------------
-# Override service-specific settings as needed.
+
+# Image repos, imagePullSecrets, and flyte.secrets are now in base values.yaml.
+# Only AWS IRSA annotations remain here.
+
+# ----------------------------------------------------------------------------
+# SECTION 2: AWS Cloud Configuration
+# ----------------------------------------------------------------------------
+# S3 storage and IRSA annotations. Overrides base chart empty defaults.
+
+# AWS cloud-specific overrides for shared configMap and flyte subchart.
+configMap:
+  connection:
+    region: '{{ .Values.global.AWS_REGION }}'
+
+flyte:
+  region: '{{ .Values.global.AWS_REGION }}'
+  storage:
+    type: s3
+    s3:
+      region: "{{ .Values.global.AWS_REGION }}"
+  configmap:
+    adminServer:
+      connection:
+        region: '{{ .Values.global.AWS_REGION }}'
+
+  # --- AWS IRSA Annotations ---
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+  datacatalog:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+  cacheservice:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Service-Specific Configuration
+# ----------------------------------------------------------------------------
 
 services:
   artifacts:
     serviceAccount:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+  dataproxy:
+    configMap:
+      dataproxy:
+        # Falls back to DATAPLANE_HOST when DATAPLANE_ENDPOINT is unset.
+        secureTunnelTenantURLPattern: '{{ default .Values.global.DATAPLANE_HOST .Values.global.DATAPLANE_ENDPOINT }}'
 
-flyte:
-  flyteadmin:
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+# --- AWS ScyllaDB Storage Class ---
+scylla:
+  storageClass:
+    provisioner: "ebs.csi.eks.amazonaws.com"
+    parameters:
+      type: gp2
+      fsType: ext4
 
-  datacatalog:
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
-
-  cacheservice:
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
 # ----------------------------------------------------------------------------
-# Monitoring Configuration (AWS/EKS specific)
+# Monitoring (kube-prometheus-stack subchart)
 # ----------------------------------------------------------------------------
-
-# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
-# Their metrics endpoints are not accessible from within the cluster.
-# Disable scraping and alerting rules for these components to avoid
-# false-positive TargetDown and *Down alerts.
+#
+# Selfhosted-intracluster: the controlplane owns the monitoring stack
+# (monitoring.enabled left at chart default, configured via env overlay).
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy
+# internally — their metrics endpoints aren't reachable from the cluster.
+# Disable scraping + alerting rules for these components to avoid
+# false-positive TargetDown alerts.
 monitoring:
   kubeControllerManager:
     enabled: false
