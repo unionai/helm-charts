@@ -63,18 +63,12 @@ for src in "${CRD_SRC}"/*.yaml; do
   base="$(basename "${src}")"
   dst="${OUT_DIR}/${base}"
 
-  yq eval '
-    .metadata.annotations["argocd.argoproj.io/sync-options"] = "ServerSideApply=true"
-  ' "${src}" > "${dst}"
-
-  tmpfile="$(mktemp)"
   {
     echo "# AUTO-GENERATED — do not edit. Run scripts/sync.sh in this directory to regenerate."
     echo "# Source: scylla/scylla-operator ${VERSION}"
     echo "#         crds/${base}"
-    cat "${dst}"
-  } > "${tmpfile}"
-  mv "${tmpfile}" "${dst}"
+    cat "${src}"
+  } > "${dst}"
 
   count=$((count + 1))
 done

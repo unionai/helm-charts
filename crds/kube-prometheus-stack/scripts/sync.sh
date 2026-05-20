@@ -68,23 +68,12 @@ for src in "${CRD_SRC}"/crd-*.yaml; do
   base="$(basename "${src}")"
   dst="${OUT_DIR}/${base}"
 
-  # Inject the resource-level SSA sync-option. argocd-application-controller
-  # honors this on every apply code path (including the ones where the
-  # application-level ServerSideApply=true still falls back to client-side
-  # patch), so the 256 KiB last-applied-configuration overflow can never fire
-  # on these CRDs.
-  yq eval '
-    .metadata.annotations["argocd.argoproj.io/sync-options"] = "ServerSideApply=true"
-  ' "${src}" > "${dst}"
-
-  tmpfile="$(mktemp)"
   {
     echo "# AUTO-GENERATED — do not edit. Run scripts/sync.sh in this directory to regenerate."
     echo "# Source: prometheus-community/kube-prometheus-stack ${VERSION}"
     echo "#         charts/crds/crds/${base}"
-    cat "${dst}"
-  } > "${tmpfile}"
-  mv "${tmpfile}" "${dst}"
+    cat "${src}"
+  } > "${dst}"
 
   count=$((count + 1))
 done

@@ -63,24 +63,18 @@ fi
 # Wipe existing vendored CRDs so removals upstream propagate.
 rm -f "${OUT_DIR}"/crd-*.yaml
 
-# Helper: write a single CRD document with header + injected SSA annotation.
+# Helper: write a single CRD document with the AUTO-GENERATED header.
 write_crd() {
   local doc_yaml="$1"
   local dst="$2"
   local source_path="$3"
 
-  echo "${doc_yaml}" \
-    | yq eval '.metadata.annotations["argocd.argoproj.io/sync-options"] = "ServerSideApply=true"' - \
-    > "${dst}"
-
-  tmpfile="$(mktemp)"
   {
     echo "# AUTO-GENERATED — do not edit. Run scripts/sync.sh in this directory to regenerate."
     echo "# Source: oci://docker.io/envoyproxy/gateway-helm ${VERSION}"
     echo "#         ${source_path}"
-    cat "${dst}"
-  } > "${tmpfile}"
-  mv "${tmpfile}" "${dst}"
+    echo "${doc_yaml}"
+  } > "${dst}"
 }
 
 count=0

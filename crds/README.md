@@ -18,13 +18,12 @@ with `metadata.annotations: Too long: may not be more than 262144 bytes`,
 which surfaces as `Last sync ❌` on the control-plane app and stalls
 selfHeal indefinitely.
 
-Vendoring the CRDs into a dedicated ArgoCD app whose `syncOptions` are
-`ServerSideApply=true,Force=true,ServerSideDiff=true`, with a per-resource
-`argocd.argoproj.io/sync-options: ServerSideApply=true` annotation injected
-on every CRD, routes every code path that touches these resources through
-the K8s server-side-apply endpoint. SSA tracks ownership via
-`metadata.managedFields` instead of `last-applied-configuration`, so the
-256 KiB overflow can never fire on these objects.
+Installing these CRDs via **server-side apply** sidesteps the limit
+entirely — SSA tracks ownership via `metadata.managedFields` rather than
+`last-applied-configuration`, so the 256 KiB cap is never approached.
+The customer-facing install instructions use
+`kubectl apply --server-side --force-conflicts -f crds/<name>/` for this
+reason.
 
 See `kubectl.kubernetes.io/last-applied-configuration` annotation-size
 issues in [argoproj/argo-cd](https://github.com/argoproj/argo-cd) for
@@ -50,8 +49,7 @@ crds/<name>/
   scripts/
     sync.sh                 # re-vendor from upstream + bump VERSION
     check.sh                # CI gate: cross-validate + detect drift
-  crd-*.yaml                # vendored CRDs, each with the SSA annotation
-                            # and an "AUTO-GENERATED — do not edit" header
+  crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
 `scripts/sync.sh` is the only thing that should ever write to the `crd-*.yaml`
