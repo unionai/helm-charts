@@ -36,7 +36,7 @@ background on the failure mode.
 | `kube-prometheus-stack/`   | `prometheus-community/kube-prometheus-stack`        | `controlplane`, `dataplane` |
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
-| `flyte-v1/`                | Union-maintained (no upstream sync)                 | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
+| `flyte-v1/`                | Union-maintained; mirror of `charts/dataplane/crds/` | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
 | `knative-operator/`        | `knative/serving` + `knative/operator` releases     | App Serving; replaces `charts/knative-operator-crds` |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
@@ -47,22 +47,31 @@ source so the same CRDs aren't applied twice.
 
 ```
 crds/<name>/
-  VERSION                   # upstream chart version this dir tracks (omit for Union-maintained CRDs)
-  scripts/                  # omit for Union-maintained CRDs
-    sync.sh                 # re-vendor from upstream + bump VERSION
+  VERSION                   # upstream chart version this dir tracks (omit for chart-mirrored dirs)
+  scripts/
+    sync.sh                 # (re-)populate crd-*.yaml — from upstream OR from a chart-dir mirror source
     check.sh                # CI gate: cross-validate + detect drift
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
-For upstream-tracked dirs (KPS / scylla / envoy-gateway), `scripts/sync.sh`
-is the only thing that should ever write to the `crd-*.yaml` files. Hand
-edits will be overwritten on the next sync; if you need to patch a CRD, do
-it via a downstream layer (kustomize on the ArgoCD source, or a helm
-post-render), not in `crd-*.yaml` directly.
+Each directory falls into one of two subtypes — both end up as
+byte-identical `crd-*.yaml` plus a `scripts/` pair, so `make vendor-crds`
+and `make check-vendored-crds` iterate over them uniformly.
 
-For Union-maintained dirs (e.g. `flyte-v1/`), `crd-*.yaml` is the source of
-truth — edit it directly. No `scripts/` is needed; the `make vendor-crds`
-loop simply skips dirs that lack a sync script.
+**Upstream-tracked** (KPS / scylla / envoy-gateway): `scripts/sync.sh`
+pulls from the upstream chart at the version declared in
+`charts/controlplane/Chart.yaml`, writes that version to `VERSION`, and
+re-emits the `crd-*.yaml` files. Hand edits are overwritten on the next
+sync; patch downstream (kustomize on the ArgoCD source, or a helm
+post-render), not `crd-*.yaml` directly.
+
+**Chart-mirrored** (`flyte-v1/`): the source of truth is a CRD file inside
+a chart's Helm-native `crds/` directory (e.g.
+`charts/dataplane/crds/crd-flyteworkflows.yaml`). `scripts/sync.sh` copies
+that file here so the mirror can be installed via SSA by a dedicated
+ArgoCD `Application` (when the customer runs `helm install --skip-crds`).
+No `VERSION` file — there's no upstream version to track. Edit the
+chart-dir file, then `make vendor-crds`.
 
 ## Adding a new vendored CRD set
 
@@ -94,6 +103,6 @@ make check-vendored-crds
 ```
 
 `check.sh` fails the build if any of:
-- the parent-chart dep version disagrees between controlplane and dataplane
-- `crds/<name>/VERSION` disagrees with the parent-chart dep version
-- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run
+- the parent-chart dep version disagrees between controlplane and dataplane (upstream-tracked dirs only)
+- `crds/<name>/VERSION` disagrees with the parent-chart dep version (upstream-tracked dirs only)
+- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run (all dirs)

@@ -49,11 +49,18 @@ In addition to the standard prerequisites, you need:
 
 ### Step 1: Install Dataplane CRDs
 
+The `FlyteWorkflow` CRD is bundled with the dataplane chart (Helm 3
+`crds/` convention) and would otherwise install automatically. Because
+this guide passes `--skip-crds` in Step 3 (to keep CRD lifecycle out of
+Helm), install it directly via server-side apply from the byte-identical
+mirror under `crds/flyte-v1/`:
+
 ```bash
-helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
-  --namespace union \
-  --create-namespace
+# From a checkout of unionai/helm-charts
+kubectl apply --server-side --force-conflicts -f crds/flyte-v1/
 ```
+
+(Legacy: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is deprecated; prefer the command above.)
 
 ### Step 1b: Install Vendored CRDs (when monitoring.enabled=true)
 

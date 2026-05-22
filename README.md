@@ -64,7 +64,10 @@ secrets:
 
 4. Install the Union operator and CRDs:
 ```shell
-helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds
+# The dataplane chart bundles the FlyteWorkflow CRD under `crds/`; Helm
+# installs it automatically on first install. Drop `--skip-crds` if you'd
+# rather Helm handle the CRD; pass `--skip-crds` here and apply
+# `crds/flyte-v1/` separately if you manage CRDs out-of-band (SSA / ArgoCD).
 helm upgrade --install unionai-dataplane unionai/dataplane \
     --create-namespace \
     --namespace union \
