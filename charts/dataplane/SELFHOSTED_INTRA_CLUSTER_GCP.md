@@ -55,6 +55,29 @@ helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
   --create-namespace
 ```
 
+### Step 1b: Install Vendored CRDs (when monitoring.enabled=true)
+
+The dataplane chart installs `kube-prometheus-stack` when monitoring is
+enabled. Its CRDs have OpenAPI v3 schemas larger than Kubernetes' 256 KiB
+per-annotation limit, so a default `helm install` client-side apply
+overflows `kubectl.kubernetes.io/last-applied-configuration`. The CRDs
+are vendored under `helm-charts/crds/kube-prometheus-stack/` and must be
+installed via **server-side apply** before installing the dataplane.
+
+```bash
+# From a checkout of unionai/helm-charts
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+```
+
+Skip this step if either:
+- `monitoring.enabled: false` in your dataplane values, or
+- your cluster already runs kube-prometheus-stack from another source AND
+  that installation manages these CRDs.
+
+If you are deploying via ArgoCD with the Union-provided ApplicationSets,
+the dedicated `kube-prometheus-stack-crds` ApplicationSet handles this for
+you.
+
 ### Step 2: Download Values File
 
 Download the intra-cluster configuration file from the Union Helm charts repository:
@@ -76,9 +99,14 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --create-namespace \
   -f values.gcp.selfhosted-intracluster.yaml \
   -f values.gcp.selfhosted-customer.yaml \
+  --skip-crds \
   --timeout 10m \
   --wait
 ```
+
+> `--skip-crds` tells Helm not to apply CRDs from any chart's `crds/`
+> directory. CRDs are installed separately from `helm-charts/crds/` via
+> server-side apply (see Step 1b).
 
 **Values file layers (applied in order):**
 

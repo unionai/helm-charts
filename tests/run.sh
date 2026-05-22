@@ -72,6 +72,8 @@ function generate {
 # Run the tests
 function helm-tests {
   echo "Running helm output tests..."
+  mkdir -p "${TMP_DIR}"
+  rm -f "${TMP_DIR:?}"/*.yaml
   generate ${TMP_DIR}
   for file in  ${TMP_DIR}/*.yaml; do
     OUTPUT=$(basename ${file})

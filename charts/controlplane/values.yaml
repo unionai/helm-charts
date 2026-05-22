@@ -129,6 +129,65 @@ strategy:
     maxSurge: 1
 secrets: {}
 
+# --- Image-builder bootstrap ---
+#
+# Helm post-install/post-upgrade hook Job that registers the `build-image`
+# ContainerTask in flyteadmin so the SDK can invoke remote image builds
+# without operators running `flyte deploy` manually after every helm upgrade.
+imageBuilder:
+  bootstrap:
+    # When false, the bootstrap Job + ConfigMap are not rendered (use this
+    # if the customer prefers to manage build-image registration themselves
+    # or has an existing registration that must not be overwritten).
+    enabled: true
+
+    # Container image the bootstrap Job runs in. Needs Python + a shell;
+    # no Union image currently ships `uv` + `flyte` CLI so the Job
+    # `pip install`s them at startup (~30s, idempotent on re-runs).
+    image: python:3.13-slim
+
+    # Registry prefix the build-image + frontend-v2 task images are pulled
+    # from. Defaults to Union's public ECR staging; override per env if
+    # mirroring to a private registry.
+    unionImageNamePrefix: public.ecr.aws/g1m2l3c1/imagebuilder-staging
+
+    # Where the build-image task is registered. Convention is system/production.
+    # The Job creates the project if it doesn't already exist.
+    project: system
+    domain: production
+
+    # Annotations + labels added to the Job's pod template. Useful for
+    # service-mesh sidecar control (e.g. linkerd.io/inject: disabled to
+    # keep the one-shot Job from getting a sidecar that never exits),
+    # Prometheus scrape opt-in/out, cost-attribution labels, etc.
+    podAnnotations: {}
+    podLabels: {}
+
+    # Job-spec tunables. Defaults are conservative for a one-shot
+    # post-install hook; override for stricter retry / cleanup policies.
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 600
+    restartPolicy: Never
+
+    # Flyte admin connection used by the bootstrap Job. Rendered into
+    # /etc/flyte/config.yaml inside the Job pod and consumed by `flyte deploy`.
+    #
+    # NOTE: deliberately not derived from `.Values.configMap.admin` (the CP
+    # service-to-service block). That one uses the intra-cluster gRPC path
+    # (flyteadmin.<ns>.svc.cluster.local:81, insecure) which the Python SDK's
+    # OAuth discovery can't reproduce, so the bootstrap Job goes through the
+    # public ingress instead. Override here only if your env needs different
+    # auth (e.g. PKCE, custom token endpoint, alternate clientSecretLocation).
+    #
+    # String values are templated with `tpl` so `{{ .Values.global.X }}`-style
+    # references resolve at render time.
+    admin:
+      endpoint: '{{ .Values.global.UNION_HOST }}'
+      insecure: false
+      authType: ClientSecret
+      clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+      clientSecretLocation: /etc/secrets/union/client_secret
+
 imagePullSecrets:
   - name: union-registry-secret
 
@@ -1193,6 +1252,11 @@ console:
 
   # Additional environment variables from ConfigMap
   envFrom: []
+
+  telemetry:
+    # Set to false to disable external telemetry calls (Grafana Faro).
+    # Useful for egress-restricted selfhosted/selfmanaged deployments.
+    externalEnabled: true
 
   nodeSelector: {}
 

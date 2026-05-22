@@ -14,11 +14,38 @@ $(TMP_DIR): $(TESTS_DIR)
 	mkdir -p $(TESTS_DIR)/tmp
 
 .PHONY: generate-expected
-generate-expected: $(GEN_DIR)
+generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: helm-test kubeconform-test
+test: check-vendored-crds helm-test kubeconform-test
+
+# Vendored CRDs (crds/<name>/) — see crds/README.md.
+# Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
+# and scripts/check.sh (drift gate). These targets iterate so adding a new
+# vendored set is a matter of creating crds/<name>/ with the same script
+# layout — no Makefile edits required.
+
+.PHONY: vendor-crds
+vendor-crds:
+	@set -e; for d in crds/*/; do \
+	  if [ -x "$${d}scripts/sync.sh" ]; then \
+	    echo ">> vendoring $${d}"; \
+	    "$${d}scripts/sync.sh"; \
+	  fi; \
+	done
+
+# Run every check and exit non-zero if any of them failed (instead of stopping
+# at the first failure) so a single CI run surfaces all drift at once.
+.PHONY: check-vendored-crds
+check-vendored-crds:
+	@fail=0; \
+	for d in crds/*/; do \
+	  if [ -x "$${d}scripts/check.sh" ]; then \
+	    "$${d}scripts/check.sh" || fail=1; \
+	  fi; \
+	done; \
+	exit $${fail}
 
 .PHONY: helm-test
 helm-test: $(TMP_DIR)
