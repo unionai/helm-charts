@@ -37,7 +37,7 @@ background on the failure mode.
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
 | `flyte-v1/`                | Union-maintained (no upstream sync)                 | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
-| `knative-operator/`        | `knative/serving` + `knative/operator` releases     | App Serving; replaces `charts/knative-operator-crds` |
+| `dataplane/`               | `knative/serving` release; mirror of `charts/dataplane/crds/` | `dataplane` zero-trust gateway (Knative Serving CRDs); replaces `charts/knative-operator-crds` and the prior `knative-operator/` vendoring |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
 by ArgoCD — the parent ApplicationSet sets `helm.skipCrds: true` on its
@@ -54,15 +54,29 @@ crds/<name>/
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
-For upstream-tracked dirs (KPS / scylla / envoy-gateway), `scripts/sync.sh`
-is the only thing that should ever write to the `crd-*.yaml` files. Hand
-edits will be overwritten on the next sync; if you need to patch a CRD, do
-it via a downstream layer (kustomize on the ArgoCD source, or a helm
-post-render), not in `crd-*.yaml` directly.
+Each directory falls into one of three subtypes — all have `scripts/sync.sh`
++ `scripts/check.sh` and are picked up uniformly by `make vendor-crds` /
+`make check-vendored-crds`:
 
-For Union-maintained dirs (e.g. `flyte-v1/`), `crd-*.yaml` is the source of
-truth — edit it directly. No `scripts/` is needed; the `make vendor-crds`
-loop simply skips dirs that lack a sync script.
+**Upstream-only** (KPS / scylla / envoy-gateway): `sync.sh` pulls from the
+upstream chart at the version declared in `charts/controlplane/Chart.yaml`,
+writes that version to `VERSION`, and emits `crd-*.yaml` into this dir.
+Hand edits are overwritten on the next sync; patch downstream (kustomize on
+the ArgoCD source, or a helm post-render), not `crd-*.yaml` directly.
+
+**Chart-mirrored, Union-maintained** (`flyte-v1/`): the source of truth is
+a file inside a chart's Helm-native `crds/` directory (e.g.
+`charts/dataplane/crds/crd-flyteworkflows.yaml`). `sync.sh` copies that
+file here so the mirror can be installed via SSA by a dedicated ArgoCD
+`Application` when the customer runs `helm install --skip-crds`. No
+`VERSION` file — there's no upstream version to track.
+
+**Chart-mirrored, upstream-tracked** (`dataplane/`): combines both — `sync.sh`
+pulls from upstream at the version pinned in `VERSION`, writes the CRDs to
+the chart's `crds/` dir (`charts/dataplane/crds/`) AND to this mirror dir.
+Non-matching files in the chart dir (e.g. `crd-flyteworkflows.yaml`, which
+is `flyte-v1/`'s domain) are preserved via name-pattern filtering. Same
+install rationale as chart-mirrored Union-maintained.
 
 ## Adding a new vendored CRD set
 

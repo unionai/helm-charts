@@ -137,7 +137,7 @@ global:
 - Uses **published chart** (`unionai/dataplane`) from Helm repository
 - Images are pulled from Union's public registry
 - Layered approach separates infrastructure config and customer overrides
-- **Do not layer `values.zero-trust.yaml`** onto this configuration. Zero-trust mode is for BYOC deployments only.
+- **Do not set `zero_trust.enabled: true`** with this configuration. Zero-trust mode is for BYOC deployments only.
 
 ### Step 4: Verify Intra-Cluster Communication
 

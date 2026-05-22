@@ -1826,6 +1826,14 @@ prometheus:
 #   identified.
 low_privilege: true
 
+# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# gateway (replaces the knative-operator path), the dataproxy backend, and
+# the tunnel-service dataplane ingress. Customers must also set
+# `knative-operator.enabled: false` because Helm evaluates that subchart
+# condition at parse time and can't derive it from this flag.
+zero_trust:
+  enabled: false
+
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
@@ -1961,9 +1969,10 @@ storage:
     projectId: ""
 
 # -- Tunnel-service ingress config consumed by the union-operator's tunnel sidecar.
+# The dataplane ingress is gated by `zero_trust.enabled` (templates evaluate
+# that flag directly); only the origin URL override is configurable here.
 tunnelService:
   dataplane:
-    enableIngress: false
     originURL: ""
   apps:
     enableGlobalIngress: true
@@ -2319,10 +2328,9 @@ monitoring:
           cpu: "500m"
           memory: "1Gi"
 
-# -- Vendored Knative Serving + Kourier + Envoy gateway. Zero-trust mode only.
+# -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
+# `zero_trust.enabled: true`; the templates gate on that flag directly.
 gateway:
-  enabled: false
-
   service:
     httpAppsPort: 80
     httpStaticPort: 8888
@@ -2567,13 +2575,13 @@ gateway:
     observability: {}
     tracing: {}
 
-# -- union-dataproxy backend. Used when the zero-trust gateway is enabled.
+# -- union-dataproxy backend. Rendered when `zero_trust.enabled: true`; the
+# templates gate on that flag directly.
 dataproxy:
   serviceAccount:
     create: true
     name: dataproxy-system
     annotations: {}
-  enabled: false
   replicas: 1
   service:
     port: 8080
