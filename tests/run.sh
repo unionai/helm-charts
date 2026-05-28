@@ -61,10 +61,18 @@ function generate {
       done
     fi
 
+    EXTRA_HELM_ARGS=""
+    HELM_ARGS_LINE=$(head -n 10 ${file} | grep "^# helm-args:" || true)
+    if [[ -n "${HELM_ARGS_LINE}" ]]; then
+      EXTRA_HELM_ARGS=$(echo "${HELM_ARGS_LINE}" | sed 's/^# helm-args: *//')
+      echo "  - Including additional helm args: ${EXTRA_HELM_ARGS}"
+    fi
+
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
       --kube-version 1.32.0 \
       ${ADDITIONAL_VALUES} \
+      ${EXTRA_HELM_ARGS} \
       --values ${file} > ${TARGET_DIR}/${OUTPUT}
   done
 }
