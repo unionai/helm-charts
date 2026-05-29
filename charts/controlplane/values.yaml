@@ -259,6 +259,15 @@ ingress:
   # to the public LB, prefer the `nginx.ingress.kubernetes.io/server-alias`
   # annotation below — it's controller-private and doesn't trip cert-manager
   # / external-dns into managing a hostname they can't address.
+  #
+  # When OIDC auth is enabled, each extra host must ALSO be added to:
+  #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
+  #     trusts the host for OAuth redirect URL construction)
+  #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
+  #     (so tokens with aud=<extra-host> validate)
+  #   - the IdP application's redirect URI list (`https://<host>/callback`)
+  # Missing any of these will cause login on the alias host to fail —
+  # flyteadmin falls back to the internal service URL and the IdP rejects it.
   extraHosts: []
 
   # Whether to create separate ingress objects for gRPC and HTTP traffic.
@@ -1662,10 +1671,17 @@ flyte:
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
+        # Hosts flyteadmin trusts for OAuth redirect URL construction. When a
+        # request arrives, flyteadmin matches the Host header against this
+        # list to build `redirect_uri`; unmatched hosts fall back to the
+        # internal service URL and the IdP will reject the resulting
+        # /authorize request. Must include every public hostname listed in
+        # `ingress.host` and `ingress.extraHosts`.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+          # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:
           authServerType: "External"
@@ -1681,8 +1697,12 @@ flyte:
             # Allowed JWT audiences for access token validation.
             # Default: ["https://{UNION_HOST}"].
             # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            # Must include every public hostname listed in `ingress.host` and
+            # `ingress.extraHosts` (each as `https://<host>`), or tokens issued
+            # for an extra host's audience will be rejected.
             allowedAudience:
               - 'https://{{ .Values.global.UNION_HOST }}'
+              # - 'https://<each ingress.extraHosts entry>'
 
           # --- Subject claim resolution (FAB-205) ---
           # Ordered list of JWT claims to try for caller identity.
