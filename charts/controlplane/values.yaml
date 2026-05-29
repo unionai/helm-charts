@@ -141,10 +141,13 @@ imageBuilder:
     # or has an existing registration that must not be overwritten).
     enabled: true
 
-    # Container image the bootstrap Job runs in. Defaults to the Union-published
-    # `build-image-bootstrap` image (ghcr.io/flyteorg/flyte:py3.12 base with the
-    # `kubernetes` Python client pre-installed), so the Job has no runtime install
-    # step and works in restricted-network deployments where the cluster cannot reach PyPI.
+    # Container image the bootstrap Job runs in. Must provide `flyte` (Python
+    # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
+    # Union-published `build-image-bootstrap` image, which bakes both in so the
+    # Job has no runtime install step and works in restricted-network
+    # deployments where the cluster cannot reach PyPI. Override `repository`
+    # to use a private mirror or a custom image that satisfies the same
+    # contract.
     image:
       repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/build-image-bootstrap"
       tag: "{{ .Chart.AppVersion }}"
@@ -225,15 +228,47 @@ ingress:
   # Default to the ingress class being created in nginx-ingress chart.
   className: "controlplane"
 
-  # TLS configuration for intra-cluster HTTPS.
-  tls:
-    - hosts:
-        - '{{ .Values.global.UNION_HOST }}'
-        - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-      secretName: 'controlplane-selfsigned-tls-secret'
+  # TLS configuration for the controlplane Ingresses.
+  #
+  # No TLS is configured by default. To enable HTTPS, set `tls` to a list of
+  # `{hosts, secretName}` entries. The secret must already exist in the chart's
+  # namespace (typically provisioned by cert-manager via extraObjects, or by
+  # an external-secrets ExternalSecret in your environment overlay).
+  #
+  # Example — one secret covering the public host and the in-cluster alias:
+  # tls:
+  #   - hosts:
+  #       - '{{ .Values.global.UNION_HOST }}'
+  #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+  #     secretName: my-controlplane-tls-secret
+  tls: []
 
   # Host to use for all ingress objects.
   host:  "" # Set the DNS name of the ingress host used by you control plane
+
+  # Additional hostnames to expose every controlplane Ingress (and Envoy
+  # GRPCRoute/HTTPRoute) on. Each entry is added as a separate rules[].host
+  # entry (and hostnames[] entry on Gateway-API routes), so all routes are
+  # reachable on both the primary `host` and each additional hostname.
+  #
+  # TLS coverage is independent — add the hostname to an existing `tls[].hosts`
+  # entry if it's covered by the same secret, add a new `tls[]` entry with its
+  # own secretName for per-host certs, or leave it out for HTTP-only access.
+  #
+  # For an in-cluster alias used only to avoid hairpinning DP→CP traffic out
+  # to the public LB, prefer the `nginx.ingress.kubernetes.io/server-alias`
+  # annotation below — it's controller-private and doesn't trip cert-manager
+  # / external-dns into managing a hostname they can't address.
+  #
+  # When OIDC auth is enabled, each extra host must ALSO be added to:
+  #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
+  #     trusts the host for OAuth redirect URL construction)
+  #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
+  #     (so tokens with aud=<extra-host> validate)
+  #   - the IdP application's redirect URI list (`https://<host>/callback`)
+  # Missing any of these will cause login on the alias host to fail —
+  # flyteadmin falls back to the internal service URL and the IdP rejects it.
+  extraHosts: []
 
   # Whether to create separate ingress objects for gRPC and HTTP traffic.
   separateGrpcIngress: true
@@ -241,9 +276,14 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
-    # Allow DP→CP traffic via intra-cluster DNS to match ingress rules.
-    # Without this, requests from the dataplane to the controlplane nginx
-    # controller service DNS name won't match the ingress host.
+    # Intra-cluster routing alias — configured by default so controlplane
+    # services (DP→CP, CP→CP auth subrequests) can reach the ingress via the
+    # in-cluster DNS name `controlplane-nginx-controller.<ns>.svc.cluster.local`
+    # without hairpinning out to the public LB. The alias is matched at the
+    # nginx server_name level; the same TLS listener and Ingress rules apply
+    # to it, so no cert SAN, external-dns record, or extra `rules[].host`
+    # entry is needed (and the alias is intentionally not first-classed via
+    # `ingress.extraHosts` because no other controller needs to know about it).
     nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
 
     # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
@@ -1631,10 +1671,17 @@ flyte:
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
+        # Hosts flyteadmin trusts for OAuth redirect URL construction. When a
+        # request arrives, flyteadmin matches the Host header against this
+        # list to build `redirect_uri`; unmatched hosts fall back to the
+        # internal service URL and the IdP will reject the resulting
+        # /authorize request. Must include every public hostname listed in
+        # `ingress.host` and `ingress.extraHosts`.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+          # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:
           authServerType: "External"
@@ -1650,8 +1697,12 @@ flyte:
             # Allowed JWT audiences for access token validation.
             # Default: ["https://{UNION_HOST}"].
             # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            # Must include every public hostname listed in `ingress.host` and
+            # `ingress.extraHosts` (each as `https://<host>`), or tokens issued
+            # for an extra host's audience will be rejected.
             allowedAudience:
               - 'https://{{ .Values.global.UNION_HOST }}'
+              # - 'https://<each ingress.extraHosts entry>'
 
           # --- Subject claim resolution (FAB-205) ---
           # Ordered list of JWT claims to try for caller identity.
