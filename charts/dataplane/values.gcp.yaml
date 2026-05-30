@@ -177,7 +177,11 @@ clusterresourcesync:
       connection:
         # Control plane host for intra-cluster communication.
         # Falls back to CONTROLPLANE_HOST when CONTROLPLANE_INTRA_CLUSTER_HOST is unset.
-        host: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+        # Appends :443 (the canonical HTTPS port for nginx-routed CONTROLPLANE_HOST)
+        # if the resolved host has no explicit port — caller-supplied CONTROLPLANE_HOST
+        # is typically a bare DNS name (e.g. `mike-foo.example.com`) and gRPC dial
+        # requires host:port.
+        host: 'dns:///{{ $h := default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}{{ $h }}{{ if not (regexMatch ":[0-9]+$" $h) }}:443{{ end }}'
 
         # Skip SSL certificate verification for self-signed certs
         # Set to true for self-signed certificates, false for trusted CA certs
@@ -217,7 +221,9 @@ config:
       # Falls back to CONTROLPLANE_HOST (nginx-routed, auth-enforced) when
       # FLYTEADMIN_ENDPOINT is unset. Set FLYTEADMIN_ENDPOINT explicitly to bypass
       # nginx with a direct gRPC dial to flyteadmin (e.g. port 81 plaintext).
-      endpoint: '{{ default .Values.global.CONTROLPLANE_HOST .Values.global.FLYTEADMIN_ENDPOINT }}'
+      # :443 default appended when no explicit port — see notes on the
+      # clusterresourcesync host above.
+      endpoint: '{{ $h := default .Values.global.CONTROLPLANE_HOST .Values.global.FLYTEADMIN_ENDPOINT }}{{ $h }}{{ if not (regexMatch ":[0-9]+$" $h) }}:443{{ end }}'
 
       # Use insecure (non-TLS) connection for intra-cluster HTTP communication
       insecure: true
@@ -236,7 +242,9 @@ config:
       # Falls back to CONTROLPLANE_HOST (nginx-routed) when CACHESERVICE_ENDPOINT
       # is unset. Set CACHESERVICE_ENDPOINT explicitly to bypass nginx with a
       # direct gRPC dial (e.g. "dns:///cacheservice.{ns}.svc.cluster.local:89").
-      cache-endpoint: '{{ default (printf "dns:///%s" .Values.global.CONTROLPLANE_HOST) .Values.global.CACHESERVICE_ENDPOINT }}'
+      # :443 default appended when no explicit port — see notes on the
+      # clusterresourcesync host above.
+      cache-endpoint: '{{ $h := default .Values.global.CONTROLPLANE_HOST .Values.global.CACHESERVICE_ENDPOINT }}{{ if not (hasPrefix "dns:///" $h) }}dns:///{{ end }}{{ $h }}{{ if not (regexMatch ":[0-9]+$" $h) }}:443{{ end }}'
       endpoint: ""
 
       # Use insecure connection for intra-cluster communication
@@ -258,7 +266,9 @@ config:
           # QUEUE_SERVICE_HOST explicitly to bypass ingress and dial the queue
           # service directly (e.g. queue.{ns}.svc.cluster.local:80) — required
           # today since task pods don't carry OAuth credentials for nginx auth.
-          - _U_EP_OVERRIDE: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.QUEUE_SERVICE_HOST }}'
+          # :443 default appended when no explicit port — see notes on the
+          # clusterresourcesync host above.
+          - _U_EP_OVERRIDE: 'dns:///{{ $h := default .Values.global.CONTROLPLANE_HOST .Values.global.QUEUE_SERVICE_HOST }}{{ $h }}{{ if not (regexMatch ":[0-9]+$" $h) }}:443{{ end }}'
 
           # Assumed queue service is running with TLS disabled since it's intra-cluster,
           # we can set the following env vars to skip TLS verification for the queue service.
@@ -269,7 +279,9 @@ config:
     connection:
       # Control plane connection for Union services.
       # Falls back to CONTROLPLANE_HOST when CONTROLPLANE_INTRA_CLUSTER_HOST is unset.
-      host: 'dns:///{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}'
+      # :443 default appended when no explicit port — see notes on the
+      # clusterresourcesync host above.
+      host: 'dns:///{{ $h := default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}{{ $h }}{{ if not (regexMatch ":[0-9]+$" $h) }}:443{{ end }}'
 
       # Skip SSL verification for self-signed certificates
       insecureSkipVerify: true
@@ -399,7 +411,10 @@ ingress:
   serving:
     # Default to using the intra-cluster host for serving.
     # Falls back to CONTROLPLANE_HOST when CONTROLPLANE_INTRA_CLUSTER_HOST is unset.
-    hostOverride: "*.apps.{{ default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}"
+    # Strip trailing port if present — Knative wildcard hostname matching uses
+    # the hostname only (no `:port` suffix), and CONTROLPLANE_HOST may include
+    # a port for gRPC dial paths (see notes on the clusterresourcesync host above).
+    hostOverride: "*.apps.{{ regexReplaceAll \":[0-9]+$\" (default .Values.global.CONTROLPLANE_HOST .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST) \"\" }}"
     # Assume the same ingress class as the dataproxy
     class: "dataplane"
 
