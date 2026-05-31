@@ -2,17 +2,17 @@
 
 ## Overlay file naming
 
-Each chart in `charts/` ships overlay files alongside the base `values.yaml`:
+Each chart in `charts/` follows this exact layout:
 
 - **`values.yaml`** — base defaults for every deployment
-- **`values.{cloud}.yaml`** — per-cloud canonical overlay (`aws`, `gcp`, `azure`)
-- **`values.{cloud}.{mode}.yaml`** — mode-specific overlay layered on top of the per-cloud overlay (e.g. `values.aws.eks-automode.yaml`)
-- **`values.{purpose}.yaml`** — orthogonal opt-in overlays not tied to a cloud (e.g. `values.registry.yaml`, `values-legacy.yaml`, `values-test-certs.yaml`, `values.v2_and_v1.yaml`)
-- **`examples/`** — example values files we do **not** test; starting points for non-default deployments
+- **`values.{cloud}.yaml`** — per-cloud canonical overlay (`aws`, `gcp`, `azure`, future: `oci`, `openshift`). Describes the **general case** for that cloud — a split CP/DP topology, with no intra-cluster assumptions baked in. The single canonical overlay per cloud is the surface area we guarantee.
+- **`examples/`** — every other overlay lives here. Intra-cluster topology, custom registries, EKS Automode, v1/v2 dual-mode, test fixtures, BYOC migration patterns. Operators layer these on top of a `values.{cloud}.yaml` as needed.
 
-## We only ship overlays for configurations we actively test
+Anything not in the bulleted list above is excess and should be moved or removed.
 
-If a values file lives at one of the canonical paths above (not under `examples/`), the chart's snapshot tests (`tests/`) exercise it. Conversely: if a configuration is not test-covered, we don't ship a top-level overlay for it.
+## We only ship canonical overlays for configurations we actively test
+
+If a values file lives at one of the canonical paths above (not under `examples/`), the chart's snapshot tests (`tests/`) exercise it. Conversely: if a configuration is not test-covered, it lives in `examples/`.
 
 Why this matters:
 - Shipping untested overlays as defaults creates a maintenance footgun — they drift from chart template changes and start producing invalid manifests, often silently
