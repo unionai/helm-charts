@@ -1462,7 +1462,7 @@ Checks both storage.provider and the top-level provider field (Azure uses storag
   {{- splitList "/" (tpl .Values.imageBuilder.defaultRepository .) | first -}}
 {{- else if eq (tpl .Values.storage.provider .) "aws" -}}
   {{- $region := tpl .Values.storage.region . -}}
-  {{- $accountId := .Values.global.AWS_ACCOUNT_ID -}}
+  {{- $accountId := default "" .Values.global.AWS_ACCOUNT_ID -}}
   {{- printf "%s.dkr.ecr.%s.amazonaws.com" $accountId $region -}}
 {{- else if or (eq (tpl .Values.storage.provider .) "gcp") (eq (tpl .Values.storage.provider .) "gcs") (eq (.Values.provider | default "") "gcp") -}}
   {{- $region := tpl .Values.storage.region . -}}

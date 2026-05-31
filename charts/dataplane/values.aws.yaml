@@ -1,118 +1,44 @@
-# ============================================================================
-# Union Dataplane — AWS overlay (canonical)
-# ============================================================================
-# This is the actively-tested AWS overlay shipped with the chart. Topology
-# (intracluster vs multi-cluster-same-VPC vs BYOC public) is decided by the
-# canonical host indirection (CONTROLPLANE_HOST) and cloud-provider Service
-# annotations / DNS supplied by the env layer (terraform) — the same overlay
-# serves all three.
-#
-# Self-contained — can be used standalone:
-#   helm install ... -f values.aws.yaml
-#
-# Previously named `values.aws.selfhosted-intracluster.yaml`. That filename
-# still works as a deprecated shim — see charts/MIGRATION.md.
-# ============================================================================
-
-# ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration
-# ----------------------------------------------------------------------------
-# Configure ALL variables below for your self-hosted intra-cluster deployment.
-# This file includes both AWS infrastructure configuration AND intra-cluster
-# specific settings.
+# Union Dataplane — AWS overlay.
+# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
+# annotations, not by this overlay.
 
 global:
+  # --- Identity ---
+  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks
+  CLUSTER_NAME: ""              # Unique cluster identifier
+  ORG_NAME: ""                  # Organization name (must match controlplane)
 
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-us-east-1" or "staging-cluster"
-  #    Note: Must be unique within your organization
-  CLUSTER_NAME: ""
+  # --- Storage ---
+  METADATA_BUCKET: ""           # S3 bucket for workflow metadata
+  FAST_REGISTRATION_BUCKET: ""  # S3 bucket for code uploads
 
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
-  ORG_NAME: ""
-
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-metadata-bucket"
-  #    Note: Bucket must exist before deployment
-  METADATA_BUCKET: ""
-
-  #    S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-fast-registration-bucket"
-  #    Note: Can be same as metadata bucket or separate
-  FAST_REGISTRATION_BUCKET: ""
-
-  #    AWS_ACCOUNT_ID - AWS account ID (used for ECR registry URL)
-  #    Format: 12-digit AWS account ID
-  #    Example: "123456789012"
-  AWS_ACCOUNT_ID: ""
-
-  #    AWS_REGION - AWS region for S3 buckets
-  #    Format: AWS region code
-  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  # --- AWS ---
+  AWS_ACCOUNT_ID: ""            # 12-digit account ID (used for ECR registry URL)
   AWS_REGION: ""
 
-  #    BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
-  #    Permissions: S3 access, ECR (if private images)
-  BACKEND_IAM_ROLE_ARN: ""
+  # --- AWS IAM (IRSA) ---
+  # Format: arn:aws:iam::<account>:role/<role-name>
+  BACKEND_IAM_ROLE_ARN: ""      # IAM role for Union backend services
+  WORKER_IAM_ROLE_ARN: ""       # IAM role for workflow execution pods
 
-  #    WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
-  #    Permissions: S3 access, AWS services used by workflows
-  WORKER_IAM_ROLE_ARN: ""
+  # --- Images ---
+  IMAGE_REPOSITORY_PREFIX: "public.ecr.aws/p0i0a9q8"
 
-  #    CONTROLPLANE_HOST - Canonical control plane entrypoint for all DP->CP calls.
-  #    All four legacy endpoint variables below fall back to this value when unset.
-  #    Format: "SERVICE-NAME.NAMESPACE.svc.cluster.local" (no port; nginx routes by
-  #    gRPC service path)
-  #    Example: "controlplane-nginx-controller.controlplane.svc.cluster.local"
-  CONTROLPLANE_HOST: ""
+  # --- DP -> CP routing ---
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
 
-  # Optional override for the gRPC dial endpoint used by all DP->CP service
-  # calls (cluster-resource-sync, admin, cache, fasttask). Leave empty to default
-  # to `dns:///{CONTROLPLANE_HOST}:443`. Set explicitly to bypass the nginx
-  # ingress (e.g. `dns:///controlplane-nginx-controller.controlplane.svc.cluster.local:443`
-  # for intracluster topology).
-  CONTROLPLANE_GRPC_ENDPOINT: ""
-
-  # DEPRECATED — long-term plan is to remove this in favor of routing queue
-  # traffic through CONTROLPLANE_GRPC_ENDPOINT once propeller injects OAuth
-  # credentials into user task pods (see chart MIGRATION.md). Until then it
-  # remains as the auth-less escape hatch task pods need.
-  #
-  # Why it exists today: regular DP -> CP traffic (cluster-resource-sync,
-  # admin, cache, fasttask) is made by Union operator/propeller pods that
-  # carry OAuth client_credentials. Queue events come from user task pods
-  # that don't carry credentials, so they need an unauthenticated path —
-  # typically the queue Service directly, bypassing nginx auth.
-  #
-  # Empty by default — falls through to CONTROLPLANE_GRPC_ENDPOINT, which is
-  # correct only if that endpoint itself accepts unauthenticated calls (rare).
-  # For the intracluster topology, set this to the queue Service URL —
-  # see examples/values.aws.intracluster.yaml.
+  # DEPRECATED — long-term plan is to remove this once propeller injects
+  # OAuth credentials into task pods (see chart MIGRATION.md). Until then it
+  # remains as the auth-less escape hatch task pods need (their queue events
+  # bypass nginx auth via this endpoint). Empty falls through to
+  # CONTROLPLANE_GRPC_ENDPOINT; for intracluster set the queue Service URL
+  # via examples/values.aws.intracluster.yaml.
   QUEUE_GRPC_ENDPOINT: ""
 
-  # --- Authentication Configuration ---
-  # Set all values below to enable OAuth2 authentication.
-  # Required when the control plane has OIDC enabled.
-  # Supports any OAuth2/OIDC provider (Okta, Azure AD, Auth0, Keycloak, etc.)
-  #
-  # Service-to-service OAuth client ID (client_credentials flow).
-  # Uses: OAuth App 4 (Operator).
-  # Example: "0oa3xyz4abc5def6g7h8"
-  AUTH_CLIENT_ID: ""
-  # OAuth2 scope for service-to-service client_credentials grant.
-  # Okta: leave empty (defaults to "all").
-  # Entra ID: "api://my-app-name/.default"
-  OIDC_S2S_SCOPE: ""
+  # --- Service-to-Service OAuth2 ---
+  AUTH_CLIENT_ID: ""            # client_credentials client ID
+  OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)

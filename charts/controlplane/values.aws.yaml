@@ -1,21 +1,6 @@
-# ============================================================================
-# Union Control Plane — AWS overlay (canonical)
-# ============================================================================
-# This is the actively-tested AWS overlay shipped with the chart. CP and DP
-# topology is decided by the canonical host indirection (CONTROLPLANE_HOST /
-# DATAPLANE_HOST) and by cloud-provider Service annotations / DNS that the
-# env layer (terraform) supplies — same overlay serves intracluster,
-# multi-cluster-same-VPC, and BYOC public topologies.
-#
-# Base values.yaml provides: ingress, nginx, auth, monitoring, image repos,
-# imagePullSecrets, namespace-derived FQDNs, and all non-cloud-specific config.
-#
-# This overlay provides: AWS globals (region, RDS, S3, IAM), IRSA annotations,
-# DP host indirection, and authentication credentials.
-#
-# Previously named `values.aws.selfhosted-intracluster.yaml`. That filename
-# still works as a deprecated shim — see charts/MIGRATION.md.
-# ============================================================================
+# Union Control Plane — AWS overlay.
+# Layer on top of values.yaml. Topology (intracluster, split-cluster, etc.)
+# is decided by env-layer DNS + LB annotations, not by this overlay.
 
 global:
   # --- Deployment Identity ---
@@ -24,40 +9,32 @@ global:
 
   # --- AWS Infrastructure ---
   AWS_REGION: ""              # e.g. "us-west-2"
-  DB_HOST: ""                 # RDS endpoint (e.g. "mydb.abc123.us-west-2.rds.amazonaws.com")
-  DB_NAME: ""                 # Database name (e.g. "unionai")
-  DB_USER: ""                 # Database username (e.g. "unionai")
+  DB_HOST: ""                 # RDS endpoint
+  DB_NAME: ""
+  DB_USER: ""
+  DB_DEBUG: false             # Enable GORM SQL debug logging
   BUCKET_NAME: ""             # S3 bucket for metadata
   ARTIFACTS_BUCKET_NAME: ""   # S3 bucket for artifacts
-  KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password (must contain "pass.txt" key)
-  # Canonical DP entrypoint for all CP->DP calls.
-  DATAPLANE_HOST: ""          # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
-  DATAPLANE_ENDPOINT: ""      # Deprecated: falls back to DATAPLANE_HOST when unset.
+  KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
+
+  # --- DP entrypoint (CP -> DP) ---
+  DATAPLANE_HOST: ""          # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
+
+  # --- Images ---
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
+
+  # --- Ingress ---
+  INGRESS_PROVIDER: nginx     # nginx | envoy | both
 
   # --- AWS IAM (IRSA) ---
-  ARTIFACT_IAM_ROLE_ARN: ""   # IAM role for artifacts service
-  FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role for flyteadmin, datacatalog, cacheservice
+  ARTIFACT_IAM_ROLE_ARN: ""   # IAM role for the artifacts service
+  FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role shared by flyteadmin, datacatalog, cacheservice
 
-  # --- Service-to-Service Authentication ---
-  # Configure your OAuth2/OIDC provider. See flyte.configmap.adminServer.auth
-  # in values.yaml for full auth configuration with Okta/Entra ID examples.
-  INTERNAL_CLIENT_ID: ""      # OAuth2 client ID for S2S calls
-  AUTH_TOKEN_URL: ""          # OAuth2 token endpoint for S2S authentication
-  OIDC_S2S_SCOPE: ""          # S2S scope. Okta: leave empty. Entra ID: "api://my-app/.default"
+  # --- Service-to-Service OAuth2 ---
+  INTERNAL_CLIENT_ID: ""      # client_credentials client ID
+  AUTH_TOKEN_URL: ""          # OAuth2 token endpoint
+  OIDC_S2S_SCOPE: ""          # Okta: leave empty. Entra ID: "api://my-app/.default"
 
-# ----------------------------------------------------------------------------
-# SECTION 2: Flyte IRSA Annotations (AWS-specific)
-# ----------------------------------------------------------------------------
-
-# Image repos, imagePullSecrets, and flyte.secrets are now in base values.yaml.
-# Only AWS IRSA annotations remain here.
-
-# ----------------------------------------------------------------------------
-# SECTION 2: AWS Cloud Configuration
-# ----------------------------------------------------------------------------
-# S3 storage and IRSA annotations. Overrides base chart empty defaults.
-
-# AWS cloud-specific overrides for shared configMap and flyte subchart.
 configMap:
   connection:
     region: '{{ .Values.global.AWS_REGION }}'
@@ -73,6 +50,39 @@ flyte:
       connection:
         region: '{{ .Values.global.AWS_REGION }}'
 
+      # --- OIDC Authentication ---
+      # Fill in the IdP-specific fields below. Defaults beyond these (claims,
+      # cookie settings, etc.) live in base values.yaml's
+      # `flyte.configmap.adminServer.auth` block.
+      auth:
+        appAuth:
+          externalAuthServer:
+            # OIDC issuer base URL.
+            #   Okta:      https://dev-123456.okta.com/oauth2/default
+            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
+            baseUrl: ""
+            # OIDC metadata discovery path (relative to baseUrl).
+            #   Okta:      .well-known/oauth-authorization-server  (default)
+            #   Entra ID:  .well-known/openid-configuration
+            metadataUrl: ".well-known/oauth-authorization-server"
+          thirdPartyConfig:
+            flyteClient:
+              # CLI / SDK PKCE client.
+              #   Okta:      "0oa..."
+              #   Entra ID:  "<app-uuid>"
+              clientId: ""
+              # Entra ID only — leave empty for Okta.
+              audience: ""
+        userAuth:
+          openId:
+            # Browser login.
+            #   Okta:      https://dev-123456.okta.com/oauth2/default
+            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
+            baseUrl: ""
+            #   Okta:      "0oa..."
+            #   Entra ID:  "<app-uuid>"
+            clientId: ""
+
   # --- AWS IRSA Annotations ---
   flyteadmin:
     serviceAccount:
@@ -87,10 +97,6 @@ flyte:
       annotations:
         eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
 
-# ----------------------------------------------------------------------------
-# SECTION 3: Service-Specific Configuration
-# ----------------------------------------------------------------------------
-
 services:
   artifacts:
     serviceAccount:
@@ -102,7 +108,6 @@ services:
         # Falls back to DATAPLANE_HOST when DATAPLANE_ENDPOINT is unset.
         secureTunnelTenantURLPattern: '{{ default .Values.global.DATAPLANE_HOST .Values.global.DATAPLANE_ENDPOINT }}'
 
-# --- AWS ScyllaDB Storage Class ---
 scylla:
   storageClass:
     provisioner: "ebs.csi.eks.amazonaws.com"
@@ -110,16 +115,9 @@ scylla:
       type: gp2
       fsType: ext4
 
-# ----------------------------------------------------------------------------
-# Monitoring (kube-prometheus-stack subchart)
-# ----------------------------------------------------------------------------
-#
-# Selfhosted-intracluster: the controlplane owns the monitoring stack
-# (monitoring.enabled left at chart default, configured via env overlay).
-# EKS manages controller-manager, scheduler, etcd, and kube-proxy
-# internally — their metrics endpoints aren't reachable from the cluster.
-# Disable scraping + alerting rules for these components to avoid
-# false-positive TargetDown alerts.
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally —
+# their metrics endpoints aren't reachable from the cluster. Disable scraping
+# + alerting to avoid false-positive TargetDown alerts.
 monitoring:
   kubeControllerManager:
     enabled: false
