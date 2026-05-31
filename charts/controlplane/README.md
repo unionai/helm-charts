@@ -2,55 +2,62 @@
 
 ![Version: 2025.10.0](https://img.shields.io/badge/Version-2025.10.0-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.10.0](https://img.shields.io/badge/AppVersion-2025.10.0-informational?style=flat-square)
 
-Deploys the Union controlplane components to onboard a kubernetes cluster to the Union Cloud.
+Deploys the Union control plane onto a Kubernetes cluster.
 
-## Installation guides
+> **Selfhosted production deployments** carry meaningful operational requirements (cluster prerequisites, ingress + TLS, OIDC/OAuth2, multi-cluster routing). Reach out to [support@union.ai](mailto:support@union.ai) before standing up a production selfhosted control plane — we'll help you scope cluster sizing, IdP integration, and the rollout plan.
 
-- **Selfhosted (CP + DP in one or coordinated clusters)** — see the [self-hosted deployment guide](https://docs.union.ai/union/deployment/selfhosted/) on docs.union.ai. The guide covers cluster prerequisites, ingress + TLS, OIDC/OAuth2 setup, environment overrides, and step-by-step install for both AWS and GCP.
-- **Conventions + recent migrations** — chart-level [`CONVENTIONS.md`](../CONVENTIONS.md) and [`MIGRATION.md`](../MIGRATION.md).
+This README covers the Helm install only. Chart conventions: [`CONVENTIONS.md`](../CONVENTIONS.md). Recent migrations: [`MIGRATION.md`](../MIGRATION.md).
 
 ## Prerequisites
 
-Before installing the Union controlplane chart, you need to install the required dependencies and CRDs.
-
-### 1. Add Helm Repositories
+### 1. Add Helm repositories
 
 ```bash
-# Add Union.ai Helm repository
 helm repo add unionai https://unionai.github.io/helm-charts/
-
-# Add Flyte Helm repository
 helm repo add flyte https://helm.flyte.org
-
-# Add Ingress NGINX Helm repository (if using ingress-nginx)
-helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
-
-# Add Envoy Gateway Helm repository (if using Envoy Gateway)
-helm repo add envoy-gateway oci://docker.io/envoyproxy
-
-# Add ScyllaDB Helm repository (if using ScyllaDB)
-helm repo add scylla https://scylla-operator-charts.storage.googleapis.com/stable
-
-# Update repositories
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx   # if INGRESS_PROVIDER=nginx
+helm repo add envoy-gateway oci://docker.io/envoyproxy                   # if INGRESS_PROVIDER=envoy
+helm repo add scylla https://scylla-operator-charts.storage.googleapis.com/stable  # if scylla.enabled=true
 helm repo update
 ```
 
-### 2. Install Scylla CRDs (Required for Queue Service)
+### 2. Install required CRDs
 
-**Both ScyllaDB and Postgres are required** for the Union control plane:
-- **ScyllaDB**: Used exclusively by the queue service for high-performance message queueing
-- **Postgres**: Used by all other control plane services for metadata and state management
-
-Scylla CRDs are required if you plan to leave scylla enabled (`scylla.enabled: true`). Helm CRD management is not consistent and commonly depends on what devops tool is used to manage the Helm chart.
-
-We've included a script if you want to manually install the CRDs:
+CRDs are installed separately from the chart via server-side apply. This
+avoids the 256 KiB `kubectl.kubernetes.io/last-applied-configuration`
+annotation overflow that affects large OpenAPI v3 schemas (notably
+prometheus-operator + Gateway API). The Helm install below uses
+`--skip-crds` so Helm doesn't try to manage these.
 
 ```bash
-cd helm-charts/charts/controlplane
-./scripts/install-scylla-crds.sh
+# From a checkout of unionai/helm-charts
+git clone https://github.com/unionai/helm-charts.git
+cd helm-charts
+
+# Required when monitoring.enabled=true (chart default).
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+
+# Required when scylla.enabled=true (chart default — ScyllaDB powers the
+# queue service). Skip if you manage scylla-operator + scylla CRDs
+# externally.
+kubectl apply --server-side --force-conflicts -f crds/scylla-operator/
+
+# Required when INGRESS_PROVIDER=envoy or both. SKIP if your cluster
+# already has Gateway API CRDs from another source — this directory
+# bundles both standard Gateway API and envoy-specific CRDs.
+kubectl apply --server-side --force-conflicts -f crds/envoy-gateway/
 ```
 
-Scylla CRDs are not required if you manage ScyllaDB outside of the Helm chart.
+`--force-conflicts` is needed only on the first install (or when adopting
+CRDs previously owned by a Helm-installed copy) so SSA can transfer field
+ownership.
+
+### Database architecture
+
+The control plane needs **both** databases:
+
+- **Postgres** — all services except queue (identity, executions, monolith, …). Provide externally and reference via `dbHost`/`dbName`/`dbUser`/db secret.
+- **ScyllaDB** — queue service only. Can be embedded (chart-managed, default) or external (`scylla.enabled: false` + `scylla.externalHost`).
 
 ## Requirements
 
@@ -100,81 +107,47 @@ helm install scylla-manager scylla/scylla-manager \
 
 Refer to the [ScyllaDB Manager documentation](https://operator.docs.scylladb.com/stable/manager) for detailed configuration options.
 
-## Quick Start
+## Quick start
 
-Choose your cloud provider to get started:
+### 1. Configure values
 
-- [AWS (Amazon Web Services)](#quick-start-aws)
-- GCP (Google Cloud Platform) - *Coming soon*
-- Azure (Microsoft Azure) - *Coming soon*
-
----
-
-### Quick Start: AWS
-
-For AWS deployments, we provide reference configuration files that make it easy to get started.
-
-#### Prerequisites (AWS)
-
-Before you begin, ensure you have:
-
-1. **AWS EKS cluster** (Kubernetes >= 1.28.0)
-2. **PostgreSQL database** (RDS or self-hosted)
-3. **S3 buckets** for control plane metadata and artifacts
-4. **IAM roles** configured with IRSA for control plane services
-5. **Helm 3.18+** installed locally
-
-#### Step 1: Download Configuration Template
+Pick the cloud overlay for your environment (`aws` or `gcp`) and fill in
+the `global.*` placeholders + the `flyte.configmap.adminServer.auth` block
+for your IdP:
 
 ```bash
-# Download the AWS reference values file
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/controlplane/values.aws.yaml
+# Edit values.aws.yaml — every empty "" global needs a value; set the
+# adminServer.auth fields for your OIDC issuer (Okta, Entra ID, etc.)
 ```
 
-#### Step 2: Fill in Required Values
-
-Edit `values.aws.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
-
-#### Step 3: Create Database Password Secret
+### 2. Create the DB password secret
 
 ```bash
 kubectl create namespace union-cp
 kubectl create secret generic union-controlplane-secrets \
-  --from-literal=pass.txt='YOUR_DB_PASSWORD' \
+  --from-literal=pass.txt='<DB_PASSWORD>' \
   -n union-cp
 ```
 
-#### Step 4: Install Control Plane
+### 3. Install the chart
 
 ```bash
-helm repo add unionai https://unionai.github.io/helm-charts/
-helm repo update
-
 helm upgrade --install unionai-controlplane unionai/controlplane \
   --namespace union-cp \
   --values values.aws.yaml \
-  --timeout 15m \
-  --wait
+  --skip-crds \
+  --timeout 15m --wait
 ```
 
-#### Step 5: Verify Installation
-
-Check that all control plane components are running:
+### 4. Verify
 
 ```bash
-# Check pod status
 kubectl get pods -n union-cp
-
-# Verify services are available
-kubectl get svc -n union-cp
-
-# Check flyteadmin logs
 kubectl logs -n union-cp deploy/flyteadmin --tail=50
 ```
 
-Expected output: All pods should be in `Running` state.
-
-For detailed configuration options and alternative deployment models, see the sections below.
+All pods should be `Running` and `flyteadmin` should be serving requests.
 
 ---
 

@@ -2,98 +2,69 @@
 
 ![Version: 2025.4.2](https://img.shields.io/badge/Version-2025.4.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.4.0](https://img.shields.io/badge/AppVersion-2025.4.0-informational?style=flat-square)
 
-Deploys the Union dataplane components to onboard a kubernetes cluster to the Union Cloud.
+Deploys the Union dataplane components to onboard a Kubernetes cluster to a Union control plane.
 
-## Installation guides
+This README covers the Helm install only. For cloud infrastructure setup
+(cluster, IAM, object storage, IdP), see the
+[Self-managed deployment guide](https://www.union.ai/docs/v2/union/deployment/selfmanaged/)
+on docs.union.ai — start with the per-cloud `prepare-infra` page for your provider, then return here for the chart install.
 
-- **Selfhosted (CP + DP in one or coordinated clusters)** — see the [self-hosted deployment guide](https://docs.union.ai/union/deployment/selfhosted/) on docs.union.ai. The guide covers cluster prerequisites, ingress + TLS, OIDC/OAuth2 setup, environment overrides, topology options (intracluster / multi-cluster same VPC / BYOC public), and step-by-step install for both AWS and GCP.
-- **Conventions + recent migrations** — chart-level [`CONVENTIONS.md`](../CONVENTIONS.md) and [`MIGRATION.md`](../MIGRATION.md).
+Chart conventions: [`CONVENTIONS.md`](../CONVENTIONS.md). Recent migrations: [`MIGRATION.md`](../MIGRATION.md).
 
-## Quick Start
+## Quick start
 
-Choose your cloud provider to get started:
-
-- [AWS (Amazon Web Services)](#quick-start-aws)
-- GCP (Google Cloud Platform) - *Coming soon*
-- Azure (Microsoft Azure) - *Coming soon*
-
----
-
-### Quick Start: AWS
-
-This guide will help you deploy Union dataplane on AWS EKS.
-
-#### Prerequisites (AWS)
-
-Before you begin, ensure you have:
-
-1. **AWS EKS cluster** (Kubernetes >= 1.28.0)
-2. **S3 buckets** for metadata storage and fast registration
-3. **IAM roles** configured with IRSA for:
-   - Union backend services (with S3, ECR access)
-   - Workflow execution pods (with S3 and service-specific access)
-   - FluentBit logging (with CloudWatch/S3 access)
-4. **Union credentials** (client ID and secret from Union team)
-5. **Helm 3.18+** installed locally
-
-#### Step 1: Add the Union Helm Repository
+### 1. Add the Helm repository
 
 ```bash
 helm repo add unionai https://unionai.github.io/helm-charts/
 helm repo update
 ```
 
-#### Step 2: Install Required CRDs
+### 2. Install required CRDs
 
-Union requires Custom Resource Definitions to be installed first.
-
-**Mandatory** — `FlyteWorkflow` (consumed by the operator):
+CRDs are installed separately from the chart via server-side apply. This
+avoids the 256 KiB `kubectl.kubernetes.io/last-applied-configuration`
+annotation overflow that affects large OpenAPI v3 schemas. The Helm install
+in Step 4 uses `--skip-crds` so Helm doesn't try to manage these.
 
 ```bash
 # From a checkout of unionai/helm-charts
+git clone https://github.com/unionai/helm-charts.git
+cd helm-charts
+
+# Required — FlyteWorkflow CRD consumed by propeller.
 kubectl apply --server-side --force-conflicts -f crds/flyte-v1/
-```
 
-`crds/flyte-v1/` is a byte-identical mirror of the chart-bundled CRD at
-`charts/dataplane/crds/`. The mirror exists so an ArgoCD `Application`
-(or this `kubectl apply`) can install via SSA when you pass `--skip-crds`
-to Helm in Step 4. If you instead drop `--skip-crds`, Helm will install
-the bundled CRD itself on first install — note that Helm's `crds/`
-directory is **install-only and never modified by `helm upgrade`**, so
-schema changes (rare for FlyteWorkflow) must be reapplied out-of-band.
-
-(Equivalent legacy path: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is now deprecated; prefer one of the two paths above.)
-
-**Optional — install only the sets that match the dataplane features you enable:**
-
-```bash
-# Required when monitoring.enabled=true (default). Skip if your cluster
-# already runs kube-prometheus-stack from another source AND that
-# installation manages these CRDs.
+# Required when monitoring.enabled=true (chart default). Skip if your
+# cluster already runs kube-prometheus-stack with its CRDs managed
+# elsewhere.
 kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
 
-# Required for App Serving (Knative-backed serving). Skip if App Serving
-# is disabled in your values, or if your cluster already manages the
-# Knative CRDs from another source.
+# Required for App Serving (Knative). Skip if disabled in your values
+# or if Knative CRDs are managed elsewhere.
 kubectl apply --server-side --force-conflicts -f crds/knative-operator/
 ```
 
-`--force-conflicts` is needed only on the first install (or when adopting CRDs previously owned by a Helm-installed copy) so SSA can transfer field ownership.
+`--force-conflicts` is needed only on the first install (or when adopting
+CRDs previously owned by a Helm-installed copy) so SSA can transfer field
+ownership.
 
-#### Step 3: Configure Your Values File
+### 3. Configure values
 
-Download the AWS reference values file and fill in your configuration:
+Choose the overlay for your cloud (`aws`, `gcp`, or `azure`) and fill in
+the `global.*` placeholders:
 
 ```bash
-# Download the template
 curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/values.aws.yaml
-
-# values.aws.yaml are accessible to edit directly.
+# Edit values.aws.yaml — every empty "" global needs a value.
 ```
 
-Edit `values.aws.yaml` by setting all `global` values and replace all empty `""` values marked with `# TODO`.
+For intra-cluster topologies (CP + DP in the same cluster), layer
+`examples/values.{cloud}.intracluster.yaml` on top — it overrides the
+DP→CP routing globals (`CONTROLPLANE_GRPC_ENDPOINT`, `QUEUE_GRPC_ENDPOINT`)
+to dial cluster-local Services.
 
-#### Step 4: Install the Union Dataplane
+### 4. Install the chart
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
@@ -101,49 +72,18 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --create-namespace \
   --values values.aws.yaml \
   --skip-crds \
-  --timeout 10m \
-  --wait
+  --timeout 10m --wait
 ```
 
-> `--skip-crds` tells Helm not to apply CRDs bundled in any subchart's
-> `crds/` directory. CRDs are installed separately via `kubectl apply
-> --server-side` in Step 2.
-
-#### Step 5: Verify the Installation
-
-Check that all components are running:
+### 5. Verify
 
 ```bash
-# Check pod status
 kubectl get pods -n union
-
-# Check operator logs
-kubectl logs -n union -l app.kubernetes.io/name=operator --tail=50
-
-# Verify connectivity to control plane
 kubectl logs -n union -l app.kubernetes.io/name=clusterresourcesync --tail=50
 ```
 
-Expected output: All pods should be in `Running` state, and logs should show successful connection to the control plane.
-
-#### Troubleshooting (AWS)
-
-**Pods stuck in Pending:**
-
-- Check that IAM roles are correctly configured with IRSA trust policies
-- Verify EKS cluster has sufficient resources
-
-**Authentication errors:**
-
-- Verify client ID and secret are correct
-- Ensure the secret was created: `kubectl get secret -n union union-secret-auth`
-
-**Storage errors:**
-
-- Verify S3 bucket names and region are correct
-- Check IAM role permissions for S3 access (GetObject, PutObject, ListBucket)
-
-**For more help:** Contact the Union team or visit [Union documentation](https://docs.union.ai)
+All pods should be `Running`, and `clusterresourcesync` should log a
+successful connection to the control plane.
 
 ---
 
@@ -299,23 +239,6 @@ monitoring:
 ```
 
 For full monitoring documentation, see [Monitoring](https://docs.union.ai/deployment/configuration/monitoring/) in the Union documentation.
-
----
-
-## Alternative Deployment Models
-
-### Self-Hosted Intra-Cluster Deployment (AWS)
-
-For deploying Union dataplane in the **same Kubernetes cluster** as your Union control plane, see the dedicated guide:
-
-**[Self-Hosted Intra-Cluster Deployment Guide (AWS)](SELFHOSTED_INTRA_CLUSTER_AWS.md)**
-
-This deployment model is ideal for:
-
-- Fully self-hosted Union deployments
-- Single-cluster architectures
-- Environments requiring simplified networking and reduced costs
-- Deployments with strict data sovereignty requirements
 
 ---
 
