@@ -1,96 +1,42 @@
-# ----------------------------------------------------------------------------
-# Global Configuration
-# ----------------------------------------------------------------------------
-# Global values are accessible to both the chart and all subcharts.
-# Override these in deployment-specific values files:
-#   - values.aws.yaml: AWS-specific configuration (RDS, S3, IAM roles)
-#   - values.aws.selfhosted-intracluster.yaml: Self-contained intra-cluster configuration
-#
-# Usage:
-#   helm install -f values.aws.yaml [...]
-#   helm install -f values.aws.selfhosted-intracluster.yaml [...]
-
 global:
-
-  # --- Deployment Identity ---
-  UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
-  UNION_ORG: ""             # Organization name (must match dataplane)
-
-  # --- Infrastructure ---
-  DB_HOST: ""               # PostgreSQL endpoint
-  DB_NAME: ""               # PostgreSQL database name
-  DB_USER: ""               # PostgreSQL username
-  DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
-  BUCKET_NAME: ""           # Object storage bucket for metadata
-  ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
-  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
-  DATAPLANE_ENDPOINT: ""    # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
-
-  # --- Images ---
-  # Default: Union's customer-facing registry. Requires imagePullSecrets.
-  # Internal deployments: overridden by terraform to private ECR/GCR.
-  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
-
-  # --- Ingress ---
-  INGRESS_PROVIDER: nginx   # Options: "nginx", "envoy", "both"
-
-  # Cloud-specific globals (AWS_REGION, IAM role ARNs, etc.) are declared
-  # in the cloud overlay (e.g. values.aws.selfhosted-intracluster.yaml).
-
-  # --- Service-to-Service Authentication ---
-  INTERNAL_CLIENT_ID: ""    # OAuth2 client ID for S2S calls (client_credentials)
-  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint for S2S authentication
-  OIDC_S2S_SCOPE: ""        # S2S scope. Okta: leave empty (defaults to "all"). Entra ID: "api://my-app/.default"
-
-  # --- OIDC Authentication ---
-  # Full auth configuration is in flyte.configmap.adminServer.auth.
-  # These globals are deprecated — set auth fields directly in that block
-  # or via the authn terraform module outputs (app_auth, user_auth).
-  OIDC_BASE_URL: ""         # Deprecated: use adminServer.auth.appAuth.externalAuthServer.baseUrl
-  OIDC_CLIENT_ID: ""        # Deprecated: use adminServer.auth.userAuth.openId.clientId
-  CLI_CLIENT_ID: ""         # Deprecated: use adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId
-
-# ----------------------------------------------------------------------------
-# Additional Configuration
-# ----------------------------------------------------------------------------
-# Note: Most configuration now comes from globals above.
-# Database host, name, user, buckets, and region are all configured via globals.
-
-# It's recommended to create a Kubernetes secret and reference it via
-# globals.KUBERNETES_SECRET_NAME rather than storing the password here
-dbPass: ""
-# -- Set the image used for control plane services
+  UNION_HOST: ''
+  UNION_ORG: ''
+  DB_HOST: ''
+  DB_NAME: ''
+  DB_USER: ''
+  DB_DEBUG: false
+  BUCKET_NAME: ''
+  ARTIFACTS_BUCKET_NAME: ''
+  KUBERNETES_SECRET_NAME: ''
+  DATAPLANE_ENDPOINT: ''
+  IMAGE_REPOSITORY_PREFIX: registry.unionai.cloud/controlplane
+  INGRESS_PROVIDER: nginx
+  INTERNAL_CLIENT_ID: ''
+  AUTH_TOKEN_URL: ''
+  OIDC_S2S_SCOPE: ''
+  OIDC_BASE_URL: ''
+  OIDC_CLIENT_ID: ''
+  CLI_CLIENT_ID: ''
+dbPass: ''
 image:
-  repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/services"
+  repository: '{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/services'
   pullPolicy: IfNotPresent
-  tag: "{{ .Chart.AppVersion }}"
-
-# -- Default config for Union services (excluding flyte subchart)
+  tag: '{{ .Chart.AppVersion }}'
 defaults:
-  # Defaults to assume secrets and db credentials are stored in the same Kubernetes secret.
-  #
-  # Kubernetes secret names for service credentials
-  secretName: "{{ .Values.global.KUBERNETES_SECRET_NAME }}"
-  # Database secret name for database password
-  dbSecretName: "{{ .Values.global.KUBERNETES_SECRET_NAME }}"
-
+  secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+  dbSecretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
 controlplane:
   enabled: true
-
 replicaCount: 1
-nameOverride: ""
-# Configuring the fullnameOverride ensures that all deployed resources
-# have predictable names that do not depend on the release name.
-# This can be important in the context of self-hosted deployments
-# where dataplanes interact through well-known service names. (e.g. ingress-nginx controller)
-fullnameOverride: "controlplane"
+nameOverride: ''
+fullnameOverride: controlplane
 serviceAccount:
   create: true
   annotations: {}
 podAnnotations:
   linkerd.io/inject: disabled
   prometheus.io/path: /metrics
-  prometheus.io/port: "10254"
+  prometheus.io/port: '10254'
 service:
   type: ClusterIP
   grpcport: 80
@@ -109,94 +55,46 @@ env:
   valueFrom:
     resourceFieldRef:
       resource: limits.memory
-      divisor: "1"
+      divisor: '1'
 - name: GOMAXPROCS
   valueFrom:
     resourceFieldRef:
       resource: limits.cpu
-      divisor: "1"
+      divisor: '1'
 autoscaling:
   enabled: true
   minReplicas: 1
   maxReplicas: 1
   targetCPUUtilizationPercentage: 80
   targetMemoryUtilizationPercentage: 80
-# Union autoscaling configuration.
 strategy:
   type: RollingUpdate
   rollingUpdate:
     maxUnavailable: 1
     maxSurge: 1
 secrets: {}
-
-# --- Image-builder bootstrap ---
-#
-# Helm post-install/post-upgrade hook Job that registers the `build-image`
-# ContainerTask in flyteadmin so the SDK can invoke remote image builds
-# without operators running `flyte deploy` manually after every helm upgrade.
 imageBuilder:
   bootstrap:
-    # When false, the bootstrap Job + ConfigMap are not rendered (use this
-    # if the operator prefers to manage build-image registration themselves
-    # or has an existing registration that must not be overwritten).
     enabled: true
-
-    # Container image the bootstrap Job runs in. Must provide `flyte` (Python
-    # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
-    # Union-published `build-image-bootstrap` image, which bakes both in so the
-    # Job has no runtime install step and works in restricted-network
-    # deployments where the cluster cannot reach PyPI. Override `repository`
-    # to use a private mirror or a custom image that satisfies the same
-    # contract.
     image:
-      repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/build-image-bootstrap"
-      tag: "{{ .Chart.AppVersion }}"
-
-    # Registry prefix the build-image + frontend-v2 task images are pulled
-    # from. Defaults to Union's public ECR staging; override per env if
-    # mirroring to a private registry.
+      repository: '{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/build-image-bootstrap'
+      tag: '{{ .Chart.AppVersion }}'
     unionImageNamePrefix: public.ecr.aws/g1m2l3c1/imagebuilder-staging
-
-    # Where the build-image task is registered. Convention is system/production.
-    # The Job creates the project if it doesn't already exist.
     project: system
     domain: production
-
-    # Annotations + labels added to the Job's pod template. Useful for
-    # service-mesh sidecar control (e.g. linkerd.io/inject: disabled to
-    # keep the one-shot Job from getting a sidecar that never exits),
-    # Prometheus scrape opt-in/out, cost-attribution labels, etc.
     podAnnotations: {}
     podLabels: {}
-
-    # Job-spec tunables. Defaults are conservative for a one-shot
-    # post-install hook; override for stricter retry / cleanup policies.
     backoffLimit: 2
     ttlSecondsAfterFinished: 600
     restartPolicy: Never
-
-    # Flyte admin connection used by the bootstrap Job. Rendered into
-    # /etc/flyte/config.yaml inside the Job pod and consumed by `flyte deploy`.
-    #
-    # NOTE: deliberately not derived from `.Values.configMap.admin` (the CP
-    # service-to-service block). That one uses the intra-cluster gRPC path
-    # (flyteadmin.<ns>.svc.cluster.local:81, insecure) which the Python SDK's
-    # OAuth discovery can't reproduce, so the bootstrap Job goes through the
-    # public ingress instead. Override here only if your env needs different
-    # auth (e.g. PKCE, custom token endpoint, alternate clientSecretLocation).
-    #
-    # String values are templated with `tpl` so `{{ .Values.global.X }}`-style
-    # references resolve at render time.
     admin:
       endpoint: '{{ .Values.global.UNION_HOST }}'
       insecure: false
       authType: ClientSecret
       clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
       clientSecretLocation: /etc/secrets/union/client_secret
-
 imagePullSecrets:
-  - name: union-registry-secret
-
+- name: union-registry-secret
 podMonitor:
   custom:
     enabled: false
@@ -219,262 +117,167 @@ postgres-exporter:
     enabled: false
     labels:
       instance: union
-
 ingress:
-
-  # Enable Secret Service ingress routes
   secretService: true
-
-  # Default to the ingress class being created in nginx-ingress chart.
-  className: "controlplane"
-
-  # TLS configuration for the controlplane Ingresses.
-  #
-  # No TLS is configured by default. To enable HTTPS, set `tls` to a list of
-  # `{hosts, secretName}` entries. The secret must already exist in the chart's
-  # namespace (typically provisioned by cert-manager via extraObjects, or by
-  # an external-secrets ExternalSecret in your environment overlay).
-  #
-  # Example — one secret covering the public host and the in-cluster alias:
-  # tls:
-  #   - hosts:
-  #       - '{{ .Values.global.UNION_HOST }}'
-  #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-  #     secretName: my-controlplane-tls-secret
+  className: controlplane
   tls: []
-
-  # Host to use for all ingress objects.
-  host:  "" # Set the DNS name of the ingress host used by you control plane
-
-  # Additional hostnames to expose every controlplane Ingress (and Envoy
-  # GRPCRoute/HTTPRoute) on. Each entry is added as a separate rules[].host
-  # entry (and hostnames[] entry on Gateway-API routes), so all routes are
-  # reachable on both the primary `host` and each additional hostname.
-  #
-  # TLS coverage is independent — add the hostname to an existing `tls[].hosts`
-  # entry if it's covered by the same secret, add a new `tls[]` entry with its
-  # own secretName for per-host certs, or leave it out for HTTP-only access.
-  #
-  # For an in-cluster alias used only to avoid hairpinning DP→CP traffic out
-  # to the public LB, prefer the `nginx.ingress.kubernetes.io/server-alias`
-  # annotation below — it's controller-private and doesn't trip cert-manager
-  # / external-dns into managing a hostname they can't address.
-  #
-  # When OIDC auth is enabled, each extra host must ALSO be added to:
-  #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
-  #     trusts the host for OAuth redirect URL construction)
-  #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
-  #     (so tokens with aud=<extra-host> validate)
-  #   - the IdP application's redirect URI list (`https://<host>/callback`)
-  # Missing any of these will cause login on the alias host to fail —
-  # flyteadmin falls back to the internal service URL and the IdP rejects it.
+  host: ''
   extraHosts: []
-
-  # Whether to create separate ingress objects for gRPC and HTTP traffic.
   separateGrpcIngress: true
-
-  # Universal ingress annotations.
-  # Currently biased toward nginx-ingress controller
   annotations:
-    # Intra-cluster routing alias — configured by default so controlplane
-    # services (DP→CP, CP→CP auth subrequests) can reach the ingress via the
-    # in-cluster DNS name `controlplane-nginx-controller.<ns>.svc.cluster.local`
-    # without hairpinning out to the public LB. The alias is matched at the
-    # nginx server_name level; the same TLS listener and Ingress rules apply
-    # to it, so no cert SAN, external-dns record, or extra `rules[].host`
-    # entry is needed (and the alias is intentionally not first-classed via
-    # `ingress.extraHosts` because no other controller needs to know about it).
-    nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-
-    # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
+    nginx.ingress.kubernetes.io/server-alias: controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
     nginx.ingress.kubernetes.io/app-root: /v2
-    nginx.ingress.kubernetes.io/service-upstream: "true"
-
-    # Set RPS (requests per second) to 100, Burst is automatically computed to be 5x that number. If we decide to
-    # bump rps, we should consider setting Burst separately through `limit-burst-multiplier`
-    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/service-upstream: 'true'
+    nginx.ingress.kubernetes.io/limit-rps: '100'
     nginx.ingress.kubernetes.io/proxy-body-size: 6m
     nginx.ingress.kubernetes.io/proxy-buffer-size: 32k
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
-    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: 'false'
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
-    nginx.ingress.kubernetes.io/server-snippet: |
-      client_header_timeout 604800;
+    nginx.ingress.kubernetes.io/server-snippet: 'client_header_timeout 604800;
+
       client_body_timeout 604800;
+
       # Increasing the default configuration from
+
       #        client_header_buffer_size       1k;
+
       #        large_client_header_buffers     4 8k;
+
       # to default of 16k and 32k for large buffer sizes. These sizes are chosen as a short term mediation until we can collect data to reason
+
       # about expected header sizs (PE-1101).
+
       # Historically, we have seen is with the previous 8k max buffer size , the auth endpoint of /me would throw 400 Bad request and due to this ingress controller
-      # threw a 500 as it doesn't expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+
+      # threw a 500 as it doesn''t expect this status code on auth request expected range :  200 <= authcall.status(i.e status of /me call) <=300
+
       # Code link for ref : https://github.com/nginx/nginx/blob/e734df6664e70f118ca3140bcef6d4f1750fa8fa/src/http/modules/ngx_http_auth_request_module.c#L170-L179
+
       # Now the main reason we have seen 400 bad request is large size of the cookies which contribute to the header size.
+
       # We should keep reducing the size of what headers are being sent meanwhile we increase this size to mitigate the long header issue.
+
       client_header_buffer_size 16k;
+
       large_client_header_buffers 64 32k;
 
+      '
   separateGrpcIngressAnnotations:
-    # Must annotate gRPC ingress with this to ensure proper handling of gRPC traffic.
-    nginx.ingress.kubernetes.io/backend-protocol: "GRPC"
-  # --- Protected Ingress Auth Annotations ---
-  # These configure nginx to validate requests via flyteadmin's /me endpoint
-  # and redirect unauthenticated users to /login for the OIDC flow.
-  # Active when OIDC authentication is enabled (server.security.useAuth: true).
-  #
-  # auth-response-headers MUST include:
-  #   - X-User-Subject: identity capture on browser requests ("Owned By" display)
-  #   - X-User-Token: raw OIDC token forwarding for external authorization
-  # Removing either will break functionality. X-User-Token enables browser-path
-  # token forwarding to external authz servers for downstream token exchange.
+    nginx.ingress.kubernetes.io/backend-protocol: GRPC
   protectedIngressAnnotations:
-    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
-    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.ingress.kubernetes.io/auth-url: https://$host/me
+    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
+    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
     nginx.org/websocket-services: dataproxy-service
   enableProtectedConsoleIngress: false
   protectedIngressAnnotationsWithoutSignin:
-    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
-    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.ingress.kubernetes.io/auth-url: https://$host/me
+    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
     nginx.org/websocket-services: dataproxy-service
   protectedConsoleIngressAnnotations:
-    nginx.ingress.kubernetes.io/auth-url: "https://$host/me"
-    nginx.ingress.kubernetes.io/auth-signin: "https://$host/login?redirect_url=$escaped_request_uri"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
-    nginx.ingress.kubernetes.io/auth-cache-key: "$http_flyte_authorization$http_cookie"
+    nginx.ingress.kubernetes.io/auth-url: https://$host/me
+    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
+    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
     nginx.org/websocket-services: dataproxy-service
   protectedIngressAnnotationsGrpc:
-    nginx.ingress.kubernetes.io/auth-url: "http://flyteadmin.{{ template \"flyte.namespace\" . }}.svc.cluster.local/me"
-    nginx.ingress.kubernetes.io/auth-response-headers: "Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token"
-    nginx.ingress.kubernetes.io/auth-cache-key: "$http_authorization$http_flyte_authorization$http_cookie"
-    # For gRPC backends (backend-protocol: GRPC), nginx uses grpc_pass instead
-    # of proxy_pass. The auth-response-headers annotation only sets proxy headers,
-    # not gRPC headers. This configuration-snippet bridges identity headers from
-    # the auth subrequest response into the upstream gRPC request so backend
-    # services receive the caller's identity.
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
+    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.{{ template "flyte.namespace" . }}.svc.cluster.local/me
+    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
+    nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
+    nginx.ingress.kubernetes.io/configuration-snippet: 'auth_request_set $user_id $upstream_http_x_user_subject;
+
       proxy_set_header X-User-Subject $user_id;
+
       grpc_set_header X-User-Subject $user_id;
 
+
       auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
+
       proxy_set_header X-User-Claim-Identitytype $user_identitytype;
+
       grpc_set_header X-User-Claim-Identitytype $user_identitytype;
 
+
       auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
+
       proxy_set_header X-User-Claim-userhandle $user_handle;
+
       grpc_set_header X-User-Claim-userhandle $user_handle;
 
+
       auth_request_set $groups $upstream_http_x_user_claim_groups;
+
       proxy_set_header X-User-Claim-groups $groups;
+
       grpc_set_header X-User-Claim-groups $groups;
 
+
       more_set_headers "x-request-id: $request_id";
+
       proxy_set_header x-request-id $request_id;
+
       grpc_set_header x-request-id $request_id;
 
-# Envoy Gateway controller installed through external chart.
+      '
 envoy-gateway:
-  # Set to true when Envoy Gateway is installed alongside this controlplane.
-  # Automatically set by Terraform when envoy-gateway/revisions.yaml exists.
   enabled: false
-
 envoyGateway:
-  # GatewayClass name for Envoy Gateway. Must match the gatewayClassName in the
-  # Gateway resource. Uses a distinct name from the dataplane's gateway class.
   gatewayClassName: controlplane-envoy
   rateLimit:
     enabled: false
     requestsPerUnit: 100
     unit: Second
-
-# -- Central logging configuration. All controlplane services pull their log level from here.
-# Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO, 6=DEBUG).
-# Log format options: json, text, gcp
 logging:
   level: 6
   show-source: true
   formatter:
     type: json
-
 configMap:
-  # Flyteadmin endpoint for intra-cluster communication.
-  # CP-internal: direct to flyteadmin K8s service (not through ingress).
   admin:
-    endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
+    endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
     insecure: true
     clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
-    clientSecretLocation: "/etc/secrets/union/client_secret"
-
-  # Authorization — all non-authorizer services use TypeAuthorizer to route
-  # Authorize() calls directly to the in-cluster authorizer service.
-  # The authorizer service itself decides the backend (Noop, UserClouds,
-  # or External) — see services.authorizer.configMap below.
+    clientSecretLocation: /etc/secrets/union/client_secret
   authorizer:
-    type: "Authorizer"
-    # When true, construct ExternalIdentity for subjects without an
-    # identitytype JWT claim. Required for External authorization with
-    # non-Okta IdPs that cannot add custom claims. (FAB-189)
-    #
-    # Ideally this would be derived from services.authorizer.configMap.authorizer.type,
-    # but the flyte-core subchart renders configs in its own template scope where
-    # .Values.services is not accessible. Set via global.USE_EXTERNAL_IDENTITY
-    # in your values overlay. A future release removing the flyte-core subchart
-    # dependency will allow direct derivation.
+    type: Authorizer
     useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
     authorizerClient:
       grpcConfig:
-        host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
+        host: dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80
         insecure: true
-      # Headers forwarded from this service to the authorizer on each
-      # Authorize() call. Do not remove x-user-token — it carries the
-      # browser user's OIDC token (from nginx /me subrequest) to the
-      # authorizer for external authorization token exchange.
       forwardHeaders:
-        - authorization
-        - flyte-authorization
-        - x-user-token
+      - authorization
+      - flyte-authorization
+      - x-user-token
   cache:
     identity:
       enabled: false
   connection:
-    environment: "staging"
-    region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
-    # Use controlplane ingress controller for gRPC routing.
-    rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-  otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
+    environment: staging
+    region: ''
+    rootTenantURLPattern: dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+  otel:
     type: noop
   sharedService:
     security:
-      # Single-tenant mode: all requests are for this organization.
       singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
     selfServeConfig:
       legacyHosts:
-        - '{{ .Values.global.UNION_ORG }}'
+      - '{{ .Values.global.UNION_ORG }}'
   union:
     connection:
-      # Internal service-to-service communication goes through the controlplane
-      # nginx ingress to trigger the authentication flow (auth subrequest to /me).
-      # gRPC requires TLS for HTTP/2 with NGINX, so insecure must be false.
-      # However, the TLS certificate on the ingress is typically issued for the
-      # external domain only — the internal FQDN (controlplane-nginx-controller.
-      # <namespace>.svc.cluster.local) won't match. Since traffic is already
-      # within the cluster network, skip TLS certificate verification.
       insecure: false
       insecureSkipVerify: true
-
-      # Overridden by terraform from authn module trusted_identity_claims output.
-      # Okta: externalIdentityClaim = internal client_id (sub == client_id)
-      # Entra ID: externalIdentityClaim = Service Principal Object ID
       trustedIdentityClaims:
         enabled: true
-        externalIdentityClaim: ""
-        externalIdentityTypeClaim: "app"
+        externalIdentityClaim: ''
+        externalIdentityTypeClaim: app
     internalConnectionConfig:
       enabled: true
-      urlPattern: "_SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80"
+      urlPattern: _SERVICE_.{{ .Release.Namespace }}.svc.cluster.local:80
     auth:
       enable: true
       type: ClientSecret
@@ -483,32 +286,27 @@ configMap:
       tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
       authorizationMetadataKey: flyte-authorization
       scopes:
-        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
-
+      - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 services:
   artifacts:
-
-    # Artifacts service migrations conflict with Executions services. In a subsequent PR we will force database
-    # migrations to create separate databases.
     disabled: true
-
-    fullnameOverride: "artifacts"
+    fullnameOverride: artifacts
     initContainers:
-      - name: migrate
-        args:
-          - artifacts
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
-    args:
+    - name: migrate
+      args:
       - artifacts
-      - serve
+      - migrate
       - --config
       - /etc/config/*.yaml
+    args:
+    - artifacts
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
       sharedService:
         metrics:
-          scope: "artifacts:"
+          scope: 'artifacts:'
       db:
         debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
@@ -527,25 +325,20 @@ services:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
             container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
-            # Storage backend config — cloud-specific, set in overlay.
-            # AWS: stow/s3 with auth_type: iam
-            # GCP: stow/google with json_key
             stow:
               config: {}
-              kind: ""
+              kind: ''
             type: stow
           artifactDatabaseConfig:
             connMaxLifeTime: 1m
             maxIdleConnections: 20
             maxOpenConnections: 30
-            # Duplicate for application postgres reference
             postgres:
               dbname: '{{ .Values.global.DB_NAME }}'
               host: '{{ .Values.global.DB_HOST }}'
               options: sslmode=disable
               passwordPath: /etc/db/pass.txt
               port: 5432
-              # Default to the same host as the primary DB.
               readReplicaHost: '{{ .Values.global.DB_HOST }}'
               username: '{{ .Values.global.DB_USER }}'
           artifactServerConfig:
@@ -561,335 +354,69 @@ services:
             triggerProcessors: 1
             triggerProcessorsWait: 10
   authorizer:
-    fullnameOverride: "authorizer"
+    fullnameOverride: authorizer
     sharedService:
       connectPort: 8081
       grpcNativePort: 8080
     args:
-      - authorizer
-      - serve
-      - --config
-      - /etc/config/*.yaml
+    - authorizer
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
-      # The authorizer service's own backend. All other services route to this
-      # service via TypeAuthorizer; this config controls what the authorizer
-      # service does with those requests.
-      #
-      # Supported types:
-      #   - "Noop"       — no enforcement (default)
-      #   - "UserClouds" — Union RBAC (just set type, defaults are pre-configured)
-      #   - "External"   — customer-provided gRPC authorization server (selfhosted)
-      #
-      # --- External Authorization (selfhosted) ---
-      # For selfhosted deployments with a customer-provided authz server:
-      #   authorizer:
-      #     type: "External"
-      #     externalClient:
-      #       grpcConfig:
-      #         # gRPC target for the external authorization server.
-      #         # Uses standard gRPC name resolution (dns:///, unix:///, etc).
-      #         host: "dns:///your-authz-server.namespace.svc.cluster.local:50051"
-      #
-      #         # Connect without TLS (default: false).
-      #         insecure: true
-      #
-      #         # Skip server certificate verification — do NOT use in production (default: false).
-      #         # insecureSkipVerify: false
-      #
-      #         # Timeout per gRPC retry attempt (default: "5s").
-      #         # perRetryTimeout: "5s"
-      #
-      #         # Max gRPC retries. 0 = no retries, fail fast (default: 0).
-      #         # maxRetries: 0
-      #
-      #         # Max delay for gRPC backoff between retries.
-      #         # maxBackoffDelay: "10s"
-      #
-      #       # If true, allow requests when the external server is unreachable.
-      #       # If false (default), deny on error.
-      #       failOpen: false
       authorizer:
-        type: "Noop"
-        # --- Bootstrap (Union/UserClouds mode only) ---
-        # Seeds the authorization database on first start.
-        # Ignored when type is "Noop" or "External".
+        type: Noop
         bootstrap:
-          # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
-
-          # Dataplane clusters to bootstrap as authz cluster resources under the org
           dataplaneClusters: []
-          # Example:
-          # - dp-1
-
-          # Authorization domains to create. Each domain is an isolation boundary
-          # for workflow executions (e.g. dev vs prod).
           domains:
-            - development
-            - staging
-            - production
-
-          # Projects to pre-create during bootstrap. Optional — projects can
-          # also be created later via the console or CLI.
+          - development
+          - staging
+          - production
           projects: []
-          # Example:
-          #   - "union-health-monitoring"
-
-          # Internal platform service accounts that need Admin access.
-          # clientId must match the resolved `sub` claim from your IdP's
-          # client_credentials tokens (for Okta this is the Client ID;
-          # for Entra ID this is the Service Principal Object ID).
           serviceAccounts: []
-          # Example:
-          #   - clientId: "<App 3 sub claim>"
-          #     name: "service-to-service"
-          #     role: "Admin"
-          #   - clientId: "<App 4 sub claim>"
-          #     name: "operator"
-          #     role: "Admin"
-          #   - clientId: "<App 5 sub claim>"
-          #     name: "eager"
-          #     role: "Admin"
-
-          # Human users granted Admin role on bootstrap. These users can
-          # manage RBAC via the console. subject must match the `sub` claim
-          # from your IdP's user tokens.
           adminUsers: []
-          # Example:
-          #   - name: "admin@example.com"
-          #     subject: "<user sub claim>"
-
           retryInterval: 5s
           maxRetries: 30
-        # --- External client defaults ---
-        # Headers forwarded from the authorizer to the external server on
-        # each Authorize() call. These carry the caller's OIDC token so the
-        # external server can inspect JWT claims for authorization decisions.
-        # Always included even when type is "Noop" or "UserClouds" (ignored
-        # by those backends). Customers adding External authorization should
-        # see these explicitly rather than relying on hidden Go defaults.
         externalClient:
           forwardHeaders:
-            - authorization
-            - flyte-authorization
-        # --- UserClouds client defaults (pre-configured) ---
-        # These defaults are used when type is set to "UserClouds" (Union RBAC).
-        # They are ignored when type is "Noop" or "External".
-        # To enable Union RBAC, just change type to "UserClouds" — no other
-        # configuration is needed. Override individual fields only if your
-        # deployment uses non-standard naming or secrets.
+          - authorization
+          - flyte-authorization
         userCloudsClient:
-          tenantUrl: 'http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080'
-          tenantID: '623771e7-ddd6-4575-bedb-7c970ec75b87'
+          tenantUrl: http://{{ .Release.Name }}-union-authz.{{ .Release.Namespace }}.svc.cluster.local:8080
+          tenantID: 623771e7-ddd6-4575-bedb-7c970ec75b87
           clientID: '{{ .Values.union.authz.clientID }}'
-          clientSecretName: 'union/client_secret'
+          clientSecretName: union/client_secret
           enableLogging: true
         internalCommunicationConfig:
           enabled: false
       sharedService:
         connectPort: 8081
         metrics:
-          scope: "authorizer:"
+          scope: 'authorizer:'
   cluster:
-    fullnameOverride: "cluster"
+    fullnameOverride: cluster
     sharedService:
       connectPort: 8081
     initContainers:
-      - name: migrate
-        args:
-          - cloudcluster
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
-    args:
+    - name: migrate
+      args:
       - cloudcluster
-      - serve
+      - migrate
       - --config
       - /etc/config/*.yaml
+    args:
+    - cloudcluster
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
       sharedService:
         connectPort: 8081
         metrics:
-          scope: "cluster:"
+          scope: 'cluster:'
       cloudProvider:
         provider: Mock
-      db:
-        debug: '{{ .Values.global.DB_DEBUG }}'
-        dbname: '{{ .Values.global.DB_NAME }}'
-        host: '{{ .Values.global.DB_HOST }}'
-        username:  '{{ .Values.global.DB_USER }}'
-        passwordPath: /etc/db/pass.txt
-        port: 5432
-        connectionPool:
-          maxIdleConnections: 20
-          maxOpenConnections: 20
-          maxConnectionLifetime: 1m
-      cluster:
-        cloudflare:
-          active: false
-  dataproxy:
-    fullnameOverride: "dataproxy"
-    args:
-      - dataproxy
-      - serve
-      - --config
-      - /etc/config/*.yaml
-    configMap:
-      sharedService:
-        metrics:
-          scope: "dataproxy:"
-      dataproxy:
-        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
-        clusterSelector:
-          type: local
-        # Task metrics query templates for GetActionAttemptMetrics / GetAppMetrics RPCs.
-        # Migrated from usage service to dataproxy in cloud #15357.
-        taskMetrics:
-          metricDelayToleranceDuration: 0s
-          promQuery:
-            queries:
-              EXECUTION_METRIC_APP_REQUESTS: |
-                sum(rate((
-                  envoy_cluster_upstream_rq_xx{
-                    job="serving-envoy",
-                    project=~"{{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, envoy_response_code_class)
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
-                histogram_quantile(0.5, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
-                histogram_quantile(0.90, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
-                histogram_quantile(0.95, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_REPLICA_COUNT: |
-                sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
-              EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
-                max by (namespace, pod) (
-                  (
-                    sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) >
-                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
-                  )
-                  or
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
-                ) *
-                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
-                max by (namespace, pod) (
-                  (
-                    sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) >
-                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
-                  )
-                  or
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
-                ) *
-                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_CPU_UTILIZATION: |
-                (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) /
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
-                (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}) /
-                  sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
-              EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
-              EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_LIMIT_CPU: |
-                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
-                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_MEMORY_UTILIZATION: |
-                (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) /
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_REQUEST_CPU: |
-                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
-                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_USED_CPU_AVG: |
-                sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m]) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
-                sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-          agentQuery:
-            mappings:
-              dgx_job:
-                queries:
-                  EXECUTION_METRIC_ALLOCATED_CPU_AVG: "CPU_ALLOCATION:MEAN"
-                  EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "MEM_ALLOCATION:MEAN"
-                  EXECUTION_METRIC_CPU_UTILIZATION: "CPU_UTILIZATION:MEAN"
-                  EXECUTION_METRIC_MEMORY_UTILIZATION: "MEM_UTILIZATION:MEAN"
-                  EXECUTION_METRIC_GPU_UTILIZATION: "GPU_UTILIZATION:MEAN"
-  organizations:
-    fullnameOverride: "organizations"
-    sharedService:
-      connectPort: 8081
-    initContainers:
-      - name: migrate
-        args:
-          - cloudorganizations
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
-      - name: bootstrap
-        args:
-          - cloudorganizations
-          - bootstrap-tenant
-          - organizations
-          - --config
-          - "/etc/config/*.yaml"
-    args:
-      - cloudorganizations
-      - serve
-      - --config
-      - /etc/config/*.yaml
-    configMap:
-      sharedService:
-        connectPort: 8081
-        metrics:
-          scope: "organizations:"
-      organizations:
-        bootStrapConfig:
-          organizations:
-            - '{{ .Values.global.UNION_ORG }}'
-          tenantType: "SELF_MANAGED"
       db:
         debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
@@ -901,32 +428,204 @@ services:
           maxIdleConnections: 20
           maxOpenConnections: 20
           maxConnectionLifetime: 1m
-
-  executions:
-    fullnameOverride: "executions"
-    initContainers:
-      - name: migrate
-        args:
-          - cloudpropeller
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
+      cluster:
+        cloudflare:
+          active: false
+  dataproxy:
+    fullnameOverride: dataproxy
     args:
-      - cloudpropeller
-      - serve
+    - dataproxy
+    - serve
+    - --config
+    - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        metrics:
+          scope: 'dataproxy:'
+      dataproxy:
+        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80
+        clusterSelector:
+          type: local
+        taskMetrics:
+          metricDelayToleranceDuration: 0s
+          promQuery:
+            queries:
+              EXECUTION_METRIC_APP_REQUESTS: "sum(rate((\n  envoy_cluster_upstream_rq_xx{\n    job=\"serving-envoy\",\n    project=~\"{{ \"{{\" }}.Project{{ \"}}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{\
+                \ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, envoy_response_code_class)\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P50: "histogram_quantile(0.5, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P90: "histogram_quantile(0.90, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P95: "histogram_quantile(0.95, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_REPLICA_COUNT: 'sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
+
+                '
+              EXECUTION_METRIC_ALLOCATED_CPU_AVG: "max by (namespace, pod) (\n  (\n    sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"\
+                {{ \"{{\" }}.PodName{{ \"}}\" }}\",image!=\"\"}[5m])) >\n    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\"\
+                \ }}.PodName{{ \"}}\" }}\",resource=\"cpu\"})\n  )\n  or\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\"\
+                \ }}.PodName{{ \"}}\" }}\",resource=\"cpu\"})\n) *\non (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"\
+                {{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "max by (namespace, pod) (\n  (\n    sum by (namespace, pod) (container_memory_working_set_bytes{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\"\
+                ,pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",image!=\"\"}) >\n    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"\
+                {{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"})\n  )\n  or\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{\
+                \ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"})\n) *\non (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\"\
+                ,pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_CPU_UTILIZATION: "(sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                ,image!=\"\"}[5m])) /\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"\
+                cpu\"})) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"\
+                Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: "(sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                }) /\n  sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"} + DCGM_FI_DEV_FB_FREE{namespace=\"{{\
+                \ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"})) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\"\
+                \ }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: 'sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1)) / 100.0
+
+                '
+              EXECUTION_METRIC_GPU_UTILIZATION: 'sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1)) / 100.0
+
+                '
+              EXECUTION_METRIC_GPU_SM_ACTIVE: 'sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_GPU_SM_OCCUPANCY: 'sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_LIMIT_CPU: 'sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_LIMIT_MEMORY_BYTES: 'sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_MEMORY_UTILIZATION: "(sum by (namespace, pod) (container_memory_working_set_bytes{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                ,image!=\"\"}) /\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"\
+                })) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"\
+                Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_REQUEST_CPU: 'sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_REQUEST_MEMORY_BYTES: 'sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_USED_CPU_AVG: 'sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: 'sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+          agentQuery:
+            mappings:
+              dgx_job:
+                queries:
+                  EXECUTION_METRIC_ALLOCATED_CPU_AVG: CPU_ALLOCATION:MEAN
+                  EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: MEM_ALLOCATION:MEAN
+                  EXECUTION_METRIC_CPU_UTILIZATION: CPU_UTILIZATION:MEAN
+                  EXECUTION_METRIC_MEMORY_UTILIZATION: MEM_UTILIZATION:MEAN
+                  EXECUTION_METRIC_GPU_UTILIZATION: GPU_UTILIZATION:MEAN
+  organizations:
+    fullnameOverride: organizations
+    sharedService:
+      connectPort: 8081
+    initContainers:
+    - name: migrate
+      args:
+      - cloudorganizations
+      - migrate
       - --config
       - /etc/config/*.yaml
+    - name: bootstrap
+      args:
+      - cloudorganizations
+      - bootstrap-tenant
+      - organizations
+      - --config
+      - /etc/config/*.yaml
+    args:
+    - cloudorganizations
+    - serve
+    - --config
+    - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        connectPort: 8081
+        metrics:
+          scope: 'organizations:'
+      organizations:
+        bootStrapConfig:
+          organizations:
+          - '{{ .Values.global.UNION_ORG }}'
+          tenantType: SELF_MANAGED
+      db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        username: '{{ .Values.global.DB_USER }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 20
+          maxOpenConnections: 20
+          maxConnectionLifetime: 1m
+  executions:
+    fullnameOverride: executions
+    initContainers:
+    - name: migrate
+      args:
+      - cloudpropeller
+      - migrate
+      - --config
+      - /etc/config/*.yaml
+    args:
+    - cloudpropeller
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
       workspace:
         enable: false
       sharedService:
         metrics:
-          scope: "executions:"
+          scope: 'executions:'
       db:
         debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
-        host:  '{{ .Values.global.DB_HOST }}'
-        username:  '{{ .Values.global.DB_USER }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        username: '{{ .Values.global.DB_USER }}'
         passwordPath: /etc/db/pass.txt
         port: 5432
         connectionPool:
@@ -935,50 +634,32 @@ services:
           maxConnectionLifetime: 1m
       cloudEventsProcessor:
         cloudProvider: Local
-      # The events-proxy defaults RecorderType to RedisStream, which requires
-      # a Redis instance. Selfhosted environments do not provision Redis, so
-      # this must be set to RunService (uses existing gRPC service mesh).
       eventsProxy:
         recorderType: RunService
       executions:
         app:
           adminClient:
             connection:
-              # CP-internal: direct to flyteadmin K8s service.
-              endpoint: 'flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81'
+              endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
               insecure: true
-              authorizationHeader: "flyte-authorization"
+              authorizationHeader: flyte-authorization
               clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
-              clientSecretLocation: "/etc/secrets/union/client_secret"
+              clientSecretLocation: /etc/secrets/union/client_secret
               tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
               scopes:
               - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
-
         apps:
-          # Enrich "Owned By" display with name/email from a remote identity service.
-          # Requires a functional identity service, which is NOT supported in selfhosted.
-          # When true and no identity service is reachable, all runs display "Unknown"
-          # even when created_by is populated in the DB.
           enrichIdentities: false
-          # App serving URL pattern (work in progress for self-hosted)
-          publicURLPattern: 'https://%s.apps.{{ .Values.global.UNION_HOST }}'
-
-        # Disable LLM assistant features (requires Redis and OpenAI API key)
+          publicURLPattern: https://%s.apps.{{ .Values.global.UNION_HOST }}
         llm:
           enabled: false
-
-        # Enable V2 task/run/trigger endpoints
         task:
           enabled: true
-          # Enrich "Owned By" display with name/email from a remote identity service.
-          # Requires a functional identity service, which is NOT supported in selfhosted.
-          # When true and no identity service is reachable, all runs display "Unknown"
-          # even when created_by is populated in the DB.
           enrichIdentities: false
           clusterCacheConfig:
             ttl: 10m
   identity:
-    fullnameOverride: "identity"
+    fullnameOverride: identity
     service:
       type: ClusterIP
       grpcport: 80
@@ -987,10 +668,10 @@ services:
     sharedService:
       connectPort: 8081
     args:
-      - cloudidentity
-      - serve
-      - --config
-      - /etc/config/*.yaml
+    - cloudidentity
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
       cache:
         identity:
@@ -1000,31 +681,7 @@ services:
       identity:
         app:
           identityProviderConfig:
-            # Identity provider for the User Management page.
-            # Supported values:
-            #   noop  — returns empty results (default; no external IDP required)
-            #   azure — Azure/Entra ID via Microsoft Graph API
-            #   okta  — Okta (Union Cloud managed deployments only)
-            provider: "noop"
-            # Azure/Entra ID provider configuration.
-            # Required when provider is "azure". Requires a dedicated Entra app registration
-            # with Application permissions (not Delegated): User.Read.All,
-            # GroupMember.Read.All, Application.ReadWrite.All; admin consent granted.
-            #
-            # Store the client secret in the KUBERNETES_SECRET_NAME K8s secret under
-            # the key referenced by clientSecretName (e.g. "azure_client_secret").
-            # The value is read from /etc/secrets/union/<clientSecretName> at runtime.
-            # Example ExternalSecret:
-            #   spec.data[].remoteRef.key: <your-secret-manager-path>
-            #   spec.data[].secretKey: azure_client_secret
-            #   spec.target.name: <KUBERNETES_SECRET_NAME>
-            #   spec.target.creationPolicy: Merge
-            #
-            # azure:
-            #   tenantId: ""    # Azure AD tenant (directory) ID
-            #   clientId: ""    # App registration client ID
-            #   clientSecretName: "azure_client_secret"
-            #   groupId: ""    # Optional: scope user listing to a specific Entra group
+            provider: noop
           adminClient:
             connection:
               authorizationHeader: flyte-authorization
@@ -1032,22 +689,22 @@ services:
               clientSecretLocation: /etc/secrets/union/client_secret
               insecure: true
               scopes:
-                - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+              - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
               tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
   usage:
-    fullnameOverride: "usage"
+    fullnameOverride: usage
     sharedService:
       connectPort: 8081
     args:
-      - usage
-      - serve
-      - --config
-      - /etc/config/*.yaml
+    - usage
+    - serve
+    - --config
+    - /etc/config/*.yaml
     configMap:
       sharedService:
         connectPort: 8081
         metrics:
-          scope: "usage:"
+          scope: 'usage:'
       cloudProvider:
         provider: Mock
       billing:
@@ -1058,115 +715,113 @@ services:
           metricDelayToleranceDuration: 0s
           promQuery:
             queries:
-              EXECUTION_METRIC_APP_REQUESTS: |
-                sum(rate((
-                  envoy_cluster_upstream_rq_xx{
-                    job="serving-envoy",
-                    project=~"{{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, envoy_response_code_class)
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
-                histogram_quantile(0.5, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
-                histogram_quantile(0.90, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
-                histogram_quantile(0.95, sum(rate((
-                  envoy_cluster_upstream_rq_time_bucket{
-                    job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
-                    domain=~"{{ "{{" }}.Domain{{ "}}" }}",
-                    name=~"{{ "{{" }}.AppName{{ "}}" }}",
-                    name!=""}
-                )[5m:])) by (project, domain, name, le))
-              EXECUTION_METRIC_APP_REPLICA_COUNT: |
-                sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
-              EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
-                max by (namespace, pod) (
-                  (
-                    sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) >
-                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
-                  )
-                  or
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
-                ) *
-                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
-                max by (namespace, pod) (
-                  (
-                    sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) >
-                    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
-                  )
-                  or
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
-                ) *
-                on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_CPU_UTILIZATION: |
-                (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) /
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
-                (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}) /
-                  sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
-              EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
-              EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_LIMIT_CPU: |
-                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
-                sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_MEMORY_UTILIZATION: |
-                (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) /
-                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
-              EXECUTION_METRIC_REQUEST_CPU: |
-                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
-                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_USED_CPU_AVG: |
-                sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m]) *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
-              EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
-                sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""} *
-                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_APP_REQUESTS: "sum(rate((\n  envoy_cluster_upstream_rq_xx{\n    job=\"serving-envoy\",\n    project=~\"{{ \"{{\" }}.Project{{ \"}}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{\
+                \ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, envoy_response_code_class)\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P50: "histogram_quantile(0.5, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P90: "histogram_quantile(0.90, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_RESPONSE_TIME_P95: "histogram_quantile(0.95, sum(rate((\n  envoy_cluster_upstream_rq_time_bucket{\n    job=\"serving-envoy\",\n    project=~\"${{ \"{{\" }}.Project{{ \"\
+                }}\" }}\",\n    domain=~\"{{ \"{{\" }}.Domain{{ \"}}\" }}\",\n    name=~\"{{ \"{{\" }}.AppName{{ \"}}\" }}\",\n    name!=\"\"}\n)[5m:])) by (project, domain, name, le))\n"
+              EXECUTION_METRIC_APP_REPLICA_COUNT: 'sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
+
+                '
+              EXECUTION_METRIC_ALLOCATED_CPU_AVG: "max by (namespace, pod) (\n  (\n    sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"\
+                {{ \"{{\" }}.PodName{{ \"}}\" }}\",image!=\"\"}[5m])) >\n    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\"\
+                \ }}.PodName{{ \"}}\" }}\",resource=\"cpu\"})\n  )\n  or\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\"\
+                \ }}.PodName{{ \"}}\" }}\",resource=\"cpu\"})\n) *\non (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"\
+                {{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "max by (namespace, pod) (\n  (\n    sum by (namespace, pod) (container_memory_working_set_bytes{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\"\
+                ,pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",image!=\"\"}) >\n    sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"\
+                {{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"})\n  )\n  or\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{\
+                \ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"})\n) *\non (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\"\
+                ,pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_CPU_UTILIZATION: "(sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                ,image!=\"\"}[5m])) /\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"\
+                cpu\"})) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"\
+                Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: "(sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                }) /\n  sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"} + DCGM_FI_DEV_FB_FREE{namespace=\"{{\
+                \ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"})) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\"\
+                \ }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: 'sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1)) / 100.0
+
+                '
+              EXECUTION_METRIC_GPU_UTILIZATION: 'sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1)) / 100.0
+
+                '
+              EXECUTION_METRIC_GPU_SM_ACTIVE: 'sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_GPU_SM_OCCUPANCY: 'sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_LIMIT_CPU: 'sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_LIMIT_MEMORY_BYTES: 'sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_MEMORY_UTILIZATION: "(sum by (namespace, pod) (container_memory_working_set_bytes{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\"\
+                ,image!=\"\"}) /\n  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",resource=\"memory\"\
+                })) *\non (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace=\"{{ \"{{\" }}.Namespace{{ \"}}\" }}\",pod=~\"{{ \"{{\" }}.PodName{{ \"}}\" }}\",phase=~\"\
+                Pending|Running\"} == 1)\n"
+              EXECUTION_METRIC_REQUEST_CPU: 'sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_REQUEST_MEMORY_BYTES: 'sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_USED_CPU_AVG: 'sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
+              EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: 'sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}
+                *
+
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} ==
+                1))
+
+                '
           agentQuery:
             mappings:
               dgx_job:
                 queries:
-                  EXECUTION_METRIC_ALLOCATED_CPU_AVG: "CPU_ALLOCATION:MEAN"
-                  EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "MEM_ALLOCATION:MEAN"
-                  EXECUTION_METRIC_CPU_UTILIZATION: "CPU_UTILIZATION:MEAN"
-                  EXECUTION_METRIC_MEMORY_UTILIZATION: "MEM_UTILIZATION:MEAN"
-                  EXECUTION_METRIC_GPU_UTILIZATION: "GPU_UTILIZATION:MEAN"
+                  EXECUTION_METRIC_ALLOCATED_CPU_AVG: CPU_ALLOCATION:MEAN
+                  EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: MEM_ALLOCATION:MEAN
+                  EXECUTION_METRIC_CPU_UTILIZATION: CPU_UTILIZATION:MEAN
+                  EXECUTION_METRIC_MEMORY_UTILIZATION: MEM_UTILIZATION:MEAN
+                  EXECUTION_METRIC_GPU_UTILIZATION: GPU_UTILIZATION:MEAN
     resources:
       limits:
         cpu: 3
@@ -1174,117 +829,99 @@ services:
       requests:
         cpu: 500m
         memory: 250Mi
-
   run-scheduler:
-    fullnameOverride: "run-scheduler"
+    fullnameOverride: run-scheduler
     args:
-      - cloudpropeller
-      - scheduler
-      - start
-      - --config
-      - "/etc/config/*.yaml"
+    - cloudpropeller
+    - scheduler
+    - start
+    - --config
+    - /etc/config/*.yaml
     initContainers:
-      - name: migrate
-        args:
-          - cloudpropeller
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
+    - name: migrate
+      args:
+      - cloudpropeller
+      - migrate
+      - --config
+      - /etc/config/*.yaml
     configMap:
       sharedService:
         metrics:
-          scope: "run-scheduler:"
+          scope: 'run-scheduler:'
       db:
         debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
-        host:  '{{ .Values.global.DB_HOST }}'
-        username:  '{{ .Values.global.DB_USER }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        username: '{{ .Values.global.DB_USER }}'
         passwordPath: /etc/db/pass.txt
         port: 5432
         connectionPool:
           maxIdleConnections: 20
           maxOpenConnections: 20
           maxConnectionLifetime: 1m
-
   queue:
-    fullnameOverride: "queue"
-
-    # Queue service must only run a single replica.
+    fullnameOverride: queue
     replicaCount: 1
     autoscaling:
       enabled: false
-
     args:
-      - queue
-      - serve
-      - '--config'
-      - /etc/config/*.yaml
+    - queue
+    - serve
+    - --config
+    - /etc/config/*.yaml
     initContainers:
-      - name: migrate
-        args:
-          - queue
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
+    - name: migrate
+      args:
+      - queue
+      - migrate
+      - --config
+      - /etc/config/*.yaml
     configMap:
       sharedService:
         metrics:
-          scope: "queue:"
+          scope: 'queue:'
       queue:
         db:
           hosts:
-            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          - '{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local'
           threadCount: 64
           type: cql
         eventer:
           recordActionThreadCount: 16
           type: runservice
           updateActionStatusThreadCount: 16
-
-
-# Union console configuration.
 console:
   replicaCount: 1
-
   image:
-    repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/unionconsole"
+    repository: '{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/unionconsole'
     pullPolicy: IfNotPresent
-    tag: "{{ .Chart.AppVersion }}"
-
-  nameOverride: ""
-  # More readable resource names.
-  fullnameOverride: "unionconsole"
-
+    tag: '{{ .Chart.AppVersion }}'
+  nameOverride: ''
+  fullnameOverride: unionconsole
   serviceAccount:
     create: true
     annotations: {}
-    name: ""
-
+    name: ''
   podAnnotations:
     kubectl.kubernetes.io/default-container: unionconsole
-
   podLabels: {}
-
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1000
     fsGroupChangePolicy: OnRootMismatch
     seLinuxOptions:
       type: spc_t
-
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
       drop:
       - ALL
-
   service:
     type: ClusterIP
     port: 80
     targetPort: 8080
     metricsPort: 8081
     annotations: {}
-
   resources:
     limits:
       cpu: 500m
@@ -1292,103 +929,32 @@ console:
     requests:
       cpu: 250m
       memory: 250Mi
-
-  # Environment variables
   env:
-    - name: UNION_ORG_OVERRIDE
-      value: '{{ .Values.global.UNION_ORG }}'
-
-  # Additional environment variables from ConfigMap
+  - name: UNION_ORG_OVERRIDE
+    value: '{{ .Values.global.UNION_ORG }}'
   envFrom: []
-
   telemetry:
-    # Set to false to disable external telemetry calls (Grafana Faro).
-    # Useful for egress-restricted selfhosted/selfmanaged deployments.
     externalEnabled: true
-
   nodeSelector: {}
-
   tolerations: []
-
   affinity: {}
-
   strategy:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
       maxUnavailable: 1
-
 flyte:
-  # Enable scheduler auth secret mount so flyte-secret-auth is mounted at /etc/secrets/.
-  # Set clientSecret: "placeholder" so the subchart renders the secret — it must be
-  # overwritten externally (e.g. via ExternalSecrets from Secrets Manager).
-  secrets:
-    adminOauthClientCredentials:
-      enabled: true
-      clientSecret: "placeholder"
-
-  # Database configuration (references globals)
-  dbHost: '{{ .Values.global.DB_HOST }}'
-  dbName: '{{ .Values.global.DB_NAME }}'
-  dbUser: '{{ .Values.global.DB_USER }}'
-
-  # Storage configuration (references globals)
-  bucketName: '{{ .Values.global.BUCKET_NAME }}'
-  region: ""  # Cloud-specific: set in overlay
-
   flyteadmin:
-    # -- Set the image used for flyteadmin
-    image:
-      # flyte-core subchart doesn't render templates, must use hardcoded repository.
-      repository: "registry.unionai.cloud/controlplane/services"
-      pullPolicy: IfNotPresent
-      tag:  ""
-
-    # Replica count to be used as long as autoscaling is disabled
+    enabled: false
     replicaCount: 1
-
-    # Autoscaling configuration for flyteadmin
-    autoscaling:
-       # Enable autoscaling for flyteadmin
-      enabled: true
-
-    strategy:
-      type: RollingUpdate
-      rollingUpdate:
-        maxSurge: 1
-        maxUnavailable: 1
-
-    serviceAccount:
-      # Cloud-specific IAM annotations (set in cloud overlay):
-      # AWS IRSA: eks.amazonaws.com/role-arn
-      # GCP Workload Identity: iam.gke.io/gcp-service-account
-      annotations: {}
-      imagePullSecrets:
-        - name: union-registry-secret
-    podAnnotations:
-      kubectl.kubernetes.io/default-container: flyteadmin
-    initialProjects:
-      - union-health-monitoring
-      - flytesnacks
-    readinessProbe: |-
-      httpGet:
-        path: /healthcheck
-        port: 8088
-      initialDelaySeconds: 15
-      timeoutSeconds: 1
-      periodSeconds: 10
-      successThreshold: 1
-      failureThreshold: 3
-
-    livenessProbe: |-
-      httpGet:
-        path: /healthcheck
-        port: 8088
-      initialDelaySeconds: 20
-      timeoutSeconds: 1
-      periodSeconds: 5
-      successThreshold: 1
-      failureThreshold: 3
+    image:
+      repository: registry.unionai.cloud/controlplane/services
+      tag: ''
+      pullPolicy: IfNotPresent
+    env: []
+    envFrom: []
+    readinessProbe: "httpGet:\n  path: /healthcheck\n  port: 8088\ninitialDelaySeconds: 15\ntimeoutSeconds: 1\nperiodSeconds: 10\nsuccessThreshold: 1\nfailureThreshold: 3"
+    livenessProbe: "httpGet:\n  path: /healthcheck\n  port: 8088\ninitialDelaySeconds: 20\ntimeoutSeconds: 1\nperiodSeconds: 5\nsuccessThreshold: 1\nfailureThreshold: 3"
     resources:
       limits:
         cpu: 2
@@ -1398,126 +964,629 @@ flyte:
         cpu: 50m
         ephemeral-storage: 200Mi
         memory: 500Mi
-    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
-    # can read client_secret from union/client_secret. The flyte-core subchart does not
-    # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
-    # -- Mounts flyte-admin-private-config ConfigMap for Union-specific flyteadmin config
-    # (private.yaml) that isn't supported by the upstream flyte-core chart.
-    additionalVolumes:
-      - name: union-secrets
-        secret:
-          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
-      - name: private-config
-        configMap:
-          name: flyte-admin-private-config
-    # Override configPath to include both config directories
-    configPath: /etc/flyte/*/*.yaml
-    additionalVolumeMounts:
-      - name: union-secrets
-        mountPath: /etc/secrets/union
-        readOnly: true
-      - name: private-config
-        mountPath: /etc/flyte/private
-        readOnly: true
-  flytescheduler:
-    image:
-      repository: "registry.unionai.cloud/controlplane/services"
-      pullPolicy: IfNotPresent
-      tag:  ""
-    serviceAccount:
-      imagePullSecrets:
-        - name: union-registry-secret
-
-  workflow_scheduler:
-    enabled: false
-    type: native
-
-  datacatalog:
-    # Enable datacatalog service
-    enabled: false
-    replicaCount: 1
-    image:
-      repository: "registry.unionai.cloud/controlplane/datacatalog" # -- Set the repository for the public datacatalog image"
-      tag: "" # -- Set the tag for the public datacatalog image
-      pullPolicy: "IfNotPresent" # -- Set the pull policy for the datacatalog image
-
-    autoscaling:
-       # -- Enable autoscaling for datacatalog
-      enabled: true
-
     strategy:
       type: RollingUpdate
       rollingUpdate:
         maxSurge: 1
         maxUnavailable: 1
-
-    resources:
-      limits:
-        cpu: 1
-        ephemeral-storage: 500Mi
-        memory: 1Gi
-      requests:
-        cpu: 10m
-        ephemeral-storage: 50Mi
-        memory: 50Mi
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 10
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
+    configPath: /etc/flyte/*/*.yaml
+    initialProjects:
+    - union-health-monitoring
+    - flytesnacks
+    service:
+      appProtocols:
+        enabled: false
+      annotations: {}
+      type: ClusterIP
+      loadBalancerSourceRanges: []
+      additionalPorts: []
     serviceAccount:
+      create: true
+      alwaysCreate: false
       annotations: {}
       imagePullSecrets:
-        - name: union-registry-secret
-    service:
-      type: ClusterIP
-  flytepropeller:
-    enabled: false
+      - name: union-registry-secret
+      createClusterRole: null
+      rbac: true
+      rbacScope: cluster
+      clusterRole: null
+      rbacRules:
+        apiGroups:
+        - ''
+        - flyte.lyft.com
+        - rbac.authorization.k8s.io
+        resources:
+        - configmaps
+        - flyteworkflows
+        - namespaces
+        - pods
+        - resourcequotas
+        - roles
+        - rolebindings
+        - secrets
+        - services
+        - serviceaccounts
+        - spark-role
+        - limitranges
+        verbs:
+        - '*'
+    annotations: {}
+    podAnnotations:
+      kubectl.kubernetes.io/default-container: flyteadmin
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    secrets: {}
+    additionalVolumes:
+    - name: union-secrets
+      secret:
+        secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    - name: private-config
+      configMap:
+        name: flyte-admin-private-config
+    additionalVolumeMounts:
+    - name: union-secrets
+      mountPath: /etc/secrets/union
+      readOnly: true
+    - name: private-config
+      mountPath: /etc/flyte/private
+      readOnly: true
+    additionalContainers: []
+    extraArgs: {}
+    priorityClassName: ''
+    securityContext:
+      runAsNonRoot: true
+      fsGroup: 65534
+      runAsUser: 1001
+      fsGroupChangePolicy: Always
+      seLinuxOptions:
+        type: spc_t
+    serviceMonitor:
+      enabled: false
+      interval: 60s
+      scrapeTimeout: 30s
+      labels: {}
   flyteconsole:
-    enabled: true
-    podEnv: {}
+    enabled: false
     replicaCount: 1
     image:
-      repository: "registry.unionai.cloud/controlplane/flyteconsole" # -- Set the repository for the console image"
-      tag: "" # -- Set the tag for the console image
-    imagePullSecrets:
-      - name: union-registry-secret
+      repository: registry.unionai.cloud/controlplane/flyteconsole
+      tag: ''
+      pullPolicy: IfNotPresent
     resources:
-      # flyteconsole service has less memory footprint but cpu goes up depends on traffic, If CPU use is high then we will use HPA
       limits:
         cpu: 250m
         memory: 250Mi
-        ephemeral-storage: 200Mi # Pre-liminary limit to avoid runaway disk usage
+        ephemeral-storage: 200Mi
       requests:
         cpu: 10m
         memory: 50Mi
         ephemeral-storage: 20Mi
-    serviceAccount:
-      create: true
+    strategy: {}
+    service:
+      appProtocols:
+        enabled: false
+      annotations:
+        service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: '600'
+        external-dns.alpha.kubernetes.io/hostname: flyte.example.com
+      type: ClusterIP
+    annotations: {}
     podAnnotations:
       linkerd.io/inject: disabled
-      prometheus.io/scrape: "false"
+      prometheus.io/scrape: 'false'
+    podEnv: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
     ga:
       enabled: true
-      tracking_id: ""
-    service:
-      annotations:
-        service.beta.kubernetes.io/aws-load-balancer-connection-idle-timeout: "600"
-        external-dns.alpha.kubernetes.io/hostname: "flyte.example.com"
-      type: ClusterIP
+      tracking_id: ''
+    priorityClassName: ''
+    imagePullSecrets:
+    - name: union-registry-secret
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      fsGroupChangePolicy: OnRootMismatch
+      seLinuxOptions:
+        type: spc_t
     serviceMonitor:
       enabled: false
-  webhook:
+      interval: 60s
+      scrapeTimeout: 30s
+      labels: {}
+    livenessProbe: {}
+    readinessProbe: {}
+    serviceAccount:
+      create: true
+  secrets:
+    adminOauthClientCredentials:
+      enabled: false
+      clientSecret: placeholder
+      clientId: flytepropeller
+      secretName: flyte-secret-auth
+  common:
+    databaseSecret:
+      name: union-controlplane-secrets
+      secretManifest: {}
+    ingress:
+      ingressClassName: null
+      enabled: false
+      webpackHMR: false
+      separateGrpcIngress: false
+      separateGrpcIngressAnnotations:
+        nginx.ingress.kubernetes.io/backend-protocol: GRPC
+      annotations:
+        nginx.ingress.kubernetes.io/app-root: /console
+        nginx.ingress.kubernetes.io/service-upstream: 'true'
+      albSSLRedirect: false
+      tls:
+        enabled: false
+    flyteNamespaceTemplate:
+      enabled: false
+  storage:
+    secretName: ''
+    type: ''
+    bucketName: '{{ .Values.global.BUCKET_NAME }}'
+    s3:
+      endpoint: ''
+      region: ''
+      authType: iam
+      accessKey: ''
+      secretKey: ''
+    gcs: {}
+    custom: {}
+    enableMultiContainer: false
+    limits:
+      maxDownloadMBs: 10
+    cache:
+      maxSizeMBs: 1024
+      targetGCPercent: 70
+  db:
+    datacatalog:
+      database:
+        port: 5432
+        username: '{{ .Values.global.DB_USER }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        dbname: datacatalog
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 20
+        connMaxLifeTime: 120s
+    admin:
+      database:
+        port: 5432
+        username: '{{ .Values.global.DB_USER }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        dbname: flyteadmin
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 80
+        connMaxLifeTime: 120s
+    checks: false
+    cacheservice:
+      database:
+        port: 5432
+        username: '{{ .Values.global.DB_USER }}'
+        host: '{{ .Values.global.DB_HOST }}'
+        dbname: cacheservice
+        passwordPath: /etc/db/pass.txt
+        maxIdleConnections: 10
+        maxOpenConnections: 20
+        connMaxLifeTime: 120s
+  configmap:
+    clusters:
+      labelClusterMap: {}
+      clusterConfigs: []
+    console:
+      BASE_URL: /console
+      CONFIG_DIR: /etc/flyte/config
+    domain:
+      domains:
+      - id: development
+        name: development
+      - id: staging
+        name: staging
+      - id: production
+        name: production
+    otel:
+      otel:
+        type: noop
+        file:
+          filename: /tmp/trace.txt
+        jaeger:
+          endpoint: http://localhost:14268/api/traces
+        otlpgrpc:
+          endpoint: http://localhost:4317
+        otlphttp:
+          endpoint: http://localhost:4318/v1/traces
+        sampler:
+          parentSampler: always
+    schedulerConfig:
+      scheduler:
+        metricsScope: 'flyte:'
+        profilerPort: 10254
+    adminServer:
+      server:
+        httpPort: 8088
+        grpc:
+          port: 8089
+        security:
+          secure: false
+          useAuth: true
+          allowCors: true
+          allowedOrigins:
+          - '*'
+          allowedHeaders:
+          - Content-Type
+          - flyte-authorization
+      flyteadmin:
+        roleNameKey: iam.amazonaws.com/role
+        profilerPort: 10254
+        metricsScope: 'flyte:'
+        metadataStoragePrefix:
+        - metadata
+        - admin
+        eventVersion: 2
+        testing: null
+        metricsKeys:
+        - phase
+        useOffloadedInputs: true
+        useOffloadedWorkflowClosure: true
+      auth:
+        authorizedUris:
+        - http://flyteadmin:80
+        - http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80
+        - https://{{ .Values.global.UNION_HOST }}
+        appAuth:
+          thirdPartyConfig:
+            flyteClient:
+              clientId: ''
+              redirectUri: http://localhost:53593/callback
+              scopes:
+              - all
+              audience: ''
+          authServerType: External
+          externalAuthServer:
+            baseUrl: ''
+            metadataUrl: .well-known/oauth-authorization-server
+            allowedAudience:
+            - https://{{ .Values.global.UNION_HOST }}
+        userAuth:
+          openId:
+            baseUrl: ''
+            scopes:
+            - profile
+            - openid
+            - offline_access
+            clientId: ''
+          cookieSetting:
+            sameSitePolicy: LaxMode
+            domain: ''
+          idpQueryParameter: idp
+        httpAuthorizationHeader: flyte-authorization
+        grpcAuthorizationHeader: flyte-authorization
+      admin:
+        endpoint: dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+        insecure: true
+        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+        clientSecretLocation: /etc/secrets/client_secret
+      authorizer:
+        type: Authorizer
+        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
+        authorizerClient:
+          grpcConfig:
+            host: dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80
+            insecure: true
+          forwardHeaders:
+          - authorization
+          - flyte-authorization
+          - x-user-token
+      cloudEvents:
+        enable: false
+      connection:
+        environment: staging
+        region: ''
+        rootTenantURLPattern: dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+      otel:
+        type: noop
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+          populateUserFields: false
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      sharedService:
+        connectPort: 8089
+        httpPort: 8088
+        port: 8089
+        security:
+          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
+        selfServeConfig:
+          legacyHosts:
+          - '{{ .Values.global.UNION_ORG }}'
+    datacatalogServer:
+      datacatalog:
+        storage-prefix: metadata/datacatalog
+        metrics-scope: flyte
+        profiler-port: 10254
+        heartbeat-grace-period-multiplier: 3
+        max-reservation-heartbeat: 30s
+      application:
+        grpcPort: 8089
+        httpPort: 8080
+        grpcServerReflection: true
+        grpcMaxRecvMsgSizeMBs: 6
+    task_resource_defaults:
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 2
+          memory: 1Gi
+          gpu: 1
+    admin:
+      event:
+        type: admin
+        rate: 500
+        capacity: 1000
+      admin:
+        endpoint: flyteadmin:81
+        insecure: true
+        clientId: '{{ .Values.secrets.adminOauthClientCredentials.clientId }}'
+        clientSecretLocation: /etc/secrets/client_secret
+      endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
+      insecure: true
+      clientId: null
+      clientSecretLocation: null
+    catalog:
+      catalog-cache:
+        endpoint: datacatalog:89
+        type: datacatalog
+        insecure: true
+    copilot:
+      plugins:
+        k8s:
+          co-pilot:
+            name: flyte-copilot-
+            image: cr.flyte.org/flyteorg/flytecopilot-release:v1.16.1
+            start-timeout: 30s
+    core:
+      manager:
+        pod-application: flytepropeller
+        pod-template-container-name: flytepropeller
+        pod-template-name: flytepropeller-template
+      propeller:
+        rawoutput-prefix: s3://{{ .Values.storage.bucketName }}/
+        metadata-prefix: metadata/propeller
+        workers: 4
+        max-workflow-retries: 30
+        workflow-reeval-duration: 30s
+        downstream-eval-duration: 30s
+        limit-namespace: all
+        prof-port: 10254
+        metrics-prefix: flyte
+        enable-admin-launcher: true
+        leader-election:
+          lock-config-map:
+            name: propeller-leader
+            namespace: flyte
+          enabled: true
+          lease-duration: 15s
+          renew-deadline: 10s
+          retry-period: 2s
+        queue:
+          type: batch
+          batching-interval: 2s
+          batch-size: -1
+          queue:
+            type: maxof
+            rate: 100
+            capacity: 1000
+            base-delay: 5s
+            max-delay: 120s
+          sub-queue:
+            type: bucket
+            rate: 10
+            capacity: 100
+        literal-offloading-config:
+          enabled: false
+      webhook:
+        certDir: /etc/webhook/certs
+        serviceName: flyte-pod-webhook
+    enabled_plugins:
+      tasks:
+        task-plugins:
+          enabled-plugins:
+          - container
+          - sidecar
+          - k8s-array
+          - connector-service
+          - echo
+          default-for-task-types:
+            container: container
+            sidecar: sidecar
+            container_array: k8s-array
+    k8s:
+      plugins:
+        k8s:
+          default-env-vars: []
+          default-cpus: 100m
+          default-memory: 100Mi
+    remoteData:
+      remoteData:
+        region: us-east-1
+        scheme: local
+        signedUrls:
+          durationMinutes: 3
+    resource_manager:
+      propeller:
+        resourcemanager:
+          type: noop
+    task_logs:
+      plugins:
+        logs:
+          kubernetes-enabled: false
+          cloudwatch-enabled: false
+    cacheserviceServer:
+      union:
+        internalConnectionConfig:
+          enabled: true
+          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
+      authorizer:
+        type: Authorizer
+        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
+        authorizerClient:
+          grpcConfig:
+            host: dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80
+            insecure: true
+          forwardHeaders:
+          - authorization
+          - flyte-authorization
+          - x-user-token
+      cacheservice:
+        storage-prefix: cached_outputs
+        metrics-scope: flyte
+        profiler-port: 10254
+        heartbeat-grace-period-multiplier: 3
+        max-reservation-heartbeat: 30s
+      cache-server:
+        grpcPort: 8089
+        httpPort: 8080
+        grpcServerReflection: true
+      otel:
+        type: noop
+      private:
+        app:
+          cacheProviderConfig:
+            kind: bypass
+    sharedService:
+      connectPort: 8089
+      httpPort: 8088
+      port: 8089
+  workflow_scheduler:
     enabled: false
+    config: {}
+    type: native
+  workflow_notifications:
+    enabled: false
+    config: {}
+  external_events:
+    enable: false
+    type: aws
+    aws:
+      region: us-east-2
+    eventsPublisher:
+      topicName: arn:aws:sns:us-east-2:123456:123-my-topic
+      eventTypes:
+      - all
+  cloud_events:
+    enable: false
+    eventsPublisher:
+      topicName: arn:aws:sns:us-east-2:123456:123-my-topic
+      eventTypes:
+      - all
+    type: aws
+    aws:
+      region: us-east-2
+    gcp:
+      region: us-east1
+    kafka:
+      version: 3.7.0
+      brokers:
+      - mybroker:443
+      saslConfig:
+        enabled: false
+        user: kafka
+        password: ''
+        passwordPath: ''
+        handshake: true
+        mechanism: PLAIN
+      tlsConfig:
+        enabled: false
+        certPath: /etc/ssl/certs/kafka-client.crt
+        keyPath: /etc/ssl/certs/kafka-client.key
   cluster_resource_manager:
     enabled: false
+    standaloneDeployment: false
+    service_account_name: flyteadmin
+    annotations: {}
+    podAnnotations: {}
+    podEnv: {}
+    podLabels: {}
+    nodeSelector: {}
+    resources: {}
+    strategy: {}
+    config:
+      cluster_resources:
+        refreshInterval: 5m
+        templatePath: /etc/flyte/clusterresource/templates
+        standaloneDeployment: false
+        customData:
+        - production:
+          - projectQuotaCpu:
+              value: '5'
+          - projectQuotaMemory:
+              value: 4000Mi
+        - staging:
+          - projectQuotaCpu:
+              value: '2'
+          - projectQuotaMemory:
+              value: 3000Mi
+        - development:
+          - projectQuotaCpu:
+              value: '4'
+          - projectQuotaMemory:
+              value: 3000Mi
+    prometheus:
+      enabled: false
+      port: 10254
+    templates:
+    - key: aa_namespace
+      value: "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {{ namespace }}\nspec:\n  finalizers:\n  - kubernetes\n"
+    - key: ab_project_resource_quota
+      value: "apiVersion: v1\nkind: ResourceQuota\nmetadata:\n  name: project-quota\n  namespace: {{ namespace }}\nspec:\n  hard:\n    limits.cpu: {{ projectQuotaCpu }}\n    limits.memory: {{ projectQuotaMemory\
+        \ }}\n"
+  dbHost: '{{ .Values.global.DB_HOST }}'
+  dbName: '{{ .Values.global.DB_NAME }}'
+  dbUser: '{{ .Values.global.DB_USER }}'
+  bucketName: '{{ .Values.global.BUCKET_NAME }}'
+  region: ''
   cacheservice:
     enabled: true
     replicaCount: 1
     image:
-      repository: "registry.unionai.cloud/controlplane/services" # -- Set the repository for the private cacheservice image"
-      tag: "" # -- Set the tag for the private cacheservice datacatalog image
-      pullPolicy: "IfNotPresent" # -- Set the pull policy for the private cacheservice  image
+      repository: registry.unionai.cloud/controlplane/services
+      tag: ''
+      pullPolicy: IfNotPresent
     serviceAccount:
       create: true
       annotations: {}
       imagePullSecrets:
-        - name: union-registry-secret
+      - name: union-registry-secret
     resources:
       limits:
         cpu: 1
@@ -1530,560 +1599,232 @@ flyte:
     affinity:
       podAntiAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: cacheservice
-            topologyKey: kubernetes.io/hostname
-
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: cacheservice
+          topologyKey: kubernetes.io/hostname
     service:
-      annotations: { }
+      annotations: {}
       type: ClusterIP
-    # -- Annotations for Cacheservice pods
-    podAnnotations: { }
-    # -- Additional Cacheservice container environment variables
-    podEnv: { }
-    # -- Labels for Cacheservice pods
-    podLabels: { }
-    # -- nodeSelector for Cacheservice deployment
-    nodeSelector: { }
-    # -- tolerations for Cacheservice deployment
-    tolerations: [ ]
-    # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
-    # can read client_secret from union/client_secret. The flyte-core subchart does not
-    # include this mount by default.
+    podAnnotations: {}
+    podEnv: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
     additionalVolumes:
-      - name: union-secrets
-        secret:
-          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+    - name: union-secrets
+      secret:
+        secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
     additionalVolumeMounts:
-      - name: union-secrets
-        mountPath: /etc/secrets/union
-        readOnly: true
-    # -- Appends additional containers to the deployment spec. May include template values.
-    additionalContainers: [ ]
-    # -- Appends extra command line arguments to the main command
-    extraArgs: { }
-    # -- Sets priorityClassName for cacheservice pod(s).
-    priorityClassName: ""
-    # -- Sets securityContext for cacheservice pod(s).
+    - name: union-secrets
+      mountPath: /etc/secrets/union
+      readOnly: true
+    additionalContainers: []
+    extraArgs: {}
+    priorityClassName: ''
     securityContext:
       runAsNonRoot: true
       fsGroup: 1001
       runAsUser: 1001
-      fsGroupChangePolicy: "OnRootMismatch"
+      fsGroupChangePolicy: OnRootMismatch
       seLinuxOptions:
         type: spc_t
-  common:
-    databaseSecret:
-      # -- Specify name of K8s Secret which contains Database password. Leave it empty if you don't need this Secret
-      # flyte-org/flyte flyte-core helm chart _helpers.tpl does not render templates.
-      # Therefore we have to explicitly set the value here.
-      # Ref: https://github.com/flyteorg/flyte/pull/6711
-      # TODO (DIRECTLY CONFIGURE): Match value to global.KUBERNETES_SECRET_NAME
-      name: "union-controlplane-secrets"
-      # -- Leave it empty if your secret already exists
-      secretManifest: {}
-
-        # Else you can create your own secret object. You can use Kubernetes secrets, else you can configure external secrets
-        # For external secrets please install Necessary dependencies, like, of your choice
-        # - https://github.com/hashicorp/vault
-        # - https://github.com/godaddy/kubernetes-external-secrets
-        # apiVersion: v1
-        # kind: Secret
-        # metadata:
-        #   name: db-pass
-        # type: Opaque
-        # stringData:
-        #   # -- If using plain text you can provide the password here
-        #   pass.txt: '{{ .Values.dbPass }}'
-    ingress:
-      # Disables flyte subchart ingresses.
-      enabled: false
-
-  storage:
-    # -- Sets the storage type. Supported values are sandbox, s3, gcs and custom.
-    # Cloud-specific: set in overlay (AWS: s3, GCP: gcs)
-    type: ""
-    # -- bucketName defines the storage bucket flyte will use. Required for all types except for sandbox.
-    bucketName: '{{ .Values.global.BUCKET_NAME }}'
-    cache:
-      maxSizeMBs: 1024
-  db:
-    checks: false
-    datacatalog:
-      database:
-        port: 5432
-        # -- Create a user called flyteadmin
-        username: "{{ .Values.global.DB_USER }}"
-        host: "{{ .Values.global.DB_HOST }}"
-        # -- Use a specific DB name for datacatalog
-        dbname: datacatalog
-        passwordPath: /etc/db/pass.txt
-        maxIdleConnections: 10
-        maxOpenConnections: 20
-        connMaxLifeTime: 120s
-    admin:
-      database:
-        port: 5432
-        # -- Create a user called flyteadmin
-        username: "{{ .Values.global.DB_USER }}"
-        host: "{{ .Values.global.DB_HOST }}"
-        # -- Use a specific DB name for flyteadmin
-        dbname: flyteadmin
-        passwordPath: /etc/db/pass.txt
-        maxIdleConnections: 10
-        maxOpenConnections: 80
-        connMaxLifeTime: 120s
-    cacheservice:
-      database:
-        port: 5432
-        # -- Create a user called flyteadmin
-        username: "{{ .Values.global.DB_USER }}"
-        host: "{{ .Values.global.DB_HOST }}"
-        # -- Use a specific DB name for cacheservice
-        dbname: cacheservice
-        passwordPath: /etc/db/pass.txt
-        maxIdleConnections: 10
-        maxOpenConnections: 20
-        connMaxLifeTime: 120s
-  configmap:
-    # --- Namespace Mapping (flyteadmin) ---
-    # Controls how flyteadmin maps project-domain pairs to Kubernetes namespaces.
-    # MUST match the dataplane's namespace_mapping value.
-    # Default (if unset): "{{ project }}-{{ domain }}"
-    #
-    # namespace_config:
-    #   namespace_mapping:
-    #     template: "{{ project }}-{{ domain }}"
-
-    adminServer:
-      server:
-        security:
-          useAuth: true
-
-      # --- OIDC Authentication Configuration ---
-      # Configure your identity provider below. Set values directly or via
-      # your values overlay. For Union-managed deployments, the authn Terraform
-      # module generates this block automatically.
-      #
-      # Supported IdPs: Okta, Entra ID (Azure AD), Keycloak, Authentik.
-      # See unionai-docs for provider-specific setup guides.
-      auth:
-        httpAuthorizationHeader: "flyte-authorization"
-        grpcAuthorizationHeader: "flyte-authorization"
-        # Hosts flyteadmin trusts for OAuth redirect URL construction. When a
-        # request arrives, flyteadmin matches the Host header against this
-        # list to build `redirect_uri`; unmatched hosts fall back to the
-        # internal service URL and the IdP will reject the resulting
-        # /authorize request. Must include every public hostname listed in
-        # `ingress.host` and `ingress.extraHosts`.
-        authorizedUris:
-          - "http://flyteadmin:80"
-          - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
-          - 'https://{{ .Values.global.UNION_HOST }}'
-          # - 'https://<each ingress.extraHosts entry>'
-
-        appAuth:
-          authServerType: "External"
-          externalAuthServer:
-            # --- OIDC Issuer ---
-            # Okta example: "https://dev-123456.okta.com/oauth2/default"
-            # Entra ID example: "https://login.microsoftonline.com/{tenant-id}/v2.0"
-            baseUrl: ""
-            # Metadata discovery endpoint (relative to baseUrl).
-            # Okta: ".well-known/oauth-authorization-server" (default)
-            # Entra ID: ".well-known/openid-configuration"
-            metadataUrl: ".well-known/oauth-authorization-server"
-            # Allowed JWT audiences for access token validation.
-            # Default: ["https://{UNION_HOST}"].
-            # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
-            # Must include every public hostname listed in `ingress.host` and
-            # `ingress.extraHosts` (each as `https://<host>`), or tokens issued
-            # for an extra host's audience will be rejected.
-            allowedAudience:
-              - 'https://{{ .Values.global.UNION_HOST }}'
-              # - 'https://<each ingress.extraHosts entry>'
-
-          # --- Subject claim resolution (FAB-205) ---
-          # Ordered list of JWT claims to try for caller identity.
-          # Only needed for IdPs where client_credentials tokens omit "sub".
-          # Default: uses standard "sub" claim.
-          # Override in values overlay if your IdP requires fallback claims.
-
-          # --- Identity type claim mapping ---
-          # Maps IdP-specific claims to internal identitytype.
-          # Okta: not needed (identitytype claim is native)
-          # Entra ID example (set in values overlay):
-          #   identityTypeClaimsForApps:
-          #     idtyp: ["app"]
-
-          thirdPartyConfig:
-            flyteClient:
-              # --- CLI/SDK PKCE Client ---
-              # Okta example: "0oa7mno8pqr9stu0v1w2"
-              # Entra ID example: "3df10225-18a5-4636-b1ef-582e5a8ea21c"
-              clientId: ""
-              redirectUri: "http://localhost:53593/callback"
-              # Resource scope for CLI/SDK and task pod authentication.
-              # Okta: ["all"] (default)
-              # Entra ID: ["api://my-app-name/.default"]
-              scopes:
-                - "all"
-              # Audience parameter for authorization requests.
-              # Okta: "" (not needed)
-              # Entra ID: "api://my-app-name"
-              audience: ""
-
-        userAuth:
-          openId:
-            # --- Browser Login ---
-            # Okta example: "0oa1abc2def3ghi4j5k6"
-            # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
-            baseUrl: ""
-            clientId: ""
-            # Browser login scopes.
-            # Okta: ["profile", "openid", "offline_access"] (default)
-            # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
-            scopes:
-              - profile
-              - openid
-              - offline_access
-          cookieSetting:
-            sameSitePolicy: "LaxMode"
-            domain: ""
-          idpQueryParameter: "idp"
-
-      admin:
-        # CP-internal: through controlplane ingress controller for gRPC routing.
-        endpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-        insecure: true
-        clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
-        clientSecretLocation: "/etc/secrets/client_secret"
-      # flyteadmin routes authorization to the in-cluster authorizer service.
-      authorizer:
-        type: "Authorizer"
-        # Set via global.USE_EXTERNAL_IDENTITY in your values overlay.
-        # Cannot cross-reference services.authorizer.configMap here because
-        # this renders inside the flyte subchart scope. (FAB-189)
-        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
-        authorizerClient:
-          grpcConfig:
-            host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
-            insecure: true
-          forwardHeaders:
-            - authorization
-            - flyte-authorization
-            - x-user-token
-      cloudEvents:
-        enable: false
-      connection:
-        environment: "staging"
-        region: ""  # Cloud-specific: set in overlay
-        rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-      flyteadmin:
-        metricsKeys:
-          - phase
-        useOffloadedInputs: true
-        useOffloadedWorkflowClosure: true
-        # See: https://github.com/unionai/flyte/pull/733/files
-        testing: null
-      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
-        type: noop
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
-          # Don't rely on user API to exists
-          populateUserFields: false
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-      sharedService:
-        # Flyteadmin container and service parts hardcoded and should not change.
-        # https://github.com/flyteorg/flyte/blob/v1.16.0-b2/charts/flyte-core/templates/admin/service.yaml
-        connectPort: 8089
-        httpPort: 8088
-        port: 8089
-        security:
-          singleTenantOrgID: '{{ .Values.global.UNION_ORG }}'
-        selfServeConfig:
-          legacyHosts:
-            - '{{ .Values.global.UNION_ORG }}'
-    cacheserviceServer:
-      union:
-        internalConnectionConfig:
-          enabled: true
-          urlPattern: '{{ printf "_SERVICE_.%s.svc.cluster.local:80" .Release.Namespace }}'
-      # cacheservice routes authorization to the in-cluster authorizer service.
-      authorizer:
-        type: "Authorizer"
-        # Set via global.USE_EXTERNAL_IDENTITY in your values overlay. (FAB-189)
-        useExternalIdentity: '{{ default "false" .Values.global.USE_EXTERNAL_IDENTITY }}'
-        authorizerClient:
-          grpcConfig:
-            host: 'dns:///authorizer.{{ .Release.Namespace }}.svc.cluster.local:80'
-            insecure: true
-          forwardHeaders:
-            - authorization
-            - flyte-authorization
-            - x-user-token
-      cacheservice:
-        storage-prefix: cached_outputs
-        metrics-scope: flyte
-        profiler-port: 10254
-        heartbeat-grace-period-multiplier: 3
-        max-reservation-heartbeat: 30s
-      cache-server:
-        grpcPort: 8089
-        httpPort: 8080
-        grpcServerReflection: true
-      otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
-        type: noop
-      private:
-        app:
-          cacheProviderConfig:
-            kind: bypass
-    sharedService:
-      connectPort: 8089
-      httpPort: 8088
-      port: 8089
-    admin:
-      # Hack: Initializing clients triggers a code path in AdminService where it attempt to extract
-      # the org from the host. This constraint breaks in situations where we are using a DNS entry that
-      # does not have atleast one "." in it. The default flyte-core helm chart defaults to access flyteadmin
-      # at "flyteadmin:81". This breaks the Union specific code path. To unblock testing, we are setting
-      # the endpoint to the full DNS entry of the flyteadmin service in the cluster.
-      endpoint: flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:81
-      insecure: true
-      clientId: null
-      clientSecretLocation: null
   cloudEvents:
     enable: false
-  workflow_notifications:
+  datacatalog:
     enabled: false
-
+    replicaCount: 1
+    image:
+      repository: registry.unionai.cloud/controlplane/datacatalog
+      tag: ''
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 1
+        ephemeral-storage: 500Mi
+        memory: 1Gi
+      requests:
+        cpu: 10m
+        ephemeral-storage: 50Mi
+        memory: 50Mi
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 1
+    autoscaling:
+      enabled: true
+      minReplicas: 1
+      maxReplicas: 10
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 80
+      - type: Resource
+        resource:
+          name: memory
+          target:
+            type: Utilization
+            averageUtilization: 80
+    configPath: /etc/datacatalog/config/*.yaml
+    service:
+      annotations: {}
+      type: ClusterIP
+      additionalPorts: []
+    serviceMonitor:
+      enabled: false
+      labels: {}
+      interval: 60s
+      scrapeTimeout: 30s
+    serviceAccount:
+      create: true
+      annotations: {}
+      imagePullSecrets:
+      - name: union-registry-secret
+    annotations: {}
+    podAnnotations: {}
+    podEnv: {}
+    podLabels: {}
+    nodeSelector: {}
+    tolerations: []
+    affinity: {}
+    additionalVolumes: []
+    additionalVolumeMounts: []
+    additionalContainers: []
+    extraArgs: {}
+    priorityClassName: ''
+    securityContext:
+      runAsNonRoot: true
+      fsGroup: 1001
+      runAsUser: 1001
+      fsGroupChangePolicy: OnRootMismatch
+      seLinuxOptions:
+        type: spc_t
 unionv2:
   enabled: false
-
 dataproxy:
   prometheus:
     enabled: false
-
 artifacts:
   enabled: false
-
 objectstore:
   controlPlane:
     enabled: false
-
 ingress-nginx:
   enabled: true
-
-  # Consistent service naming — used by server-alias and intra-cluster routing.
   fullnameOverride: controlplane-nginx
-
   controller:
     service:
-      # ClusterIP for intra-cluster only (no external access).
-      # Override to LoadBalancer in cloud overlay for internet-facing deployments.
       type: ClusterIP
       ports:
         http: 80
         https: 443
-
-    # TLS certificate for all HTTPS connections.
-    # The nginx-ingress subchart does not support Helm templating in extraArgs,
-    # so the TLS secret reference must be set as a literal value in your
-    # environment-specific values overlay.
-    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
     extraArgs: {}
-
     admissionWebhooks:
       enabled: false
       patch:
         enabled: false
-
-    # Snippet annotations are required for gRPC identity header forwarding.
     allowSnippetAnnotations: true
     config:
-      annotations-risk-level: "Critical"
-      grpc-connect-timeout: "1200"
-      grpc-read-timeout: "604800"
-      grpc-send-timeout: "604800"
-      proxy-read-timeout: "3600"
-      proxy-send-timeout: "3600"
-      proxy-connect-timeout: "60"
-
+      annotations-risk-level: Critical
+      grpc-connect-timeout: '1200'
+      grpc-read-timeout: '604800'
+      grpc-send-timeout: '604800'
+      proxy-read-timeout: '3600'
+      proxy-send-timeout: '3600'
+      proxy-connect-timeout: '60'
     metrics:
       enabled: true
       serviceMonitor:
-        enabled: false  # We manage our own ServiceMonitor in templates/monitoring/
-
+        enabled: false
     ingressClassResource:
       enabled: true
       default: false
       name: controlplane
       controllerValue: union.ai/controlplane
-
-# ScyllaDB configuration
-# REQUIRED: ScyllaDB is used exclusively by the queue service for high-performance message queueing
-# Postgres (configured above) is used by all other control plane services
-#
-# When enabled, deploys ScyllaDB Operator and Cluster as the queue service backend
-#
-# IMPORTANT: Before enabling ScyllaDB, you MUST manually install the CRDs:
-#   Run the helper script: ./scripts/install-scylla-crds.sh
-#
-#   Or manually:
-#   helm repo add scylla-operator https://scylla-operator-charts.storage.googleapis.com/stable
-#   tmpdir=$(mktemp -d) \
-#   && helm pull scylla-operator/scylla-operator --version v1.18.1 --untar --untardir "${tmpdir}" \
-#   && kubectl apply --server-side -f "${tmpdir}"/scylla-operator/crds/ \
-#   && rm -rf "${tmpdir}"
-#
-# This is required because Helm does not properly manage CRD lifecycle updates.
-# See: https://operator.docs.scylladb.com/stable/installation/helm.html
 scylla:
   enabled: true
-
-  # ScyllaDB cluster configuration
   fullnameOverride: scylla
-
-  # Storage class configuration — cloud-specific provisioner set in overlay.
-  # AWS: ebs.csi.eks.amazonaws.com, GCP: pd.csi.storage.gke.io
   storageClass:
     create: true
-    name: "scylladb"
-    provisioner: ""  # Set in cloud overlay
-    parameters: {}   # Set in cloud overlay (AWS: type: gp2, GCP: type: pd-standard)
+    name: scylladb
+    provisioner: ''
+    parameters: {}
     reclaimPolicy: Delete
     volumeBindingMode: WaitForFirstConsumer
     allowVolumeExpansion: true
-
-  # Datacenter configuration
   datacenter: dc1
-
-  # Rack configuration
   racks:
-    - name: rack1
-      agentResources:
-        requests:
-          cpu: 50m
-          memory: 10M
-      members: 3
-      storage:
-        capacity: 100Gi
-        storageClassName: "scylladb"  # Reference the storage class created above
-      resources:
-        limits:
-          cpu: 2
-          memory: 4Gi
-        requests:
-          cpu: 1
-          memory: 2Gi
-      # Explicitly disable placement constraints (operator adds defaults otherwise)
-      # For production with dedicated nodes, configure nodeAffinity and tolerations here
-      placement:
-        nodeAffinity: {}
-        tolerations: []
-
-  # ScyllaDB version
+  - name: rack1
+    agentResources:
+      requests:
+        cpu: 50m
+        memory: 10M
+    members: 3
+    storage:
+      capacity: 100Gi
+      storageClassName: scylladb
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+    placement:
+      nodeAffinity: {}
+      tolerations: []
   scyllaImage:
     tag: 2025.1.5
-
-  # Developer mode (disable for production)
   developerMode: true
-
-  # Sysctl properties
   sysctls:
-    - fs.aio-max-nr=30000000
-
-  # Additional ScyllaDB configuration can be added here
-  # See https://operator.docs.scylladb.com/stable/generic for more options
-
-# ScyllaDB Operator configuration
-# The operator manages ScyllaDB clusters in Kubernetes
+  - fs.aio-max-nr=30000000
 scylla-operator:
-
   fullnameOverride: scylla-operator
-
-  # Webhook configuration
   webhook:
-    # Set to false if you don't need admission webhooks
     enabled: true
-
-  # Additional operator configuration
-  # See https://operator.docs.scylladb.com/stable/installation for more options
-
-# NOTE: ScyllaDB Manager is NOT included as a subchart.
-# For backup/repair functionality, install scylla-manager separately.
-# See README.md for installation instructions.
-
-# ----------------------------------------------------------------------------
-# union.authz
-# ----------------------------------------------------------------------------
-# Deploys the union-authz (userclouds-lite) service for RBAC authorization.
-# Automatically activated when services.authorizer.configMap.authorizer.type
-# is set to "UserClouds". No separate enable flag needed.
-# Database settings reference the global controlplane DB by default.
-# Override database.host/name/user/password for a dedicated database.
 union:
   authz:
-    # OAuth2 client ID used by union CP services to authenticate with union-authz.
-    # This is a fixed constant — userclouds-lite bootstraps its own DB on first start
-    # using whatever value is set here, so no external provisioning is required.
-    clientID: "union-authz-client"
-
-    # Service account
+    clientID: union-authz-client
     serviceAccount:
       create: true
-      name: ""
+      name: ''
       annotations: {}
-
-    # Pod security context
     podSecurityContext:
       runAsNonRoot: true
       runAsUser: 1000
       runAsGroup: 1000
       fsGroup: 1000
-
-    # Container security context
     securityContext:
       allowPrivilegeEscalation: false
       capabilities:
         drop:
-          - ALL
+        - ALL
       readOnlyRootFilesystem: true
-
-    # Pod annotations
     podAnnotations: {}
-
-    # Static assets directory for Console SPA
     staticDir: /usr/share/userclouds/static
-
-    # Network policy
     networkPolicy:
       enabled: false
-
     database:
       host: '{{ .Values.global.DB_HOST }}'
       port: 5432
       user: '{{ .Values.global.DB_USER }}'
-      password: "file:///etc/db/pass.txt"
+      password: file:///etc/db/pass.txt
       sslMode: require
       name: userclouds
       mode: normal
-
     command:
-      - userclouds-lite
+    - userclouds-lite
     replicaCount: 3
     service:
       type: ClusterIP
       port: 8080
     resources:
       limits:
-        cpu: "1"
+        cpu: '1'
         memory: 512Mi
       requests:
         cpu: 250m
@@ -2113,54 +1854,50 @@ union:
         maxSurge: 1
         maxUnavailable: 0
     terminationGracePeriodSeconds: 45
-    priorityClassName: ""
+    priorityClassName: ''
     topologySpreadConstraints: []
     nodeSelector: {}
     tolerations: []
     affinity:
       podAntiAffinity:
         requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: union-authz
-            topologyKey: kubernetes.io/hostname
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: union-authz
+          topologyKey: kubernetes.io/hostname
     extraEnv: []
     extraVolumes: []
     extraVolumeMounts: []
-
     auth:
-      issuer: 'http://{{ include "union.authz.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.union.authz.service.port }}'
-      signingKey: "kube://secrets/userclouds-signing-key?key=signing_key"
+      issuer: http://{{ include "union.authz.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.union.authz.service.port }}
+      signingKey: kube://secrets/userclouds-signing-key?key=signing_key
       providers: []
       apps:
-        - id: "union-controlplane"
-          name: "union-controlplane"
-          credentials:
-            - clientId: '{{ .Values.union.authz.clientID }}'
-              clientSecret: 'kube://secrets/{{ .Values.global.KUBERNETES_SECRET_NAME }}?key=client_secret'
-
+      - id: union-controlplane
+        name: union-controlplane
+        credentials:
+        - clientId: '{{ .Values.union.authz.clientID }}'
+          clientSecret: kube://secrets/{{ .Values.global.KUBERNETES_SECRET_NAME }}?key=client_secret
     cache:
       enabled: true
       type: memory
       ttl: 60m
       ttls:
-        objectType: ""
-        object: ""
-        edgeType: ""
-        edge: ""
-        user: ""
+        objectType: ''
+        object: ''
+        edgeType: ''
+        edge: ''
+        user: ''
       redis:
         host: redis
         port: 6379
-        password: ""
+        password: ''
         tls: false
       memory:
         maxEntries: 100000
         shards: 128
         depShards: 128
-
     users: []
-
     metrics:
       enabled: true
       serviceMonitor:
@@ -2170,125 +1907,65 @@ union:
         scrapeTimeout: 10s
         metricRelabelings: []
         relabelings:
-          - sourceLabels: [__metrics_path__]
-            targetLabel: metrics_path
-          - sourceLabels: [__meta_kubernetes_pod_node_name]
-            targetLabel: __host__
-          - action: replace
-            sourceLabels: [__meta_kubernetes_namespace]
-            targetLabel: kubernetes_namespace
-          - action: labelmap
-            regex: __meta_kubernetes_pod_label_(.+)
-          - action: labeldrop
-            regex: (pod_template_generation|operator_agent_grafana_com_name|operator_agent_grafana_com_type|app_kubernetes_io_managed_by|app_kubernetes_io_version|control_plane_component|control_plane_ns|extension|pod_template_hash|workload_ns|helm_sh_chart|inject|instance|pod_template_hash|workload_ns)
-          - action: replace
-            replacement: integrations/unionai/custom
-            targetLabel: job
-
-# This section is for additional objects that can be added to the Helm chart.
+        - sourceLabels:
+          - __metrics_path__
+          targetLabel: metrics_path
+        - sourceLabels:
+          - __meta_kubernetes_pod_node_name
+          targetLabel: __host__
+        - action: replace
+          sourceLabels:
+          - __meta_kubernetes_namespace
+          targetLabel: kubernetes_namespace
+        - action: labelmap
+          regex: __meta_kubernetes_pod_label_(.+)
+        - action: labeldrop
+          regex: (pod_template_generation|operator_agent_grafana_com_name|operator_agent_grafana_com_type|app_kubernetes_io_managed_by|app_kubernetes_io_version|control_plane_component|control_plane_ns|extension|pod_template_hash|workload_ns|helm_sh_chart|inject|instance|pod_template_hash|workload_ns)
+        - action: replace
+          replacement: integrations/unionai/custom
+          targetLabel: job
 extraObjects: []
-
-# Additional objects from values-overrides.yaml. Rendered alongside extraObjects
-# so that manual overrides don't clobber Terraform-generated extraObjects entries.
 extraObjectsOverrides: []
-
-# ----------------------------------------------------------------------------
-# Monitoring & Observability
-# ----------------------------------------------------------------------------
-# Optional kube-prometheus-stack instance for monitoring controlplane services.
-# This deploys Prometheus, Grafana, and supporting exporters for general
-# observability of the controlplane.
-#
-# CRDs are NOT installed by this chart. They must be installed separately,
-# either by the dataplane chart or manually:
-#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-#   helm install prometheus-crds prometheus-community/prometheus-operator-crds
 monitoring:
   enabled: false
-
-  # kube-prometheus-stack subchart defaults include scraping for
-  # kubeControllerManager, kubeScheduler, kubeEtcd, and kubeProxy. Managed
-  # Kubernetes (EKS, GKE, AKS) hides those control-plane components — the
-  # cloud-specific overlays (values.aws.yaml, values.gcp.yaml,
-  # values.azure.yaml) disable scraping for them to avoid false-positive
-  # TargetDown alerts.
-
-  # The following flags control Union monitoring resources independently
-  # of the kube-prometheus-stack subchart (monitoring.enabled). This allows
-  # ServiceMonitors, PrometheusRules, and Dashboards to be created even
-  # when the full monitoring stack is not deployed in this namespace.
-
-  # Dashboard ConfigMaps are auto-discovered by Grafana sidecar (NAMESPACE=ALL).
   dashboards:
     enabled: true
-    # Label and value used by the Grafana sidecar to discover dashboard ConfigMaps.
-    # Must match the Grafana sidecar.dashboards.label/labelValue configuration.
     label: grafana_dashboard
-    labelValue: "1"
-
-  # ServiceMonitors for Union services. Creates ServiceMonitor CRDs that
-  # are discovered by Prometheus (either local or from another namespace).
+    labelValue: '1'
   serviceMonitors:
     enabled: true
-
-  # PrometheusRules for recording and alerting. Recording rules are always
-  # included; alerting rules require monitoring.alerting.enabled.
   prometheusRules:
     enabled: true
-
-  # Opt-in operational alerts (service down, restarts, panics).
-  # Requires AlertManager to be configured.
   alerting:
     enabled: false
-
-  # Opt-in SLO recording rules and burn rate alerts.
-  # SLO recording rules compute availability, success rate, and error budget.
-  # SLO alerts fire when error budget is being consumed too quickly.
   slos:
     enabled: false
     alerting:
       enabled: false
     targets:
-      availability: 0.999   # 99.9% availability target
-      latencyP99: 5          # p99 latency target in seconds
-
-  nameOverride: "monitoring"
-  fullnameOverride: "monitoring"
-
+      availability: 0.999
+      latencyP99: 5
+  nameOverride: monitoring
+  fullnameOverride: monitoring
   prometheusOperator:
     enabled: true
-
-  # CRDs should be installed by the dataplane chart or separately.
-  # Do NOT install CRDs from the controlplane to avoid conflicts.
   crds:
     enabled: false
-
-  # Alertmanager disabled by default.
   alertmanager:
     enabled: false
-
   grafana:
     enabled: true
-    fullnameOverride: "monitoring-grafana"
+    fullnameOverride: monitoring-grafana
     adminPassword: admin
-    # Serve Grafana at /grafana behind the controlplane ingress.
-    # Access is gated by the same auth-request as other controlplane services.
-    # Anonymous auth is enabled since the ingress auth gate already controls access.
-    # TODO: Replace with auth.proxy once the identity service forwards user identity headers.
     grafana.ini:
       server:
-        root_url: "%(protocol)s://%(domain)s/grafana"
+        root_url: '%(protocol)s://%(domain)s/grafana'
         serve_from_sub_path: true
       auth.anonymous:
         enabled: true
         org_role: Admin
-    # Disable Grafana ServiceMonitor — Grafana's serve_from_sub_path redirects
-    # the /metrics endpoint, causing scrape failures. Grafana health is monitored
-    # via deployment availability instead.
     serviceMonitor:
       enabled: false
-
-  # Default monitoring for K8s components that impact controlplane performance.
   coreDns:
     enabled: true
   defaultRules:
@@ -2309,36 +1986,24 @@ monitoring:
     enabled: true
   kubeStateMetrics:
     enabled: true
-
   kube-state-metrics:
-    nameOverride: "monitoring-kube-state-metrics"
-    fullnameOverride: "monitoring-kube-state-metrics"
-
+    nameOverride: monitoring-kube-state-metrics
+    fullnameOverride: monitoring-kube-state-metrics
   prometheus:
     enabled: true
-
-    # Ref: https://github.com/prometheus-operator/prometheus-operator/blob/main/Documentation/platform/prometheus-agent.md
     agentMode: false
-
     service:
       port: 80
     prometheusSpec:
       maximumStartupDurationSeconds: 600
       retention: 7d
-
-      # Use NotIn to pick up everything EXCEPT union-features CRDs.
-      # This matches CRDs with no label, with "union-services", or any other value,
-      # but excludes CRDs explicitly labeled "union-features" (from the dataplane).
-      # Select all rules, serviceMonitors, and podMonitors regardless of labels.
-      # The union-features Prometheus (cost/billing) uses a separate static config.
       ruleSelectorNilUsesHelmValues: false
       serviceMonitorSelectorNilUsesHelmValues: false
       podMonitorSelectorNilUsesHelmValues: false
-
       resources:
         limits:
-          cpu: "2"
-          memory: "4Gi"
+          cpu: '2'
+          memory: 4Gi
         requests:
-          cpu: "500m"
-          memory: "1Gi"
+          cpu: 500m
+          memory: 1Gi
