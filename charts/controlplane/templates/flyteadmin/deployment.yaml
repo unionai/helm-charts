@@ -1,4 +1,3 @@
-{{- if .Values.flyte.useDirectTemplates }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -109,7 +108,7 @@ spec:
           - mountPath: /etc/flyte/clusterresource/templates
             name: resource-templates
           - mountPath: /etc/flyte/config
-            name: clusters-config-volume
+            name: base-config-volume
           - mountPath: /etc/secrets/
             name: admin-secrets
           {{- if gt (len .Values.flyte.configmap.clusters.labelClusterMap) 0 }}
@@ -130,7 +129,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             [
-                "flyteadmin --config={{ .Values.flyte.flyteadmin.configPath }} secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name flyte-admin-secrets --fromPath /etc/scratch/secrets",
+                "flyteadmin --config={{ .Values.flyte.flyteadmin.configPath }} secrets init --localPath /etc/scratch/secrets && flyteadmin --config=/etc/flyte/config/*.yaml secrets create --name {{ template "flyteadmin.secretsName" . }} --fromPath /etc/scratch/secrets",
             ]
           securityContext:
             allowPrivilegeEscalation: false
@@ -188,7 +187,7 @@ spec:
         - mountPath: /srv/flyte
           name: shared-data
         - mountPath: /etc/flyte/config
-          name: clusters-config-volume
+          name: base-config-volume
         - mountPath: /etc/secrets/
           name: admin-secrets
         {{- with .Values.flyte.flyteadmin.additionalVolumeMounts -}}
@@ -206,23 +205,12 @@ spec:
       - projected:
           sources:
             - configMap:
-                name: flyte-admin-base-config
+                name: {{ template "flyteadmin.configMapName" . }}
             {{- if .Values.flyte.storage.secretName }}
             - secret:
                 name: {{ .Values.flyte.storage.secretName }}
             {{- end }}
         name: base-config-volume
-      - projected:
-          sources:
-            - configMap:
-                name: flyte-admin-base-config
-            - configMap:
-                name: flyte-admin-clusters-config
-            {{- if .Values.flyte.storage.secretName }}
-            - secret:
-                name: {{ .Values.flyte.storage.secretName }}
-            {{- end }}
-        name: clusters-config-volume
       {{- if .Values.flyte.cluster_resource_manager.enabled }}
       - configMap:
           name: clusterresource-template
@@ -230,7 +218,7 @@ spec:
       {{- end }}
       - name: admin-secrets
         secret:
-          secretName: flyte-admin-secrets
+          secretName: {{ template "flyteadmin.secretsName" . }}
       {{- with .Values.flyte.flyteadmin.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 6 }}
       {{- end }}
@@ -243,4 +231,3 @@ spec:
       {{- with .Values.flyte.flyteadmin.tolerations }}
       tolerations: {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
-{{- end }}

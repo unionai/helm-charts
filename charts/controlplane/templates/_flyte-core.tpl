@@ -28,7 +28,15 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{/* ---- flyteadmin ---- */}}
 
 {{- define "flyteadmin.name" -}}
-flyteadmin
+{{ .Release.Name }}-flyteadmin
+{{- end -}}
+
+{{- define "flyteadmin.configMapName" -}}
+{{ .Release.Name }}-flyteadmin-config
+{{- end -}}
+
+{{- define "flyteadmin.secretsName" -}}
+{{ .Release.Name }}-flyteadmin-secrets
 {{- end -}}
 
 {{- define "flyteadmin.selectorLabels" -}}
@@ -52,7 +60,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/* ---- flyteconsole ---- */}}
 
 {{- define "flyteconsole.name" -}}
-flyteconsole
+{{ .Release.Name }}-flyteconsole
+{{- end -}}
+
+{{- define "flyteconsole.configMapName" -}}
+{{ .Release.Name }}-flyteconsole-config
 {{- end -}}
 
 {{- define "flyteconsole.selectorLabels" -}}
@@ -69,6 +81,34 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "flyteconsole.podLabels" -}}
 {{ include "flyteconsole.labels" . }}
 {{- with .Values.flyte.flyteconsole.podLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/* ---- datacatalog ---- */}}
+
+{{- define "datacatalog.name" -}}
+{{ .Release.Name }}-datacatalog
+{{- end -}}
+
+{{- define "datacatalog.configMapName" -}}
+{{ .Release.Name }}-datacatalog-config
+{{- end -}}
+
+{{- define "datacatalog.selectorLabels" -}}
+app.kubernetes.io/name: {{ template "datacatalog.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "datacatalog.labels" -}}
+{{ include "datacatalog.selectorLabels" . }}
+helm.sh/chart: {{ include "flyte.chart" . }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "datacatalog.podLabels" -}}
+{{ include "datacatalog.labels" . }}
+{{- with .Values.flyte.datacatalog.podLabels }}
 {{ toYaml . }}
 {{- end }}
 {{- end -}}
