@@ -12,7 +12,7 @@ Helm charts for deploying Union.ai onto Kubernetes:
 |---|---|---|
 | **Self-managed dataplane** (Union-managed control plane, you run the DP) | [docs.union.ai → Self-managed deployment](https://www.union.ai/docs/v2/union/deployment/selfmanaged/) | Per-cloud `prepare-infra` and `deploy-dataplane` pages walk through the full path; this repo's [`charts/dataplane/README.md`](./charts/dataplane/) covers the Helm install. |
 | **Selfhosted** (you run both control plane and dataplane) | Reach out to [support@union.ai](mailto:support@union.ai) | Production selfhosted setup has meaningful operational requirements (cluster prerequisites, ingress + TLS, OIDC, multi-cluster routing). Support will scope the rollout with you. Chart-level install reference: [`charts/controlplane/README.md`](./charts/controlplane/) and [`charts/dataplane/README.md`](./charts/dataplane/). |
-| **BYOC** (Union runs everything) | [docs.union.ai → BYOC](https://www.union.ai/docs/v2/union/deployment/byoc/) | Customers don't operate the chart directly; Union deploy tooling installs it. |
+| **BYOC** (fully operated by Union) | [docs.union.ai → BYOC](https://www.union.ai/docs/v2/union/deployment/byoc/) | Union deploy tooling installs and operates the chart end-to-end; this repo is provided as a reference. |
 
 ## Chart conventions
 
