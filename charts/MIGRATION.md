@@ -19,14 +19,16 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 The `*.selfhosted-intracluster.yaml` files are **deleted** in this release. The cloud-side `union_extension` terraform modules now fetch the canonical filename directly (coordinated cloud-side PR — see References). External consumers fetching the old filename via HTTP will receive 404; migrate to the new filename.
 
-**2. The old `values.{aws,gcp}.yaml` BYOC templates moved to `examples/`.**
+**2. The old `values.{aws,gcp}.yaml` contents moved to `examples/*.legacy.yaml`.**
 
 | Before | After |
 |---|---|
-| `charts/controlplane/values.{aws,gcp}.yaml` (legacy BYOC template) | `charts/controlplane/examples/values.{aws,gcp}.byoc.yaml` |
-| `charts/dataplane/values.{aws,gcp}.yaml` (legacy BYOC template) | `charts/dataplane/examples/values.{aws,gcp}.byoc.yaml` |
+| `charts/controlplane/values.{aws,gcp}.yaml` (pre-consolidation contents) | `charts/controlplane/examples/values.{aws,gcp}.legacy.yaml` |
+| `charts/dataplane/values.{aws,gcp}.yaml` (pre-consolidation contents) | `charts/dataplane/examples/values.{aws,gcp}.legacy.yaml` |
 
-These were never covered by snapshot tests and are not Union's deployed defaults. They are kept as starting points for anyone who needs to derive a non-default deployment. See [CONVENTIONS.md](./CONVENTIONS.md) on why we don't ship untested overlays as defaults.
+The legacy files are preserved purely as **historical reference** for anyone diffing against pre-consolidation deployments. They are not maintained, not tested, and should not be used as a starting point for new deployments. All deployment modes (selfmanaged, selfhosted, BYOC) consume the consolidated canonical `values.{cloud}.yaml`; mode-specific overrides happen at the env layer (terraform `union_extension` for selfmanaged, Union deploy tooling for BYOC, etc.).
+
+The chart no longer has any concept of "BYOC overlay" vs "selfmanaged overlay" vs "selfhosted overlay" — one canonical per cloud is the only supported shape. See [CONVENTIONS.md](./CONVENTIONS.md).
 
 **3. The canonical overlays now use unified host indirection** — `CONTROLPLANE_HOST` (DP→CP) and `DATAPLANE_HOST` (CP→DP).
 
@@ -53,12 +55,12 @@ The four DP-side endpoint variables (`CONTROLPLANE_INTRA_CLUSTER_HOST`, `QUEUE_S
 
 ### Topology support, same overlay
 
-The canonical overlay supports three topologies via env-layer overrides:
+The canonical overlay is mode-agnostic. It describes the general case — a split CP/DP topology where CP and DP can live in different clusters. Three topology patterns layer cleanly on top, all driven by env-layer overrides (terraform `union_extension`, Union BYOC tooling, etc.):
 
 ```yaml
-# Intracluster (CP + DP in the same cluster) — chart defaults
-# Service.type stays ClusterIP. CONTROLPLANE_HOST resolves to
-# "controlplane-nginx-controller.{cp-ns}.svc.cluster.local".
+# Intracluster (CP + DP in the same cluster) — see examples/values.{cloud}.intracluster.yaml
+# CP and DP nginx Services stay ClusterIP. CONTROLPLANE_GRPC_ENDPOINT and
+# DATAPLANE_HOST resolve to in-cluster svc.cluster.local FQDNs.
 
 # Multi-cluster same VPC (DP in its own cluster, internal LB)
 # DP nginx-controller becomes a LoadBalancer with cloud-specific internal
@@ -67,32 +69,36 @@ The canonical overlay supports three topologies via env-layer overrides:
 #   GCP:   networking.gke.io/load-balancer-type: Internal
 #   Azure: service.beta.kubernetes.io/azure-load-balancer-internal: "true"
 # DNS (private hosted zone) maps the internal hostname to the LB.
-# CONTROLPLANE_HOST resolves to the internal hostname.
+# CONTROLPLANE_GRPC_ENDPOINT resolves to the internal-DNS host.
 
-# BYOC public (DP in its own cluster, public LB)
-# DP nginx-controller is a public LoadBalancer (cloud default).
-# CONTROLPLANE_HOST resolves to the public hostname.
+# Multi-cluster cross-VPC (DP in its own cluster, public LB or peered)
+# DP nginx-controller is a LoadBalancer (public or internal-peered).
+# CONTROLPLANE_GRPC_ENDPOINT resolves to whatever hostname the DP cluster
+# can reach the CP at (public DNS, private DNS via peering, etc.).
 ```
 
-Service annotations + DNS are owned by the env layer (terraform `union_extension` module), not by the chart.
+Service annotations + DNS are owned by the env layer, not by the chart. The chart's only knowledge of topology is the value of `CONTROLPLANE_HOST` / `CONTROLPLANE_GRPC_ENDPOINT` / `DATAPLANE_HOST` globals, which the env layer fills in.
 
 ### Migration paths
 
 **If you fetch `values.{cloud}.selfhosted-intracluster.yaml` (cloud-side terraform, scripts, CI):**
-The file has been deleted. Update your fetch URL to the new canonical `values.{cloud}.yaml`. The new file's content is identical to the old shim's content, so no behavior change beyond the URL.
+The file has been deleted. Update your fetch URL to the new canonical `values.{cloud}.yaml` and layer `examples/values.{cloud}.intracluster.yaml` on top if you still want intra-cluster routing.
 
-**If you fetch `values.{cloud}.yaml` (old BYOC template):**
-The content has changed. The new canonical defaults reflect Union's tested topology (in-cluster gRPC FQDNs, deployment-mode-agnostic host indirection). Three sub-cases:
+**If you fetch `values.{cloud}.yaml` (pre-consolidation contents):**
+The content has changed. The new canonical defaults are mode-agnostic and don't bake in any topology assumption.
 
-1. **You're running selfhosted/intracluster** — no action needed. The new defaults match what you were already doing in practice.
-2. **You're running BYOC (DP in a separate cluster from CP)** — override the in-cluster hostname defaults with your external endpoints in your env values overlay, OR start from `examples/values.{cloud}.byoc.yaml`.
-3. **You're unsure what you were doing** — `diff` the old file (now at `examples/values.{cloud}.byoc.yaml`) against the new canonical file to see exactly which defaults changed for you.
+1. **You're running intracluster (CP + DP in the same cluster)** — layer `examples/values.{cloud}.intracluster.yaml` on top.
+2. **You're running multi-cluster** — supply `CONTROLPLANE_HOST` / `CONTROLPLANE_GRPC_ENDPOINT` / `DATAPLANE_HOST` overrides via your env overlay (terraform `union_extension` does this automatically for selfmanaged).
+3. **You're unsure what you were doing** — `diff` the old file (now at `examples/values.{cloud}.legacy.yaml`) against the new canonical file to see exactly which defaults changed for you.
 
 **If you set any of the four deprecated DP variables in env overlays:**
 They continue to work. Move to `CONTROLPLANE_HOST` when convenient — the chart will derive everything from it. The cloud `union_extension` module will drop the legacy assignments in a follow-up release.
 
 **If you set `DATAPLANE_ENDPOINT` in env overlays:**
 Same — continues to work, alias for `DATAPLANE_HOST`.
+
+**If you set `QUEUE_GRPC_ENDPOINT`:**
+Still required for the auth-less queue path used by user task pods. Long-term plan: deprecate once propeller injects OAuth credentials into task pods, then queue traffic flows through `CONTROLPLANE_GRPC_ENDPOINT` like everything else. No action needed today.
 
 ### Timeline
 
