@@ -9,6 +9,9 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade,post-rollback
     "helm.sh/hook-weight": "10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.imageBuilder.bootstrap.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   backoffLimit: {{ .Values.imageBuilder.bootstrap.backoffLimit }}
   ttlSecondsAfterFinished: {{ .Values.imageBuilder.bootstrap.ttlSecondsAfterFinished }}
@@ -26,6 +29,10 @@ spec:
     {{- end }}
     spec:
       restartPolicy: {{ .Values.imageBuilder.bootstrap.restartPolicy }}
+      {{- with (include "unionai.imagePullSecrets" (dict "config" .Values.imageBuilder.bootstrap "Values" .Values) | fromYamlArray) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: bootstrap
           image: "{{ tpl .Values.imageBuilder.bootstrap.image.repository . }}:{{ tpl .Values.imageBuilder.bootstrap.image.tag . }}"
@@ -36,6 +43,9 @@ spec:
               value: {{ .Values.imageBuilder.bootstrap.unionImageNamePrefix | quote }}
             - name: FLYTECTL_CONFIG
               value: /etc/flyte/config.yaml
+            {{- with .Values.imageBuilder.bootstrap.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           command:
             - /bin/sh
             - -ec
@@ -61,6 +71,9 @@ spec:
             - name: client-secret
               mountPath: /etc/secrets/union
               readOnly: true
+            {{- with .Values.imageBuilder.bootstrap.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: bootstrap
           configMap:
@@ -81,4 +94,7 @@ spec:
             # chart-wide defaults.secretName convention so per-env overrides
             # of that value flow through automatically.
             secretName: {{ tpl .Values.defaults.secretName . | quote }}
+        {{- with .Values.imageBuilder.bootstrap.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
 {{- end }}

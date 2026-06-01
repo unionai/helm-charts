@@ -162,12 +162,54 @@ imageBuilder:
     project: system
     domain: production
 
+    # Annotations on the Job object itself (merged with the chart-managed
+    # helm.sh/hook* annotations). Useful for ArgoCD sync hints
+    # (argocd.argoproj.io/sync-options, argocd.argoproj.io/hook), tooling
+    # that targets Jobs by annotation, or arbitrary metadata.
+    # For pod-template annotations, use `podAnnotations` below.
+    annotations: {}
+
     # Annotations + labels added to the Job's pod template. Useful for
     # service-mesh sidecar control (e.g. linkerd.io/inject: disabled to
     # keep the one-shot Job from getting a sidecar that never exits),
     # Prometheus scrape opt-in/out, cost-attribution labels, etc.
     podAnnotations: {}
     podLabels: {}
+
+    # imagePullSecrets attached to the bootstrap Job's pod. If unset,
+    # falls back to the chart-wide `.Values.imagePullSecrets` — which is
+    # the right default since the bootstrap image lives under the same
+    # `global.IMAGE_REPOSITORY_PREFIX` as the rest of the chart's images.
+    # Override here (e.g. to a different secret, or to `[]` to disable)
+    # only if the bootstrap image is mirrored to a separate registry.
+    # imagePullSecrets: []
+
+    # Extra env vars appended to the bootstrap container's env. The Job
+    # talks to the public flyteadmin ingress over TLS, so the most common
+    # use is to inject corp-proxy / CA-bundle settings in restricted
+    # networks (e.g. HTTPS_PROXY, NO_PROXY, SSL_CERT_FILE pointing at a
+    # CA bundle mounted via extraVolumes).
+    extraEnv: []
+    # extraEnv:
+    #   - name: HTTPS_PROXY
+    #     value: http://proxy.corp.example:3128
+    #   - name: SSL_CERT_FILE
+    #     value: /etc/ssl/corp/ca-bundle.crt
+
+    # Extra volumes + volumeMounts appended to the Job's pod spec and
+    # container respectively. Use this to mount a corp CA bundle, swap
+    # the client-secret source for an alternate Secret, or attach any
+    # other config/data the Job needs at registration time.
+    extraVolumes: []
+    extraVolumeMounts: []
+    # extraVolumes:
+    #   - name: corp-ca
+    #     configMap:
+    #       name: corp-ca-bundle
+    # extraVolumeMounts:
+    #   - name: corp-ca
+    #     mountPath: /etc/ssl/corp
+    #     readOnly: true
 
     # Job-spec tunables. Defaults are conservative for a one-shot
     # post-install hook; override for stricter retry / cleanup policies.
