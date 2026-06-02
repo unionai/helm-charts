@@ -1,0 +1,220 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- $shards := (include "actions.shardsConfig" . | fromJson).partitions -}}
+{{- $isSharded := gt (len $shards) 1 -}}
+{{- range $idx, $shard := $shards }}
+{{- $hash := "" -}}
+{{- $name := "" -}}
+{{- if $isSharded -}}
+{{- $hash = include "actions.shardHash" (dict "Root" $ "shardIndex" $idx) -}}
+{{- $name = printf "%s-%d-%s" (include "actions.fullname" $) $idx $hash -}}
+{{- else -}}
+{{- $name = include "actions.fullname" $ -}}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "actions.namespace" $ }}
+  labels:
+    {{- include "actions.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: shard
+    {{- if $isSharded }}
+    shard-index: "{{ $idx }}"
+    shard-hash: {{ $hash }}
+    {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "actions.selectorLabels" $ | nindent 6 }}
+      {{- if $isSharded }}
+      shard-index: "{{ $idx }}"
+      shard-hash: {{ $hash }}
+      {{- end }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include "actions.configChecksum" $ }}
+        kubectl.kubernetes.io/default-container: {{ include "actions.name" $ }}
+        {{- with $.Values.actions.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        platform.union.ai/zone: "controlplane"
+        {{- include "actions.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: shard
+        {{- if $isSharded }}
+        shard-index: "{{ $idx }}"
+        shard-hash: {{ $hash }}
+        {{- end }}
+    spec:
+      {{- if $.Values.actions.spreadConstraints.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "actions.name" $ }}
+              app.kubernetes.io/component: shard
+      {{- end }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "actions.serviceAccountName" $ }}
+      {{- with $.Values.actions.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ tpl $.Values.defaults.secretName $ }}
+        - name: config
+          configMap:
+            name: {{ include "actions.fullname" $ }}
+        {{- if $isSharded }}
+        - name: coordination-scripts
+          configMap:
+            name: {{ include "actions.fullname" $ }}-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+        {{- end }}
+      initContainers:
+        - name: {{ include "actions.name" $ }}-migrate
+          {{- with $.Values.actions.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: {{ include "actions.image" $ | quote }}
+          imagePullPolicy: {{ include "actions.imagePullPolicy" $ }}
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        {{- if $isSharded }}
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name={{ include "actions.name" $ }}"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: {{ include "actions.fullname" $ }}-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+        {{- end }}
+      containers:
+        - name: {{ include "actions.name" $ }}
+          {{- with $.Values.actions.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: {{ include "actions.image" $ | quote }}
+          imagePullPolicy: {{ include "actions.imagePullPolicy" $ }}
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            {{- if $isSharded }}
+            - name: SHARD_INDEX
+              value: "{{ $idx }}"
+            {{- end }}
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            {{- toYaml $.Values.actions.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      {{- with $.Values.actions.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+      {{- if $.Values.actions.affinity }}
+        {{- toYaml $.Values.actions.affinity | nindent 8 }}
+      {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "actions.selectorLabels" $ | nindent 18 }}
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+      {{- end }}
+      {{- with $.Values.actions.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}

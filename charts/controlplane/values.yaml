@@ -19,6 +19,33 @@ global:
   DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
   DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
 
+  # --- Leasor: list of attached dataplane cluster identifiers ---
+  # TEMPORARY. This static list is the ship-today way to tell leasor which
+  # dataplane clusters its queues should target. A future control-plane
+  # queue/cluster CRUD service will own this state and deprecate this knob —
+  # plan to migrate when that lands.
+  #
+  # Each entry is a cluster identifier — the value the corresponding dataplane
+  # chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues
+  # against. For an intracluster deployment (CP+DP on the same K8s) list a
+  # single entry; for multi-DP deployments list every attached dataplane.
+  #
+  # Used to auto-generate services.leasor.configMap.leasor.queueSync.queues
+  # (see comment on that block below). No reasonable default — set explicitly.
+  #
+  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
+  # flyteadmin's routing registry (name + endpoint + auth per cluster) used by
+  # RandomClusterSelector for v1 execution dispatch; populate that only when
+  # you actually need flyteadmin v1 multi-cluster routing. This list is
+  # leasor-only and just carries names.
+  #
+  # The auto-generated `default` queue lists ALL clusters here, so work fans
+  # out across every attached dataplane. Override
+  # services.leasor.configMap.leasor.queueSync.queues directly if you need a
+  # different policy.
+  LEASOR_ATTACHED_CLUSTERS: []   # e.g. ["my-dp-cluster"] or ["cluster-a", "cluster-b"]
+
   # --- Images ---
   # Customer-facing registry default; internal deployments override to private ECR/GCR.
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
@@ -1258,6 +1285,206 @@ services:
           recordActionThreadCount: 16
           type: runservice
           updateActionStatusThreadCount: 16
+
+  # Leasor is the lease-based scheduler that hands actions to the data-plane
+  # leaseworker. It is the authoritative in-memory lease store, so it runs as a
+  # single replica with a Recreate strategy (two pods would split-brain).
+  #
+  # Internally leasor is sharded across many tenants behind an Envoy router. A
+  # self-hosted deployment is single-tenant, so one shard owns everything and no
+  # router is needed — leasor rides the generic services renderer like queue.
+  #
+  # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
+  # services renderer. templates/leasor/configmap.yaml builds it instead so
+  # that queueSync.queues can be auto-generated from
+  # global.LEASOR_ATTACHED_CLUSTERS (one `default` queue containing all
+  # attached clusters, plus one queue per cluster). To bypass auto-generation
+  # entirely, set configMap.leasor.queueSync.queues below explicitly.
+  leasor:
+    fullnameOverride: "leasor"
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+    strategy:
+      type: Recreate
+    args:
+      - leasor
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    initContainers:
+      - name: migrate
+        args:
+          - leasor
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "leasor:"
+      leasor:
+        db:
+          type: CQL
+          cql:
+            hosts:
+              - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+            keyspace: leasor
+        # Single tenant => one shard owns all partitions. With totalPartitions=1
+        # every org hashes to partition 0, so this lone shard ([0]) serves every
+        # request and no Envoy router is required. shardIndex must be set
+        # explicitly because the generic renderer does not inject SHARD_INDEX.
+        totalPartitions: 1
+        partitions:
+          - [0]
+        shardIndex: 0
+        # The ScyllaDB cluster key is ((partition_id, bucket_id), id). partition_id
+        # is constant for a single tenant, so bucket_id (0..numBuckets-1) is the
+        # only spread dimension. Raise it well above the ScyllaDB shard (core)
+        # count so rows and write batches distribute evenly across the ring — a
+        # managed (Scylla Cloud) cluster has many cores, so keep this generous.
+        # This is pure configuration — the table schema is unchanged — but it is a
+        # hash modulus, so it must stay fixed after the first deploy.
+        numBuckets: 512
+        # No router fronts this single shard, so nothing sets the
+        # leasor-partition-id routing header. Skip the validation that would
+        # otherwise reject every request for the missing header.
+        skipPartitionCheckForDevbox: true
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+
+
+# Actions is the stateful coordination layer between the run service and leasor.
+# It is sharded by action partition (fnv32a("org:project:domain:run:parentAction")
+# % 1024) and fronted by an Envoy router that hashes each request to the owning
+# shard via the actions-shard-id header — the same routing semantics used in
+# Union's managed control plane.
+#
+# Self-hosted runs 10 fixed shards (the same count Union's managed control
+# planes run). Each shard is its own single-replica Deployment owning a
+# contiguous slice of the 1024 partitions. The Watch endpoint is heavy, so this
+# count was chosen to spread that load. Because it needs per-shard Deployments
+# plus the router, actions has its own templates (templates/actions/) and is
+# configured here, NOT under .Values.services.
+actions:
+  enabled: true
+
+  # Service name is fixed to "actions" so sibling services can reach it by name
+  # via configMap.union.internalConnectionConfig (_SERVICE_.<ns>.svc...:80).
+  fullnameOverride: "actions"
+
+  # Container image. Empty repository/tag fall back to the shared control-plane
+  # services image (.Values.image).
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  service:
+    type: ClusterIP
+    grpcport: 80
+    httpport: 81
+
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+
+  podAnnotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "10254"
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread shards across zones (best-effort).
+  spreadConstraints:
+    enabled: true
+
+  configMap:
+    sharedService:
+      metrics:
+        scope: "actions:"
+    actions:
+      db:
+        type: CQL
+        cql:
+          hosts:
+            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          keyspace: actions
+      # Replicate to leasor + run service over gRPC (no Redis dependency in
+      # self-hosted). Targets are resolved by service name via the global
+      # configMap.union.internalConnectionConfig urlPattern.
+      replicatorType: GRPCService
+      # Fixed 10-shard layout: each shard owns a contiguous ~1/10 of the 1024
+      # partitions (four shards get 103, six get 102; total 1024). Keep the
+      # ranges contiguous, gapless and covering [0, 1023]; changing a range
+      # re-hashes that shard's Deployment name and rolls it.
+      partitions:
+        - startPartition: 0
+          endPartition: 102
+        - startPartition: 103
+          endPartition: 205
+        - startPartition: 206
+          endPartition: 308
+        - startPartition: 309
+          endPartition: 411
+        - startPartition: 412
+          endPartition: 513
+        - startPartition: 514
+          endPartition: 615
+        - startPartition: 616
+          endPartition: 717
+        - startPartition: 718
+          endPartition: 819
+        - startPartition: 820
+          endPartition: 921
+        - startPartition: 922
+          endPartition: 1023
+
+  # Envoy router. Runs the actions-service-router Go HTTP filter, which requires
+  # an Envoy image that bundles the compiled /lib/actions-service-router.so
+  # plugin. The image is named `envoy-router` and is published through the same
+  # path as the other control-plane images: private ECR `union-cp/envoy-router`
+  # (mirrored to private GAR `union-public-images/union-cp/envoy-router` and to
+  # Harbor `controlplane/envoy-router`). repository defaults to
+  # <IMAGE_REPOSITORY_PREFIX>/envoy-router; override here only if needed.
+  router:
+    replicaCount: 2
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 2
+        memory: 2Gi
+      requests:
+        cpu: 1
+        memory: 1Gi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 60
+      # targetMemoryUtilizationPercentage: 60
+    podAnnotations:
+      prometheus.io/path: /stats/prometheus
+      prometheus.io/port: "9901"
 
 
 # Union console configuration.

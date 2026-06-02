@@ -17,7 +17,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: scylla-operator
       app.kubernetes.io/instance: scylla-operator
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.pdb.yaml
 apiVersion: policy/v1
@@ -31,7 +30,6 @@ spec:
     matchLabels:
       app.kubernetes.io/name: webhook-server
       app.kubernetes.io/instance: webhook-server
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: v1
@@ -64,7 +62,6 @@ metadata:
   name: controlplane-nginx
   namespace: union
 automountServiceAccountToken: true
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.serviceaccount.yaml
 apiVersion: v1
@@ -75,7 +72,6 @@ metadata:
   labels:
     app.kubernetes.io/name: scylla-operator
     app.kubernetes.io/instance: scylla-operator
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.serviceaccount.yaml
 apiVersion: v1
@@ -86,7 +82,19 @@ metadata:
   labels:
     app.kubernetes.io/name: webhook-server
     app.kubernetes.io/instance: webhook-server
-
+---
+# Source: controlplane/templates/actions/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: actions
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
 ---
 # Source: controlplane/templates/cacheservice/rbac.yaml
 apiVersion: v1
@@ -101,7 +109,6 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 imagePullSecrets: 
   - name: union-registry-secret
-
 ---
 # Source: controlplane/templates/console/serviceaccount.yaml
 apiVersion: v1
@@ -114,7 +121,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.6.0"
     app.kubernetes.io/managed-by: Helm
-
 ---
 # Source: controlplane/templates/serviceaccount.yaml
 ---
@@ -181,6 +187,18 @@ metadata:
 apiVersion: v1
 kind: ServiceAccount
 metadata:
+  name: leasor
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: leasor
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: controlplane/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
   name: organizations
   labels:
     helm.sh/chart: controlplane-2026.6.0
@@ -224,7 +242,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.6.0"
     app.kubernetes.io/managed-by: Helm
-
 ---
 # Source: controlplane/templates/union-serviceaccount.yaml
 apiVersion: v1
@@ -238,7 +255,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.6.0"
     app.kubernetes.io/managed-by: Helm
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/secret.yaml
 apiVersion: v1
@@ -248,7 +264,6 @@ metadata:
   namespace: union
 type: Opaque
 stringData:
-
 ---
 # Source: controlplane/charts/flyte/templates/common/secret-auth.yaml
 apiVersion: v1
@@ -259,7 +274,6 @@ metadata:
 type: Opaque
 stringData:
   client_secret: placeholder
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/configmap.yaml
 apiVersion: v1
@@ -445,7 +459,6 @@ data:
         cpu: 2
         gpu: 1
         memory: 1Gi
-
 ---
 # Source: controlplane/charts/flyte/templates/console/configmap.yaml
 apiVersion: v1
@@ -461,7 +474,6 @@ metadata:
 data: 
   BASE_URL: /console
   CONFIG_DIR: /etc/flyte/config
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-configmap.yaml
 apiVersion: v1
@@ -486,7 +498,1235 @@ data:
   proxy-connect-timeout: "60"
   proxy-read-timeout: "3600"
   proxy-send-timeout: "3600"
+---
+# Source: controlplane/templates/actions/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actions
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    actions:
+      db:
+        cql:
+          hosts:
+          - 'scylla-client.union.svc.cluster.local'
+          keyspace: actions
+        type: CQL
+      partitions:
+      - endPartition: 102
+        startPartition: 0
+      - endPartition: 205
+        startPartition: 103
+      - endPartition: 308
+        startPartition: 206
+      - endPartition: 411
+        startPartition: 309
+      - endPartition: 513
+        startPartition: 412
+      - endPartition: 615
+        startPartition: 514
+      - endPartition: 717
+        startPartition: 616
+      - endPartition: 819
+        startPartition: 718
+      - endPartition: 921
+        startPartition: 820
+      - endPartition: 1023
+        startPartition: 922
+      replicatorType: GRPCService
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'false'
+    cache:
+      identity:
+        enabled: false
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    logger:
+      formatter:
+        type: json
+      level: 6
+      show-source: true
+    otel:
+      type: noop
+    sharedService:
+      metrics:
+        scope: 'actions:'
+      security:
+        singleTenantOrgID: ''
+      selfServeConfig:
+        legacyHosts:
+        - ''
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'test-internal-client-id'
+        clientSecretLocation: /etc/secrets/union/client_secret
+        enable: true
+        scopes:
+        - 'all'
+        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        type: ClientSecret
+      connection:
+        insecure: false
+        insecureSkipVerify: true
+        trustedIdentityClaims:
+          enabled: true
+          externalIdentityClaim: ""
+          externalIdentityTypeClaim: app
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
+---
+# Source: controlplane/templates/actions/coordination.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actions-coordination
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  peer-hashes: |
+    actions-0-f288b103
+    actions-1-f6a76bed
+    actions-2-44d51338
+    actions-3-0e2fc543
+    actions-4-b7f95723
+    actions-5-3d7905f8
+    actions-6-a7e57068
+    actions-7-a5084d4e
+    actions-8-2e085e60
+    actions-9-cf8e9eab
 
+  wait-for-non-peers.sh: |
+    #!/bin/sh
+
+    set -euo pipefail
+
+    # Use timeout to enforce deadline - it will exit with 124 on timeout
+    timeout "${TIMEOUT_SECONDS:-120}" /bin/sh -euo pipefail <<'EOF'
+      get_non_peers() {
+        local pattern="$(echo "$PEER_HASHES" | tr '\n' '|' | sed 's/|$//')"
+
+        # Get pods, exit if kubectl fails
+        pods="$(kubectl get pods -n "$NAMESPACE" -l "$SHARD_LABEL_SELECTOR" -o name 2>&1)"
+        if [ $? -ne 0 ]; then
+          echo "Error: kubectl failed to list pods in namespace $NAMESPACE with selector $SHARD_LABEL_SELECTOR" >&2
+          echo "kubectl output: $pods" >&2
+          return 1
+        fi
+
+        # Filter out valid peers
+        echo "$pods" | grep -vE "${pattern}" || true
+      }
+
+      while :; do
+        non_peers="$(get_non_peers)"
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to check for non-peer pods" >&2
+          exit 1
+        fi
+
+        if [ -z "$non_peers" ]; then
+          echo "Success: Only found valid peers"
+          exit 0
+        fi
+
+        echo "Waiting for invalid peers to be removed:"
+        echo "$non_peers" | sed 's/^/  /'
+        sleep "${POLL_INTERVAL:-1}"
+      done
+    EOF
+
+    # Check timeout exit code
+    exit_code=$?
+    if [ $exit_code -eq 124 ]; then
+      echo "Error: Timed out waiting for invalid peers to be removed" >&2
+      exit 1
+    fi
+
+    exit $exit_code
+---
+# Source: controlplane/templates/actions/router-cds.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actions-router-cds
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: router
+data:
+  cds.yaml: |
+    version_info: "1"
+    resources:
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-0
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-0
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-0-f288b103.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-0
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-0
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-0-f288b103.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-1
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-1
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-1-f6a76bed.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-1
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-1
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-1-f6a76bed.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-2
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-2
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-2-44d51338.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-2
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-2
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-2-44d51338.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-3
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-3
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-3-0e2fc543.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-3
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-3
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-3-0e2fc543.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-4
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-4
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-4-b7f95723.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-4
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-4
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-4-b7f95723.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-5
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-5
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-5-3d7905f8.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-5
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-5
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-5-3d7905f8.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-6
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-6
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-6-a7e57068.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-6
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-6
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-6-a7e57068.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-7
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-7
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-7-a5084d4e.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-7
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-7
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-7-a5084d4e.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-8
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-8
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-8-2e085e60.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-8
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-8
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-8-2e085e60.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-grpc-9
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      typed_extension_protocol_options:
+        envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+          "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+          explicit_http_config:
+            http2_protocol_options: {}
+      load_assignment:
+        cluster_name: actions-grpc-9
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-9-cf8e9eab.union.svc.cluster.local
+                  port_value: 8080
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+    - "@type": type.googleapis.com/envoy.config.cluster.v3.Cluster
+      name: actions-http-9
+      connect_timeout: 0.25s
+      type: STRICT_DNS
+      dns_lookup_family: V4_ONLY
+      lb_policy: ROUND_ROBIN
+      circuit_breakers:
+        thresholds:
+        - priority: DEFAULT
+          max_connections: 1000000
+          max_pending_requests: 1000000
+          max_requests: 1000000
+          max_retries: 1000000
+      load_assignment:
+        cluster_name: actions-http-9
+        endpoints:
+        - lb_endpoints:
+          - endpoint:
+              address:
+                socket_address:
+                  address: actions-9-cf8e9eab.union.svc.cluster.local
+                  port_value: 8089
+              health_check_config:
+                port_value: 10254
+      health_checks:
+      - timeout: 5s
+        interval: 10s
+        unhealthy_threshold: 3
+        healthy_threshold: 2
+        http_health_check:
+          path: "/healthcheck"
+---
+# Source: controlplane/templates/actions/router-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actions-router
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: router
+data:
+  envoy.yaml: |
+    node:
+      cluster: actions-router
+      id: actions-router-union
+
+    dynamic_resources:
+      cds_config:
+        path_config_source:
+          path: /etc/envoy/cds.yaml
+      lds_config:
+        path_config_source:
+          path: /etc/envoy/lds.yaml
+
+    admin:
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 9901
+---
+# Source: controlplane/templates/actions/router-lds.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: actions-router-lds
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: router
+data:
+  lds.yaml: |
+    version_info: "1"
+    resources:
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: grpc
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+      - filters:
+        - name: envoy.filters.network.http_connection_manager
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            stat_prefix: actions_grpc
+            codec_type: AUTO
+            route_config:
+              name: local_route
+              virtual_hosts:
+              - name: backend
+                domains: ["*"]
+                retry_policy:
+                  retry_on: 5xx
+                  num_retries: 10
+                  retry_back_off:
+                    base_interval:
+                      nanos: 25000000
+                    max_interval:
+                      seconds: 10
+                routes:
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "0"
+                  route:
+                    cluster: actions-grpc-0
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "1"
+                  route:
+                    cluster: actions-grpc-1
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "2"
+                  route:
+                    cluster: actions-grpc-2
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "3"
+                  route:
+                    cluster: actions-grpc-3
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "4"
+                  route:
+                    cluster: actions-grpc-4
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "5"
+                  route:
+                    cluster: actions-grpc-5
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "6"
+                  route:
+                    cluster: actions-grpc-6
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "7"
+                  route:
+                    cluster: actions-grpc-7
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "8"
+                  route:
+                    cluster: actions-grpc-8
+                    timeout: 0s
+                    idle_timeout: 7200s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "9"
+                  route:
+                    cluster: actions-grpc-9
+                    timeout: 0s
+                    idle_timeout: 7200s
+            http_filters:
+            - name: envoy.filters.http.golang
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.golang.v3alpha.Config
+                library_id: actions-service-router
+                library_path: /lib/actions-service-router.so
+                plugin_name: actions-service-router
+                plugin_config:
+                  "@type": type.googleapis.com/xds.type.v3.TypedStruct
+                  value:
+                    enabled: true
+                    shards:
+                    - startPartition: 0
+                      endPartition: 102
+                    - startPartition: 103
+                      endPartition: 205
+                    - startPartition: 206
+                      endPartition: 308
+                    - startPartition: 309
+                      endPartition: 411
+                    - startPartition: 412
+                      endPartition: 513
+                    - startPartition: 514
+                      endPartition: 615
+                    - startPartition: 616
+                      endPartition: 717
+                    - startPartition: 718
+                      endPartition: 819
+                    - startPartition: 820
+                      endPartition: 921
+                    - startPartition: 922
+                      endPartition: 1023
+            - name: envoy.filters.http.router
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: http
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8089
+      filter_chains:
+      - filters:
+        - name: envoy.filters.network.http_connection_manager
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            stat_prefix: actions_http
+            codec_type: AUTO
+            route_config:
+              name: local_route
+              virtual_hosts:
+              - name: backend
+                domains: ["*"]
+                retry_policy:
+                  retry_on: 5xx
+                  num_retries: 10
+                  retry_back_off:
+                    base_interval:
+                      nanos: 25000000
+                    max_interval:
+                      seconds: 10
+                routes:
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "0"
+                  route:
+                    cluster: actions-http-0
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "1"
+                  route:
+                    cluster: actions-http-1
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "2"
+                  route:
+                    cluster: actions-http-2
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "3"
+                  route:
+                    cluster: actions-http-3
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "4"
+                  route:
+                    cluster: actions-http-4
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "5"
+                  route:
+                    cluster: actions-http-5
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "6"
+                  route:
+                    cluster: actions-http-6
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "7"
+                  route:
+                    cluster: actions-http-7
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "8"
+                  route:
+                    cluster: actions-http-8
+                    timeout: 30s
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "9"
+                  route:
+                    cluster: actions-http-9
+                    timeout: 30s
+            http_filters:
+            - name: envoy.filters.http.golang
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.golang.v3alpha.Config
+                library_id: actions-service-router
+                library_path: /lib/actions-service-router.so
+                plugin_name: actions-service-router
+                plugin_config:
+                  "@type": type.googleapis.com/xds.type.v3.TypedStruct
+                  value:
+                    enabled: true
+                    shards:
+                    - startPartition: 0
+                      endPartition: 102
+                    - startPartition: 103
+                      endPartition: 205
+                    - startPartition: 206
+                      endPartition: 308
+                    - startPartition: 309
+                      endPartition: 411
+                    - startPartition: 412
+                      endPartition: 513
+                    - startPartition: 514
+                      endPartition: 615
+                    - startPartition: 616
+                      endPartition: 717
+                    - startPartition: 718
+                      endPartition: 819
+                    - startPartition: 820
+                      endPartition: 921
+                    - startPartition: 922
+                      endPartition: 1023
+            - name: envoy.filters.http.router
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
 ---
 # Source: controlplane/templates/cacheservice/configmap.yaml
 apiVersion: v1
@@ -555,10 +1795,10 @@ data:
       cache:
         max_size_mbs: 1024
         target_gc_percent: 70
-
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -657,6 +1897,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -747,6 +1988,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -937,6 +2179,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1049,6 +2292,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1133,7 +2377,6 @@ data:
         urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1224,6 +2467,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1307,6 +2551,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1391,6 +2636,7 @@ data:
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
+
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -1599,7 +2845,91 @@ data:
       cacheProviderConfig:
         kind: bypass
       populateUserFields: false
-
+---
+# Source: controlplane/templates/leasor/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leasor
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: leasor
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'false'
+    cache:
+      identity:
+        enabled: false
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    leasor:
+      db:
+        cql:
+          hosts:
+          - 'scylla-client.union.svc.cluster.local'
+          keyspace: leasor
+        type: CQL
+      numBuckets: 512
+      partitions:
+      - - 0
+      shardIndex: 0
+      skipPartitionCheckForDevbox: true
+      totalPartitions: 1
+    logger:
+      formatter:
+        type: json
+      level: 6
+      show-source: true
+    otel:
+      type: noop
+    sharedService:
+      metrics:
+        scope: 'leasor:'
+      security:
+        singleTenantOrgID: ''
+      selfServeConfig:
+        legacyHosts:
+        - ''
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'test-internal-client-id'
+        clientSecretLocation: /etc/secrets/union/client_secret
+        enable: true
+        scopes:
+        - 'all'
+        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        type: ClientSecret
+      connection:
+        insecure: false
+        insecureSkipVerify: true
+        trustedIdentityClaims:
+          enabled: true
+          externalIdentityClaim: ""
+          externalIdentityTypeClaim: app
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/monitoring/dashboard-configmap.yaml
 apiVersion: v1
@@ -5880,8 +7210,6 @@ data:
       "uid": "union-controlplane-overview",
       "version": 2
     }
-    
-
 ---
 # Source: controlplane/templates/scylla/storageclass.yaml
 apiVersion: storage.k8s.io/v1
@@ -5892,7 +7220,6 @@ provisioner: ebs.csi.eks.amazonaws.com
 volumeBindingMode: WaitForFirstConsumer
 reclaimPolicy: Delete
 allowVolumeExpansion: true
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6008,7 +7335,6 @@ rules:
       - list
       - watch
       - get
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/edit_clusterrole.yaml
 kind: ClusterRole
@@ -6034,7 +7360,6 @@ rules:
   - update
   - delete
   - deletecollection
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6045,7 +7370,6 @@ aggregationRule:
   clusterRoleSelectors:
     - matchLabels:
         rbac.operator.scylladb.com/aggregate-to-scylla-operator: "true"
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.clusterrole_def.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6360,7 +7684,6 @@ rules:
   - patch
   - update
   - watch
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.clusterrole_def_openshift.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6378,7 +7701,6 @@ rules:
   - securitycontextconstraints
   verbs:
   - use
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator_remote.clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6389,7 +7711,6 @@ aggregationRule:
   clusterRoleSelectors:
     - matchLabels:
         rbac.operator.scylladb.com/aggregate-to-scylla-operator-remote: "true"
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator_remote.clusterrole_def.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6459,7 +7780,6 @@ rules:
   - get
   - list
   - watch
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scyllacluster_member_clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6470,7 +7790,6 @@ aggregationRule:
   clusterRoleSelectors:
     - matchLabels:
         rbac.operator.scylladb.com/aggregate-to-scylla-member: "true"
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scyllacluster_member_clusterrole_def.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6530,7 +7849,6 @@ rules:
   - secrets/finalizers
   verbs:
   - update
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scyllacluster_member_clusterrole_def_openshift.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6548,7 +7866,6 @@ rules:
   - securitycontextconstraints
   verbs:
   - use
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scylladbmonitoring_grafana_clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6559,7 +7876,6 @@ aggregationRule:
   clusterRoleSelectors:
   - matchLabels:
       rbac.operator.scylladb.com/aggregate-to-scylladb-monitoring-grafana: "true"
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scylladbmonitoring_grafana_clusterrole_def_openshift.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6577,7 +7893,6 @@ rules:
   - securitycontextconstraints
   verbs:
   - use
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scylladbmonitoring_prometheus_clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6588,7 +7903,6 @@ aggregationRule:
   clusterRoleSelectors:
   - matchLabels:
       rbac.operator.scylladb.com/aggregate-to-scylladb-monitoring-prometheus: "true"
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scylladbmonitoring_prometheus_clusterrole_def.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6614,7 +7928,6 @@ rules:
   - configmaps
   verbs:
   - get
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/scylladbmonitoring_prometheus_clusterrole_def_openshift.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6632,7 +7945,6 @@ rules:
   - securitycontextconstraints
   verbs:
   - use
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/view_clusterrole.yaml
 kind: ClusterRole
@@ -6657,7 +7969,6 @@ rules:
   - get
   - list
   - watch
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6677,7 +7988,6 @@ subjects:
 - kind: ServiceAccount
   name: flyteadmin
   namespace: union
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6699,7 +8009,6 @@ subjects:
   - kind: ServiceAccount
     name: controlplane-nginx
     namespace: union
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6714,7 +8023,6 @@ subjects:
 - kind: ServiceAccount
   name: scylla-operator
   namespace: scylla-operator
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6809,7 +8117,27 @@ rules:
       - list
       - watch
       - get
-
+---
+# Source: controlplane/templates/actions/coordination.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: actions-coordination
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get"]
+  resourceNames: ["actions-coordination"]
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6864,7 +8192,27 @@ subjects:
   - kind: ServiceAccount
     name: controlplane-nginx
     namespace: union
-
+---
+# Source: controlplane/templates/actions/coordination.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: actions-coordination
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: actions-coordination
+subjects:
+- kind: ServiceAccount
+  name: actions
+  namespace: union
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6919,7 +8267,6 @@ spec:
   selector: 
     app.kubernetes.io/name: flyteadmin
     app.kubernetes.io/instance: release-name
-
 ---
 # Source: controlplane/charts/flyte/templates/console/service.yaml
 apiVersion: v1
@@ -6945,7 +8292,6 @@ spec:
   selector: 
     app.kubernetes.io/name: flyteconsole
     app.kubernetes.io/instance: release-name
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-service-metrics.yaml
 apiVersion: v1
@@ -6972,7 +8318,6 @@ spec:
     app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/component: controller
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-service.yaml
 apiVersion: v1
@@ -7009,7 +8354,6 @@ spec:
     app.kubernetes.io/name: ingress-nginx
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/component: controller
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.service.yaml
 apiVersion: v1
@@ -7028,7 +8372,409 @@ spec:
   selector:
     app.kubernetes.io/name: webhook-server
     app.kubernetes.io/instance: webhook-server
-
+---
+# Source: controlplane/templates/actions/router-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: admin
+      port: 9901
+      protocol: TCP
+      targetPort: 9901
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: 8089
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/component: router
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-0-f288b103
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "0"
+    shard-hash: f288b103
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "0"
+    shard-hash: f288b103
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-1-f6a76bed
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "1"
+    shard-hash: f6a76bed
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "1"
+    shard-hash: f6a76bed
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-2-44d51338
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "2"
+    shard-hash: 44d51338
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "2"
+    shard-hash: 44d51338
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-3-0e2fc543
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "3"
+    shard-hash: 0e2fc543
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "3"
+    shard-hash: 0e2fc543
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-4-b7f95723
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "4"
+    shard-hash: b7f95723
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "4"
+    shard-hash: b7f95723
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-5-3d7905f8
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "5"
+    shard-hash: 3d7905f8
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "5"
+    shard-hash: 3d7905f8
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-6-a7e57068
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "6"
+    shard-hash: a7e57068
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "6"
+    shard-hash: a7e57068
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-7-a5084d4e
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "7"
+    shard-hash: a5084d4e
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "7"
+    shard-hash: a5084d4e
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-8-2e085e60
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "8"
+    shard-hash: 2e085e60
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "8"
+    shard-hash: 2e085e60
+---
+# Source: controlplane/templates/actions/service-shard.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: actions-9-cf8e9eab
+  namespace: union
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "9"
+    shard-hash: cf8e9eab
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 8080
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: 8089
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    shard-index: "9"
+    shard-hash: cf8e9eab
 ---
 # Source: controlplane/templates/cacheservice/service.yaml
 apiVersion: v1
@@ -7059,7 +8805,6 @@ spec:
   selector: 
     app.kubernetes.io/name: cacheservice
     app.kubernetes.io/instance: release-name
-
 ---
 # Source: controlplane/templates/console/service.yaml
 apiVersion: v1
@@ -7087,7 +8832,6 @@ spec:
   selector:
     app.kubernetes.io/name: unionconsole
     app.kubernetes.io/instance: release-name
-
 ---
 # Source: controlplane/templates/service.yaml
 ---
@@ -7277,6 +9021,41 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: leasor
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: leasor
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: grpc
+    - name: connect
+      port:  83
+      protocol: TCP
+      targetPort: connect
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: http
+    - name: debug
+      port: 82
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: leasor
+    app.kubernetes.io/instance: release-name
+---
+# Source: controlplane/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
   name: organizations
   labels:
     platform.union.ai/prometheus-group: "union-services"
@@ -7420,7 +9199,6 @@ spec:
   selector:
     app.kubernetes.io/name: usage
     app.kubernetes.io/instance: release-name
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/deployment.yaml
 apiVersion: apps/v1
@@ -7611,7 +9389,6 @@ spec:
       - configMap:
           name: flyte-admin-private-config
         name: private-config
-
 ---
 # Source: controlplane/charts/flyte/templates/console/deployment.yaml
 apiVersion: apps/v1
@@ -7683,7 +9460,6 @@ spec:
       volumes:
       - emptyDir: {}
         name: shared-data
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-deployment.yaml
 apiVersion: apps/v1
@@ -7799,7 +9575,6 @@ spec:
         kubernetes.io/os: linux
       serviceAccountName: controlplane-nginx
       terminationGracePeriodSeconds: 300
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/operator.deployment.yaml
 apiVersion: apps/v1
@@ -7850,7 +9625,6 @@ spec:
                   app.kubernetes.io/name: scylla-operator
               topologyKey: kubernetes.io/hostname
             weight: 1
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/webhookserver.deployment.yaml
 apiVersion: apps/v1
@@ -7931,7 +9705,1912 @@ spec:
                   app.kubernetes.io/name: webhook-server
               topologyKey: kubernetes.io/hostname
             weight: 1
-
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-0-f288b103
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "0"
+    shard-hash: f288b103
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "0"
+      shard-hash: f288b103
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "0"
+        shard-hash: f288b103
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "0"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-1-f6a76bed
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "1"
+    shard-hash: f6a76bed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "1"
+      shard-hash: f6a76bed
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "1"
+        shard-hash: f6a76bed
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "1"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-2-44d51338
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "2"
+    shard-hash: 44d51338
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "2"
+      shard-hash: 44d51338
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "2"
+        shard-hash: 44d51338
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "2"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-3-0e2fc543
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "3"
+    shard-hash: 0e2fc543
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "3"
+      shard-hash: 0e2fc543
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "3"
+        shard-hash: 0e2fc543
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "3"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-4-b7f95723
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "4"
+    shard-hash: b7f95723
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "4"
+      shard-hash: b7f95723
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "4"
+        shard-hash: b7f95723
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "4"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-5-3d7905f8
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "5"
+    shard-hash: 3d7905f8
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "5"
+      shard-hash: 3d7905f8
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "5"
+        shard-hash: 3d7905f8
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "5"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-6-a7e57068
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "6"
+    shard-hash: a7e57068
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "6"
+      shard-hash: a7e57068
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "6"
+        shard-hash: a7e57068
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "6"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-7-a5084d4e
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "7"
+    shard-hash: a5084d4e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "7"
+      shard-hash: a5084d4e
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "7"
+        shard-hash: a5084d4e
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "7"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-8-2e085e60
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "8"
+    shard-hash: 2e085e60
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "8"
+      shard-hash: 2e085e60
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "8"
+        shard-hash: 2e085e60
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "8"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-9-cf8e9eab
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "9"
+    shard-hash: cf8e9eab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "9"
+      shard-hash: cf8e9eab
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "9"
+        shard-hash: cf8e9eab
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          image: alpine/kubectl:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.0"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "9"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/router-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-router
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: router
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      app.kubernetes.io/component: router
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/router-bootstrap: 7048b7be223aae7222846e5c7cda9e2bdd2e60b5ce648a0bfb7d0d6ccc53e485
+        checksum/router-cds: 9a9893c4f5e86740baf0d96cda85edfaf75aceac387b9596d9ae9d0e0436b6ec
+        checksum/router-lds: be09ee5908d5192282b737f34f9c905ee2e479f82fbe8f3ec493b28a60a31859
+        prometheus.io/path: /stats/prometheus
+        prometheus.io/port: "9901"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: router
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: envoy-bootstrap
+          configMap:
+            name: actions-router
+            items:
+            - key: envoy.yaml
+              path: envoy.yaml
+        - name: envoy-cds
+          configMap:
+            name: actions-router-cds
+            items:
+            - key: cds.yaml
+              path: cds.yaml
+        - name: envoy-lds
+          configMap:
+            name: actions-router-lds
+            items:
+            - key: lds.yaml
+              path: lds.yaml
+      containers:
+        - name: envoy
+          image: registry.unionai.cloud/controlplane/envoy-router:2026.6.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - envoy
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --service-cluster
+            - actions-service-router
+            - --service-node
+            - $(THIS_POD_NAME)
+          env:
+            - name: THIS_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: admin
+              containerPort: 9901
+              protocol: TCP
+          volumeMounts:
+            - name: envoy-bootstrap
+              mountPath: /etc/envoy/envoy.yaml
+              subPath: envoy.yaml
+            - name: envoy-cds
+              mountPath: /etc/envoy/cds.yaml
+              subPath: cds.yaml
+            - name: envoy-lds
+              mountPath: /etc/envoy/lds.yaml
+              subPath: lds.yaml
+          resources:
+            limits:
+              cpu: 2
+              memory: 2Gi
+            requests:
+              cpu: 1
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: router
+              topologyKey: "kubernetes.io/hostname"
 ---
 # Source: controlplane/templates/cacheservice/deployment.yaml
 apiVersion: apps/v1
@@ -8047,7 +11726,6 @@ spec:
               matchLabels:
                 app.kubernetes.io/name: cacheservice
             topologyKey: kubernetes.io/hostname
-
 ---
 # Source: controlplane/templates/console/deployment.yaml
 apiVersion: apps/v1
@@ -8117,7 +11795,6 @@ spec:
           requests:
             cpu: 250m
             memory: 250Mi
-
 ---
 # Source: controlplane/templates/deployment.yaml
 ---
@@ -8725,6 +12402,132 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  name: leasor
+  labels:
+    helm.sh/chart: controlplane-2026.6.0
+    app.kubernetes.io/name: leasor
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: leasor
+      app.kubernetes.io/instance: release-name
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: leasor
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: leasor
+        app.kubernetes.io/instance: release-name
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: leasor
+      volumes:
+      - name: secrets
+        secret:
+          secretName: 
+      - name: db-pass
+        secret:
+          secretName: 
+      - name: config
+        configMap:
+          name: leasor
+      initContainers:
+        - name: leasor-migrate
+          image: registry.unionai.cloud/controlplane/services:2026.6.0
+          imagePullPolicy: IfNotPresent
+          args:
+          - leasor
+          - migrate
+          - --config
+          - /etc/config/*.yaml
+          volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
+          - name: secrets
+            mountPath: /etc/secrets/union
+          - name: config
+            mountPath: /etc/config/
+      containers:
+        - name: leasor
+          image: registry.unionai.cloud/controlplane/services:2026.6.0
+          imagePullPolicy: IfNotPresent
+          args:
+            - leasor
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+              limits:
+                cpu: 2
+                memory: 4Gi
+              requests:
+                cpu: 1
+                memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: leasor
+                    app.kubernetes.io/instance: release-name
+                topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
   name: organizations
   labels:
     helm.sh/chart: controlplane-2026.6.0
@@ -9240,7 +13043,6 @@ spec:
                     app.kubernetes.io/name: usage
                     app.kubernetes.io/instance: release-name
                 topologyKey: "kubernetes.io/hostname"
-
 ---
 # Source: controlplane/charts/flyte/templates/admin/hpa.yaml
 apiVersion: autoscaling/v2
@@ -9274,7 +13076,6 @@ spec:
           averageUtilization: 80
           type: Utilization
       type: Resource
-
 ---
 # Source: controlplane/templates/console/hpa.yaml
 apiVersion: autoscaling/v2
@@ -9307,7 +13108,6 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
-
 ---
 # Source: controlplane/templates/hpa.yaml
 ---
@@ -9441,6 +13241,7 @@ spec:
           averageUtilization: 80
 ---
 # Source: controlplane/templates/hpa.yaml
+---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -9518,8 +13319,6 @@ spec:
         target:
           type: Utilization
           averageUtilization: 80
-
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-ingressclass.yaml
 apiVersion: networking.k8s.io/v1
@@ -9536,7 +13335,6 @@ metadata:
   name: controlplane
 spec:
   controller: union.ai/controlplane
-
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
@@ -11821,17 +15619,12 @@ webhooks:
     - scylladbclusters
     - scylladbmanagerclusterregistrations
     - scylladbmanagertasks
-
 ---
 # Source: controlplane/charts/ingress-nginx/templates/controller-poddisruptionbudget.yaml
 # PDB is not supported for DaemonSets.
 # https://github.com/kubernetes/kubernetes/issues/108124
-
 ---
-# Source: controlplane/templates/pdb.yaml
----
----
-# Source: controlplane/templates/pdb.yaml
+# Source: controlplane/templates/configmap.yaml
 ---
 ---
 # Source: controlplane/templates/pdb.yaml
@@ -11842,7 +15635,12 @@ webhooks:
 ---
 # Source: controlplane/templates/pdb.yaml
 ---
-
+---
+# Source: controlplane/templates/pdb.yaml
+---
+---
+# Source: controlplane/templates/pdb.yaml
+---
 ---
 # Source: controlplane/templates/secret.yaml
 ---
@@ -11858,8 +15656,6 @@ webhooks:
 ---
 # Source: controlplane/templates/secret.yaml
 ---
-
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/certificate.yaml
 apiVersion: cert-manager.io/v1
@@ -11874,7 +15670,6 @@ spec:
     kind: Issuer
     name: scylla-operator-selfsigned-issuer
   secretName: scylla-operator-serving-cert
-
 ---
 # Source: controlplane/charts/scylla-operator/templates/issuer.yaml
 apiVersion: cert-manager.io/v1
@@ -11884,7 +15679,6 @@ metadata:
   namespace: scylla-operator
 spec:
   selfSigned: {}
-
 ---
 # Source: controlplane/charts/scylla/templates/scyllacluster.yaml
 apiVersion: scylla.scylladb.com/v1
@@ -12130,7 +15924,6 @@ data:
       org: ""
       project: "system"
       domain: "production"
-
 ---
 # Source: controlplane/templates/image-builder-bootstrap/job.yaml
 apiVersion: batch/v1
@@ -12205,4 +15998,3 @@ spec:
             # chart-wide defaults.secretName convention so per-env overrides
             # of that value flow through automatically.
             secretName: ""
-

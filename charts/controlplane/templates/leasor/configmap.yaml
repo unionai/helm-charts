@@ -1,0 +1,51 @@
+{{- if and (index .Values "controlplane" | default dict).enabled (hasKey .Values.services "leasor") (not (.Values.services.leasor.disabled | default false)) -}}
+{{- /*
+Bespoke ConfigMap for leasor. Mirrors what the generic services renderer
+(templates/configmap.yaml) would produce — same name, same labels, same
+unionai.configMap-style merge of global .Values.configMap with
+.Values.services.leasor.configMap — and then auto-generates
+queueSync.queues from .Values.global.LEASOR_ATTACHED_CLUSTERS following the
+self-hosted pattern: one `default` queue containing ALL attached clusters,
+plus one queue per cluster containing only that cluster. The auto-generation
+is skipped if services.leasor.configMap.leasor.queueSync.queues is already
+set explicitly (full override).
+*/ -}}
+{{- $service := dict "config" .Values.services.leasor "key" "leasor" "Release" .Release "Values" .Values "Chart" .Chart -}}
+
+{{- /* Replicate unionai.configMap's deep-merge of global + per-service. */ -}}
+{{- $global := .Values.configMap | default dict -}}
+{{- $svc := .Values.services.leasor.configMap | default dict -}}
+{{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) -}}
+{{- if hasKey .Values "logging" -}}
+  {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") -}}
+{{- end -}}
+
+{{- /* Auto-generate queueSync.queues unless explicitly set. */ -}}
+{{- $leasor    := index $merged "leasor"    | default dict -}}
+{{- $queueSync := index $leasor "queueSync" | default dict -}}
+{{- $existing  := index $queueSync "queues" | default list -}}
+{{- $clusters  := .Values.global.LEASOR_ATTACHED_CLUSTERS | default list -}}
+{{- if and (eq (len $existing) 0) (gt (len $clusters) 0) -}}
+  {{- $org := .Values.global.UNION_ORG -}}
+  {{- $queues := list -}}
+  {{- /* default queue containing all attached clusters */ -}}
+  {{- $queues = append $queues (dict "org" $org "name" "default" "priority" 50 "fairnessAlgorithm" 1 "clusters" $clusters) -}}
+  {{- /* one queue per cluster, containing only that cluster */ -}}
+  {{- range $c := $clusters -}}
+    {{- $queues = append $queues (dict "org" $org "name" $c "priority" 50 "fairnessAlgorithm" 1 "clusters" (list $c)) -}}
+  {{- end -}}
+  {{- $_ := set $queueSync "queues" $queues -}}
+  {{- if not (hasKey $queueSync "source") -}}{{- $_ := set $queueSync "source" "static" -}}{{- end -}}
+  {{- $_ := set $leasor "queueSync" $queueSync -}}
+  {{- $_ := set $merged "leasor" $leasor -}}
+{{- end -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "unionai.fullname" $service }}
+  labels:
+    {{- include "unionai.labels" $service | nindent 4 }}
+data:
+  config.yaml: |
+    {{- tpl ($merged | toYaml) $service | nindent 4 }}
+{{- end }}
