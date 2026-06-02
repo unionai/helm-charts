@@ -1,61 +1,288 @@
-# Work in progress: GCP specific overrides for dataplane chart
+# Union Dataplane — GCP overlay.
+# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
+# annotations, not by this overlay.
 
+global:
+  # --- Identity ---
+  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks
+  CLUSTER_NAME: ""              # Unique cluster identifier
+  ORG_NAME: ""                  # Organization name (must match controlplane)
+
+  # --- Storage ---
+  METADATA_BUCKET: ""           # GCS bucket for workflow metadata
+  FAST_REGISTRATION_BUCKET: ""  # GCS bucket for code uploads
+
+  # --- GCP ---
+  GCP_REGION: ""
+  GOOGLE_PROJECT_ID: ""
+
+  # --- GCP IAM (Workload Identity) ---
+  # Format: <sa-name>@<project-id>.iam.gserviceaccount.com
+  BACKEND_IAM_ROLE_ARN: ""      # SA for Union backend services
+  WORKER_IAM_ROLE_ARN: ""       # SA for workflow execution pods
+
+  # --- Images ---
+  IMAGE_REPOSITORY_PREFIX: "public.ecr.aws/p0i0a9q8"
+
+  # --- DP -> CP routing ---
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
+
+  # DEPRECATED — long-term plan is to remove this once propeller injects
+  # OAuth credentials into task pods (see chart MIGRATION.md). Until then it
+  # remains as the auth-less escape hatch task pods need (their queue events
+  # bypass nginx auth via this endpoint). Empty falls through to
+  # CONTROLPLANE_GRPC_ENDPOINT; for intracluster set the queue Service URL
+  # via examples/values.gcp.intracluster.yaml.
+  QUEUE_GRPC_ENDPOINT: ""
+
+  # --- Service-to-Service OAuth2 ---
+  AUTH_CLIENT_ID: ""            # client_credentials client ID
+  OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Cloud provider identifier
+provider: gcp
+
+# ----------------------------------------------------------------------------
+# SECTION 3: Object Storage Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# Configure GCS buckets for workflow metadata and fast registration.
+# These buckets must be created before deployment.
+
+storage:
+  provider: gcs  # GCS provider (not custom)
+  region: '{{ .Values.global.GCP_REGION }}'
+  enableMultiContainer: true
+
+  # GCP configuration
+  gcp:
+    projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+    # Workload Identity provides authentication automatically
+
+# ----------------------------------------------------------------------------
+# SECTION 4: Image Configuration
+# ----------------------------------------------------------------------------
+# Image configuration for Union dataplane components
+# Images are pulled from Union's public ECR registry
+
+image:
+  union:
+    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
+    # tag will be set from Chart.AppVersion or can be overridden
+
+# ----------------------------------------------------------------------------
 # Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
 # By default, the image builder uses authenticationType: "noop". Uncomment and
 # set "google" if you want the builder to authenticate to Artifact Registry / GCR
 # via the GCP provider credential chain (Workload Identity / GKE metadata).
 # imageBuilder:
 #   authenticationType: google
 
-# DCGM Exporter
-dcgm-exporter:
-  enabled: true
+# ----------------------------------------------------------------------------
+# SECTION 5: Workload Identity (REQUIRED for GCP)
+# ----------------------------------------------------------------------------
+# Configure Workload Identity for secure GCP access.
+# These GCP service accounts must be created with appropriate IAM bindings.
 
-  # Affinity assuming cloud.google.com/gke-accelerator label is always
-  # associated to Nvidia.
-  affinity:
-    nodeAffinity:
-      requiredDuringSchedulingIgnoredDuringExecution:
-        nodeSelectorTerms:
-        - matchExpressions:
-          - key: cloud.google.com/gke-accelerator
-            operator: Exists
+# GCP service account for Union backend services (operator, propeller, etc.)
+additionalServiceAccountAnnotations:
+  iam.gke.io/gcp-service-account: "{{ tpl .Values.global.BACKEND_IAM_ROLE_ARN . }}"
 
-  extraEnv:
-  - name: "LD_LIBRARY_PATH"
-    value: "/usr/local/nvidia/lib64"
-  # Set DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE to "device-name" for GCP environments
-  # This ensure pod attribute on the metric is set to the pod name utilizing the GPU
-  # Ref: https://github.com/NVIDIA/dcgm-exporter/issues/27#issuecomment-978027181
-  - name: "DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE"
-    value: "device-name"
+# GCP service account for workflow execution pods
+userRoleAnnotationKey: iam.gke.io/gcp-service-account
+userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
-  extraHostVolumes:
-  - hostPath: "/home/kubernetes/bin/nvidia"
-    name: "nvidia-install-dir-host"
+# ----------------------------------------------------------------------------
+# SECTION 6: Cluster Resource Sync Configuration
+# ----------------------------------------------------------------------------
+# Syncs Kubernetes resources (namespaces, service accounts, quotas) with
+# the control plane using intra-cluster communication.
 
-  extraVolumeMounts:
-  - mountPath: "/etc/dcgm-exporter/default-counters.csv"
-    name: "exporter-metrics-volume"
-    subPath: "default-counters.csv"
-  - mountPath: "/usr/local/nvidia"
-    name: "nvidia-install-dir-host"
+clusterresourcesync:
+  config:
+    union:
+      connection:
+        # Control plane gRPC endpoint. Default `dns:///{CONTROLPLANE_HOST}:443`
+        # via CONTROLPLANE_GRPC_ENDPOINT global; override that global to bypass
+        # the nginx ingress.
+        host: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
 
-  # privileged mode provides the necessary permissions to access GPU-to-pod mappings
-  securityContext:
-    allowPrivilegeEscalation: true
-    privileged: true
+        # Skip SSL certificate verification for self-signed certs
+        # Set to true for self-signed certificates, false for trusted CA certs
+        insecureSkipVerify: true
 
-# Identify the GCP Secret Manager backend so the operator can report a canonical
-# secret store identity to the control plane (used for cluster-pool drift detection).
-# These fields are read only when proxy.secretManager.type is GCP.
+      # --- Service-to-service OAuth2 ---
+      # ClusterResourceSync acquires OAuth2 tokens via client_credentials
+      # flow and sends them on outgoing calls to the control plane.
+      auth:
+        enable: true
+        type: "ClientSecret"
+        clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+        clientSecretLocation: "/etc/union/secret/client_secret"
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: "5m"
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+
+# ----------------------------------------------------------------------------
+# SECTION 7: Core Service Configuration
+# ----------------------------------------------------------------------------
+# Configure dataplane services to communicate with control plane services
+# using Kubernetes internal networking (ClusterIP services).
+
 config:
+  sharedService:
+    security:
+      singleTenantOrgID: '{{ .Values.global.ORG_NAME }}'
+
+  # Override storage paths to use gs:// instead of s3://
+  core:
+    propeller:
+      rawoutput-prefix: "gs://{{ .Values.global.METADATA_BUCKET }}"
+  admin:
+    admin:
+      # Flyteadmin endpoint via CONTROLPLANE_GRPC_ENDPOINT (default
+      # `dns:///{CONTROLPLANE_HOST}:443`). Override the global to bypass nginx.
+      endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
+
+      # Use insecure (non-TLS) connection for intra-cluster HTTP communication
+      insecure: true
+
+      # OAuth2 client credentials for authenticated admin calls
+      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+      clientSecretLocation: "/etc/union/secret/client_secret"
+
+  catalog:
+    # Catalog service for task caching and reuse
+    catalog-cache:
+
+      type: "cacheservicev2"
+
+      # Cacheservice endpoint via CONTROLPLANE_GRPC_ENDPOINT (default
+      # `dns:///{CONTROLPLANE_HOST}:443`).
+      cache-endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
+      endpoint: ""
+
+      # Use insecure connection for intra-cluster communication
+      insecure: true
+
+      # Disable admin authentication (direct service-to-service)
+      use-admin-auth: false
+
+  k8s:
+    plugins:
+      k8s:
+        # Environment variables injected into all task pods
+        default-env-vars:
+          # Optionally increase the log level for all execution pods for debugging
+          # - LOG_LEVEL: "10"
+
+          # Queue endpoint for task pods via CONTROLPLANE_GRPC_ENDPOINT
+          # (default `dns:///{CONTROLPLANE_HOST}:443`).
+          - _U_EP_OVERRIDE: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
+
+          # Assumed queue service is running with TLS disabled since it's intra-cluster,
+          # we can set the following env vars to skip TLS verification for the queue service.
+          - _U_INSECURE: true
+          - _U_INSECURE_SKIP_VERIFY: false
+
+  union:
+    connection:
+      # Control plane connection for Union services via CONTROLPLANE_GRPC_ENDPOINT
+      # (default `dns:///{CONTROLPLANE_HOST}:443`).
+      host: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
+
+      # Skip SSL verification for self-signed certificates
+      insecureSkipVerify: true
+
+    # --- Service-to-service OAuth2 ---
+    # Operator acquires OAuth2 tokens via client_credentials
+    # flow and sends them on outgoing calls to the control plane.
+    auth:
+      enable: true
+      type: "ClientSecret"
+      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+      clientSecretLocation: "/etc/union/secret/client_secret"
+      authorizationMetadataKey: "flyte-authorization"
+      tokenRefreshWindow: "5m"
+
+  # Identify the GCP Secret Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is GCP.
   proxy:
     smConfig:
       gcpConfig:
-        project: '{{ .Values.storage.gcp.projectId }}'
+        project: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
+    # Persisted log source for the operator-proxy's TailLogs / TailTaskExecutionLogs
+    # handlers (cloud/operator/dataproxy/log_service.go). When the client requests
+    # LogsSource=PERSISTED_ONLY, the proxy reads historical task pod logs from the
+    # Cloud Logging API instead of the (live) Kubernetes pod log stream — which
+    # is what lets the UI keep showing logs after task pods are garbage-collected.
+    #
+    # Requires the operator-proxy GSA to hold roles/logging.viewer on the project.
+    persistedLogs:
+      sourceType: GCPStackdriver
+      gcpLogging:
+        gcp:
+          project: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+
+  operator:
+    # Disable Cloudflare tunnel (not needed for intra-cluster)
+    enableTunnelService: false
+
+    # Disable billable usage collector (typically for Union-managed control planes)
+    billableUsageCollector:
+      enabled: false
+
+    # Override storage paths and GCP project ID
+    clusterData:
+      metadataBucketPrefix: "gs://{{ .Values.global.METADATA_BUCKET }}"
+      gcpProjectId: "{{ .Values.global.GOOGLE_PROJECT_ID }}"
+
+    # Override dependencies heartbeat to only check proxy
+    dependenciesHeartbeat:
+      proxy:
+        endpoint: 'http://union-operator-proxy:10254'
+
+# ----------------------------------------------------------------------------
+# Executor Configuration
+# ----------------------------------------------------------------------------
+# Configure how workflow tasks are executed.
 
 executor:
+  config:
+    unionAuth:
+      # --- API key injection ---
+      # Injects the EAGER_API_KEY secret into task pods
+      # for authenticated eager-mode execution.
+      injectSecret: true
+      secretName: "EAGER_API_KEY"
+
+  # --- Task log links (GCP Cloud Logging) ---
+  # GKE ships container logs to Google Cloud Logging via the cluster's
+  # built-in logging agent (enabled by default in the
+  # selfmanaged/gcp/infra module — `logging.googleapis.com/kubernetes`
+  # with `SYSTEM_COMPONENTS` + `WORKLOADS`). These templates emit
+  # Cloud Console links the UI surfaces for task pods.
+  #
+  # `roles/logging.viewer` is granted to `union_backend_sa` (the GSA
+  # mapped to proxy + operator via Workload Identity) in
+  # `selfmanaged/gcp/dataplane/union_iam.tf` so the dataplane backend
+  # can serve log entries to the console. End users viewing logs via
+  # the Cloud Console link separately need `roles/logging.viewer` on
+  # the project. Mirrors the BYOC pattern in
+  # `cloud/deploy/dataplane/values-gcp.yaml` +
+  # `cloud/deploy/dataplane/template-gcp.yaml` (FAB-179).
   task_logs:
     plugins:
       logs:
@@ -78,120 +305,90 @@ executor:
         logs:
           cloudwatch-enabled: false
           kubernetes-enabled: false
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
           templates:
             - displayName: GCP Logs
               templateUris:
                 - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
-      dask:
-        # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-        logs:
-          # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
-          cloudwatch-enabled: false
-          kubernetes-enabled: false
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
-          templates:
-            - displayName: "GCP Logs"
-              scheme: TaskExecution
-              templateUris:
-                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22job-runner%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
-            - displayName: Dask Dashboard
-              linkType: dashboard
-              scheme: TaskExecution
-              templateUris:
-                - "/dataplane/dask/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/status"
-      ray:
-        logs:
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.rayClusterName}}`}}-head/"
-          templates:
-            - displayName: "Ray Dashboard"
-              linkType: dashboard
-              scheme: TaskExecution
-              templateUris:
-                - "/dataplane/ray/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
-            - displayName: "Stacktrace Logs (Ray All)"
-              scheme: TaskExecution
-              templateUris:
-                - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
-      spark:
-        logs:
-          mixed:
-            kubernetes-enabled: false
-            stackdriver-enabled: true
-            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
-            dynamic-log-links:
-              - vscode:
-                  displayName: VSCode
-                  linkType: ide
-                  templateUris:
-                    - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
-            templates:
-              - displayName: Spark Driver UI
-                linkType: dashboard
-                templateUris:
-                  - "/dataplane/spark/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
-          all-user:
-            kubernetes-enabled: false
-            stackdriver-enabled: true
-            stackdriver-template-uri: "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%7E%22{{`{{.podName}}`}}-exec%22?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
-        spark-config-default:
-          - spark.driver.cores: "1"
-          - spark.eventLog.enabled: "true"
-          - spark.eventLog.dir: "{{.Values.storage.sparkBucketPrefix}}/spark-events"
-          - spark.executorEnv.HTTP2_DISABLE: "true"
-          - spark.hadoop.fs.AbstractFileSystem.gs.impl: com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS
-          - spark.kubernetes.allocation.batch.size: "50"
-          - spark.kubernetes.driverEnv.HTTP2_DISABLE: "true"
-          - spark.network.timeout: 600s
-          - spark.executorEnv.KUBERNETES_REQUEST_TIMEOUT: 100000
-          - spark.executor.heartbeatInterval: 60s
-          - spark.ui.proxyRedirectUri: "{{.Values.cloudUrl}}"
-          - spark.kubernetes.submission.connectionTimeout: "30000"
-          - spark.kubernetes.submission.requestTimeout: "30000"
-          - spark.kubernetes.driver.connectionTimeout: "30000"
-          - spark.kubernetes.driver.requestTimeout: "30000"
-        spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
 
 # ----------------------------------------------------------------------------
-# Logging Configuration (GCP/GKE specific)
+# Ingress Configuration
+# ----------------------------------------------------------------------------
+# Configure ingress for external access to dataplane services.
+
+# Extra Kubernetes objects to be deployed alongside Union
+extraObjects: []
+
+# Ingress configuration for Union dataplane and serving
+ingress:
+  dataproxy:
+    class: "dataplane"
+  enabled: true
+
+  # Ingress architecture for serving will change in the future.
+  # This is a temporary configuration for intra-cluster deployments.
+  serving:
+    # Knative wildcard hostname matching for *.apps.<CONTROLPLANE_HOST>.
+    # CONTROLPLANE_HOST is contractually a bare hostname (no port).
+    hostOverride: '*.apps.{{ .Values.global.CONTROLPLANE_HOST }}'
+    # Assume the same ingress class as the dataproxy
+    class: "dataplane"
+
+# NGINX Ingress controller for dataplane
+ingress-nginx:
+  enabled: true
+
+  # Service name for the ingress controller
+  # This creates a service: "dataplane-nginx-controller"
+  # External traffic enters through this service
+  fullnameOverride: "dataplane-nginx"
+
+  controller:
+    service:
+      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
+      # Change to LoadBalancer or NodePort for external access
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
+
+    ingressClassResource:
+      # Ingress class name used in Ingress resources
+      name: "dataplane"
+
+# ----------------------------------------------------------------------------
+# Operator Configuration
 # ----------------------------------------------------------------------------
 
-# GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
-# includes WORKLOADS) already ship workload container stdout/stderr to Cloud
-# Logging via Google's managed fluentbit-gke DaemonSet in kube-system. Disable
-# the subchart fluentbit to avoid duplicate ingestion; rely on Google's agent,
-# and link out to console.cloud.google.com/logs/query for log viewing
-# (configured in executor.task_logs above).
+operator:
+  # Disable Cloudflare tunnel (not needed for intra-cluster deployment)
+  enableTunnelService: false
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration
+# ----------------------------------------------------------------------------
+
+# kube-prometheus-stack monitoring subchart (selfhosted-intracluster specific).
 #
-# Override back to true at the env-specific values layer if GKE managed Cloud
-# Logging is not enabled for the cluster.
-fluentbit:
-  enabled: false
-
-# ----------------------------------------------------------------------------
-# Monitoring Configuration (GCP/GKE specific)
-# ----------------------------------------------------------------------------
-
-# GKE manages controller-manager, scheduler, etcd, and kube-proxy internally.
-# Their metrics endpoints are not accessible from within the cluster.
-# Disable scraping and alerting rules for these components to avoid
-# false-positive TargetDown and *Down alerts. Mirrors values.aws.yaml.
+# In selfhosted-intracluster mode, the controlplane owns the full
+# kube-prometheus-stack (Prometheus operator, Prometheus, Grafana, etc.).
+# The DP does NOT enable the monitoring subchart (monitoring.enabled: false)
+# to avoid cluster-scoped resource conflicts (ClusterRole, webhooks, etc.).
+#
+# Union monitoring resources (ServiceMonitors, PrometheusRules, Dashboards)
+# are independent of the subchart and enabled by their own flags.
+# The CP Prometheus discovers them across namespaces via nil-selector config.
+#
+# To enable alerting rules (PrometheusRule alert groups), set
+# monitoring.alerting.enabled to true in your environment-specific
+# values overlay. This should be paired with AlertManager configuration
+# to route alerts to Grafana or another notification target.
 monitoring:
+  enabled: false
+  # GKE manages control-plane components (controller-manager, scheduler,
+  # etcd, kube-proxy) — their metrics endpoints aren't reachable. Disable
+  # the kube-prometheus-stack ServiceMonitors + alerting rules so any
+  # sidecar Prometheus pointed at this namespace doesn't trip false-positive
+  # TargetDown alerts. Mirrors values.aws.selfhosted-intracluster.yaml.
   kubeControllerManager:
     enabled: false
   kubeScheduler:
@@ -207,3 +404,90 @@ monitoring:
       kubeSchedulerRecording: false
       kubeProxy: false
       etcd: false
+
+# Union-features Prometheus for metrics collection and cost tracking
+prometheus:
+  prometheusOperator:
+    admissionWebhooks:
+      # Disable admission webhooks by default
+      # Enable if you have cert-manager installed
+      enabled: true
+
+      # Optional: Enable webhooks with cert-manager
+      # enabled: true
+      #certManager:
+      #  enabled: true
+      #  issuerRef:
+      #    group: "cert-manager.io"
+      #    kind: "ClusterIssuer"
+      #    name: "selfsigned-issuer"
+
+      patch:
+        enabled: true
+
+# ----------------------------------------------------------------------------
+# Secrets Configuration
+# ----------------------------------------------------------------------------
+
+secrets:
+  admin:
+    # --- OAuth secret configuration ---
+    # Mounts union-secret-auth K8s Secret with the client_secret into dataplane pods.
+    # Set create: false when using ExternalSecrets to provision the secret.
+    enable: true
+    create: false
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+    clientSecret: "placeholder"
+
+# ----------------------------------------------------------------------------
+# App Serving Configuration (Work in Progress)
+# ----------------------------------------------------------------------------
+
+serving:
+  auth:
+    # Disable authentication for serving (work in progress)
+    enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 6: Logging Configuration
+# ----------------------------------------------------------------------------
+# GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
+# includes WORKLOADS) already ship workload container stdout/stderr to Cloud
+# Logging via Google's managed fluentbit-gke DaemonSet in kube-system. The
+# subchart fluentbit is disabled to avoid duplicate ingestion; log viewing
+# links out to console.cloud.google.com/logs/query (see executor.task_logs).
+#
+# Override back to true at the env-specific values layer if GKE managed Cloud
+# Logging is not enabled for the cluster. ServiceAccount fields below remain
+# documented for that case but are inert while enabled=false.
+
+fluentbit:
+  enabled: false
+  serviceAccount:
+    name: fluentbit-system
+    # GKE Workload Identity annotation to grant FluentBit write access to GCS.
+    # The GCP service account must have roles/storage.objectAdmin on the bucket
+    # and the KSA must be bound via roles/iam.workloadIdentityUser.
+    annotations: {}
+    # annotations:
+    #   iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com"
+
+# ----------------------------------------------------------------------------
+# SECTION 7: Enable Opencost used for getting instance level cost data.
+# ----------------------------------------------------------------------------
+opencost:
+  # Currently we are disabling this as V2 console is not yet integrated with this cost data.
+  enabled: false
+
+# ----------------------------------------------------------------------------
+# SECTION 8: Override priority class due to GKE restriction where it doesn't
+#            allow running pods with system-cluster-critical other core kube
+#            components.
+# ----------------------------------------------------------------------------
+flytepropeller:
+  priorityClassName: ""
+
+flytepropellerwebhook: {}
+
+# -- Control plane namespace for cross-namespace RBAC (secretsWatcher).
+controlplaneNamespace: "union-cp"

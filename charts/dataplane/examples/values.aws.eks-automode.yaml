@@ -1,16 +1,95 @@
-# helm-values: examples/values-test-certs.yaml
-# Intended to match and test charts/dataplane/values.aws.eks-automode.yaml
-global:
-  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
-  CLUSTER_NAME: "test-cluster-name"
-  ORG_NAME: "test-org-name"
-  AUTH_CLIENT_ID: "test-client-id"
-  METADATA_BUCKET: "test-metadata-bucket"
-  FAST_REGISTRATION_BUCKET: "test-fast-registration-bucket"
-  AWS_REGION: "test-region"
-  BACKEND_IAM_ROLE_ARN: "test-backend-iam-role-arn"
-  WORKER_IAM_ROLE_ARN: "test-worker-iam-role-arn"
+# ============================================================================
+# Union Dataplane Configuration for AWS EKS Auto Mode
+# ============================================================================
+# This file provides a production-ready template for deploying Union dataplane
+# on AWS EKS using Auto Mode. Replace the placeholder values below with your
+# actual configuration.
+#
+# For more details, see: https://docs.union.ai/deployment/
+# ============================================================================
 
+# Before deployment, replace these placeholders in the globals section below.
+# The globals section makes these values accessible to both the chart and
+# future subcharts, ensuring consistent configuration across all components.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: Global Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values are accessible to both the chart and all potential subcharts.
+
+global:
+
+  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
+  #    Format: "hostname" (no protocol prefix for standard BYOC)
+  #    Example: "mycompany.unionai.cloud" or "union.example.com"
+  #    Source: Provided by Union team for BYOC deployments
+  UNION_CONTROL_PLANE_HOST: ""
+
+  # 2. CLUSTER_NAME - Unique cluster identifier
+  #    Format: Lowercase alphanumeric with hyphens
+  #    Example: "prod-us-east-1" or "staging-cluster"
+  #    Note: Must be unique within your organization
+  CLUSTER_NAME: ""
+
+  # 3. ORG_NAME - Organization name
+  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
+  #    Example: "acme-corp" or "my-organization"
+  #    Source: Provided by Union team
+  ORG_NAME: ""
+
+  # 4. AUTH_CLIENT_ID - OAuth client_credentials client ID
+  #    Format: String provided by Union team
+  #    Example: "dataplane-prod-client"
+  #    Source: Provided by Union team
+  AUTH_CLIENT_ID: ""
+
+  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-metadata-bucket"
+  #    Note: Bucket must exist before deployment
+  METADATA_BUCKET: ""
+
+  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
+  #    Format: Valid S3 bucket name
+  #    Example: "my-union-fast-registration-bucket"
+  #    Note: Can be same as metadata bucket or separate
+  FAST_REGISTRATION_BUCKET: ""
+
+  # 1. AWS_ACCOUNT_ID - AWS account ID (used for ECR registry URL)
+  #    Format: 12-digit AWS account ID
+  #    Example: "123456789012"
+  AWS_ACCOUNT_ID: ""
+
+  # 2. AWS_REGION - AWS region for S3 buckets
+  #    Format: AWS region code
+  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  AWS_REGION: ""
+
+  # 3. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
+  #    Permissions: S3 access, ECR (if private images)
+  BACKEND_IAM_ROLE_ARN: ""
+
+  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
+  #    Format: Full ARN
+  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
+  #    Permissions: S3 access, AWS services used by workflows
+  WORKER_IAM_ROLE_ARN: ""
+
+  # ----------------------------------------------------------------------------
+  # Note: For self-hosted intra-cluster deployments (control plane and dataplane
+  # in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
+  # That file is self-contained and includes all necessary configuration.
+  # ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 2: Core Identity Configuration (REQUIRED)
+# ----------------------------------------------------------------------------
+# These values reference the globals defined above.
+
+# Cloud provider identifier (do not change for AWS)
 provider: aws
 
 # ----------------------------------------------------------------------------
@@ -26,6 +105,15 @@ storage:
   # AWS region for S3 buckets
   region: '{{ .Values.global.AWS_REGION }}'
   enableMultiContainer: true
+
+# ----------------------------------------------------------------------------
+# Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "aws" if you want the builder to authenticate to ECR via the AWS provider
+# credential chain (IRSA / EC2 instance profile).
+# imageBuilder:
+#   authenticationType: aws
 
 # ----------------------------------------------------------------------------
 # SECTION 4: IAM Roles (REQUIRED for AWS)
@@ -53,7 +141,7 @@ secrets:
     clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
 
     # Client secret for dataplane authentication (keep this secure!)
-    clientSecret: "test-not-real-secret"
+    clientSecret: ""
 
     # Whether to create the Kubernetes secret
     # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
@@ -67,8 +155,11 @@ secrets:
 fluentbit:
   serviceAccount:
     name: fluentbit-system
-    # Annotations may be required for IRSA
+    # IRSA annotation to grant FluentBit write access to the S3 metadata bucket.
+    # The IAM role must allow s3:PutObject, s3:GetObject, s3:ListBucket on the bucket.
     annotations: {}
+    # annotations:
+    #   eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<FLUENTBIT_ROLE_NAME>"
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Task Level Monitoring
@@ -79,7 +170,7 @@ dcgm-exporter:
   enabled: true
 
   # Configure AWS specific affinity
-  # Reference: http://github.com/aws-observability/helm-charts/blob/main/charts/amazon-cloudwatch-observability/values.yaml#L1413-L1545
+  # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -227,6 +318,14 @@ dcgm-exporter:
 # ----------------------------------------------------------------------------
 
 config:
+  # Identify the AWS Secrets Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is AWS.
+  proxy:
+    smConfig:
+      awsConfig:
+        account: '{{ .Values.global.AWS_ACCOUNT_ID }}'
+        region: '{{ .Values.global.AWS_REGION }}'
   k8s:
     plugins:
       k8s:
@@ -368,3 +467,28 @@ extraObjects:
       # Priority weight (lower = less preferred)
       # GPU nodes are more expensive, so prefer general-purpose nodes first
       weight: 10
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (AWS/EKS specific)
+# ----------------------------------------------------------------------------
+
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

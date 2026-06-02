@@ -1,87 +1,26 @@
 # Union Helm Charts
 
-## Dataplane
+Helm charts for deploying Union.ai onto Kubernetes:
 
-### Assumptions
-* You have a Union organization that has already been created and you know the URL of your control plane host.
-* The Union provided client ID and secret.
-* You have a Kubernetes cluster, running one of the most recent three minor K8s versions. [Learn more](https://kubernetes.io/releases/version-skew-policy/)
-* Object storage provided by a vendor or an S3 compatible platform (such as [Minio](https://min.io).
+- **[`charts/controlplane`](./charts/controlplane/)** — Union control plane (flyteadmin, identity, executions, queue, scheduler, etc.).
+- **[`charts/dataplane`](./charts/dataplane/)** — Union dataplane (union-operator / propeller) that onboards a Kubernetes cluster to a Union control plane.
+- **[`charts/dataplane-crds`](./charts/dataplane-crds/)** — **deprecated**. Use vendored CRDs at [`crds/`](./crds/) instead.
 
-> Some sample Terraform configurations are available in the [providers](providers) directory.
+## Documentation by deployment mode
 
-## Prerequisites
+| Mode | Where to start | What this repo covers |
+|---|---|---|
+| **Self-managed dataplane** (Union-managed control plane, you run the DP) | [docs.union.ai → Self-managed deployment](https://www.union.ai/docs/v2/union/deployment/selfmanaged/) | Per-cloud `prepare-infra` and `deploy-dataplane` pages walk through the full path; this repo's [`charts/dataplane/README.md`](./charts/dataplane/) covers the Helm install. |
+| **Selfhosted** (you run both control plane and dataplane) | Reach out to [support@union.ai](mailto:support@union.ai) | Production selfhosted setup has meaningful operational requirements (cluster prerequisites, ingress + TLS, OIDC, multi-cluster routing). Support will scope the rollout with you. Chart-level install reference: [`charts/controlplane/README.md`](./charts/controlplane/) and [`charts/dataplane/README.md`](./charts/dataplane/). |
+| **BYOC** (fully operated by Union) | [docs.union.ai → BYOC](https://www.union.ai/docs/v2/union/deployment/byoc/) | Union deploy tooling installs and operates the chart end-to-end; this repo is provided as a reference. |
 
-* Install Helm 3.19
+## Chart conventions
 
-```bash
-brew install helm
-# Or if our version is lagging behind brew
-curl -fsSL -o get_helm.sh https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4
-chmod 700 get_helm.sh
-./get_helm.sh --version v4.0.0
-```
+- [`charts/CONVENTIONS.md`](./charts/CONVENTIONS.md) — overlay file naming, what's actively tested vs. an example.
+- [`charts/MIGRATION.md`](./charts/MIGRATION.md) — recent breaking-ish chart changes and how to migrate.
 
-> Helm 3.19 is required to match version specific pinned in Github workflows.
+## Local development
 
-* Install [union](https://docs.union.ai/byoc/api-reference/union-cli) and [uctl](https://docs.union.ai/byoc/api-reference/uctl-cli/).
+Sample Terraform configurations for spinning up substrate to test against live in [`providers/`](./providers).
 
-## Deploy the Union operator
-
-1. Add the Union.ai Helm repo:
-```shell
-helm repo add unionai https://unionai.github.io/helm-charts/
-helm repo update
-```
-
-2. Create a values file that include, at a minimum, the following fields:
-
-```yaml
-host: <YOUR_UNION_CONTROL_PLANE_URL>
-clusterName: <MY_CLUSTER> #arbitrary and unique cluster identifier
-orgName: <MY_ORG> #Name of your Union.ai organization
-provider: aws #The cloud provider your cluster is running in.  Acceptable values include `aws`, `gcp`, `azure`, `oci`, and `metal` (for self-managed or on-prem clusters).
-storage:
-  endpoint: <STORAGE_ENDPOINT> #This is the S3 API endpoint provided by your cloud vendor.
-  accessKey: <S3_ACCESS_KEY>
-  secretKey: <S3_SECRET_KEY>
-  bucketName: <S3_BUCKET_NAME>
-  fastRegistrationBucketName: <S3_BUCKET_NAME> #it can be the same as bucketName
-  region: <CLOUD_REGION> # not needed for on-prem deployments
-secrets:
-  admin:
-    create: true
-    # Insert values from step 4
-    clientSecret: <UNION_CLIENT_SECRET> #you can also provide this as a command-line argument
-    clientId: "<UNION_CLIENT_ID>"
-```
-3. Optionally configure the resource `limits` and `requests` for the different services.  By default these will be set minimally, will vary depending on usage, and follow the Kubernetes `ResourceRequirements` specification.
-    * `clusterresourcesync.resources`
-    * `flytepropeller.resources`
-    * `flytepropellerwebhook.resources`
-    * `operator.resources`
-    * `proxy.resources`
-
-4. Install the Union operator and CRDs:
-```shell
-# The dataplane chart bundles the FlyteWorkflow CRD under `crds/`; Helm
-# installs it automatically on first install. Drop `--skip-crds` if you'd
-# rather Helm handle the CRD; pass `--skip-crds` here and apply
-# `crds/flyte-v1/` separately if you manage CRDs out-of-band (SSA / ArgoCD).
-helm upgrade --install unionai-dataplane unionai/dataplane \
-    --create-namespace \
-    --namespace union \
-    --values <YOUR_VALUES_FILE>
-```
-
-5. Once deployed you can check to see if the cluster has been successfully registered to the control plane:
-
-```shell
-uctl get cluster
- ----------- ------- --------------- -----------
-| NAME      | ORG   | STATE         | HEALTH    |
- ----------- ------- --------------- -----------
-| <cluster> | <org> | STATE_ENABLED | HEALTHY   |
- ----------- ------- --------------- -----------
-1 rows
-```
+Helm version: 3.18+ (CI pins 3.19). Snapshot tests: `make test`.

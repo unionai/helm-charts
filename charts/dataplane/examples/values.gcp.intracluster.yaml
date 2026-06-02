@@ -1,0 +1,27 @@
+# ============================================================================
+# GCP intracluster example — Dataplane
+# ============================================================================
+# Overlay for the topology where controlplane and dataplane run in the same
+# Kubernetes cluster. Routes DP -> CP traffic through cluster-local Services
+# (svc.cluster.local) instead of through the public CP ingress.
+#
+# Apply on top of:
+#   helm template charts/dataplane \
+#     -f charts/dataplane/values.yaml \
+#     -f charts/dataplane/values.gcp.yaml \
+#     -f charts/dataplane/examples/values.gcp.intracluster.yaml \
+#     ...
+#
+# Replace `controlplane` below with the actual CP release namespace if it
+# differs in your deployment.
+# ============================================================================
+
+global:
+  # All DP -> CP gRPC traffic dials the CP nginx Service directly. Bypasses
+  # the public LB + auth, and works without DNS hops outside the cluster.
+  CONTROLPLANE_GRPC_ENDPOINT: "dns:///controlplane-nginx-controller.controlplane.svc.cluster.local:443"
+
+  # Task pods can't carry OAuth credentials, so queue calls must hit an
+  # auth-less path. The queue Service in the CP namespace exposes :80 with no
+  # auth — safe only because nothing outside the cluster can reach it.
+  QUEUE_GRPC_ENDPOINT: "dns:///queue.controlplane.svc.cluster.local:80"
