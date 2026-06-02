@@ -1,0 +1,35 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- if and .Values.actions.router.autoscaling.enabled (gt (int (include "actions.shardCount" .)) 1) }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "actions.router.fullname" . }}
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.router.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "actions.router.fullname" . }}
+  minReplicas: {{ .Values.actions.router.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.actions.router.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.actions.router.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.actions.router.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.actions.router.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.actions.router.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+{{- end }}
+{{- end }}

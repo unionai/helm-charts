@@ -1,0 +1,117 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- $shards := (include "actions.shardsConfig" . | fromJson).partitions -}}
+{{- if gt (len $shards) 1 }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "actions.router.fullname" . }}-lds
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.router.labels" . | nindent 4 }}
+data:
+  lds.yaml: |
+    version_info: "{{ .Release.Revision }}"
+    resources:
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: grpc
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8080
+      filter_chains:
+      - filters:
+        - name: envoy.filters.network.http_connection_manager
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            stat_prefix: actions_grpc
+            codec_type: AUTO
+            route_config:
+              name: local_route
+              virtual_hosts:
+              - name: backend
+                domains: ["*"]
+                {{- include "actions.router.retryPolicy" . | nindent 16 }}
+                routes:
+                {{- range $idx, $shard := $shards }}
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "{{ $idx }}"
+                  route:
+                    cluster: actions-grpc-{{ $idx }}
+                    timeout: 0s
+                    idle_timeout: 7200s
+                {{- end }}
+            http_filters:
+            - name: envoy.filters.http.golang
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.golang.v3alpha.Config
+                library_id: actions-service-router
+                library_path: /lib/actions-service-router.so
+                plugin_name: actions-service-router
+                plugin_config:
+                  "@type": type.googleapis.com/xds.type.v3.TypedStruct
+                  value:
+                    enabled: true
+                    shards:
+                    {{- range $idx, $shard := $shards }}
+                    - startPartition: {{ $shard.startPartition }}
+                      endPartition: {{ $shard.endPartition }}
+                    {{- end }}
+            - name: envoy.filters.http.router
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+    - "@type": type.googleapis.com/envoy.config.listener.v3.Listener
+      name: http
+      address:
+        socket_address:
+          address: 0.0.0.0
+          port_value: 8089
+      filter_chains:
+      - filters:
+        - name: envoy.filters.network.http_connection_manager
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+            stat_prefix: actions_http
+            codec_type: AUTO
+            route_config:
+              name: local_route
+              virtual_hosts:
+              - name: backend
+                domains: ["*"]
+                {{- include "actions.router.retryPolicy" . | nindent 16 }}
+                routes:
+                {{- range $idx, $shard := $shards }}
+                - match:
+                    prefix: "/"
+                    headers:
+                    - name: "actions-shard-id"
+                      string_match:
+                        exact: "{{ $idx }}"
+                  route:
+                    cluster: actions-http-{{ $idx }}
+                    timeout: 30s
+                {{- end }}
+            http_filters:
+            - name: envoy.filters.http.golang
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.golang.v3alpha.Config
+                library_id: actions-service-router
+                library_path: /lib/actions-service-router.so
+                plugin_name: actions-service-router
+                plugin_config:
+                  "@type": type.googleapis.com/xds.type.v3.TypedStruct
+                  value:
+                    enabled: true
+                    shards:
+                    {{- range $idx, $shard := $shards }}
+                    - startPartition: {{ $shard.startPartition }}
+                      endPartition: {{ $shard.endPartition }}
+                    {{- end }}
+            - name: envoy.filters.http.router
+              typed_config:
+                "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+{{- end }}
+{{- end }}

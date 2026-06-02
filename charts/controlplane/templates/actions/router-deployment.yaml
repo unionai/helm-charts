@@ -1,0 +1,137 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- if gt (int (include "actions.shardCount" .)) 1 }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "actions.router.fullname" . }}
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.router.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.actions.router.autoscaling.enabled }}
+  replicas: {{ .Values.actions.router.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "actions.router.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/router-bootstrap: {{ include (print $.Template.BasePath "/actions/router-configmap.yaml") . | sha256sum }}
+        checksum/router-cds: {{ include (print $.Template.BasePath "/actions/router-cds.yaml") . | sha256sum }}
+        checksum/router-lds: {{ include (print $.Template.BasePath "/actions/router-lds.yaml") . | sha256sum }}
+        {{- with .Values.actions.router.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        platform.union.ai/zone: "controlplane"
+        {{- include "actions.router.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "actions.serviceAccountName" . }}
+      {{- with .Values.actions.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: envoy-bootstrap
+          configMap:
+            name: {{ include "actions.router.fullname" . }}
+            items:
+            - key: envoy.yaml
+              path: envoy.yaml
+        - name: envoy-cds
+          configMap:
+            name: {{ include "actions.router.fullname" . }}-cds
+            items:
+            - key: cds.yaml
+              path: cds.yaml
+        - name: envoy-lds
+          configMap:
+            name: {{ include "actions.router.fullname" . }}-lds
+            items:
+            - key: lds.yaml
+              path: lds.yaml
+      containers:
+        - name: envoy
+          {{- with .Values.actions.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          image: {{ include "actions.router.image" . }}
+          imagePullPolicy: {{ include "actions.router.imagePullPolicy" . }}
+          command:
+            - envoy
+            - -c
+            - /etc/envoy/envoy.yaml
+            - --service-cluster
+            - actions-service-router
+            - --service-node
+            - $(THIS_POD_NAME)
+          env:
+            - name: THIS_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: admin
+              containerPort: 9901
+              protocol: TCP
+          volumeMounts:
+            - name: envoy-bootstrap
+              mountPath: /etc/envoy/envoy.yaml
+              subPath: envoy.yaml
+            - name: envoy-cds
+              mountPath: /etc/envoy/cds.yaml
+              subPath: cds.yaml
+            - name: envoy-lds
+              mountPath: /etc/envoy/lds.yaml
+              subPath: lds.yaml
+          resources:
+            {{- toYaml .Values.actions.router.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: admin
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      {{- with .Values.actions.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.actions.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+      {{- if .Values.actions.affinity }}
+        {{- toYaml .Values.actions.affinity | nindent 8 }}
+      {{- else }}
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  {{- include "actions.router.selectorLabels" . | nindent 18 }}
+              topologyKey: "kubernetes.io/hostname"
+      {{- end }}
+{{- end }}
+{{- end }}
