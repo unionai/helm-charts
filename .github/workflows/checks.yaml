@@ -16,7 +16,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4.3.1
         with:
-          version: v4.0.4
+          version: v4.2.0
       - name: Run linter
         run: make lint
   validate:
@@ -29,7 +29,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4.3.1
         with:
-          version: v4.0.4
+          version: v4.2.0
       - name: Run tests
         run: make helm-test
   kubeconform:
@@ -43,3 +43,29 @@ jobs:
         uses: yokawasa/action-setup-kube-tools@v0.11.2
       - name: Run kubeconform
         run: make kubeconform-test
+  vendored-crds:
+    # Drift gate for the vendored CRDs under crds/<name>/. Each
+    # scripts/check.sh re-pulls its upstream chart and diffs the rendered
+    # CRD YAML against the checked-in copy; the job fails if any CRD set
+    # drifts from the parent-chart dep version it claims to track.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.2.0
+      - name: Set up yq
+        # mikefarah/yq (Go), not the Python yq that ships in Ubuntu —
+        # check.sh / sync.sh use the mikefarah expression syntax.
+        run: |
+          YQ_VERSION=v4.43.1
+          sudo curl -fsSL -o /usr/local/bin/yq \
+            "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          sudo chmod +x /usr/local/bin/yq
+          yq --version
+      - name: Verify vendored CRDs match upstream charts
+        run: make check-vendored-crds

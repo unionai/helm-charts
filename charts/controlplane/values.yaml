@@ -1,62 +1,67 @@
-# ----------------------------------------------------------------------------
-# Global Configuration
-# ----------------------------------------------------------------------------
-# Global values are accessible to both the chart and all subcharts.
-# Override these in deployment-specific values files:
-#   - values.aws.yaml: AWS-specific configuration (RDS, S3, IAM roles)
-#   - values.aws.selfhosted-intracluster.yaml: Self-contained intra-cluster configuration
-#
-# Usage:
-#   helm install -f values.aws.yaml [...]
-#   helm install -f values.aws.selfhosted-intracluster.yaml [...]
+# Base defaults for every controlplane deployment. Cloud-specific overrides
+# live in values.{aws,gcp}.yaml — start there for new deployments.
 
 global:
-
   # --- Deployment Identity ---
   UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
   UNION_ORG: ""             # Organization name (must match dataplane)
 
   # --- Infrastructure ---
-  DB_HOST: ""               # PostgreSQL endpoint
-  DB_NAME: ""               # PostgreSQL database name
-  DB_USER: ""               # PostgreSQL username
+  DB_HOST: ""
+  DB_NAME: ""
+  DB_USER: ""
+  DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
   BUCKET_NAME: ""           # Object storage bucket for metadata
-  ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
-  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
-  DATAPLANE_ENDPOINT: ""    # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
+  ARTIFACTS_BUCKET_NAME: ""
+  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
+
+  # --- DP entrypoint (CP -> DP) ---
+  DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
+  DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
+
+  # --- Leasor: list of attached dataplane cluster identifiers ---
+  # TEMPORARY. This static list is the ship-today way to tell leasor which
+  # dataplane clusters its queues should target. A future control-plane
+  # queue/cluster CRUD service will own this state and deprecate this knob —
+  # plan to migrate when that lands.
+  #
+  # Each entry is a cluster identifier — the value the corresponding dataplane
+  # chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues
+  # against. For an intracluster deployment (CP+DP on the same K8s) list a
+  # single entry; for multi-DP deployments list every attached dataplane.
+  #
+  # Used to auto-generate services.leasor.configMap.leasor.queueSync.queues
+  # (see comment on that block below). No reasonable default — set explicitly.
+  #
+  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
+  # flyteadmin's routing registry (name + endpoint + auth per cluster) used by
+  # RandomClusterSelector for v1 execution dispatch; populate that only when
+  # you actually need flyteadmin v1 multi-cluster routing. This list is
+  # leasor-only and just carries names.
+  #
+  # The auto-generated `default` queue lists ALL clusters here, so work fans
+  # out across every attached dataplane. Override
+  # services.leasor.configMap.leasor.queueSync.queues directly if you need a
+  # different policy.
+  LEASOR_ATTACHED_CLUSTERS: []   # e.g. ["my-dp-cluster"] or ["cluster-a", "cluster-b"]
 
   # --- Images ---
-  # Default: Union's customer-facing registry. Requires imagePullSecrets.
-  # Internal deployments: overridden by terraform to private ECR/GCR.
+  # Customer-facing registry default; internal deployments override to private ECR/GCR.
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
   # --- Ingress ---
-  INGRESS_PROVIDER: nginx   # Options: "nginx", "envoy", "both"
+  INGRESS_PROVIDER: nginx   # nginx | envoy | both
 
-  # Cloud-specific globals (AWS_REGION, IAM role ARNs, etc.) are declared
-  # in the cloud overlay (e.g. values.aws.selfhosted-intracluster.yaml).
+  # --- Service-to-Service OAuth2 ---
+  # Full IdP config lives in flyte.configmap.adminServer.auth below; these
+  # three globals feed into that block plus a few service ConfigMaps.
+  INTERNAL_CLIENT_ID: ""    # client_credentials client ID for S2S calls
+  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint
+  OIDC_S2S_SCOPE: ""        # Okta: leave empty. Entra ID: "api://my-app/.default"
 
-  # --- Service-to-Service Authentication ---
-  INTERNAL_CLIENT_ID: ""    # OAuth2 client ID for S2S calls (client_credentials)
-  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint for S2S authentication
-  OIDC_S2S_SCOPE: ""        # S2S scope. Okta: leave empty (defaults to "all"). Entra ID: "api://my-app/.default"
-
-  # --- OIDC Authentication ---
-  # Full auth configuration is in flyte.configmap.adminServer.auth.
-  # These globals are deprecated — set auth fields directly in that block
-  # or via the authn terraform module outputs (app_auth, user_auth).
-  OIDC_BASE_URL: ""         # Deprecated: use adminServer.auth.appAuth.externalAuthServer.baseUrl
-  OIDC_CLIENT_ID: ""        # Deprecated: use adminServer.auth.userAuth.openId.clientId
-  CLI_CLIENT_ID: ""         # Deprecated: use adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId
-
-# ----------------------------------------------------------------------------
-# Additional Configuration
-# ----------------------------------------------------------------------------
-# Note: Most configuration now comes from globals above.
-# Database host, name, user, buckets, and region are all configured via globals.
-
-# It's recommended to create a Kubernetes secret and reference it via
-# globals.KUBERNETES_SECRET_NAME rather than storing the password here
+# Prefer setting the DB password via a K8s secret referenced by
+# global.KUBERNETES_SECRET_NAME; this inline field is here only as a fallback.
 dbPass: ""
 # -- Set the image used for control plane services
 image:
@@ -128,10 +133,114 @@ strategy:
     maxSurge: 1
 secrets: {}
 
+# --- Image-builder bootstrap ---
+#
+# Helm post-install/post-upgrade hook Job that registers the `build-image`
+# ContainerTask in flyteadmin so the SDK can invoke remote image builds
+# without operators running `flyte deploy` manually after every helm upgrade.
+imageBuilder:
+  bootstrap:
+    # When false, the bootstrap Job + ConfigMap are not rendered (use this
+    # if the operator prefers to manage build-image registration themselves
+    # or has an existing registration that must not be overwritten).
+    enabled: true
+
+    # Container image the bootstrap Job runs in. Must provide `flyte` (Python
+    # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
+    # Union-published `build-image-bootstrap` image, which bakes both in so the
+    # Job has no runtime install step and works in restricted-network
+    # deployments where the cluster cannot reach PyPI. Override `repository`
+    # to use a private mirror or a custom image that satisfies the same
+    # contract.
+    image:
+      repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/build-image-bootstrap"
+      tag: "{{ .Chart.AppVersion }}"
+
+    # Registry prefix the build-image + frontend-v2 task images are pulled
+    # from. Defaults to Union's public ECR staging; override per env if
+    # mirroring to a private registry.
+    unionImageNamePrefix: public.ecr.aws/g1m2l3c1/imagebuilder-staging
+
+    # Where the build-image task is registered. Convention is system/production.
+    # The Job creates the project if it doesn't already exist.
+    project: system
+    domain: production
+
+    # Annotations on the Job object itself (merged with the chart-managed
+    # helm.sh/hook* annotations). Useful for GitOps controllers, operator
+    # tooling that targets Jobs by annotation, or arbitrary metadata.
+    # For pod-template annotations, use `podAnnotations` below.
+    annotations: {}
+
+    # Annotations + labels added to the Job's pod template. Useful for
+    # service-mesh sidecar control (e.g. linkerd.io/inject: disabled to
+    # keep the one-shot Job from getting a sidecar that never exits),
+    # Prometheus scrape opt-in/out, cost-attribution labels, etc.
+    podAnnotations: {}
+    podLabels: {}
+
+    # imagePullSecrets attached to the bootstrap Job's pod. If unset,
+    # falls back to the chart-wide `.Values.imagePullSecrets` — which is
+    # the right default since the bootstrap image lives under the same
+    # `global.IMAGE_REPOSITORY_PREFIX` as the rest of the chart's images.
+    # Override here (e.g. to a different secret, or to `[]` to disable)
+    # only if the bootstrap image is mirrored to a separate registry.
+    # imagePullSecrets: []
+
+    # Extra env vars appended to the bootstrap container's env. The Job
+    # talks to the public flyteadmin ingress over TLS, so the most common
+    # use is to inject proxy / CA-bundle settings in restricted networks
+    # (e.g. HTTPS_PROXY, NO_PROXY, SSL_CERT_FILE pointing at a private CA
+    # bundle mounted via extraVolumes).
+    extraEnv: []
+    # extraEnv:
+    #   - name: HTTPS_PROXY
+    #     value: http://proxy.internal.example:3128
+    #   - name: SSL_CERT_FILE
+    #     value: /etc/ssl/private/ca-bundle.crt
+
+    # Extra volumes + volumeMounts appended to the Job's pod spec and
+    # container respectively. Use this to mount a private CA bundle, swap
+    # the client-secret source for an alternate Secret, or attach any
+    # other config/data the Job needs at registration time.
+    extraVolumes: []
+    extraVolumeMounts: []
+    # extraVolumes:
+    #   - name: private-ca
+    #     configMap:
+    #       name: private-ca-bundle
+    # extraVolumeMounts:
+    #   - name: private-ca
+    #     mountPath: /etc/ssl/private
+    #     readOnly: true
+
+    # Job-spec tunables. Defaults are conservative for a one-shot
+    # post-install hook; override for stricter retry / cleanup policies.
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 600
+    restartPolicy: Never
+
+    # Flyte admin connection used by the bootstrap Job. Rendered into
+    # /etc/flyte/config.yaml inside the Job pod and consumed by `flyte deploy`.
+    #
+    # NOTE: deliberately not derived from `.Values.configMap.admin` (the CP
+    # service-to-service block). That one uses the intra-cluster gRPC path
+    # (flyteadmin.<ns>.svc.cluster.local:81, insecure) which the Python SDK's
+    # OAuth discovery can't reproduce, so the bootstrap Job goes through the
+    # public ingress instead. Override here only if your env needs different
+    # auth (e.g. PKCE, custom token endpoint, alternate clientSecretLocation).
+    #
+    # String values are templated with `tpl` so `{{ .Values.global.X }}`-style
+    # references resolve at render time.
+    admin:
+      endpoint: '{{ .Values.global.UNION_HOST }}'
+      insecure: false
+      authType: ClientSecret
+      clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+      clientSecretLocation: /etc/secrets/union/client_secret
+
 imagePullSecrets:
   - name: union-registry-secret
-
-extraObjects: []
 
 podMonitor:
   custom:
@@ -164,15 +273,47 @@ ingress:
   # Default to the ingress class being created in nginx-ingress chart.
   className: "controlplane"
 
-  # TLS configuration for intra-cluster HTTPS.
-  tls:
-    - hosts:
-        - '{{ .Values.global.UNION_HOST }}'
-        - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-      secretName: 'controlplane-selfsigned-tls-secret'
+  # TLS configuration for the controlplane Ingresses.
+  #
+  # No TLS is configured by default. To enable HTTPS, set `tls` to a list of
+  # `{hosts, secretName}` entries. The secret must already exist in the chart's
+  # namespace (typically provisioned by cert-manager via extraObjects, or by
+  # an external-secrets ExternalSecret in your environment overlay).
+  #
+  # Example — one secret covering the public host and the in-cluster alias:
+  # tls:
+  #   - hosts:
+  #       - '{{ .Values.global.UNION_HOST }}'
+  #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+  #     secretName: my-controlplane-tls-secret
+  tls: []
 
   # Host to use for all ingress objects.
   host:  "" # Set the DNS name of the ingress host used by you control plane
+
+  # Additional hostnames to expose every controlplane Ingress (and Envoy
+  # GRPCRoute/HTTPRoute) on. Each entry is added as a separate rules[].host
+  # entry (and hostnames[] entry on Gateway-API routes), so all routes are
+  # reachable on both the primary `host` and each additional hostname.
+  #
+  # TLS coverage is independent — add the hostname to an existing `tls[].hosts`
+  # entry if it's covered by the same secret, add a new `tls[]` entry with its
+  # own secretName for per-host certs, or leave it out for HTTP-only access.
+  #
+  # For an in-cluster alias used only to avoid hairpinning DP→CP traffic out
+  # to the public LB, prefer the `nginx.ingress.kubernetes.io/server-alias`
+  # annotation below — it's controller-private and doesn't trip cert-manager
+  # / external-dns into managing a hostname they can't address.
+  #
+  # When OIDC auth is enabled, each extra host must ALSO be added to:
+  #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
+  #     trusts the host for OAuth redirect URL construction)
+  #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
+  #     (so tokens with aud=<extra-host> validate)
+  #   - the IdP application's redirect URI list (`https://<host>/callback`)
+  # Missing any of these will cause login on the alias host to fail —
+  # flyteadmin falls back to the internal service URL and the IdP rejects it.
+  extraHosts: []
 
   # Whether to create separate ingress objects for gRPC and HTTP traffic.
   separateGrpcIngress: true
@@ -180,9 +321,14 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
-    # Allow DP→CP traffic via intra-cluster DNS to match ingress rules.
-    # Without this, requests from the dataplane to the controlplane nginx
-    # controller service DNS name won't match the ingress host.
+    # Intra-cluster routing alias — configured by default so controlplane
+    # services (DP→CP, CP→CP auth subrequests) can reach the ingress via the
+    # in-cluster DNS name `controlplane-nginx-controller.<ns>.svc.cluster.local`
+    # without hairpinning out to the public LB. The alias is matched at the
+    # nginx server_name level; the same TLS listener and Ingress rules apply
+    # to it, so no cert SAN, external-dns record, or extra `rules[].host`
+    # entry is needed (and the alias is intentionally not first-classed via
+    # `ingress.extraHosts` because no other controller needs to know about it).
     nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
 
     # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
@@ -409,6 +555,7 @@ services:
         metrics:
           scope: "artifacts:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         options: sslmode=disable
@@ -515,6 +662,11 @@ services:
           # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
 
+          # Dataplane clusters to bootstrap as authz cluster resources under the org
+          dataplaneClusters: []
+          # Example:
+          # - dp-1
+
           # Authorization domains to create. Each domain is an isolation boundary
           # for workflow executions (e.g. dev vs prod).
           domains:
@@ -607,6 +759,7 @@ services:
       cloudProvider:
         provider: Mock
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -760,6 +913,13 @@ services:
           - migrate
           - --config
           - "/etc/config/*.yaml"
+      - name: bootstrap
+        args:
+          - cloudorganizations
+          - bootstrap-tenant
+          - organizations
+          - --config
+          - "/etc/config/*.yaml"
     args:
       - cloudorganizations
       - serve
@@ -770,7 +930,13 @@ services:
         connectPort: 8081
         metrics:
           scope: "organizations:"
+      organizations:
+        bootStrapConfig:
+          organizations:
+            - '{{ .Values.global.UNION_ORG }}'
+          tenantType: "SELF_MANAGED"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host: '{{ .Values.global.DB_HOST }}'
         username: '{{ .Values.global.DB_USER }}'
@@ -802,6 +968,7 @@ services:
         metrics:
           scope: "executions:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -855,6 +1022,63 @@ services:
           enrichIdentities: false
           clusterCacheConfig:
             ttl: 10m
+  identity:
+    fullnameOverride: "identity"
+    service:
+      type: ClusterIP
+      grpcport: 80
+      httpport: 81
+      debugport: 82
+    sharedService:
+      connectPort: 8081
+    args:
+      - cloudidentity
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      cache:
+        identity:
+          enabled: true
+      sharedService:
+        connectPort: 8081
+      identity:
+        app:
+          identityProviderConfig:
+            # Identity provider for the User Management page.
+            # Supported values:
+            #   noop  — returns empty results (default; no external IDP required)
+            #   azure — Azure/Entra ID via Microsoft Graph API
+            #   okta  — Okta (Union Cloud managed deployments only)
+            provider: "noop"
+            # Azure/Entra ID provider configuration.
+            # Required when provider is "azure". Requires a dedicated Entra app registration
+            # with Application permissions (not Delegated): User.Read.All,
+            # GroupMember.Read.All, Application.ReadWrite.All; admin consent granted.
+            #
+            # Store the client secret in the KUBERNETES_SECRET_NAME K8s secret under
+            # the key referenced by clientSecretName (e.g. "azure_client_secret").
+            # The value is read from /etc/secrets/union/<clientSecretName> at runtime.
+            # Example ExternalSecret:
+            #   spec.data[].remoteRef.key: <your-secret-manager-path>
+            #   spec.data[].secretKey: azure_client_secret
+            #   spec.target.name: <KUBERNETES_SECRET_NAME>
+            #   spec.target.creationPolicy: Merge
+            #
+            # azure:
+            #   tenantId: ""    # Azure AD tenant (directory) ID
+            #   clientId: ""    # App registration client ID
+            #   clientSecretName: "azure_client_secret"
+            #   groupId: ""    # Optional: scope user listing to a specific Entra group
+          adminClient:
+            connection:
+              authorizationHeader: flyte-authorization
+              clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+              clientSecretLocation: /etc/secrets/union/client_secret
+              insecure: true
+              scopes:
+                - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+              tokenUrl: '{{ .Values.global.AUTH_TOKEN_URL }}'
   usage:
     fullnameOverride: "usage"
     sharedService:
@@ -1016,6 +1240,7 @@ services:
         metrics:
           scope: "run-scheduler:"
       db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
         dbname: '{{ .Values.global.DB_NAME }}'
         host:  '{{ .Values.global.DB_HOST }}'
         username:  '{{ .Values.global.DB_USER }}'
@@ -1060,6 +1285,206 @@ services:
           recordActionThreadCount: 16
           type: runservice
           updateActionStatusThreadCount: 16
+
+  # Leasor is the lease-based scheduler that hands actions to the data-plane
+  # leaseworker. It is the authoritative in-memory lease store, so it runs as a
+  # single replica with a Recreate strategy (two pods would split-brain).
+  #
+  # Internally leasor is sharded across many tenants behind an Envoy router. A
+  # self-hosted deployment is single-tenant, so one shard owns everything and no
+  # router is needed — leasor rides the generic services renderer like queue.
+  #
+  # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
+  # services renderer. templates/leasor/configmap.yaml builds it instead so
+  # that queueSync.queues can be auto-generated from
+  # global.LEASOR_ATTACHED_CLUSTERS (one `default` queue containing all
+  # attached clusters, plus one queue per cluster). To bypass auto-generation
+  # entirely, set configMap.leasor.queueSync.queues below explicitly.
+  leasor:
+    fullnameOverride: "leasor"
+    replicaCount: 1
+    autoscaling:
+      enabled: false
+    strategy:
+      type: Recreate
+    args:
+      - leasor
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    initContainers:
+      - name: migrate
+        args:
+          - leasor
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    configMap:
+      sharedService:
+        metrics:
+          scope: "leasor:"
+      leasor:
+        db:
+          type: CQL
+          cql:
+            hosts:
+              - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+            keyspace: leasor
+        # Single tenant => one shard owns all partitions. With totalPartitions=1
+        # every org hashes to partition 0, so this lone shard ([0]) serves every
+        # request and no Envoy router is required. shardIndex must be set
+        # explicitly because the generic renderer does not inject SHARD_INDEX.
+        totalPartitions: 1
+        partitions:
+          - [0]
+        shardIndex: 0
+        # The ScyllaDB cluster key is ((partition_id, bucket_id), id). partition_id
+        # is constant for a single tenant, so bucket_id (0..numBuckets-1) is the
+        # only spread dimension. Raise it well above the ScyllaDB shard (core)
+        # count so rows and write batches distribute evenly across the ring — a
+        # managed (Scylla Cloud) cluster has many cores, so keep this generous.
+        # This is pure configuration — the table schema is unchanged — but it is a
+        # hash modulus, so it must stay fixed after the first deploy.
+        numBuckets: 512
+        # No router fronts this single shard, so nothing sets the
+        # leasor-partition-id routing header. Skip the validation that would
+        # otherwise reject every request for the missing header.
+        skipPartitionCheckForDevbox: true
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 1
+        memory: 2Gi
+
+
+# Actions is the stateful coordination layer between the run service and leasor.
+# It is sharded by action partition (fnv32a("org:project:domain:run:parentAction")
+# % 1024) and fronted by an Envoy router that hashes each request to the owning
+# shard via the actions-shard-id header — the same routing semantics used in
+# Union's managed control plane.
+#
+# Self-hosted runs 10 fixed shards (the same count Union's managed control
+# planes run). Each shard is its own single-replica Deployment owning a
+# contiguous slice of the 1024 partitions. The Watch endpoint is heavy, so this
+# count was chosen to spread that load. Because it needs per-shard Deployments
+# plus the router, actions has its own templates (templates/actions/) and is
+# configured here, NOT under .Values.services.
+actions:
+  enabled: true
+
+  # Service name is fixed to "actions" so sibling services can reach it by name
+  # via configMap.union.internalConnectionConfig (_SERVICE_.<ns>.svc...:80).
+  fullnameOverride: "actions"
+
+  # Container image. Empty repository/tag fall back to the shared control-plane
+  # services image (.Values.image).
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  service:
+    type: ClusterIP
+    grpcport: 80
+    httpport: 81
+
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 1
+      memory: 2Gi
+
+  podAnnotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "10254"
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread shards across zones (best-effort).
+  spreadConstraints:
+    enabled: true
+
+  configMap:
+    sharedService:
+      metrics:
+        scope: "actions:"
+    actions:
+      db:
+        type: CQL
+        cql:
+          hosts:
+            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+          keyspace: actions
+      # Replicate to leasor + run service over gRPC (no Redis dependency in
+      # self-hosted). Targets are resolved by service name via the global
+      # configMap.union.internalConnectionConfig urlPattern.
+      replicatorType: GRPCService
+      # Fixed 10-shard layout: each shard owns a contiguous ~1/10 of the 1024
+      # partitions (four shards get 103, six get 102; total 1024). Keep the
+      # ranges contiguous, gapless and covering [0, 1023]; changing a range
+      # re-hashes that shard's Deployment name and rolls it.
+      partitions:
+        - startPartition: 0
+          endPartition: 102
+        - startPartition: 103
+          endPartition: 205
+        - startPartition: 206
+          endPartition: 308
+        - startPartition: 309
+          endPartition: 411
+        - startPartition: 412
+          endPartition: 513
+        - startPartition: 514
+          endPartition: 615
+        - startPartition: 616
+          endPartition: 717
+        - startPartition: 718
+          endPartition: 819
+        - startPartition: 820
+          endPartition: 921
+        - startPartition: 922
+          endPartition: 1023
+
+  # Envoy router. Runs the actions-service-router Go HTTP filter, which requires
+  # an Envoy image that bundles the compiled /lib/actions-service-router.so
+  # plugin. The image is named `envoy-router` and is published through the same
+  # path as the other control-plane images: private ECR `union-cp/envoy-router`
+  # (mirrored to private GAR `union-public-images/union-cp/envoy-router` and to
+  # Harbor `controlplane/envoy-router`). repository defaults to
+  # <IMAGE_REPOSITORY_PREFIX>/envoy-router; override here only if needed.
+  router:
+    replicaCount: 2
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 2
+        memory: 2Gi
+      requests:
+        cpu: 1
+        memory: 1Gi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 60
+      # targetMemoryUtilizationPercentage: 60
+    podAnnotations:
+      prometheus.io/path: /stats/prometheus
+      prometheus.io/port: "9901"
 
 
 # Union console configuration.
@@ -1120,6 +1545,11 @@ console:
 
   # Additional environment variables from ConfigMap
   envFrom: []
+
+  telemetry:
+    # Set to false to disable external telemetry calls (Grafana Faro).
+    # Useful for egress-restricted selfhosted/selfmanaged deployments.
+    externalEnabled: true
 
   nodeSelector: {}
 
@@ -1216,13 +1646,23 @@ flyte:
     # -- Mounts service-shared-secret at /etc/secrets/union/ so the UserClouds authorizer
     # can read client_secret from union/client_secret. The flyte-core subchart does not
     # include this mount by default (it only mounts flyte-admin-secrets at /etc/secrets/).
+    # -- Mounts flyte-admin-private-config ConfigMap for Union-specific flyteadmin config
+    # (private.yaml) that isn't supported by the upstream flyte-core chart.
     additionalVolumes:
       - name: union-secrets
         secret:
           secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+      - name: private-config
+        configMap:
+          name: flyte-admin-private-config
+    # Override configPath to include both config directories
+    configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
       - name: union-secrets
         mountPath: /etc/secrets/union
+        readOnly: true
+      - name: private-config
+        mountPath: /etc/flyte/private
         readOnly: true
   flytescheduler:
     image:
@@ -1476,10 +1916,17 @@ flyte:
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
+        # Hosts flyteadmin trusts for OAuth redirect URL construction. When a
+        # request arrives, flyteadmin matches the Host header against this
+        # list to build `redirect_uri`; unmatched hosts fall back to the
+        # internal service URL and the IdP will reject the resulting
+        # /authorize request. Must include every public hostname listed in
+        # `ingress.host` and `ingress.extraHosts`.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+          # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:
           authServerType: "External"
@@ -1495,8 +1942,12 @@ flyte:
             # Allowed JWT audiences for access token validation.
             # Default: ["https://{UNION_HOST}"].
             # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            # Must include every public hostname listed in `ingress.host` and
+            # `ingress.extraHosts` (each as `https://<host>`), or tokens issued
+            # for an extra host's audience will be rejected.
             allowedAudience:
               - 'https://{{ .Values.global.UNION_HOST }}'
+              # - 'https://<each ingress.extraHosts entry>'
 
           # --- Subject claim resolution (FAB-205) ---
           # Ordered list of JWT claims to try for caller identity.
@@ -1589,9 +2040,6 @@ flyte:
             kind: bypass
           # Don't rely on user API to exists
           populateUserFields: false
-      server:
-        security:
-          useAuth: true
       union:
         internalConnectionConfig:
           enabled: true
@@ -2003,24 +2451,12 @@ extraObjectsOverrides: []
 monitoring:
   enabled: false
 
-  # Managed Kubernetes (EKS, GKE, AKS) runs controller-manager, scheduler, etcd,
-  # and kube-proxy internally. Their metrics endpoints are inaccessible from within
-  # the cluster. Disable scraping to avoid false-positive TargetDown alerts.
-  kubeControllerManager:
-    enabled: false
-  kubeEtcd:
-    enabled: false
-  kubeProxy:
-    enabled: false
-  kubeScheduler:
-    enabled: false
-  defaultRules:
-    rules:
-      kubeControllerManager: false
-      kubeSchedulerAlerting: false
-      kubeSchedulerRecording: false
-      kubeProxy: false
-      etcd: false
+  # kube-prometheus-stack subchart defaults include scraping for
+  # kubeControllerManager, kubeScheduler, kubeEtcd, and kubeProxy. Managed
+  # Kubernetes (EKS, GKE, AKS) hides those control-plane components — the
+  # cloud-specific overlays (values.aws.yaml, values.gcp.yaml,
+  # values.azure.yaml) disable scraping for them to avoid false-positive
+  # TargetDown alerts.
 
   # The following flags control Union monitoring resources independently
   # of the kube-prometheus-stack subchart (monitoring.enabled). This allows

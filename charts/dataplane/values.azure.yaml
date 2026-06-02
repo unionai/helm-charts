@@ -37,11 +37,9 @@ global:
   #    Source: Provided by Union team
   ORG_NAME: ""
 
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
-  CLIENT_ID: ""
+  # 4. AUTH_CLIENT_ID - client_credentials OAuth client ID for S2S calls
+  #    Format: String provided by your IdP
+  AUTH_CLIENT_ID: ""
 
   # 5. METADATA_CONTAINER - Azure Blob container for workflow metadata
   #    Format: Valid Azure Blob container name
@@ -125,6 +123,15 @@ storage:
         # key: ""
 
 # ----------------------------------------------------------------------------
+# Image Builder Authentication (OPTIONAL)
+# ----------------------------------------------------------------------------
+# By default, the image builder uses authenticationType: "noop". Uncomment and
+# set "azure" if you want the builder to authenticate to ACR via the Azure
+# provider credential chain (Workload Identity / Managed Identity).
+# imageBuilder:
+#   authenticationType: azure
+
+# ----------------------------------------------------------------------------
 # SECTION 4: Workload Identity (REQUIRED for Azure)
 # ----------------------------------------------------------------------------
 # Configure Azure Workload Identity for secure Azure access.
@@ -147,7 +154,7 @@ userRoleAnnotationValue: "{{ .Values.global.AZURE_WORKER_CLIENT_ID }}"
 secrets:
   admin:
     # Client ID for dataplane authentication
-    clientId: '{{ .Values.global.CLIENT_ID }}'
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
 
     # Client secret for dataplane authentication (keep this secure!)
     clientSecret: ""
@@ -301,3 +308,27 @@ dcgm-exporter:
             operator: In
             values:
             - "nvidia"
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (Azure/AKS specific)
+# ----------------------------------------------------------------------------
+
+# AKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts. Mirrors values.aws.yaml.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

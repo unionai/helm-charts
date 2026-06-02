@@ -1,0 +1,141 @@
+# Union Control Plane — GCP overlay.
+# Layer on top of values.yaml. Topology (intracluster, split-cluster, etc.)
+# is decided by env-layer DNS + LB annotations, not by this overlay.
+
+global:
+  # --- Deployment Identity ---
+  UNION_HOST: ""              # Control plane FQDN (e.g. "mycompany.union.ai")
+  UNION_ORG: ""               # Organization name (must match dataplane)
+
+  # --- GCP Infrastructure ---
+  GCP_REGION: "us-central1"
+  GOOGLE_PROJECT_ID: ""
+  DB_HOST: ""                 # CloudSQL Private IP
+  DB_NAME: ""
+  DB_USER: ""
+  DB_DEBUG: false
+  BUCKET_NAME: ""             # GCS bucket for metadata
+  ARTIFACTS_BUCKET_NAME: ""   # GCS bucket for artifacts
+  KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
+
+  # --- DP entrypoint (CP -> DP) ---
+  DATAPLANE_HOST: ""          # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
+
+  # --- Images ---
+  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
+
+  # --- Ingress ---
+  INGRESS_PROVIDER: nginx     # nginx | envoy | both
+
+  # --- GCP IAM (Workload Identity) ---
+  ARTIFACT_IAM_ROLE_ARN: ""   # SA for artifacts (e.g. "artifacts@PROJECT.iam.gserviceaccount.com")
+  FLYTEADMIN_IAM_ROLE_ARN: "" # SA shared by flyteadmin, datacatalog, cacheservice
+
+  # --- Service-to-Service OAuth2 ---
+  INTERNAL_CLIENT_ID: ""
+  AUTH_TOKEN_URL: ""
+  OIDC_S2S_SCOPE: ""          # Okta: leave empty. Entra ID: "api://my-app/.default"
+
+configMap:
+  connection:
+    region: '{{ .Values.global.GCP_REGION }}'
+
+flyte:
+  region: '{{ .Values.global.GCP_REGION }}'
+  storage:
+    type: gcs
+    gcs:
+      projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+  configmap:
+    adminServer:
+      connection:
+        region: '{{ .Values.global.GCP_REGION }}'
+
+      # --- OIDC Authentication ---
+      # Fill in the IdP-specific fields below. Defaults beyond these (claims,
+      # cookie settings, etc.) live in base values.yaml's
+      # `flyte.configmap.adminServer.auth` block.
+      auth:
+        appAuth:
+          externalAuthServer:
+            # OIDC issuer base URL.
+            #   Okta:      https://dev-123456.okta.com/oauth2/default
+            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
+            baseUrl: ""
+            # OIDC metadata discovery path (relative to baseUrl).
+            #   Okta:      .well-known/oauth-authorization-server  (default)
+            #   Entra ID:  .well-known/openid-configuration
+            metadataUrl: ".well-known/oauth-authorization-server"
+          thirdPartyConfig:
+            flyteClient:
+              # CLI / SDK PKCE client.
+              clientId: ""
+              # Entra ID only — leave empty for Okta.
+              audience: ""
+        userAuth:
+          openId:
+            # Browser login.
+            baseUrl: ""
+            clientId: ""
+
+  # --- GCP Workload Identity Annotations ---
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+  datacatalog:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+  cacheservice:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+services:
+  artifacts:
+    serviceAccount:
+      annotations:
+        iam.gke.io/gcp-service-account: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+    configMap:
+      artifactsConfig:
+        app:
+          artifactBlobStoreConfig:
+            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            stow:
+              kind: google
+              config:
+                projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
+            type: stow
+
+  dataproxy:
+    configMap:
+      dataproxy:
+        # Falls back to DATAPLANE_HOST when DATAPLANE_ENDPOINT is unset.
+        secureTunnelTenantURLPattern: '{{ default .Values.global.DATAPLANE_HOST .Values.global.DATAPLANE_ENDPOINT }}'
+
+scylla:
+  storageClass:
+    provisioner: "pd.csi.storage.gke.io"
+    parameters:
+      type: pd-standard
+
+# GKE manages controller-manager, scheduler, etcd, and kube-proxy internally —
+# their metrics endpoints aren't reachable from the cluster. Disable scraping
+# + alerting to avoid false-positive TargetDown alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

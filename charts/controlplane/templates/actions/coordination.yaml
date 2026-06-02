@@ -1,0 +1,106 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- $shards := (include "actions.shardsConfig" . | fromJson).partitions -}}
+{{- if gt (len $shards) 1 }}
+{{/*
+Shard handoff coordination. On a partition-range change the shard names change;
+a new shard's wait-for-non-peers init container blocks until pods that are NOT
+in the current peer set (i.e. an old shard owning overlapping partitions) are
+gone, so two pods never own the same partition at once.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "actions.fullname" . }}-coordination
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.labels" . | nindent 4 }}
+data:
+  peer-hashes: |
+    {{- range $idx, $shard := $shards }}
+    {{- $hash := include "actions.shardHash" (dict "Root" $ "shardIndex" $idx) }}
+    {{- $name := printf "%s-%d-%s" (include "actions.fullname" $) $idx $hash }}
+    {{ $name }}
+    {{- end }}
+
+  wait-for-non-peers.sh: |
+    #!/bin/sh
+
+    set -euo pipefail
+
+    # Use timeout to enforce deadline - it will exit with 124 on timeout
+    timeout "${TIMEOUT_SECONDS:-120}" /bin/sh -euo pipefail <<'EOF'
+      get_non_peers() {
+        local pattern="$(echo "$PEER_HASHES" | tr '\n' '|' | sed 's/|$//')"
+
+        # Get pods, exit if kubectl fails
+        pods="$(kubectl get pods -n "$NAMESPACE" -l "$SHARD_LABEL_SELECTOR" -o name 2>&1)"
+        if [ $? -ne 0 ]; then
+          echo "Error: kubectl failed to list pods in namespace $NAMESPACE with selector $SHARD_LABEL_SELECTOR" >&2
+          echo "kubectl output: $pods" >&2
+          return 1
+        fi
+
+        # Filter out valid peers
+        echo "$pods" | grep -vE "${pattern}" || true
+      }
+
+      while :; do
+        non_peers="$(get_non_peers)"
+        if [ $? -ne 0 ]; then
+          echo "Error: Failed to check for non-peer pods" >&2
+          exit 1
+        fi
+
+        if [ -z "$non_peers" ]; then
+          echo "Success: Only found valid peers"
+          exit 0
+        fi
+
+        echo "Waiting for invalid peers to be removed:"
+        echo "$non_peers" | sed 's/^/  /'
+        sleep "${POLL_INTERVAL:-1}"
+      done
+    EOF
+
+    # Check timeout exit code
+    exit_code=$?
+    if [ $exit_code -eq 124 ]; then
+      echo "Error: Timed out waiting for invalid peers to be removed" >&2
+      exit 1
+    fi
+
+    exit $exit_code
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "actions.fullname" . }}-coordination
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.labels" . | nindent 4 }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get"]
+  resourceNames: ["{{ include "actions.fullname" . }}-coordination"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "actions.fullname" . }}-coordination
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    {{- include "actions.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "actions.fullname" . }}-coordination
+subjects:
+- kind: ServiceAccount
+  name: {{ include "actions.serviceAccountName" . }}
+  namespace: {{ include "actions.namespace" . }}
+{{- end }}
+{{- end }}
