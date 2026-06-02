@@ -89,17 +89,24 @@ app.kubernetes.io/component: router
 {{- end -}}
 
 {{/*
-Router image. Defaults to <IMAGE_REPOSITORY_PREFIX>/envoy-router:<appVersion>,
-i.e. the separately-published Envoy image carrying
-/lib/actions-service-router.so (private ECR union-cp/envoy-router, the parallel
-private GAR mirror, and Harbor controlplane/envoy-router). Override on a
-per-deployment basis only when needed.
+Router image. Defaults to <IMAGE_REPOSITORY_PREFIX>/envoy-router:<tag>, i.e. the
+separately-published Envoy image carrying /lib/actions-service-router.so (private
+ECR union-cp/envoy-router, the parallel private GAR mirror, and Harbor
+controlplane/envoy-router). The tag tracks .Values.image.tag — the same global
+that the other control-plane images use — so a per-env overlay that pins
+image.tag (e.g. selfmanaged runtime values.yaml setting image.tag to a cloud
+commit sha) drives envoy-router along with everything else. Falls back to
+.Chart.AppVersion when image.tag is unset.
 */}}
 {{- define "actions.router.image" -}}
 {{- if and .Values.actions.router.image .Values.actions.router.image.repository .Values.actions.router.image.tag -}}
 {{ tpl .Values.actions.router.image.repository . }}:{{ .Values.actions.router.image.tag }}
 {{- else -}}
-{{ tpl .Values.global.IMAGE_REPOSITORY_PREFIX . }}/envoy-router:{{ .Chart.AppVersion }}
+{{- $tag := .Chart.AppVersion -}}
+{{- if .Values.image.tag -}}
+{{- $tag = tpl (.Values.image.tag | toString) . -}}
+{{- end -}}
+{{ tpl .Values.global.IMAGE_REPOSITORY_PREFIX . }}/envoy-router:{{ $tag }}
 {{- end -}}
 {{- end -}}
 

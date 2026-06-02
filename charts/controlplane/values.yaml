@@ -19,6 +19,33 @@ global:
   DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
   DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
 
+  # --- Leasor: list of attached dataplane cluster identifiers ---
+  # TEMPORARY. This static list is the ship-today way to tell leasor which
+  # dataplane clusters its queues should target. A future control-plane
+  # queue/cluster CRUD service will own this state and deprecate this knob —
+  # plan to migrate when that lands.
+  #
+  # Each entry is a cluster identifier — the value the corresponding dataplane
+  # chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues
+  # against. For an intracluster deployment (CP+DP on the same K8s) list a
+  # single entry; for multi-DP deployments list every attached dataplane.
+  #
+  # Used to auto-generate services.leasor.configMap.leasor.queueSync.queues
+  # (see comment on that block below). No reasonable default — set explicitly.
+  #
+  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
+  # flyteadmin's routing registry (name + endpoint + auth per cluster) used by
+  # RandomClusterSelector for v1 execution dispatch; populate that only when
+  # you actually need flyteadmin v1 multi-cluster routing. This list is
+  # leasor-only and just carries names.
+  #
+  # The auto-generated `default` queue lists ALL clusters here, so work fans
+  # out across every attached dataplane. Override
+  # services.leasor.configMap.leasor.queueSync.queues directly if you need a
+  # different policy.
+  LEASOR_ATTACHED_CLUSTERS: []   # e.g. ["my-dp-cluster"] or ["cluster-a", "cluster-b"]
+
   # --- Images ---
   # Customer-facing registry default; internal deployments override to private ECR/GCR.
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
@@ -1266,6 +1293,13 @@ services:
   # Internally leasor is sharded across many tenants behind an Envoy router. A
   # self-hosted deployment is single-tenant, so one shard owns everything and no
   # router is needed — leasor rides the generic services renderer like queue.
+  #
+  # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
+  # services renderer. templates/leasor/configmap.yaml builds it instead so
+  # that queueSync.queues can be auto-generated from
+  # global.LEASOR_ATTACHED_CLUSTERS (one `default` queue containing all
+  # attached clusters, plus one queue per cluster). To bypass auto-generation
+  # entirely, set configMap.leasor.queueSync.queues below explicitly.
   leasor:
     fullnameOverride: "leasor"
     replicaCount: 1
