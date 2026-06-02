@@ -49,11 +49,41 @@ In addition to the standard prerequisites, you need:
 
 ### Step 1: Install Dataplane CRDs
 
+The `FlyteWorkflow` CRD is bundled with the dataplane chart (Helm 3
+`crds/` convention) and would otherwise install automatically. Because
+this guide passes `--skip-crds` in Step 3 (to keep CRD lifecycle out of
+Helm), install it directly via server-side apply from the byte-identical
+mirror under `crds/flyte-v1/`:
+
 ```bash
-helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds \
-  --namespace union \
-  --create-namespace
+# From a checkout of unionai/helm-charts
+kubectl apply --server-side --force-conflicts -f crds/flyte-v1/
 ```
+
+(Legacy: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is deprecated; prefer the command above.)
+
+### Step 1b: Install Vendored CRDs (when monitoring.enabled=true)
+
+The dataplane chart installs `kube-prometheus-stack` when monitoring is
+enabled. Its CRDs have OpenAPI v3 schemas larger than Kubernetes' 256 KiB
+per-annotation limit, so a default `helm install` client-side apply
+overflows `kubectl.kubernetes.io/last-applied-configuration`. The CRDs
+are vendored under `helm-charts/crds/kube-prometheus-stack/` and must be
+installed via **server-side apply** before installing the dataplane.
+
+```bash
+# From a checkout of unionai/helm-charts
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+```
+
+Skip this step if either:
+- `monitoring.enabled: false` in your dataplane values, or
+- your cluster already runs kube-prometheus-stack from another source AND
+  that installation manages these CRDs.
+
+If you are deploying via ArgoCD with the Union-provided ApplicationSets,
+the dedicated `kube-prometheus-stack-crds` ApplicationSet handles this for
+you.
 
 ### Step 2: Download Values File
 
@@ -76,9 +106,14 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --create-namespace \
   -f values.aws.selfhosted-intracluster.yaml \
   -f values.aws.selfhosted-customer.yaml \
+  --skip-crds \
   --timeout 10m \
   --wait
 ```
+
+> `--skip-crds` tells Helm not to apply CRDs from any chart's `crds/`
+> directory. CRDs are installed separately from `helm-charts/crds/` via
+> server-side apply (see Step 1b).
 
 **Values file layers (applied in order):**
 

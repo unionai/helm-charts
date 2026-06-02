@@ -146,6 +146,29 @@ clusterresourcesync:
     name: ""
     # -- Additional annotations for the syncresources service account
     annotations: {}
+  # -- ClusterRole rules granted to the syncresources ServiceAccount. Override or extend
+  # this list to grant access to additional resources (for example, custom resources or
+  # extra core resources) that the cluster resource manager should be able to sync into
+  # project namespaces.
+  clusterRoleRules:
+    - apiGroups:
+        - ""
+        - rbac.authorization.k8s.io
+      resources:
+        - clusterrolebindings
+        - configmaps
+        - limitranges
+        - namespaces
+        - podtemplates
+        - pods
+        - resourcequotas
+        - rolebindings
+        - roles
+        - secrets
+        - serviceaccounts
+        - services
+      verbs:
+        - '*'
   # -- Additional pod labels for the syncresources service
   podLabels: { }
   # -- Additional pod annotations for the syncresources service
@@ -517,6 +540,11 @@ config:
       userRole: "{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"
       # -- For GCP only, the project id for object storage.
       gcpProjectId: "{{ tpl .Values.storage.gcp.projectId . }}"
+      # -- Cloud provider the cluster runs on (aws, gcp, azure, oci, or metal). Selects the GPU
+      # accelerator node label used for usage attribution and tags billable usage. Defaults to the
+      # top-level `provider`. When empty, if the operator isn't running in low privilege mode then the operator
+      # falls back to detecting it from node labels.
+      cloudProvider: '{{ tpl (.Values.provider | default "" | toString) . }}'
     # -- Configuration for the usage reporting service.
     collectUsages:
       # -- Enable usage collection in the operator service.
@@ -994,6 +1022,81 @@ executor:
   # -- nodeName constraints for executor deployment
   nodeName: ""
 
+leaseworker:
+  enabled: true
+  raw_config: {}
+  config:
+    organization: "{{ tpl .Values.orgName . }}"
+    cluster: "{{ tpl .Values.clusterName . }}"
+    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
+    leasorAddress: http://leasor-service:8090
+    actionsServiceAddress: http://actions-service:8089
+    unionAuth:
+      injectSecret: true
+      secretName: EAGER_API_KEY
+  capacity: 100000
+  dispatcherCount: 512
+  refreshInterval: 10s
+  terminationGracePeriodSeconds: 75
+  serviceAccount:
+    annotations: { }
+  resources:
+    limits:
+      cpu: 8
+      memory: 16Gi
+    requests:
+      cpu: 4
+      memory: 8Gi
+  podLabels:
+    app: leaseworker
+    app.kubernetes.io/name: leaseworker
+    app.kubernetes.io/instance: "{{ .Release.Name }}"
+  podAnnotations: { }
+  selector:
+    matchLabels:
+      app: leaseworker
+  sharedService:
+    metrics:
+      scope: "leaseworker:"
+    security:
+      secure: false
+      useAuth: false
+      allowCors: true
+      allowedOrigins:
+        - "*"
+      allowedHeaders:
+        - "Content-Type"
+      allowLocalhostAccess: true
+  fasttask:
+    additional-worker-args:
+      - "--last-ack-grace-period-seconds"
+      - "120"
+    callback-uri: "http://union-operator-leaseworker.{{.Release.Namespace}}.svc.cluster.local:15605"
+    grace-period-status-not-found: 2m
+  plugins:
+    ioutils:
+      remoteFileOutputPaths:
+        deckFilename: report.html
+    k8s:
+      inject-finalizer: true
+      disable-inject-owner-references: true
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []
+  # -- Appends additional environment variables to the leaseworker container's spec.
+  podEnv: []
+  # -- nodeSelector for leaseworker deployment
+  nodeSelector: { }
+  # -- tolerations for leaseworker deployment
+  tolerations: [ ]
+  # -- affinity for leaseworker deployment
+  affinity: { }
+  # -- topologySpreadConstraints for leaseworker deployment
+  topologySpreadConstraints: { }
+  # -- nodeName constraints for leaseworker deployment
+  nodeName: ""
+
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
@@ -1169,6 +1272,9 @@ flytepropellerwebhook:
         name: union-pod-webhook.flyte.org
         # -- Path for the webhook
         path: /mutate--v1-pod/secrets
+        # -- Namespace selector for the webhook. If empty, the field is omitted and external controllers
+        # -- (e.g. admissionsenforcer) can manage it without SSA field ownership conflicts.
+        namespaceSelector: {}
         # -- Object selector for the webhook
         objectSelector:
           matchLabels:
@@ -1181,6 +1287,9 @@ flytepropellerwebhook:
         name: managed-image-webhook.union.ai
         # -- Path for the webhook
         path: /mutate--v1-pod/managed-image
+        # -- Namespace selector for the webhook. If empty, the field is omitted and external controllers
+        # -- (e.g. admissionsenforcer) can manage it without SSA field ownership conflicts.
+        namespaceSelector: {}
         # -- Object selector for the webhook (matchExpressions)
         objectSelector:
           matchLabels:
@@ -1463,11 +1572,6 @@ prometheus:
   rbac:
     create: false
   
-  #Disables the KSM that comes with the prometheus chart since we are configuring our own scrape config for it. 
-  #This also avoids conflicts with the kube-state-metrics that may be installed by the kube-prometheus-stack chart.
-  kube-state-metrics:
-    enabled: false
-
   # Match the same service name as kube-prometheus-stack mode so that
   # health checks, opencost, and ingress work without changes.
   # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
@@ -1580,12 +1684,36 @@ prometheus:
           namespaces:
             own_namespace: true
       relabel_configs:
-        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_prometheus_group]
           regex: .+
           action: keep
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: debug
           action: keep
+    # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
+    # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    - job_name: 'kubernetes-cadvisor'
+      metrics_path: /metrics
+      scheme: https
+      kubernetes_sd_configs:
+        - role: node
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        insecure_skip_verify: true
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "container_cpu_usage_seconds_total|container_memory_working_set_bytes"
+          action: keep
+      relabel_configs:
+        - action: labelmap
+          regex: __meta_kubernetes_node_label_(.+)
+        - target_label: __address__
+          replacement: kubernetes.default.svc:443
+        - source_labels: [__meta_kubernetes_node_name]
+          regex: (.+)
+          target_label: __metrics_path__
+          replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -1649,9 +1777,12 @@ prometheus:
 
   alertmanager:
     enabled: false
-  # kube-state-metrics: use namespace-scoped Role (not ClusterRole) and only watch the release namespace.
+  # kube-state-metrics subchart of the community prometheus chart.
+  # Uses namespace-scoped Role (not ClusterRole) and only watches the release namespace.
   # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
   # (kube_node_*) since nodes are cluster-scoped resources.
+  # When monitoring.enabled=true, the kube-prometheus-stack deploys its own KSM instance
+  # (monitoring-kube-state-metrics) with cluster-wide scope — both can coexist.
   kube-state-metrics:
     enabled: true
     rbac:
@@ -1681,7 +1812,23 @@ prometheus:
 
 # -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
 #  require additional permissions on the cluster. This limits the functionality though.
+#
+# Known tradeoffs when low_privilege is enabled:
+# - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
+#   cluster-scoped node discovery, and kube-state-metrics is limited to the release
+#   namespace (no cross-namespace pod resource metrics for task execution pods).
+#   Console CPU/memory charts for task executions will show "no data."
+# - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
+#   kube-state-metrics instance.
+# - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
+# - There are likely additional features that require cluster-scoped permissions and
+#   will not function in low_privilege mode. This list will be expanded as they are
+#   identified.
 low_privilege: true
+
+# -- Namespace of the control plane (for selfhosted-intracluster mode).
+# When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
+controlplaneNamespace: ""
 
 # -- When enabled, creates a single shared ServiceAccount for all components
 # (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
@@ -1824,7 +1971,7 @@ serving:
   # -- Additional configuration for Knative serving
   extraConfig:
     deployment:
-      registries-skipping-tag-resolving: "managed.cr.union.ai"
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
   # -- Resources for serving components
   resources:
     3scale-kourier-gateway:

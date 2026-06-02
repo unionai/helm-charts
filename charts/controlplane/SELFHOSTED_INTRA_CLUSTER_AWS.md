@@ -77,12 +77,48 @@ Choose standard hosted deployment when:
 
 ### Step 1: Install Prerequisites
 
-#### Install ScyllaDB CRDs (if using embedded ScyllaDB)
+#### Install Vendored CRDs
+
+Several controlplane sub-charts ship CustomResourceDefinitions whose OpenAPI v3
+schemas exceed Kubernetes' 256 KiB per-annotation limit. Applying these CRDs
+client-side (the default `kubectl apply` / Helm install path) overflows the
+`kubectl.kubernetes.io/last-applied-configuration` annotation and the apply
+fails with `metadata.annotations: Too long`. To avoid this, the chart no
+longer renders these CRDs as part of the parent install; they are vendored
+under `helm-charts/crds/<chart>/` and must be installed up-front via
+**server-side apply**.
+
+Install only the CRD sets for the components you intend to enable. Each
+`crd-*.yaml` carries an `argocd.argoproj.io/sync-options: ServerSideApply=true`
+annotation so a downstream ArgoCD adoption keeps the same fieldManager
+behavior.
 
 ```bash
-cd helm-charts/charts/controlplane
-./scripts/install-scylla-crds.sh
+cd helm-charts
+
+# Required when monitoring.enabled=true (controlplane and/or dataplane).
+# Skip if your cluster already runs kube-prometheus-stack from another source
+# AND that installation manages these CRDs.
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+
+# Required when scylla.enabled=true. Skip if you bring your own
+# scylla-operator install that manages these CRDs.
+kubectl apply --server-side --force-conflicts -f crds/scylla-operator/
+
+# Required when envoy-gateway.enabled=true. SKIP if your cluster already has
+# the standard Gateway API CRDs (gateway.networking.k8s.io) installed from
+# another source — this directory bundles both Gateway API and envoy-specific
+# (gateway.envoyproxy.io) CRDs together, and double-installing the Gateway
+# API CRDs will cause field-manager conflicts.
+kubectl apply --server-side --force-conflicts -f crds/envoy-gateway/
 ```
+
+If you are deploying via ArgoCD with the Union-provided ApplicationSets,
+the dedicated `<chart>-crds` ApplicationSets handle these installs for you
+and you can skip this step.
+
+> The previous `charts/controlplane/scripts/install-scylla-crds.sh` is
+> superseded by the `crds/scylla-operator/` vendored directory above.
 
 #### Add Helm Repositories
 
@@ -198,9 +234,14 @@ helm upgrade --install unionai-controlplane unionai/controlplane \
   -f values.aws.selfhosted-intracluster.yaml \
   -f values.registry.yaml \
   -f values.aws.selfhosted-customer.yaml \
+  --skip-crds \
   --timeout 15m \
   --wait
 ```
+
+> `--skip-crds` tells Helm not to apply CRDs from any chart's `crds/`
+> directory. CRDs are installed separately from `helm-charts/crds/` via
+> server-side apply (see Step 1).
 
 **Values file layers (applied in order):**
 
