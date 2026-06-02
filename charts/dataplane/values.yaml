@@ -1,84 +1,41 @@
-# ----------------------------------------------------------------------------
-# Global Configuration
-# ----------------------------------------------------------------------------
-# Global values are accessible to both the chart and all subcharts.
-# Override these in deployment-specific values files:
-#   - values.aws.yaml: AWS-specific configuration (S3, IAM roles)
-#   - values.aws.selfhosted-intracluster.yaml: Self-contained intra-cluster configuration
-#
-# Usage:
-#   helm install -f values.aws.yaml [...]
-#   helm install -f values.aws.selfhosted-intracluster.yaml [...]
+# Base defaults for every dataplane deployment. Cloud-specific overrides
+# live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 
 global:
-  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-  #    Format: "hostname" (no protocol prefix for standard BYOC)
-  #    Example: "mycompany.unionai.cloud" or "union.example.com"
-  #    Source: Provided by Union team for BYOC deployments
-  UNION_CONTROL_PLANE_HOST: ""
+  # --- Identity ---
+  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks (e.g. "mycompany.union.ai")
+  CLUSTER_NAME: ""              # Unique cluster identifier within your org
+  ORG_NAME: ""                  # Organization name (must match controlplane)
 
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-us-east-1" or "staging-cluster"
-  #    Note: Must be unique within your organization
-  CLUSTER_NAME: ""
+  # --- Storage ---
+  METADATA_BUCKET: ""           # Bucket for workflow metadata
+  FAST_REGISTRATION_BUCKET: ""  # Bucket for code uploads (can be same as METADATA_BUCKET)
 
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
-  ORG_NAME: ""
-
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
-  CLIENT_ID: ""
-
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-metadata-bucket"
-  #    Note: Bucket must exist before deployment
-  METADATA_BUCKET: ""
-
-  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-fast-registration-bucket"
-  #    Note: Can be same as metadata bucket or separate
-  FAST_REGISTRATION_BUCKET: ""
-
-  # -- AWS account ID (required for ECR registry URL auto-generation).
-  #    Example: "123456789012"
-  AWS_ACCOUNT_ID: ""
-
-  #    BACKEND_IAM_ROLE_ARN - IAM Role to use for union-system SA
-  #    GCP Format: service-account-name@project-id.iam.gserviceaccount.com
-  #    Example: "union-backend@my-project.iam.gserviceaccount.com"
-  #    Permissions: GCS access, GCR/Artifact Registry (if private images)
+  # --- IAM ---
+  # IAM identity for backend services. Cloud-specific format:
+  #   AWS:  arn:aws:iam::<account>:role/<role-name>
+  #   GCP:  <sa-name>@<project>.iam.gserviceaccount.com
   BACKEND_IAM_ROLE_ARN: ""
-
-  #    WORKER_IAM_ROLE_ARN - IAM Role to use for union SA
-  #    GCP Format: service-account-name@project-id.iam.gserviceaccount.com
-  #    Example: "union-worker@my-project.iam.gserviceaccount.com"
-  #    Permissions: GCS access, GCP services used by workflows
   WORKER_IAM_ROLE_ARN: ""
 
-# ----------------------------------------------------------------------------
-# Additional Configuration
-# ----------------------------------------------------------------------------
-# Note: Most configuration now comes from globals above.
-# Database host, name, user, buckets, and region are all configured via globals.
+  # --- DP -> CP routing ---
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
+  QUEUE_GRPC_ENDPOINT: ""       # Override for task-pod queue path (see values.{cloud}.yaml)
+
+  # --- Service-to-Service OAuth2 ---
+  AUTH_CLIENT_ID: ""            # client_credentials client ID
+  OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # -- Override the chart name.
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Set the control plane host for your Union dataplane installation.  This will be provided by Union.
+# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
 host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
-
-# -- Cluster name should be shared with Union for proper functionality.
+# -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
-# -- Organization name should be provided by Union.
+# -- Organization name (provided by Union).
 orgName: "{{ .Values.global.ORG_NAME }}"
 
 # -- Define additional pod environment variables for all of the Union pods.
@@ -540,6 +497,11 @@ config:
       userRole: "{{ tpl (.Values.userRoleAnnotationValue | toString) $ }}"
       # -- For GCP only, the project id for object storage.
       gcpProjectId: "{{ tpl .Values.storage.gcp.projectId . }}"
+      # -- Cloud provider the cluster runs on (aws, gcp, azure, oci, or metal). Selects the GPU
+      # accelerator node label used for usage attribution and tags billable usage. Defaults to the
+      # top-level `provider`. When empty, if the operator isn't running in low privilege mode then the operator
+      # falls back to detecting it from node labels.
+      cloudProvider: '{{ tpl (.Values.provider | default "" | toString) . }}'
     # -- Configuration for the usage reporting service.
     collectUsages:
       # -- Enable usage collection in the operator service.
@@ -2001,7 +1963,6 @@ knative-operator:
   namespaceOverride: '{{ .Release.Namespace }}'
   # Skip namespace creation — the parent chart creates the release namespace via --create-namespace
   skipNamespaceCreation: true
-  installCRDs: true
 
 imageBuilder:
   enabled: true
