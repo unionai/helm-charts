@@ -1,0 +1,27 @@
+# ============================================================================
+# AWS intracluster example — Dataplane
+# ============================================================================
+# Overlay for the topology where controlplane and dataplane run in the same
+# Kubernetes cluster. Routes DP -> CP traffic through cluster-local Services
+# (svc.cluster.local) instead of through the public CP ingress.
+#
+# Apply on top of:
+#   helm template charts/dataplane \
+#     -f charts/dataplane/values.yaml \
+#     -f charts/dataplane/values.aws.yaml \
+#     -f charts/dataplane/examples/values.aws.intracluster.yaml \
+#     ...
+#
+# Replace `union-cp` below with the actual CP release namespace if it differs
+# in your deployment (historical AWS default has been `union-cp`).
+# ============================================================================
+
+global:
+  # All DP -> CP gRPC traffic dials the CP nginx Service directly. Bypasses
+  # the public LB + auth, and works without DNS hops outside the cluster.
+  CONTROLPLANE_GRPC_ENDPOINT: "dns:///controlplane-nginx-controller.union-cp.svc.cluster.local:443"
+
+  # Task pods can't carry OAuth credentials, so queue calls must hit an
+  # auth-less path. The queue Service in the CP namespace exposes :80 with no
+  # auth — safe only because nothing outside the cluster can reach it.
+  QUEUE_GRPC_ENDPOINT: "dns:///queue.union-cp.svc.cluster.local:80"
