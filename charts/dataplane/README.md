@@ -49,7 +49,15 @@ Union requires Custom Resource Definitions to be installed first.
 kubectl apply --server-side --force-conflicts -f crds/flyte-v1/
 ```
 
-(Equivalent legacy path: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is now deprecated; prefer the vendored directory above so the CRDs land via server-side apply and don't trip the 256 KiB `last-applied-configuration` limit on larger CRDs nearby.)
+`crds/flyte-v1/` is a byte-identical mirror of the chart-bundled CRD at
+`charts/dataplane/crds/`. The mirror exists so an ArgoCD `Application`
+(or this `kubectl apply`) can install via SSA when you pass `--skip-crds`
+to Helm in Step 4. If you instead drop `--skip-crds`, Helm will install
+the bundled CRD itself on first install — note that Helm's `crds/`
+directory is **install-only and never modified by `helm upgrade`**, so
+schema changes (rare for FlyteWorkflow) must be reapplied out-of-band.
+
+(Equivalent legacy path: `helm upgrade --install unionai-dataplane-crds unionai/dataplane-crds --namespace union --create-namespace`. That chart is now deprecated; prefer one of the two paths above.)
 
 **Optional — install only the sets that match the dataplane features you enable:**
 
