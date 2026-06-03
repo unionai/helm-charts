@@ -986,8 +986,15 @@ leaseworker:
     organization: "{{ tpl .Values.orgName . }}"
     cluster: "{{ tpl .Values.clusterName . }}"
     workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
-    leasorAddress: http://leasor-service:8090
-    actionsServiceAddress: http://actions-service:8089
+    # Leaseworker dials leasor + actions through the controlplane nginx
+    # ingress — same hop the v1 executor uses for the queue service (see
+    # `union.connection.host` in the executor configmap on any selfhosted
+    # cluster). The ingress terminates TLS with the same wildcard cert the rest
+    # of the CP uses and fans out per-service via gRPC service path. The
+    # previous defaults (`leasor-service:8090`, `actions-service:8089`) never
+    # matched any real Service.
+    leasorAddress: "dns:///controlplane-nginx-controller.controlplane.svc.cluster.local:443"
+    actionsServiceAddress: "dns:///controlplane-nginx-controller.controlplane.svc.cluster.local:443"
     unionAuth:
       injectSecret: true
       secretName: EAGER_API_KEY
