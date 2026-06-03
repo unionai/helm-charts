@@ -1,4 +1,11 @@
 {{- if and (include "apps.enabled" .) (not .Values.zero_trust.enabled) }}
+{{- $gateway := default dict .Values.gateway -}}
+{{- $gatewayAuth := default dict $gateway.auth -}}
+{{- $host := include "dataplane.cp.host" . -}}
+{{- $tenantAuthURL := default (printf "https://%s/me" $host) (tpl ($gatewayAuth.tenantAuthURL | default "" | toString) .) -}}
+{{- $tenantAuthSignInURL := default (printf "https://%s/login" $host) (tpl ($gatewayAuth.tenantAuthSignInURL | default "" | toString) .) -}}
+{{- $tenantControlPlaneURL := default (printf "https://%s" $host) (tpl ($gatewayAuth.tenantControlPlaneURL | default "" | toString) .) -}}
+{{- $authOrganization := default (tpl .Values.orgName .) (tpl ($gatewayAuth.organization | default "" | toString) .) -}}
 apiVersion: operator.knative.dev/v1beta1
 kind: KnativeServing
 metadata:
@@ -82,12 +89,14 @@ spec:
     env:
     - container: kourier-gateway
       envVars:
-      - name: UNION_AUTHZ_TENANTAUTHURL
-        value: "https://{{ include "dataplane.cp.host" . }}/me"
-      - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
-        value: "https://{{ include "dataplane.cp.host" . }}/login"
-      - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
-        value: "https://{{ include "dataplane.cp.host" . }}"
+      - name: UNION_AUTH_TENANTAUTHURL
+        value: {{ $tenantAuthURL | quote }}
+      - name: UNION_AUTH_TENANTAUTHSIGNINURL
+        value: {{ $tenantAuthSignInURL | quote }}
+      - name: UNION_AUTH_TENANTCONTROLPLANEURL
+        value: {{ $tenantControlPlaneURL | quote }}
+      - name: UNION_AUTH_OVERRIDENORG
+        value: {{ $authOrganization | quote }}
     {{- with index .Values.serving.resources "3scale-kourier-gateway" }}
     resources:
     {{- range $container, $resources := . }}
