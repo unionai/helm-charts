@@ -1024,13 +1024,15 @@ services:
           # When true and no identity service is reachable, all runs display "Unknown"
           # even when created_by is populated in the DB.
           enrichIdentities: false
-          # Orgs whose executions dispatch through the v2 actions service
-          # (else they take the v1 path). Mirrors the internal cloud chart's
-          # executions/deploy/values-{env}.yaml convention. Self-hosted is
-          # single-tenant — the org list is just the deployment's own
-          # UNION_ORG. Override below if you need a different policy.
+          # Self-hosted is single-tenant + fresh-deploy:
+          #   • useActionsServiceForOrgs scopes v2-actions routing to this
+          #     deployment's own org.
+          #   • rejectLegacySDKVersions hard-rejects sub-2.0.4 SDK CreateRun
+          #     requests instead of routing them to the legacy queue service,
+          #     so the queue/executor decommissioning path is exercised here.
           useActionsServiceForOrgs:
             - '{{ .Values.global.UNION_ORG }}'
+          rejectLegacySDKVersions: true
           clusterCacheConfig:
             ttl: 10m
   identity:
