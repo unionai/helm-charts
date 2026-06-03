@@ -13,12 +13,25 @@ Vendored from two upstream releases (combined here because the previous
 
 The version is pinned in [`VERSION`](VERSION).
 
+## Two on-disk copies
+
+[`scripts/sync.sh`](scripts/sync.sh) writes the same `crd-*.yaml` files to
+two byte-identical locations:
+
+| Location | Purpose |
+|---|---|
+| `crds/knative-operator/` (this dir) | Vendored mirror for the `helm install --skip-crds` path and the dedicated ArgoCD CRD-only Application. Users `kubectl apply --server-side` from here. |
+| `charts/knative-operator/crds/` | Consumed by Helm's chart-`crds/` convention so the subchart auto-installs the CRDs on a default `helm install` (no `--skip-crds` flag needed). |
+
+`make check-vendored-crds` enforces parity between the two copies — hand
+editing either one will fail the drift gate.
+
 ## Refresh
 
 ```bash
 # From repo root
 vim crds/knative-operator/VERSION   # bump e.g. v1.16.0 → v1.17.0
-make vendor-crds                    # re-pulls from upstream, splits per CRD, injects SSA annotation
+make vendor-crds                    # re-pulls from upstream, splits per CRD, writes both locations
 make check-vendored-crds            # drift gate (also runs in CI)
 git diff                            # review, then commit
 ```
