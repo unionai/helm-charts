@@ -136,13 +136,26 @@ Expected output: All pods should be in `Running` state, and logs should show suc
 
 ## Zero-trust mode (BYOC only)
 
-To enable zero-trust mode, layer `values.zero-trust.yaml` after your BYOC platform overlay (e.g. `values.aws.yaml`):
+Zero-trust mode is gated by a single values flag, `zero_trust.enabled`.
+Set it to `true` in your override file alongside disabling the
+`knative-operator` subchart (Helm evaluates that condition at parse time
+and can't derive it from `zero_trust.enabled`):
+
+```yaml
+# values.aws.byoc.yaml (or similar)
+zero_trust:
+  enabled: true
+knative-operator:
+  enabled: false
+```
+
+Install:
 
 ```bash
 helm upgrade --install unionai-dataplane unionai/dataplane \
   --namespace union \
   --values values.aws.yaml \
-  --values values.zero-trust.yaml \
+  --values values.aws.byoc.yaml \
   --wait
 ```
 

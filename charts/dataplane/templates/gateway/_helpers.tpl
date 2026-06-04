@@ -28,7 +28,7 @@ app.kubernetes.io/version: "1.16.0"
 Tenant hostname and organization helpers used in the gateway path.
 
 host is consumed unconditionally by the bootstrap configmap (listener
-domain and CORS allow_origin), so it is required whenever the gateway is
+domain and CORS allow_origin), so it is required whenever zero_trust is
 enabled.
 
 organization is consumed only by the Envoy auth fallback path
@@ -37,7 +37,7 @@ so it is required only in that configuration. Emitting empty values for
 either silently produces broken URLs like `https://` or `<cluster>.dp.`.
 */}}
 {{- define "gateway.host" -}}
-{{- required "host is required when gateway.enabled is true" (tpl .Values.host .) -}}
+{{- required "host is required when zero_trust.enabled is true" (tpl .Values.host .) -}}
 {{- end }}
 
 {{- define "gateway.organization" -}}
@@ -51,7 +51,7 @@ NOTE: dataproxy.envoyRoute is a catch-all (prefix "/") and must remain last.
 Place more specific routes above it or they will be shadowed.
 */}}
 {{- define "gateway.extraRoutes" -}}
-{{- if .Values.dataproxy.enabled }}
+{{- if .Values.zero_trust.enabled }}
 {{- include "dataproxy.envoyRoute" . }}
 {{- end }}
 {{- end -}}
@@ -61,7 +61,7 @@ Collector: aggregates all backend envoy clusters.
 To add a new backend, add a conditional include block here.
 */}}
 {{- define "gateway.extraClusters" -}}
-{{- if .Values.dataproxy.enabled }}
+{{- if .Values.zero_trust.enabled }}
 {{- include "dataproxy.envoyCluster" . }}
 {{- end }}
 {{- end -}}
