@@ -16,13 +16,6 @@ global:
   DB_USER: "dbUser"
   BUCKET_NAME: "bucketName"
   ARTIFACTS_BUCKET_NAME: "artifactsBucketName"
-  # KUBERNETES_SECRET_NAME left empty -- the chart helper unionai.secretName
-  # calls `tpl .Values.defaults.secretName .` where `.` is the per-service
-  # dict constructed in templates/deployment.yaml. That dict carries
-  # Values/Release/Chart but not Template, so tpl fails with "cannot
-  # retrieve Template.Basepath" when the value resolves to a non-empty
-  # templated string on Linux helm. Until the helper is fixed
-  # (`tpl ... $` instead of `tpl ... .`), the fixture leaves this empty.
   DATAPLANE_HOST: "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
   ARTIFACT_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/artifactsrole"
   FLYTEADMIN_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/adminflyterole"
@@ -30,6 +23,17 @@ global:
   AUTH_TOKEN_URL: "https://test.example.com/oauth2/v1/token"
 
 dbPass: "dbPass"
+
+# Override the chart's templated defaults
+# (`{{ .Values.global.KUBERNETES_SECRET_NAME }}`) with plain strings. The
+# helper `unionai.secretName` (_helpers.tpl:270) calls `tpl ... .` with `.`
+# set to a per-service dict that has no `Template` field; Linux helm v4.2.0
+# fails with "cannot retrieve Template.Basepath" when tpl needs to evaluate
+# template syntax. macOS helm hides this. A plain string sidesteps the
+# helper bug entirely.
+defaults:
+  secretName: "controlplane-secrets"
+  dbSecretName: "controlplane-secrets"
 
 configMap:
   connection:
