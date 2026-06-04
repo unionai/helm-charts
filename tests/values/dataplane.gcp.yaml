@@ -1,26 +1,47 @@
-# helm-values: examples/values-test-certs.yaml
-host: byok.us-west-2.union.ai
-clusterName: test-e2e-gcp
-orgName: byok
-provider: gcp
-storage:
-  provider: gcs
-  bucketName: test-gcp-bucket
-  fastRegistrationBucketName: test-gcp-bucket
-  region: us-central1
-  enableMultiContainer: true
-  gcp:
-    projectId: test-gcp-project-123
+# helm-values: values.gcp.yaml,examples/values-test-certs.yaml
+# Exercises the GCP sibling overlay (charts/dataplane/values.gcp.yaml) and,
+# layered on top, the fully-selfhosted (air-gapped) deployment mode:
+# no admin secret, no CP auth, no tunnel service, no billable-usage
+# collector. Subsumes dataplane.fully-selfhosted.yaml -- GCP is the most
+# common provider context where this mode ships.
+
+global:
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+  CLUSTER_NAME: "test-e2e-gcp"
+  ORG_NAME: "byok"
+  METADATA_BUCKET: "test-gcp-bucket"
+  FAST_REGISTRATION_BUCKET: "test-gcp-bucket"
+  GCP_REGION: "us-central1"
+  GOOGLE_PROJECT_ID: "test-gcp-project-123"
+  BACKEND_IAM_ROLE_ARN: "union-backend@test-gcp-project-123.iam.gserviceaccount.com"
+  WORKER_IAM_ROLE_ARN: "union-worker@test-gcp-project-123.iam.gserviceaccount.com"
+  CONTROLPLANE_HOST: "test-controlplane-host"
+  AUTH_CLIENT_ID: "byok-test-e2e-gcp-operator"
+
+# Fully-selfhosted toggles.
 secrets:
   admin:
-    create: true
-    clientId: byok-test-e2e-gcp-operator
-    clientSecret: test-not-real-secret
-additionalServiceAccountAnnotations:
-  iam.gke.io/gcp-service-account: 'union-backend@test-gcp-project-123.iam.gserviceaccount.com'
-userRoleAnnotationKey: iam.gke.io/gcp-service-account
-userRoleAnnotationValue: union-worker@test-gcp-project-123.iam.gserviceaccount.com
-fluentbit:
-  serviceAccount:
-    annotations:
-      iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
+    enable: false
+    create: false
+
+serving:
+  auth:
+    enabled: false
+
+config:
+  union:
+    auth:
+      enable: false
+  operator:
+    enableTunnelService: false
+    billableUsageCollector:
+      enabled: false
+
+operator:
+  enableTunnelService: false
+
+clusterresourcesync:
+  config:
+    union:
+      auth:
+        enable: false

@@ -1,27 +1,37 @@
+# helm-values: values.aws.yaml
+# Exercises the AWS sibling overlay (charts/controlplane/values.aws.yaml) by
+# layering it and filling only the placeholders the overlay leaves empty.
+# Anything that used to live inline here moved into the overlay, so a change
+# there flows into this snapshot automatically.
+#
+# Subsumes the dropped controlplane.aws.billing-enable.yaml fixture: the
+# billing toggle is enabled below.
+
 global:
   UNION_HOST: "test.example.com"
+  UNION_ORG: "test-org"
+  AWS_REGION: "us-east-2"
+  DB_HOST: "db-instance-url"
+  DB_NAME: "dbName"
+  DB_USER: "dbUser"
+  BUCKET_NAME: "bucketName"
+  ARTIFACTS_BUCKET_NAME: "artifactsBucketName"
+  DATAPLANE_HOST: "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
+  ARTIFACT_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/artifactsrole"
+  FLYTEADMIN_IAM_ROLE_ARN: "arn:aws:iam::123456789012:role/adminflyterole"
   INTERNAL_CLIENT_ID: "test-internal-client-id"
   AUTH_TOKEN_URL: "https://test.example.com/oauth2/v1/token"
 
-dbHost: "db-instance-url"
-# -- Set the DB Name used for the control plane services
-dbName: "dbName"
-# -- Set the DB user used for the control plane services
-dbUser: "dbUser"
-# -- Set the DB password used for the controlplane services
 dbPass: "dbPass"
-# -- Set the S3 bucket name used for flyte storage
-bucketName: "bucketName"
-# -- Set the S3 bucket name used for artifacts storage
-artifactsBucketName: "artifactsBucketName"
 
 configMap:
   connection:
     environment: staging
-    region: us-east-2
     rootTenantURLPattern: dns:///fake-host.domain
+
 controlplane:
   enabled: true
+
 ingress:
   host: fake-host.domain
   # extraHosts: alt-shared reuses the primary cert (SAN); alt-own-cert has its
@@ -37,22 +47,19 @@ ingress:
     - hosts:
         - alt-own-cert.example.com
       secretName: alt-own-cert-tls-secret
+
 flyte:
   common:
     ingress:
       tls:
         secretName: fake-host-tls-secret
       host: fake-host.domain
-
   datacatalog:
     autoscaling:
       enabled: true
-
   flyteadmin:
     autoscaling:
       enabled: true
-
-      # Test setting custom values
       minReplicas: 4
       maxReplicas: 10
       metrics:
@@ -62,17 +69,17 @@ flyte:
             target:
               type: Utilization
               averageUtilization: 70
-
-    serviceAccount:
-      annotations:
-        eks.amazonaws.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
-
   configmap:
     admin:
       admin:
         endpoint: dns:///fake-host.domain
         insecure: false
 
-# Global podAnnotations — should appear on all CP deployments
 podAnnotations:
   prometheus.io/scrape: "true"
+
+services:
+  usage:
+    configMap:
+      billing:
+        enable: true
