@@ -36,8 +36,8 @@ background on the failure mode.
 | `kube-prometheus-stack/`   | `prometheus-community/kube-prometheus-stack`        | `controlplane`, `dataplane` |
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
-| `flyte-v1/`                | Union-maintained (no upstream sync)                 | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
-| `dataplane/`               | `knative/serving` release; mirror of `charts/dataplane/crds/` | `dataplane` zero-trust gateway (Knative Serving CRDs); replaces `charts/knative-operator-crds` and the prior `knative-operator/` vendoring |
+| `dataplane/`               | `knative/serving` release (12 serving CRDs) + Union-maintained FlyteWorkflow CRD; full mirror of `charts/dataplane/crds/` | `dataplane` chart (always): FlyteWorkflow CRD + Knative Serving CRDs (needed by both the zero-trust gateway and the legacy knative-operator path). Replaces `charts/dataplane-crds`. |
+| `knative-operator/`        | `knative/operator` release (2 `operator.knative.dev` CRDs only); mirror of `charts/knative-operator/crds/` | `knative-operator` subchart (legacy / non-zero-trust path). Knative serving CRDs live in `dataplane/` and are pulled from there, not duplicated here. Delete this dir + the subchart when zero-trust becomes the only mode. Replaces `charts/knative-operator-crds`. |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
 by ArgoCD — the parent ApplicationSet sets `helm.skipCrds: true` on its
@@ -47,14 +47,14 @@ source so the same CRDs aren't applied twice.
 
 ```
 crds/<name>/
-  VERSION                   # upstream chart version this dir tracks (omit for Union-maintained CRDs)
-  scripts/                  # omit for Union-maintained CRDs
-    sync.sh                 # re-vendor from upstream + bump VERSION
+  VERSION                   # upstream chart version this dir tracks (omit for chart-mirrored dirs)
+  scripts/
+    sync.sh                 # (re-)populate crd-*.yaml — from upstream OR from a chart-dir mirror source
     check.sh                # CI gate: cross-validate + detect drift
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
-Each directory falls into one of three subtypes — all have `scripts/sync.sh`
+Each directory falls into one of two subtypes — all have `scripts/sync.sh`
 + `scripts/check.sh` and are picked up uniformly by `make vendor-crds` /
 `make check-vendored-crds`:
 
@@ -64,19 +64,16 @@ writes that version to `VERSION`, and emits `crd-*.yaml` into this dir.
 Hand edits are overwritten on the next sync; patch downstream (kustomize on
 the ArgoCD source, or a helm post-render), not `crd-*.yaml` directly.
 
-**Chart-mirrored, Union-maintained** (`flyte-v1/`): the source of truth is
-a file inside a chart's Helm-native `crds/` directory (e.g.
-`charts/dataplane/crds/crd-flyteworkflows.yaml`). `sync.sh` copies that
-file here so the mirror can be installed via SSA by a dedicated ArgoCD
-`Application` when the customer runs `helm install --skip-crds`. No
-`VERSION` file — there's no upstream version to track.
-
-**Chart-mirrored, upstream-tracked** (`dataplane/`): combines both — `sync.sh`
-pulls from upstream at the version pinned in `VERSION`, writes the CRDs to
-the chart's `crds/` dir (`charts/dataplane/crds/`) AND to this mirror dir.
-Non-matching files in the chart dir (e.g. `crd-flyteworkflows.yaml`, which
-is `flyte-v1/`'s domain) are preserved via name-pattern filtering. Same
-install rationale as chart-mirrored Union-maintained.
+**Chart-mirrored, upstream-tracked** (`dataplane/`, `knative-operator/`):
+`sync.sh` pulls from upstream at the version pinned in `VERSION`, writes
+upstream-sourced CRDs to the corresponding chart's `crds/` dir
+(`charts/dataplane/crds/` or `charts/knative-operator/crds/`) AND mirrors
+EVERY file in that chart dir (including Union-maintained CRDs not pulled
+from upstream — e.g. `crd-flyteworkflows.yaml`) into this dir for SSA
+install via a dedicated ArgoCD `Application` (when the customer runs
+`helm install --skip-crds`). The chart dir is the single source of truth
+for "what CRDs does this chart need"; this mirror is its byte-identical
+SSA-install copy.
 
 ## Adding a new vendored CRD set
 
@@ -108,6 +105,6 @@ make check-vendored-crds
 ```
 
 `check.sh` fails the build if any of:
-- the parent-chart dep version disagrees between controlplane and dataplane
-- `crds/<name>/VERSION` disagrees with the parent-chart dep version
-- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run
+- the parent-chart dep version disagrees between controlplane and dataplane (upstream-tracked dirs only)
+- `crds/<name>/VERSION` disagrees with the parent-chart dep version (upstream-tracked dirs only)
+- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run (all dirs)

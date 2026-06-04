@@ -1,0 +1,131 @@
+# ============================================================================
+# DEPRECATED — historical reference only.
+# ============================================================================
+# This file was the previous canonical `charts/controlplane/values.aws.yaml`
+# before the FAB-272 consolidation (chart release 2026.X.Y). It is preserved
+# here so anyone diffing against it can understand what changed.
+#
+# DO NOT start a new deployment from this file. The chart does not test it,
+# the chart will not maintain it, and behavior may drift silently from the
+# canonical `../values.aws.yaml` as the chart evolves.
+#
+# All deployment modes (selfmanaged, selfhosted, BYOC) use `../values.aws.yaml`
+# as the base overlay. There is no chart-level distinction between modes;
+# env-specific globals are supplied via your own overlay layered on top.
+#
+# See `charts/MIGRATION.md` for the migration story.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Configuration Variables to Replace
+# ----------------------------------------------------------------------------
+# Configure the global variables below for your AWS deployment.
+# These values override the defaults in values.yaml and provide AWS-specific
+# configuration (RDS endpoints, S3 buckets, IAM roles, etc.).
+#
+# Note: For self-hosted intra-cluster deployments (control plane and dataplane
+# in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
+# That file is self-contained and includes all necessary configuration.
+# ----------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------------
+# SECTION 1: AWS-Specific Global Configuration
+# ----------------------------------------------------------------------------
+# Override global values from values.yaml with AWS-specific settings.
+
+global:
+
+  # Control plane hostname (FQDN)
+  # Example: "mycompany.union.ai" or "union.example.com"
+  UNION_HOST: ""
+
+  # AWS region for all resources
+  # Example: "us-west-2", "us-east-1", "eu-west-1"
+  AWS_REGION: ""
+
+  # PostgreSQL RDS endpoint
+  # Example: "mydb.abc123.us-west-2.rds.amazonaws.com"
+  DB_HOST: ""
+
+  # PostgreSQL database name
+  # Example: "unionai" or "union_controlplane"
+  DB_NAME: ""
+
+  # PostgreSQL username
+  # Example: "unionai" or "admin"
+  DB_USER: ""
+
+  # S3 bucket for control plane metadata
+  # Example: "union-controlplane-metadata"
+  BUCKET_NAME: ""
+
+  # S3 bucket for artifacts storage
+  # Example: "union-controlplane-artifacts"
+  ARTIFACTS_BUCKET_NAME: ""
+
+  # Name of Kubernetes secret containing the DB password and other service specific secrets.
+  # The secret can be created and set through databaseSecret.secretManifest and dbPass below.
+  # Example: "union-controlplane-secrets"
+  # Note: Secret must contain "pass.txt" key
+  KUBERNETES_SECRET_NAME: ""
+
+  # IAM role ARN for artifacts service (IRSA)
+  # Leave empty if artifacts service is disabled
+  # Example: "arn:aws:iam::123456789012:role/union-artifacts-role"
+  ARTIFACT_IAM_ROLE_ARN: ""
+
+  # IAM role ARN for Flyte services (IRSA)
+  # Example: "arn:aws:iam::123456789012:role/union-flyteadmin-role"
+  # Note: Used by flyteadmin, datacatalog, and cacheservice
+  FLYTEADMIN_IAM_ROLE_ARN: ""
+
+# ----------------------------------------------------------------------------
+# SECTION 2: AWS Specific Role configuration
+# ----------------------------------------------------------------------------
+# Override service-specific settings as needed.
+
+services:
+  artifacts:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+
+flyte:
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  datacatalog:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+
+  cacheservice:
+    serviceAccount:
+      annotations:
+        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+# ----------------------------------------------------------------------------
+# Monitoring Configuration (AWS/EKS specific)
+# ----------------------------------------------------------------------------
+
+# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
+# Their metrics endpoints are not accessible from within the cluster.
+# Disable scraping and alerting rules for these components to avoid
+# false-positive TargetDown and *Down alerts.
+monitoring:
+  kubeControllerManager:
+    enabled: false
+  kubeScheduler:
+    enabled: false
+  kubeEtcd:
+    enabled: false
+  kubeProxy:
+    enabled: false
+  defaultRules:
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false

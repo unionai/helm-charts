@@ -1,30 +1,33 @@
 #!/usr/bin/env bash
 #
-# Re-vendor Knative Serving CRDs at the version pinned in ../VERSION.
+# Re-vendor the dataplane chart's CRDs.
 #
-# Pulls knative/serving's `serving-crds.yaml` release manifest (12 CRDs:
-# *.serving.knative.dev + *.networking.internal.knative.dev +
-# *.autoscaling.internal.knative.dev + *.caching.internal.knative.dev) and
-# writes one `crd-<name>.yaml` per CRD to BOTH:
+# Two responsibilities:
 #
-#   1. charts/dataplane/crds/  — the Helm `crds/` directory. Helm 3 installs
-#                                these automatically on `helm install` unless
-#                                the user passes `--skip-crds`. The chart's
-#                                source of truth.
-#   2. crds/dataplane/         — a byte-identical mirror, used by a dedicated
-#                                ArgoCD `Application` (and the docs-recommended
-#                                `kubectl apply --server-side -f crds/dataplane/`
-#                                path) when the customer opts to manage CRDs
-#                                out-of-band (`helm install --skip-crds`).
+#   (a) Pull knative/serving's `serving-crds.yaml` release manifest (12 CRDs:
+#       *.serving.knative.dev + *.networking.internal.knative.dev +
+#       *.autoscaling.internal.knative.dev + *.caching.internal.knative.dev)
+#       at the version pinned in ../VERSION and write one `crd-<name>.yaml`
+#       per CRD into charts/dataplane/crds/. The serving CRDs are the
+#       upstream-sourced part of the chart.
 #
-# Non-Knative CRDs in the chart dir (e.g. `crd-flyteworkflows.yaml`) are
-# preserved — sync.sh only refreshes files matching `crd-*.knative.dev.yaml`.
+#   (b) Mirror EVERY `charts/dataplane/crds/crd-*.yaml` file (the 12 knative
+#       serving CRDs from (a) PLUS any non-knative CRDs in the chart dir,
+#       e.g. `crd-flyteworkflows.yaml`) into crds/dataplane/. That mirror
+#       dir is installed via SSA by a dedicated ArgoCD `Application` (and is
+#       the docs-recommended `kubectl apply --server-side -f crds/dataplane/`
+#       target) when the customer opts to manage CRDs out-of-band
+#       (`helm install --skip-crds`).
+#
+# So `charts/dataplane/crds/` is the single source of truth for "what CRDs
+# does the dataplane chart need," and `crds/dataplane/` is its byte-identical
+# SSA-install mirror.
 #
 # We deliberately drop the two `*.operator.knative.dev` CRDs (knativeservings,
-# knativeeventings) that the previous knative-operator vendoring included:
-# the dataplane chart now installs Knative Serving directly via the gateway
-# templates rather than via the Knative Operator CR pattern, so the operator
-# CRDs are no longer needed.
+# knativeeventings) — those live in `crds/knative-operator/` and are only
+# installed when the knative-operator subchart is enabled (the non-zero-trust
+# legacy path). The dataplane chart in zero-trust mode installs Knative
+# Serving directly via the gateway templates without the Operator CR pattern.
 #
 # Bumping Knative:
 #   1. Edit ./VERSION (e.g. v1.17.0).
@@ -67,16 +70,14 @@ trap 'rm -rf "${TMPDIR}"' EXIT
 SRC_URL="https://github.com/knative/serving/releases/download/knative-${VERSION}/serving-crds.yaml"
 curl -fsSL "${SRC_URL}" > "${TMPDIR}/serving-crds.yaml"
 
-# Wipe Knative CRDs from chart dir; preserve non-Knative files (e.g. crd-flyteworkflows.yaml).
+# (a) Refresh knative serving CRDs in the chart dir. Wipe only the
+#     knative-serving subset; non-knative files (crd-flyteworkflows.yaml etc.)
+#     stay in place because they're not upstream-sourced from here.
 shopt -s nullglob
 for f in "${CHART_OUT}"/crd-*.knative.dev.yaml; do rm -f "${f}"; done
-# Mirror dir holds only Knative CRDs today, so wipe all crd-*.yaml. If the
-# dataplane chart's crds/ dir ever ships more non-Knative CRDs that we want
-# mirrored here, extend the mirror step below to copy them through as well.
-for f in "${MIRROR_OUT}"/crd-*.yaml; do rm -f "${f}"; done
 shopt -u nullglob
 
-count=0
+knative_count=0
 doc_count="$(yq eval-all '. | document_index' "${TMPDIR}/serving-crds.yaml" | sort -nu | tail -1)"
 
 for i in $(seq 0 "${doc_count}"); do
@@ -88,17 +89,28 @@ for i in $(seq 0 "${doc_count}"); do
 
   doc="$(yq eval-all "select(document_index == ${i})" "${TMPDIR}/serving-crds.yaml")"
 
-  header_block="# AUTO-GENERATED — do not edit. Run crds/dataplane/scripts/sync.sh to regenerate.
-# Source: knative/serving release knative-${VERSION}/serving-crds.yaml"
+  {
+    echo "# AUTO-GENERATED — do not edit. Run crds/dataplane/scripts/sync.sh to regenerate."
+    echo "# Source: knative/serving release knative-${VERSION}/serving-crds.yaml"
+    echo "${doc}"
+  } > "${CHART_OUT}/crd-${crd_name}.yaml"
 
-  for dst_dir in "${CHART_OUT}" "${MIRROR_OUT}"; do
-    {
-      echo "${header_block}"
-      echo "${doc}"
-    } > "${dst_dir}/crd-${crd_name}.yaml"
-  done
-
-  count=$((count + 1))
+  knative_count=$((knative_count + 1))
 done
 
-echo "==> Wrote ${count} CRD manifest(s) to each of chart + mirror"
+# (b) Mirror EVERY CRD in the chart dir to the SSA-install mirror dir.
+#     This includes both the knative serving CRDs just written above AND any
+#     non-knative CRDs the chart ships (e.g. crd-flyteworkflows.yaml).
+rm -f "${MIRROR_OUT}"/crd-*.yaml
+
+mirror_count=0
+shopt -s nullglob
+for src in "${CHART_OUT}"/crd-*.yaml; do
+  base="$(basename "${src}")"
+  cp "${src}" "${MIRROR_OUT}/${base}"
+  mirror_count=$((mirror_count + 1))
+done
+shopt -u nullglob
+
+echo "==> Wrote ${knative_count} knative serving CRD(s) to chart dir"
+echo "==> Mirrored ${mirror_count} CRD(s) (knative serving + non-knative) to mirror dir"

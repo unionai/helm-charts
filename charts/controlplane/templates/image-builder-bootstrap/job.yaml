@@ -9,6 +9,9 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade,post-rollback
     "helm.sh/hook-weight": "10"
     "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    {{- with .Values.imageBuilder.bootstrap.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
 spec:
   backoffLimit: {{ .Values.imageBuilder.bootstrap.backoffLimit }}
   ttlSecondsAfterFinished: {{ .Values.imageBuilder.bootstrap.ttlSecondsAfterFinished }}
@@ -26,9 +29,13 @@ spec:
     {{- end }}
     spec:
       restartPolicy: {{ .Values.imageBuilder.bootstrap.restartPolicy }}
+      {{- with (include "unionai.imagePullSecrets" (dict "config" .Values.imageBuilder.bootstrap "Values" .Values) | fromYamlArray) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: bootstrap
-          image: {{ .Values.imageBuilder.bootstrap.image | quote }}
+          image: "{{ tpl .Values.imageBuilder.bootstrap.image.repository . }}:{{ tpl .Values.imageBuilder.bootstrap.image.tag . }}"
           env:
             - name: APP_VERSION
               value: {{ tpl .Values.image.tag . | quote }}
@@ -36,13 +43,13 @@ spec:
               value: {{ .Values.imageBuilder.bootstrap.unionImageNamePrefix | quote }}
             - name: FLYTECTL_CONFIG
               value: /etc/flyte/config.yaml
+            {{- with .Values.imageBuilder.bootstrap.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
           command:
             - /bin/sh
             - -ec
             - |
-              pip install --root-user-action=ignore --quiet uv
-              uv pip install --quiet --system flyte kubernetes
-
               flyte create project \
                 --id   {{ .Values.imageBuilder.bootstrap.project | quote }} \
                 --name "Union system tasks" \
@@ -64,6 +71,9 @@ spec:
             - name: client-secret
               mountPath: /etc/secrets/union
               readOnly: true
+            {{- with .Values.imageBuilder.bootstrap.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: bootstrap
           configMap:
@@ -84,4 +94,7 @@ spec:
             # chart-wide defaults.secretName convention so per-env overrides
             # of that value flow through automatically.
             secretName: {{ tpl .Values.defaults.secretName . | quote }}
+        {{- with .Values.imageBuilder.bootstrap.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
 {{- end }}

@@ -1,3 +1,20 @@
+{{- define "dataproxyIngressPaths" -}}
+- path: /data/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: dataproxy
+      port:
+        name: grpc
+- path: /data
+  pathType: Prefix
+  backend:
+    service:
+      name: dataproxy
+      port:
+        name: grpc
+{{- end }}
+
 {{- define "control-plane-library.dataproxy-ingress" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -11,13 +28,17 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end}}
   {{- if .Values.ingress.enableProtectedConsoleIngress }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsWithoutSignin }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- else }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotations }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- end}}
 spec:
   {{- with .Values.ingress.className }}
@@ -28,23 +49,5 @@ spec:
     {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end}}
   rules:
-    - {{ with .Values.ingress.host -}}
-      host: {{ tpl . $ }}
-      {{ end -}}
-      http:
-        paths:
-          - path: /data/*
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: dataproxy
-                port:
-                  name: grpc
-          - path: /data
-            pathType: Prefix
-            backend:
-              service:
-                name: dataproxy
-                port:
-                  name: grpc
+    {{- include "controlPlaneLibrary.ingressRules" (dict "context" . "pathsTpls" (list "dataproxyIngressPaths")) | nindent 4 }}
 {{- end }}
