@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 #
-# Verify vendored Knative Serving CRDs in this directory AND the matching
-# Helm `crds/` copies under charts/dataplane/crds/ match a fresh sync.sh
-# re-pull from upstream at the pinned VERSION. Catches:
-#   - hand edits to either copy
-#   - chart-dir copy drifting from the mirror
-#   - upstream-at-same-tag content changes (release retags, etc.)
+# Verify the dataplane chart's vendored CRDs match a fresh sync.sh re-pull:
+#   - chart dir (charts/dataplane/crds/): 12 knative serving CRDs (upstream-
+#     sourced at VERSION) + any non-knative CRDs the chart ships
+#     (e.g. crd-flyteworkflows.yaml)
+#   - mirror dir (crds/dataplane/): byte-identical copy of the chart dir,
+#     used by the dedicated ArgoCD SSA-install Application
+# Catches: hand edits to either copy, chart-dir vs mirror drift, upstream
+# release-retag content changes.
 
 set -euo pipefail
 
@@ -89,6 +91,7 @@ EOF
 fi
 
 VERSION="$(cat "${CRD_DIR}/VERSION" | tr -d '[:space:]')"
-chart_count="$(ls "${CHART_DIR}"/crd-*.knative.dev.yaml 2>/dev/null | wc -l | tr -d ' ')"
+knative_count="$(ls "${CHART_DIR}"/crd-*.knative.dev.yaml 2>/dev/null | wc -l | tr -d ' ')"
+chart_count="$(ls "${CHART_DIR}"/crd-*.yaml 2>/dev/null | wc -l | tr -d ' ')"
 mirror_count="$(ls "${CRD_DIR}"/crd-*.yaml 2>/dev/null | wc -l | tr -d ' ')"
-echo "==> dataplane Knative CRDs in sync (version ${VERSION}, ${chart_count} chart-dir + ${mirror_count} mirror files)"
+echo "==> dataplane CRDs in sync (knative serving ${VERSION}: ${knative_count}; chart-dir total: ${chart_count}; mirror: ${mirror_count})"
