@@ -139,8 +139,15 @@ config:
       # `dns:///{CONTROLPLANE_HOST}:443`). Override the global to bypass nginx.
       endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
 
-      # Use insecure (non-TLS) connection for intra-cluster HTTP communication
-      insecure: true
+      # The controlplane nginx Service exposes :443 as TLS-only. The v1
+      # flyteadmin gRPC client maps `insecure: true` to grpc.WithInsecure()
+      # (plaintext h2c) which fails the TLS handshake against nginx with
+      # `http2: frame too large, frame header looked like HTTP/1.1` —
+      # blocking SR's cluster-resource reconcile loop and leaving namespace
+      # SAs without IRSA annotations. Use TLS with relaxed cert verification
+      # (in-cluster wildcard cert), matching the union.connection pattern.
+      insecure: false
+      insecureSkipVerify: true
 
       # OAuth2 client credentials for authenticated admin calls
       clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
@@ -157,8 +164,11 @@ config:
       cache-endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
       endpoint: ""
 
-      # Use insecure connection for intra-cluster communication
-      insecure: true
+      # The controlplane nginx Service exposes :443 as TLS-only;
+      # plaintext h2c (`insecure: true`) fails the TLS handshake the same
+      # way the admin client does. Match the union.connection pattern.
+      insecure: false
+      insecureSkipVerify: true
 
       # Disable admin authentication (direct service-to-service)
       use-admin-auth: false
