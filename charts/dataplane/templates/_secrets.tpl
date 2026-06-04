@@ -38,6 +38,41 @@ Consumer pattern for multi-key (eagerClientCreds, admin):
 */}}
 
 {{/*
+secrets.admin — admin client credentials.
+
+Carries the unified shape but also accepts the legacy `enable` and `create` flags so
+existing values files keep working. Default computed name is `union-secret-auth` to
+preserve the name historically baked into consumer configs.
+
+Legacy:
+  enable: bool            (alias for enabled)
+  create: bool            (legacy: false → external secret with hardcoded name `union-secret-auth`)
+*/}}
+
+{{- define "secrets.admin.computedName" -}}union-secret-auth{{- end -}}
+
+{{- define "secrets.admin.enabled" -}}
+{{- $s := .Values.secrets.admin -}}
+{{- if hasKey $s "enabled" -}}{{- if $s.enabled -}}true{{- else -}}false{{- end -}}
+{{- else if hasKey $s "enable" -}}{{- if $s.enable -}}true{{- else -}}false{{- end -}}
+{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "secrets.admin.shouldCreate" -}}
+{{- $s := .Values.secrets.admin -}}
+{{- if eq (include "secrets.admin.enabled" .) "true" -}}
+  {{- if $s.existingSecret.name -}}false
+  {{- else if and (hasKey $s "create") (not $s.create) -}}false
+  {{- else -}}true{{- end -}}
+{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "secrets.admin.secretName" -}}
+{{- $s := .Values.secrets.admin -}}
+{{- if $s.existingSecret.name -}}{{ $s.existingSecret.name }}{{- else -}}{{ include "secrets.admin.computedName" . }}{{- end -}}
+{{- end -}}
+
+{{/*
 secrets.eagerApiKey
 */}}
 
