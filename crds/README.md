@@ -36,8 +36,9 @@ background on the failure mode.
 | `kube-prometheus-stack/`   | `prometheus-community/kube-prometheus-stack`        | `controlplane`, `dataplane` |
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
-| `flyte-v1/`                | Union-maintained (no upstream sync)                 | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
-| `dataplane/`               | `knative/serving` release; mirror of `charts/dataplane/crds/` | `dataplane` zero-trust gateway (Knative Serving CRDs); replaces `charts/knative-operator-crds` and the prior `knative-operator/` vendoring |
+| `flyte-v1/`                | Union-maintained; mirror of `charts/dataplane/crds/crd-flyteworkflows.yaml` | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
+| `dataplane/`               | `knative/serving` release; mirror of `charts/dataplane/crds/crd-*.knative.dev.yaml` | `dataplane` zero-trust gateway (Knative Serving CRDs) |
+| `knative-operator/`        | `knative/serving` + `knative/operator` releases; mirror of `charts/knative-operator/crds/` | `knative-operator` subchart (legacy / non-zero-trust path); replaces `charts/knative-operator-crds` |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
 by ArgoCD — the parent ApplicationSet sets `helm.skipCrds: true` on its
@@ -47,9 +48,9 @@ source so the same CRDs aren't applied twice.
 
 ```
 crds/<name>/
-  VERSION                   # upstream chart version this dir tracks (omit for Union-maintained CRDs)
-  scripts/                  # omit for Union-maintained CRDs
-    sync.sh                 # re-vendor from upstream + bump VERSION
+  VERSION                   # upstream chart version this dir tracks (omit for chart-mirrored dirs)
+  scripts/
+    sync.sh                 # (re-)populate crd-*.yaml — from upstream OR from a chart-dir mirror source
     check.sh                # CI gate: cross-validate + detect drift
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
@@ -71,12 +72,14 @@ file here so the mirror can be installed via SSA by a dedicated ArgoCD
 `Application` when the customer runs `helm install --skip-crds`. No
 `VERSION` file — there's no upstream version to track.
 
-**Chart-mirrored, upstream-tracked** (`dataplane/`): combines both — `sync.sh`
-pulls from upstream at the version pinned in `VERSION`, writes the CRDs to
-the chart's `crds/` dir (`charts/dataplane/crds/`) AND to this mirror dir.
-Non-matching files in the chart dir (e.g. `crd-flyteworkflows.yaml`, which
-is `flyte-v1/`'s domain) are preserved via name-pattern filtering. Same
-install rationale as chart-mirrored Union-maintained.
+**Chart-mirrored, upstream-tracked** (`dataplane/`, `knative-operator/`):
+combines both — `sync.sh` pulls from upstream at the version pinned in
+`VERSION`, writes the CRDs to the corresponding chart's `crds/` dir
+(`charts/dataplane/crds/` or `charts/knative-operator/crds/`) AND to this
+mirror dir. For `dataplane/`, non-matching files in the chart dir (e.g.
+`crd-flyteworkflows.yaml`, which is `flyte-v1/`'s domain) are preserved via
+name-pattern filtering. Same install rationale as chart-mirrored
+Union-maintained.
 
 ## Adding a new vendored CRD set
 
@@ -108,6 +111,6 @@ make check-vendored-crds
 ```
 
 `check.sh` fails the build if any of:
-- the parent-chart dep version disagrees between controlplane and dataplane
-- `crds/<name>/VERSION` disagrees with the parent-chart dep version
-- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run
+- the parent-chart dep version disagrees between controlplane and dataplane (upstream-tracked dirs only)
+- `crds/<name>/VERSION` disagrees with the parent-chart dep version (upstream-tracked dirs only)
+- the vendored `crd-*.yaml` files differ from a fresh `sync.sh` re-run (all dirs)
