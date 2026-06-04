@@ -33,9 +33,37 @@ global:
 namespace_mapping:
   template: '{{`{{ project }}`}}-{{`{{ domain }}`}}'
 
-# clusterresourcesync additionalTemplates — subsumes the standalone
-# additional-templates fixture; locks in default ClusterRole rules.
+# Subsumes dataplane.clusterresourcesync.yaml: explicit clusterRoleRules
+# replace the default list, and the additionalTemplates pair (NetworkPolicy
+# + LimitRange) exercises that custom templates render alongside the
+# baked-in namespace/serviceaccount/resourcequota templates without
+# clobbering them. The ConfigMap that holds these only renders when
+# clusterresourcesync.enabled is true AND singleNamespace mode is off
+# (namespaces.enabled=true + low_privilege=false).
+namespaces:
+  enabled: true
+low_privilege: false
+
 clusterresourcesync:
+  enabled: true
+  clusterRoleRules:
+    - apiGroups:
+        - ""
+        - rbac.authorization.k8s.io
+      resources:
+        - clusterrolebindings
+        - configmaps
+        - limitranges
+        - namespaces
+        - podtemplates
+        - pods
+        - resourcequotas
+        - rolebindings
+        - roles
+        - secrets
+        - serviceaccounts
+      verbs:
+        - '*'
   additionalTemplates:
     - key: d_custom_networkpolicy
       value: |
@@ -48,6 +76,19 @@ clusterresourcesync:
           podSelector: {}
           policyTypes:
           - Ingress
+    - key: e_custom_limitrange
+      value: |
+        apiVersion: v1
+        kind: LimitRange
+        metadata:
+          name: default-limits
+          namespace: {{ namespace }}
+        spec:
+          limits:
+          - default:
+              cpu: "2"
+              memory: "1Gi"
+            type: Container
 
 additionalPodAnnotations:
   prometheus.io/scrape: "true"
