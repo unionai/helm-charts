@@ -3,8 +3,9 @@
 > **Deprecated.** This chart is retained for back-compat while consumers
 > migrate. New deployments should use the vendored-CRD directories instead:
 >
-> - `crds/flyte-v1/` — `flyteworkflows.flyte.lyft.com` (previously rendered
->   by this chart's `templates/flyteworkflow.yaml`).
+> - `crds/dataplane/` — `flyteworkflows.flyte.lyft.com` + Knative Serving
+>   CRDs (FlyteWorkflow previously rendered by this chart's
+>   `templates/flyteworkflow.yaml`).
 > - `crds/kube-prometheus-stack/` — prometheus-operator CRDs (previously
 >   pulled in by this chart's `prometheus-operator-crds` dependency).
 
