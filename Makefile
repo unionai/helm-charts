@@ -14,11 +14,16 @@ $(TMP_DIR): $(TESTS_DIR)
 	mkdir -p $(TESTS_DIR)/tmp
 
 .PHONY: generate-expected
-generate-expected: $(GEN_DIR) vendor-crds
+generate-expected: $(GEN_DIR)
 	./tests/run.sh generate
 
+# helm-test and kubeconform-test share no state and read independent inputs,
+# so run them in parallel via a recursive `make -j2`. check-vendored-crds runs
+# first as the upstream-drift gate: cheap (~10s) and produces actionable
+# signal before the longer snapshot/schema checks.
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test
+test: check-vendored-crds
+	$(MAKE) -j2 helm-test kubeconform-test
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)

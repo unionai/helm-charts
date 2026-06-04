@@ -19,7 +19,12 @@ jobs:
           version: v4.2.0
       - name: Run linter
         run: make lint
-  validate:
+
+  # `make test` runs check-vendored-crds + helm-test + kubeconform-test, with
+  # helm-test and kubeconform-test fanned out by `make -j2`. They have no
+  # shared state and benefit from the same caches, so collapsing the legacy
+  # `validate` and `kubeconform` jobs into one runner halves cold-setup cost.
+  test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,42 +35,38 @@ jobs:
         uses: azure/setup-helm@v4.3.1
         with:
           version: v4.2.0
-      - name: Run tests
-        run: make helm-test
-  kubeconform:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
       - name: Set up kubeconform
         uses: yokawasa/action-setup-kube-tools@v0.11.2
-      - name: Run kubeconform
-        run: make kubeconform-test
-  vendored-crds:
-    # Drift gate for the vendored CRDs under crds/<name>/. Each
-    # scripts/check.sh re-pulls its upstream chart and diffs the rendered
-    # CRD YAML against the checked-in copy; the job fails if any CRD set
-    # drifts from the parent-chart dep version it claims to track.
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Set up Helm
-        uses: azure/setup-helm@v4.3.1
-        with:
-          version: v4.2.0
       - name: Set up yq
-        # mikefarah/yq (Go), not the Python yq that ships in Ubuntu —
-        # check.sh / sync.sh use the mikefarah expression syntax.
+        # check-vendored-crds shells out to per-CRD scripts/check.sh, which use
+        # mikefarah/yq syntax.
         run: |
           YQ_VERSION=v4.43.1
           sudo curl -fsSL -o /usr/local/bin/yq \
             "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           sudo chmod +x /usr/local/bin/yq
-          yq --version
-      - name: Verify vendored CRDs match upstream charts
-        run: make check-vendored-crds
+      # Cache `helm dep build` outputs keyed on Chart.lock content. On a hit,
+      # tests/run.sh sees its sentinel + populated charts/ and skips the
+      # ~50s of dep-resolution work entirely. The helm repo index cache lets
+      # cache-miss runs still resolve deps from local indexes when possible.
+      - name: Cache helm chart dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            charts/*/charts/
+            tests/.dep-sentinels/
+            ~/.cache/helm/repository/
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('charts/*/Chart.lock', 'charts/*/Chart.yaml') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+      # kubeconform's schema dir is reused as long as the targeted Kubernetes
+      # version doesn't change. Keyed on the kube-version we pass to
+      # `helm template --kube-version` in tests/run.sh; bump the suffix when
+      # that constant changes.
+      - name: Cache kubeconform schemas
+        uses: actions/cache@v4
+        with:
+          path: tests/.kubeconform-cache/
+          key: kubeconform-${{ runner.os }}-k8s1.32
+      - name: Run tests
+        run: make test
