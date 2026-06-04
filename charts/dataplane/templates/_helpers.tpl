@@ -954,7 +954,7 @@ Global pod environment variables
       resource: limits.cpu
 - name: CLUSTER_NAME
   valueFrom:
-    secretKeyRef:
+    configMapKeyRef:
       name: operator-cluster-name
       key: cluster_name
 - name: DEPLOYMENT_NAME
