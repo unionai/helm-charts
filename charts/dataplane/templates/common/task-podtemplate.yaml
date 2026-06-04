@@ -1,4 +1,5 @@
-{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) }}
+{{- $imageBuilderPullEnabled := eq (include "secrets.imageBuilder.pull.enabled" .) "true" }}
+{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) $imageBuilderPullEnabled }}
 apiVersion: v1
 kind: PodTemplate
 metadata:
@@ -9,7 +10,10 @@ template:
 {{- if include "singleNamespace" . }}
     serviceAccountName: union
 {{- end }}
-{{- if include "operator.enableDepot" . }}
+{{- if $imageBuilderPullEnabled }}
+    imagePullSecrets:
+      - name: {{ include "secrets.imageBuilder.pull.secretName" . }}
+{{- else if include "operator.enableDepot" . }}
     imagePullSecrets:
       - name: depot-token
 {{- end }}
