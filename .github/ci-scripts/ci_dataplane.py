@@ -348,7 +348,53 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
         print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
 
 
-# ── smoke-test ──────────────────────────────────────────────────────────────
+# ── smoke-test helpers ───────────────────────────────────────────────────────
+
+def _phase_name(run) -> str:  # type: ignore[no-untyped-def]
+    return str(run.phase).rsplit(".", 1)[-1].lower()
+
+
+async def _assert_succeeded(run, label: str) -> None:  # type: ignore[no-untyped-def]
+    import flyte  # type: ignore
+    await run.wait.aio(wait_for="terminal")  # type: ignore
+    run.sync()
+    p = _phase_name(run)
+    if p != "succeeded":
+        raise RuntimeError(f"{label}: run {run.name} ended in phase={run.phase}")
+
+
+def _ensure_workspace_in_path() -> None:
+    """Add GITHUB_WORKSPACE (repo root) to sys.path so ci_smoke_task is importable."""
+    workspace = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
+    if workspace not in sys.path:
+        sys.path.insert(0, workspace)
+
+
+async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-untyped-def]
+    """Submit a task, retrying on 'no clusters found' (pool propagation lag)."""
+    import flyte  # type: ignore
+    run = None
+    for attempt in range(1, 7):
+        try:
+            run = await flyte.run.aio(task_fn, **kwargs)  # type: ignore
+            break
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "no clusters found" in msg or "no cluster" in msg:
+                print(
+                    f"[ci] {label}: attempt {attempt}/6 — no clusters found, "
+                    f"retrying in 30s …",
+                    flush=True,
+                )
+                await asyncio.sleep(30)
+            else:
+                raise
+    if run is None:
+        raise RuntimeError(f"{label}: submission failed after 6 attempts (no clusters found)")
+    return run
+
+
+# ── smoke-test (hello only) ──────────────────────────────────────────────────
 
 async def _smoke_test_async(
     control_plane_url: str,
@@ -357,19 +403,12 @@ async def _smoke_test_async(
     org: str,
 ) -> str:
     import uuid
-    import flyte  # type: ignore
 
-    # Import the task from ci_smoke_task.py (repo root).
-    # The task must live in a module with a clean Python name — this file's path
-    # (.github/ci-scripts/ci_dataplane.py) produces '.github.ci-scripts.ci_dataplane'
-    # which Python rejects as a relative import and is also invalid (hyphen).
-    workspace = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
-    if workspace not in sys.path:
-        sys.path.insert(0, workspace)
+    _ensure_workspace_in_path()
     from ci_smoke_task import hello as _hello  # type: ignore  # noqa: E402
 
-    # Re-init the flyte client after importing ci_smoke_task: the module-level
-    # flyte.TaskEnvironment() call can reset client state (project/org routing).
+    # Re-init after importing ci_smoke_task (module-level TaskEnvironment() can
+    # reset the client's project/org routing).
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     print(
         f"[ci] smoke-test: client initialised — "
@@ -379,38 +418,10 @@ async def _smoke_test_async(
 
     nonce = str(uuid.uuid4())
     print(f"[ci] smoke-test: submitting hello (nonce={nonce})", flush=True)
-
-    # Retry submission: "no clusters found" can occur if the cluster pool
-    # assignment hasn't propagated to the execution service yet.
-    run = None
-    for attempt in range(1, 7):
-        try:
-            run = await flyte.run.aio(_hello, nonce=nonce)  # type: ignore
-            break
-        except Exception as exc:
-            msg = str(exc).lower()
-            if "no clusters found" in msg or "no cluster" in msg:
-                print(
-                    f"[ci] smoke-test: attempt {attempt}/6 — no clusters found, "
-                    f"retrying in 30s …",
-                    flush=True,
-                )
-                await asyncio.sleep(30)
-                # Re-init client before retry in case state drifted.
-                await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-            else:
-                raise
-    if run is None:
-        raise RuntimeError("smoke-test: run submission failed after 6 attempts (no clusters found)")
+    run = await _submit_with_retry(_hello, "smoke-test", nonce=nonce)
 
     print(f"[ci] smoke-test: run={run.name}  url={run.url}", flush=True)
-
-    await run.wait.aio(wait_for="terminal")  # type: ignore
-    run.sync()
-    phase = str(run.phase).rsplit(".", 1)[-1].lower()
-    if phase != "succeeded":
-        raise RuntimeError(f"smoke-test: run {run.name} ended in phase={run.phase}")
-
+    await _assert_succeeded(run, "smoke-test")
     print(f"[ci] smoke-test: PASSED (run={run.name})", flush=True)
     return run.name
 
@@ -425,6 +436,194 @@ def cmd_smoke_test(args: argparse.Namespace) -> None:
         )
     )
     _gha_output("smoke_run_name", run_name)
+
+
+# ── smoke suite verifications ────────────────────────────────────────────────
+
+async def _verify_logs_async(run_name: str, project: str) -> None:
+    """Fetch live logs from the run, optionally delete pods, verify logs persist."""
+    from flyte.remote import Run  # type: ignore
+    print(f"[ci] verify_logs: run={run_name}", flush=True)
+    run = await Run.get.aio(name=run_name)  # type: ignore
+    parts: list[str] = []
+    async for line in run.get_logs.aio():  # type: ignore
+        parts.append(line)
+    if not "\n".join(parts).strip():
+        raise RuntimeError(f"verify_logs: no logs returned for {run_name}")
+
+    # Attempt pod deletion (best-effort; pods may already be gone).
+    ns = f"{project}-development"
+    result = subprocess.run(
+        ["kubectl", "get", "pods", "-n", ns,
+         f"-l", f"execution-id={run_name}",
+         "--no-headers", "-o", "custom-columns=NAME:.metadata.name"],
+        capture_output=True, text=True, check=False,
+    )
+    for pod in result.stdout.strip().splitlines():
+        pod = pod.strip()
+        if pod:
+            subprocess.run(
+                ["kubectl", "delete", "pod", pod, "-n", ns, "--wait=false"],
+                check=False,
+            )
+    await asyncio.sleep(10)
+
+    # Verify persistent logs still accessible.
+    parts2: list[str] = []
+    async for line in run.get_logs.aio():  # type: ignore
+        parts2.append(line)
+    if not "\n".join(parts2).strip():
+        raise RuntimeError(
+            f"verify_logs: logs empty after pod deletion for {run_name} "
+            f"(persistent log storage may not be configured)"
+        )
+    print(f"[ci] verify_logs: PASSED ({run_name})", flush=True)
+
+
+async def _verify_io_async(run_name: str) -> None:
+    """Verify Run.outputs is non-None after task completion."""
+    from flyte.remote import Run  # type: ignore
+    print(f"[ci] verify_io: run={run_name}", flush=True)
+    run = await Run.get.aio(name=run_name)  # type: ignore
+    outputs = run.outputs
+    if outputs is None:
+        raise RuntimeError(f"verify_io: no outputs for {run_name}")
+    print(f"[ci] verify_io: PASSED ({run_name})", flush=True)
+
+
+async def _verify_image_builder_async(
+    control_plane_url: str, api_key: str, cluster_name: str, org: str
+) -> None:
+    """Build a custom image (fastapi+requests) and run a task on it."""
+    import uuid
+    from ci_smoke_task import imgbuild_task  # type: ignore  # noqa: E402
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    nonce = str(uuid.uuid4())
+    print(f"[ci] verify_image_builder: submitting imgbuild_task (nonce={nonce})", flush=True)
+    run = await _submit_with_retry(imgbuild_task, "verify_image_builder", nonce=nonce)
+    print(f"[ci] verify_image_builder: run={run.name}", flush=True)
+    await _assert_succeeded(run, "verify_image_builder")
+    print(f"[ci] verify_image_builder: PASSED (run={run.name})", flush=True)
+
+
+async def _verify_image_cache_async(
+    control_plane_url: str, api_key: str, cluster_name: str, org: str
+) -> None:
+    """Submit same stable-image task twice; second run should hit image cache."""
+    import uuid
+    from ci_smoke_task import imgcache_task  # type: ignore  # noqa: E402
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    nonce1, nonce2 = str(uuid.uuid4()), str(uuid.uuid4())
+    print(f"[ci] verify_image_cache: run 1 (nonce={nonce1})", flush=True)
+    run1 = await _submit_with_retry(imgcache_task, "verify_image_cache/run1", nonce=nonce1)
+    await _assert_succeeded(run1, "verify_image_cache run 1")
+    print(f"[ci] verify_image_cache: run 2 (nonce={nonce2}) — expect cache hit", flush=True)
+    run2 = await _submit_with_retry(imgcache_task, "verify_image_cache/run2", nonce=nonce2)
+    await _assert_succeeded(run2, "verify_image_cache run 2")
+    print(f"[ci] verify_image_cache: PASSED (run1={run1.name} run2={run2.name})", flush=True)
+
+
+async def _verify_reusable_async(
+    control_plane_url: str, api_key: str, cluster_name: str, org: str
+) -> None:
+    """Fan out square() calls over a ReusePolicy environment (replicas=2, concurrency=1)."""
+    from ci_smoke_task import reuse_driver  # type: ignore  # noqa: E402
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    n = 4  # fixed for reproducibility
+    print(f"[ci] verify_reusable: submitting reuse_driver(n={n})", flush=True)
+    run = await _submit_with_retry(reuse_driver, "verify_reusable", n=n)
+    await _assert_succeeded(run, "verify_reusable")
+    print(f"[ci] verify_reusable: PASSED (run={run.name})", flush=True)
+
+
+async def _verify_app_async(
+    control_plane_url: str, api_key: str, cluster_name: str, org: str
+) -> None:
+    """Deploy a FastAPI app, hit internal endpoints, deactivate."""
+    from ci_smoke_task import app_deploy_test  # type: ignore  # noqa: E402
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    print("[ci] verify_app: submitting app_deploy_test", flush=True)
+    run = await _submit_with_retry(app_deploy_test, "verify_app")
+    print(f"[ci] verify_app: run={run.name}  url={run.url}", flush=True)
+    await _assert_succeeded(run, "verify_app")
+    print(f"[ci] verify_app: PASSED (run={run.name})", flush=True)
+
+
+async def _run_smoke_suite_async(
+    control_plane_url: str,
+    api_key: str,
+    cluster_name: str,
+    org: str,
+) -> list[tuple[str, bool, str]]:
+    """Run hello first, then all verify tests in parallel. Returns (name, passed, error)."""
+    _ensure_workspace_in_path()
+    # Import the module once so all TaskEnvironments register before client init.
+    import ci_smoke_task  # type: ignore  # noqa: F401
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    print(
+        f"[ci] smoke-suite: client initialised — "
+        f"endpoint={control_plane_url} project={cluster_name} org={org}",
+        flush=True,
+    )
+
+    # Step 1: hello run (needed for verify_logs + verify_io).
+    import uuid
+    from ci_smoke_task import hello as _hello  # type: ignore
+
+    nonce = str(uuid.uuid4())
+    print(f"[ci] smoke-suite: submitting hello (nonce={nonce})", flush=True)
+    hello_run = await _submit_with_retry(_hello, "hello", nonce=nonce)
+    print(f"[ci] smoke-suite: hello run={hello_run.name}  url={hello_run.url}", flush=True)
+    await _assert_succeeded(hello_run, "hello")
+    print(f"[ci] smoke-suite: hello PASSED", flush=True)
+    run_name = hello_run.name
+
+    # Step 2: all verify tests in parallel.
+    tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
+        ("verify_logs",          _verify_logs_async(run_name, cluster_name)),
+        ("verify_io",            _verify_io_async(run_name)),
+        ("verify_image_builder", _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_image_cache",   _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_reusable",      _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_app",           _verify_app_async(control_plane_url, api_key, cluster_name, org)),
+    ]
+    names = [n for n, _ in tests]
+    outcomes = await asyncio.gather(*(c for _, c in tests), return_exceptions=True)
+
+    results: list[tuple[str, bool, str]] = []
+    for name, outcome in zip(names, outcomes):
+        if isinstance(outcome, Exception):
+            results.append((name, False, str(outcome)[:300]))
+            print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
+        else:
+            results.append((name, True, ""))
+
+    # Summary table.
+    print("\n[ci] ── smoke suite results ──────────────────────────────────", flush=True)
+    for name, passed, err in results:
+        status = "PASSED" if passed else "FAILED"
+        detail = f"  {err[:80]}" if err else ""
+        print(f"[ci]   {name:<24} {status}{detail}", flush=True)
+    passed_count = sum(1 for _, p, _ in results if p)
+    print(f"[ci] {passed_count}/{len(results)} passed", flush=True)
+    return results
+
+
+def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
+    results = asyncio.run(
+        _run_smoke_suite_async(
+            _env("CONTROL_PLANE_URL"),
+            _env("UNION_API_KEY", required=False),
+            _env("CLUSTER_NAME"),
+            _env("ORG_NAME"),
+        )
+    )
+    failed = [(n, e) for n, p, e in results if not p]
+    if failed:
+        sys.exit(
+            "[ci] smoke-suite FAILED: "
+            + ", ".join(n for n, _ in failed)
+        )
 
 
 # ── teardown ────────────────────────────────────────────────────────────────
@@ -457,16 +656,18 @@ def main() -> None:
     sub.add_parser("setup-routing")
     sub.add_parser("eager-api-key")
     sub.add_parser("smoke-test")
+    sub.add_parser("run-smoke-suite")
     sub.add_parser("teardown")
 
     args = p.parse_args()
     {
-        "provision":      cmd_provision,
-        "wait-healthy":   cmd_wait_healthy,
-        "setup-routing":  cmd_setup_routing,
-        "eager-api-key":  cmd_eager_api_key,
-        "smoke-test":     cmd_smoke_test,
-        "teardown":       cmd_teardown,
+        "provision":        cmd_provision,
+        "wait-healthy":     cmd_wait_healthy,
+        "setup-routing":    cmd_setup_routing,
+        "eager-api-key":    cmd_eager_api_key,
+        "smoke-test":       cmd_smoke_test,
+        "run-smoke-suite":  cmd_run_smoke_suite,
+        "teardown":         cmd_teardown,
     }[args.command](args)
 
 

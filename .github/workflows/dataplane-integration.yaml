@@ -20,7 +20,7 @@ jobs:
   integration-test:
     name: Deploy dataplane on k3d
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
 
     env:
       # Configured via repo Settings → Variables / Secrets:
@@ -109,10 +109,10 @@ jobs:
           echo "uctl configured for $HOST (ClientSecret / clientSecretEnvVar)"
           cat ~/.union/config.yaml
 
-      - name: Install Python deps (flyte + flyteplugins-union)
+      - name: Install Python deps
         if: steps.check.outputs.configured == 'true'
         run: |
-          pip install --quiet flyte flyteplugins-union
+          pip install --quiet flyte flyteplugins-union fastapi uvicorn httpx
 
       # ── k3d cluster + registry ────────────────────────────────────────────
 
@@ -241,13 +241,13 @@ jobs:
             sleep 2
           done
 
-      - name: Run smoke test
+      - name: Run smoke suite
         if: steps.check.outputs.configured == 'true'
         id: smoke
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
-          python .github/ci-scripts/ci_dataplane.py smoke-test
+          python .github/ci-scripts/ci_dataplane.py run-smoke-suite
 
       - name: Show pod status
         if: steps.check.outputs.configured == 'true'
