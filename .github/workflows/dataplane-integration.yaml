@@ -224,6 +224,21 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py eager-api-key
 
+      # The operator syncs the EAGER_API_KEY API key from the control plane as a
+      # K8s Secret in the union namespace. The admission webhook requires it at pod
+      # creation time, so wait until the secret is present before running the task.
+      - name: Wait for EAGER_API_KEY secret to sync
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          echo "Waiting for EAGER_API_KEY k8s secret to be synced by the operator..."
+          for i in $(seq 1 36); do
+            kubectl get secret EAGER_API_KEY -n "$UNION_NS" 2>/dev/null \
+              && { echo "EAGER_API_KEY secret present after $i attempt(s)"; break; }
+            echo "  not yet ($i/36)..."
+            sleep 5
+          done
+          kubectl get secret EAGER_API_KEY -n "$UNION_NS"
+
       # The Flyte SDK running on the runner fetches the storage endpoint from the
       # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"
       # (cluster-internal DNS). The runner can't resolve that name, so we:
