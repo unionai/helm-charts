@@ -319,27 +319,33 @@ def cmd_setup_routing(args: argparse.Namespace) -> None:
 
 # ── eager-api-key ──────────────────────────────────────────────────────────
 
-async def _eager_api_key_async(
-    control_plane_url: str, api_key: str, cluster_name: str
-) -> None:
-    from flyteplugins.union.remote import ApiKey  # type: ignore
-
-    await _init_client(control_plane_url, api_key, project=cluster_name)
-    try:
-        await ApiKey.create.aio(name="EAGER_API_KEY")  # type: ignore
-        print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
-    except Exception as e:
-        print(f"[ci] eager-api-key: likely exists: {e}", flush=True)
-
-
 def cmd_eager_api_key(args: argparse.Namespace) -> None:
-    asyncio.run(
-        _eager_api_key_async(
-            _env("CONTROL_PLANE_URL"),
-            _env("UNION_API_KEY", required=False),
-            _env("CLUSTER_NAME"),
-        )
+    """Create EAGER_API_KEY via uctl (idempotent).
+
+    The provision instructions say to use `uctl create apikey` — this
+    propagates the key to the cluster's operator so the webhook can inject it
+    as a K8s secret into task pods.  The Python SDK ApiKey.create.aio() only
+    creates the key on the control plane without triggering the cluster sync.
+    """
+    org_name = _env("ORG_NAME", required=False) or ""
+    # --org is a global uctl flag (matches provision step 6 instructions)
+    org_flag = ["--org", org_name] if org_name else []
+    result = subprocess.run(
+        ["uctl"] + org_flag + ["create", "apikey", "--keyName", "EAGER_API_KEY"],
+        capture_output=True, text=True,
+        env={**os.environ, **_uctl_extra_env()},
     )
+    output = result.stdout + result.stderr
+    print(output, flush=True)
+    if result.returncode != 0:
+        # "already exists" is normal on reruns; uctl still propagates the key.
+        low = output.lower()
+        if "already exists" in low or "alreadyexists" in low:
+            print("[ci] eager-api-key: key already exists (re-propagated).", flush=True)
+        else:
+            sys.exit(f"[ci] ERROR: uctl create apikey failed (exit {result.returncode})")
+    else:
+        print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
 
 
 # ── smoke-test ──────────────────────────────────────────────────────────────
