@@ -4,6 +4,87 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## dataplane 2026.6.2 — DP→CP connection wiring centralized + TLS-by-default
+
+### What changed
+
+**1. The DP→CP connection wiring moves to a single shared expression.**
+
+A new `charts/dataplane/templates/_connection.tpl` exposes three helpers that all CP-pointed consumers (`config.admin.admin`, `config.catalog.catalog-cache`, `config.union.connection`, `clusterresourcesync.config.union.connection`, task-pod `_U_EP_OVERRIDE`) now reference:
+
+| Helper | Returns |
+|---|---|
+| `dataplane.cp.host` | Bare hostname. Coalesces `global.CONTROLPLANE_HOST` (selfmanaged convention) with `Values.host` (legacy / BYOK convention). |
+| `dataplane.cp.endpoint` | gRPC dial endpoint. Defaults to `dns:///<host>:443`; respects `global.CONTROLPLANE_GRPC_ENDPOINT` override. |
+| `dataplane.cp.queueEndpoint` | Task-pod queue endpoint. Cascades `global.QUEUE_GRPC_ENDPOINT` → `global.CONTROLPLANE_GRPC_ENDPOINT` → default. |
+
+Existing deployments don't need any values change — the helpers coalesce both old and new globals, so `host:` (legacy) and `global.CONTROLPLANE_HOST` (new) both work without modification.
+
+**2. The endpoint string now includes an explicit `:443` port.**
+
+| Before | After |
+|---|---|
+| `dns:///<host>` (no port) | `dns:///<host>:443` |
+
+Functionally equivalent — gRPC's TLS dialer defaults to port 443 when none is given. Anything pointing the DP at a non-443 CP endpoint via `global.CONTROLPLANE_GRPC_ENDPOINT` is unaffected (the override wins).
+
+**3. TLS-by-default on cloud overlays.**
+
+| Field (consumer) | Before | After |
+|---|---|---|
+| `config.admin.admin.insecure` | `true` (cloud overlays) | `false` |
+| `config.admin.admin.insecureSkipVerify` | (commented out, default `false`) | explicit `false` |
+| `config.catalog.catalog-cache.insecure` | `true` (cloud overlays) | `false` |
+| `config.catalog.catalog-cache.insecure-skip-verify` | (absent) | explicit `false` |
+| `config.union.connection.insecureSkipVerify` | (commented out, default `false`) | explicit `false` |
+| `clusterresourcesync.config.union.connection.insecureSkipVerify` | `true` (cloud overlays) | `false` |
+| `_U_INSECURE` (task-pod env var) | `"true"` | `"false"` |
+| `_U_INSECURE_SKIP_VERIFY` (task-pod env var) | `"false"` | `"false"` |
+
+The new out-of-box posture is "TLS with chain verification." Right for managed control planes with valid (publicly-signed or trusted-CA) certs.
+
+### Who needs to act
+
+- **Managed CP, valid cert:** no action. TLS-by-default just works.
+- **BYOK / Union-managed CP, valid cert:** no action. Helpers fall back to `Values.host` (legacy) and the new defaults work.
+- **Self-signed CP cert (most selfmanaged staging environments):** override the four `insecureSkipVerify` consumers AND `_U_INSECURE_SKIP_VERIFY` task-pod env var to `true` at the env-values layer. Without this, every DP→CP call fails TLS chain validation with `x509: certificate signed by unknown authority`.
+- **Plain-HTTP CP (rare):** override `insecure: true` on the affected consumers. The chart no longer ships this as a default for any cloud overlay.
+
+Reference env-values overlay shape for a self-signed-cert deployment:
+
+```yaml
+config:
+  admin:
+    admin:
+      insecureSkipVerify: true
+  catalog:
+    catalog-cache:
+      insecure-skip-verify: true
+  union:
+    connection:
+      insecureSkipVerify: true
+  k8s:
+    plugins:
+      k8s:
+        default-env-vars:
+          - _U_INSECURE_SKIP_VERIFY: "true"
+
+clusterresourcesync:
+  config:
+    union:
+      connection:
+        insecureSkipVerify: true
+```
+
+### Symptoms if you skip the migration
+
+- `union-syncresources` controller crashloops with `failed to fetch auth metadata: ... frame too large, note that the frame header looked like an HTTP/1.1 header` (was: `insecure: true` against TLS port 443).
+- Or, once TLS is reached but the cert isn't trusted: `x509: certificate signed by unknown authority` on every DP→CP call. Set `insecureSkipVerify: true` if the cert is self-signed.
+- Task pods schedule but fail to dial the CP queue with the same TLS errors.
+- Downstream effect: project-domain namespaces (e.g. `development`) are never created in the DP cluster; task scheduling fails with `namespaces "development" not found`.
+
+---
+
 ## 2026.X.Y — Cloud overlay consolidation + canonical host indirection
 
 ### What changed
