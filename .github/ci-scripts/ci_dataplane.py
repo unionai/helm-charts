@@ -359,15 +359,16 @@ async def _smoke_test_async(
     import uuid
     import flyte  # type: ignore
 
+    # Import the task from ci_smoke_task.py (repo root).
+    # The task must live in a module with a clean Python name — this file's path
+    # (.github/ci-scripts/ci_dataplane.py) produces '.github.ci-scripts.ci_dataplane'
+    # which Python rejects as a relative import and is also invalid (hyphen).
+    workspace = os.environ.get("GITHUB_WORKSPACE", os.getcwd())
+    if workspace not in sys.path:
+        sys.path.insert(0, workspace)
+    from ci_smoke_task import hello as _hello  # type: ignore  # noqa: E402
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-
-    _env_hello = flyte.TaskEnvironment(name="ci-smoke-hello", cache="disable")  # type: ignore
-
-    @_env_hello.task
-    async def _hello(nonce: str) -> str:
-        import logging as _logging
-        _logging.getLogger("ci.hello").info(f"hello nonce={nonce}")
-        return f"hello-{nonce}"
 
     nonce = str(uuid.uuid4())
     print(f"[ci] smoke-test: submitting hello (nonce={nonce})", flush=True)
