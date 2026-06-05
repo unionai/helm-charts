@@ -1,14 +1,20 @@
-# dataplane-crds
+# dataplane-crds (DEPRECATED)
 
-![Version: 2025.4.2](https://img.shields.io/badge/Version-2025.4.2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 2025.4.2](https://img.shields.io/badge/AppVersion-2025.4.2-informational?style=flat-square)
+> **Deprecated.** This chart is retained for back-compat while consumers
+> migrate. New deployments should use the vendored-CRD directories instead:
+>
+> - `crds/dataplane/` — `flyteworkflows.flyte.lyft.com` + Knative Serving
+>   CRDs (FlyteWorkflow previously rendered by this chart's
+>   `templates/flyteworkflow.yaml`).
+> - `crds/kube-prometheus-stack/` — prometheus-operator CRDs (previously
+>   pulled in by this chart's `prometheus-operator-crds` dependency).
 
-Deploys the Union dataplane CRDs.
+The vendored directories ship per-CRD YAML with the
+`argocd.argoproj.io/sync-options: ServerSideApply=true` annotation injected,
+which avoids the 256 KiB `last-applied-configuration` overflow that ArgoCD's
+client-side apply hits on large operator CRDs.
 
-## Requirements
-
-Kubernetes: `>= 1.28.0-0`
-
-## Values
+## Values (deprecated chart)
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|

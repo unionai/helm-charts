@@ -1,3 +1,47 @@
+{{/*
+controlPlaneLibrary.ingressRules emits the `rules:` body for a controlplane
+Ingress. It produces one rule per hostname — first the primary
+`.Values.ingress.host`, then one rule per entry in `.Values.ingress.extraHosts`
+— each carrying the same `http.paths` block.
+
+Arguments (dict):
+  context   — the calling template's root context (so $.Values, $.Release,
+              and `tpl` continue to resolve against the chart, not the dict).
+  pathsTpls — list of named templates to include under `http.paths` (e.g.
+              `(list "protectedHttpRoutes")` or
+              `(list "protectedGrpcRoutes" "appsProtectedConnectRoutes")`).
+
+Usage:
+  rules:
+    {{- include "controlPlaneLibrary.ingressRules" (dict "context" . "pathsTpls" (list "protectedHttpRoutes")) | nindent 4 }}
+
+Notes:
+  - When `.Values.ingress.host` is empty, the primary rule emits as a hostless
+    catch-all (same behavior as the prior inline template).
+  - `.Values.ingress.extraHosts` defaults to `[]`, so when unset this helper
+    produces a single rule equivalent to the pre-extraHosts template output.
+*/}}
+{{- define "controlPlaneLibrary.ingressRules" -}}
+{{- $ctx := .context -}}
+{{- $pathsTpls := .pathsTpls -}}
+- {{ with $ctx.Values.ingress.host -}}
+  host: {{ tpl . $ctx }}
+  {{ end -}}
+  http:
+    paths:
+      {{- range $tpl := $pathsTpls }}
+      {{- include $tpl $ctx | nindent 6 }}
+      {{- end }}
+{{- range $extraHost := $ctx.Values.ingress.extraHosts }}
+- host: {{ tpl $extraHost $ctx }}
+  http:
+    paths:
+      {{- range $tpl := $pathsTpls }}
+      {{- include $tpl $ctx | nindent 6 }}
+      {{- end }}
+{{- end }}
+{{- end }}
+
 {{- define "unionai.imagePullSecrets" -}}
 {{- if and (hasKey .config "imagePullSecrets") }}
 {{ toYaml .config.imagePullSecrets }}
@@ -656,4 +700,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- else -}}
 {{- default "default" .Values.union.authz.serviceAccount.name -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+control-plane-library.useAuth
+Resolves .Values.flyte.configmap.adminServer.server.security.useAuth, defaulting to true
+when any level of the path is unset. Emits "true" when auth is on, "" when off, for use as:
+  {{- if include "control-plane-library.useAuth" . }}
+*/}}
+{{- define "control-plane-library.useAuth" -}}
+{{- $useAuth := true -}}
+{{- if hasKey .Values "flyte" -}}
+{{-   $flyte := .Values.flyte -}}
+{{-   if hasKey $flyte "configmap" -}}
+{{-     $cm := $flyte.configmap -}}
+{{-     if hasKey $cm "adminServer" -}}
+{{-       $as := $cm.adminServer -}}
+{{-       if hasKey $as "server" -}}
+{{-         $srv := $as.server -}}
+{{-         if hasKey $srv "security" -}}
+{{-           $sec := $srv.security -}}
+{{-           if hasKey $sec "useAuth" -}}
+{{-             $useAuth = $sec.useAuth -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- if $useAuth -}}true{{- end -}}
 {{- end -}}

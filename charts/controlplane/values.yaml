@@ -1,63 +1,40 @@
-# ----------------------------------------------------------------------------
-# Global Configuration
-# ----------------------------------------------------------------------------
-# Global values are accessible to both the chart and all subcharts.
-# Override these in deployment-specific values files:
-#   - values.aws.yaml: AWS-specific configuration (RDS, S3, IAM roles)
-#   - values.aws.selfhosted-intracluster.yaml: Self-contained intra-cluster configuration
-#
-# Usage:
-#   helm install -f values.aws.yaml [...]
-#   helm install -f values.aws.selfhosted-intracluster.yaml [...]
+# Base defaults for every controlplane deployment. Cloud-specific overrides
+# live in values.{aws,gcp}.yaml — start there for new deployments.
 
 global:
-
   # --- Deployment Identity ---
   UNION_HOST: ""            # Control plane FQDN (e.g. "mycompany.union.ai")
   UNION_ORG: ""             # Organization name (must match dataplane)
 
   # --- Infrastructure ---
-  DB_HOST: ""               # PostgreSQL endpoint
-  DB_NAME: ""               # PostgreSQL database name
-  DB_USER: ""               # PostgreSQL username
+  DB_HOST: ""
+  DB_NAME: ""
+  DB_USER: ""
   DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
   BUCKET_NAME: ""           # Object storage bucket for metadata
-  ARTIFACTS_BUCKET_NAME: "" # Object storage bucket for artifacts
-  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password (must contain "pass.txt" key)
-  DATAPLANE_ENDPOINT: ""    # Dataplane ingress URL (e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80")
+  ARTIFACTS_BUCKET_NAME: ""
+  KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
+
+  # --- DP entrypoint (CP -> DP) ---
+  DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
+  DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
 
   # --- Images ---
-  # Default: Union's customer-facing registry. Requires imagePullSecrets.
-  # Internal deployments: overridden by terraform to private ECR/GCR.
+  # Customer-facing registry default; internal deployments override to private ECR/GCR.
   IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
 
   # --- Ingress ---
-  INGRESS_PROVIDER: nginx   # Options: "nginx", "envoy", "both"
+  INGRESS_PROVIDER: nginx   # nginx | envoy | both
 
-  # Cloud-specific globals (AWS_REGION, IAM role ARNs, etc.) are declared
-  # in the cloud overlay (e.g. values.aws.selfhosted-intracluster.yaml).
+  # --- Service-to-Service OAuth2 ---
+  # Full IdP config lives in flyte.configmap.adminServer.auth below; these
+  # three globals feed into that block plus a few service ConfigMaps.
+  INTERNAL_CLIENT_ID: ""    # client_credentials client ID for S2S calls
+  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint
+  OIDC_S2S_SCOPE: ""        # Okta: leave empty. Entra ID: "api://my-app/.default"
 
-  # --- Service-to-Service Authentication ---
-  INTERNAL_CLIENT_ID: ""    # OAuth2 client ID for S2S calls (client_credentials)
-  AUTH_TOKEN_URL: ""        # OAuth2 token endpoint for S2S authentication
-  OIDC_S2S_SCOPE: ""        # S2S scope. Okta: leave empty (defaults to "all"). Entra ID: "api://my-app/.default"
-
-  # --- OIDC Authentication ---
-  # Full auth configuration is in flyte.configmap.adminServer.auth.
-  # These globals are deprecated — set auth fields directly in that block
-  # or via the authn terraform module outputs (app_auth, user_auth).
-  OIDC_BASE_URL: ""         # Deprecated: use adminServer.auth.appAuth.externalAuthServer.baseUrl
-  OIDC_CLIENT_ID: ""        # Deprecated: use adminServer.auth.userAuth.openId.clientId
-  CLI_CLIENT_ID: ""         # Deprecated: use adminServer.auth.appAuth.thirdPartyConfig.flyteClient.clientId
-
-# ----------------------------------------------------------------------------
-# Additional Configuration
-# ----------------------------------------------------------------------------
-# Note: Most configuration now comes from globals above.
-# Database host, name, user, buckets, and region are all configured via globals.
-
-# It's recommended to create a Kubernetes secret and reference it via
-# globals.KUBERNETES_SECRET_NAME rather than storing the password here
+# Prefer setting the DB password via a K8s secret referenced by
+# global.KUBERNETES_SECRET_NAME; this inline field is here only as a fallback.
 dbPass: ""
 # -- Set the image used for control plane services
 image:
@@ -129,6 +106,112 @@ strategy:
     maxSurge: 1
 secrets: {}
 
+# --- Image-builder bootstrap ---
+#
+# Helm post-install/post-upgrade hook Job that registers the `build-image`
+# ContainerTask in flyteadmin so the SDK can invoke remote image builds
+# without operators running `flyte deploy` manually after every helm upgrade.
+imageBuilder:
+  bootstrap:
+    # When false, the bootstrap Job + ConfigMap are not rendered (use this
+    # if the operator prefers to manage build-image registration themselves
+    # or has an existing registration that must not be overwritten).
+    enabled: true
+
+    # Container image the bootstrap Job runs in. Must provide `flyte` (Python
+    # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
+    # Union-published `build-image-bootstrap` image, which bakes both in so the
+    # Job has no runtime install step and works in restricted-network
+    # deployments where the cluster cannot reach PyPI. Override `repository`
+    # to use a private mirror or a custom image that satisfies the same
+    # contract.
+    image:
+      repository: "{{ .Values.global.IMAGE_REPOSITORY_PREFIX }}/build-image-bootstrap"
+      tag: "{{ .Chart.AppVersion }}"
+
+    # Registry prefix the build-image + frontend-v2 task images are pulled
+    # from. Defaults to Union's public ECR staging; override per env if
+    # mirroring to a private registry.
+    unionImageNamePrefix: public.ecr.aws/g1m2l3c1/imagebuilder-staging
+
+    # Where the build-image task is registered. Convention is system/production.
+    # The Job creates the project if it doesn't already exist.
+    project: system
+    domain: production
+
+    # Annotations on the Job object itself (merged with the chart-managed
+    # helm.sh/hook* annotations). Useful for GitOps controllers, operator
+    # tooling that targets Jobs by annotation, or arbitrary metadata.
+    # For pod-template annotations, use `podAnnotations` below.
+    annotations: {}
+
+    # Annotations + labels added to the Job's pod template. Useful for
+    # service-mesh sidecar control (e.g. linkerd.io/inject: disabled to
+    # keep the one-shot Job from getting a sidecar that never exits),
+    # Prometheus scrape opt-in/out, cost-attribution labels, etc.
+    podAnnotations: {}
+    podLabels: {}
+
+    # imagePullSecrets attached to the bootstrap Job's pod. If unset,
+    # falls back to the chart-wide `.Values.imagePullSecrets` — which is
+    # the right default since the bootstrap image lives under the same
+    # `global.IMAGE_REPOSITORY_PREFIX` as the rest of the chart's images.
+    # Override here (e.g. to a different secret, or to `[]` to disable)
+    # only if the bootstrap image is mirrored to a separate registry.
+    # imagePullSecrets: []
+
+    # Extra env vars appended to the bootstrap container's env. The Job
+    # talks to the public flyteadmin ingress over TLS, so the most common
+    # use is to inject proxy / CA-bundle settings in restricted networks
+    # (e.g. HTTPS_PROXY, NO_PROXY, SSL_CERT_FILE pointing at a private CA
+    # bundle mounted via extraVolumes).
+    extraEnv: []
+    # extraEnv:
+    #   - name: HTTPS_PROXY
+    #     value: http://proxy.internal.example:3128
+    #   - name: SSL_CERT_FILE
+    #     value: /etc/ssl/private/ca-bundle.crt
+
+    # Extra volumes + volumeMounts appended to the Job's pod spec and
+    # container respectively. Use this to mount a private CA bundle, swap
+    # the client-secret source for an alternate Secret, or attach any
+    # other config/data the Job needs at registration time.
+    extraVolumes: []
+    extraVolumeMounts: []
+    # extraVolumes:
+    #   - name: private-ca
+    #     configMap:
+    #       name: private-ca-bundle
+    # extraVolumeMounts:
+    #   - name: private-ca
+    #     mountPath: /etc/ssl/private
+    #     readOnly: true
+
+    # Job-spec tunables. Defaults are conservative for a one-shot
+    # post-install hook; override for stricter retry / cleanup policies.
+    backoffLimit: 2
+    ttlSecondsAfterFinished: 600
+    restartPolicy: Never
+
+    # Flyte admin connection used by the bootstrap Job. Rendered into
+    # /etc/flyte/config.yaml inside the Job pod and consumed by `flyte deploy`.
+    #
+    # NOTE: deliberately not derived from `.Values.configMap.admin` (the CP
+    # service-to-service block). That one uses the intra-cluster gRPC path
+    # (flyteadmin.<ns>.svc.cluster.local:81, insecure) which the Python SDK's
+    # OAuth discovery can't reproduce, so the bootstrap Job goes through the
+    # public ingress instead. Override here only if your env needs different
+    # auth (e.g. PKCE, custom token endpoint, alternate clientSecretLocation).
+    #
+    # String values are templated with `tpl` so `{{ .Values.global.X }}`-style
+    # references resolve at render time.
+    admin:
+      endpoint: '{{ .Values.global.UNION_HOST }}'
+      insecure: false
+      authType: ClientSecret
+      clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
+      clientSecretLocation: /etc/secrets/union/client_secret
+
 imagePullSecrets:
   - name: union-registry-secret
 
@@ -163,15 +246,47 @@ ingress:
   # Default to the ingress class being created in nginx-ingress chart.
   className: "controlplane"
 
-  # TLS configuration for intra-cluster HTTPS.
-  tls:
-    - hosts:
-        - '{{ .Values.global.UNION_HOST }}'
-        - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-      secretName: 'controlplane-selfsigned-tls-secret'
+  # TLS configuration for the controlplane Ingresses.
+  #
+  # No TLS is configured by default. To enable HTTPS, set `tls` to a list of
+  # `{hosts, secretName}` entries. The secret must already exist in the chart's
+  # namespace (typically provisioned by cert-manager via extraObjects, or by
+  # an external-secrets ExternalSecret in your environment overlay).
+  #
+  # Example — one secret covering the public host and the in-cluster alias:
+  # tls:
+  #   - hosts:
+  #       - '{{ .Values.global.UNION_HOST }}'
+  #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+  #     secretName: my-controlplane-tls-secret
+  tls: []
 
   # Host to use for all ingress objects.
   host:  "" # Set the DNS name of the ingress host used by you control plane
+
+  # Additional hostnames to expose every controlplane Ingress (and Envoy
+  # GRPCRoute/HTTPRoute) on. Each entry is added as a separate rules[].host
+  # entry (and hostnames[] entry on Gateway-API routes), so all routes are
+  # reachable on both the primary `host` and each additional hostname.
+  #
+  # TLS coverage is independent — add the hostname to an existing `tls[].hosts`
+  # entry if it's covered by the same secret, add a new `tls[]` entry with its
+  # own secretName for per-host certs, or leave it out for HTTP-only access.
+  #
+  # For an in-cluster alias used only to avoid hairpinning DP→CP traffic out
+  # to the public LB, prefer the `nginx.ingress.kubernetes.io/server-alias`
+  # annotation below — it's controller-private and doesn't trip cert-manager
+  # / external-dns into managing a hostname they can't address.
+  #
+  # When OIDC auth is enabled, each extra host must ALSO be added to:
+  #   - `flyte.configmap.adminServer.auth.authorizedUris` (so flyteadmin
+  #     trusts the host for OAuth redirect URL construction)
+  #   - `flyte.configmap.adminServer.auth.appAuth.externalAuthServer.allowedAudience`
+  #     (so tokens with aud=<extra-host> validate)
+  #   - the IdP application's redirect URI list (`https://<host>/callback`)
+  # Missing any of these will cause login on the alias host to fail —
+  # flyteadmin falls back to the internal service URL and the IdP rejects it.
+  extraHosts: []
 
   # Whether to create separate ingress objects for gRPC and HTTP traffic.
   separateGrpcIngress: true
@@ -179,9 +294,14 @@ ingress:
   # Universal ingress annotations.
   # Currently biased toward nginx-ingress controller
   annotations:
-    # Allow DP→CP traffic via intra-cluster DNS to match ingress rules.
-    # Without this, requests from the dataplane to the controlplane nginx
-    # controller service DNS name won't match the ingress host.
+    # Intra-cluster routing alias — configured by default so controlplane
+    # services (DP→CP, CP→CP auth subrequests) can reach the ingress via the
+    # in-cluster DNS name `controlplane-nginx-controller.<ns>.svc.cluster.local`
+    # without hairpinning out to the public LB. The alias is matched at the
+    # nginx server_name level; the same TLS listener and Ingress rules apply
+    # to it, so no cert SAN, external-dns record, or extra `rules[].host`
+    # entry is needed (and the alias is intentionally not first-classed via
+    # `ingress.extraHosts` because no other controller needs to know about it).
     nginx.ingress.kubernetes.io/server-alias: 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
 
     # You can switch to v1 if needed using /console instead of /v2 which defaults to v2 unionconsole
@@ -514,6 +634,11 @@ services:
         bootstrap:
           # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
+
+          # Dataplane clusters to bootstrap as authz cluster resources under the org
+          dataplaneClusters: []
+          # Example:
+          # - dp-1
 
           # Authorization domains to create. Each domain is an isolation boundary
           # for workflow executions (e.g. dev vs prod).
@@ -1564,10 +1689,17 @@ flyte:
       auth:
         httpAuthorizationHeader: "flyte-authorization"
         grpcAuthorizationHeader: "flyte-authorization"
+        # Hosts flyteadmin trusts for OAuth redirect URL construction. When a
+        # request arrives, flyteadmin matches the Host header against this
+        # list to build `redirect_uri`; unmatched hosts fall back to the
+        # internal service URL and the IdP will reject the resulting
+        # /authorize request. Must include every public hostname listed in
+        # `ingress.host` and `ingress.extraHosts`.
         authorizedUris:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+          # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:
           authServerType: "External"
@@ -1583,8 +1715,12 @@ flyte:
             # Allowed JWT audiences for access token validation.
             # Default: ["https://{UNION_HOST}"].
             # Entra ID example: ["api://my-app-name", "f0b2667d-..."]
+            # Must include every public hostname listed in `ingress.host` and
+            # `ingress.extraHosts` (each as `https://<host>`), or tokens issued
+            # for an extra host's audience will be rejected.
             allowedAudience:
               - 'https://{{ .Values.global.UNION_HOST }}'
+              # - 'https://<each ingress.extraHosts entry>'
 
           # --- Subject claim resolution (FAB-205) ---
           # Ordered list of JWT claims to try for caller identity.
