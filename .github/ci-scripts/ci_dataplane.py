@@ -117,19 +117,28 @@ def cmd_provision(args: argparse.Namespace) -> None:
     cluster_name     = _env("CLUSTER_NAME")
     control_plane_url = _env("CONTROL_PLANE_URL").removeprefix("https://").removeprefix("http://")
 
+    import time as _time
     work_dir = tempfile.mkdtemp(prefix="union-ci-provision-")
     print(f"[ci] provision: working in {work_dir}", flush=True)
 
-    # provision-dataplane-resources writes a values file to cwd
-    result = subprocess.run(
-        ["uctl", "selfserve", "provision-dataplane-resources",
-         "--clusterName", cluster_name, "--provider", "metal"],
-        cwd=work_dir, capture_output=True, text=True,
-        env={**os.environ, **_uctl_extra_env()},
-    )
-    output = result.stdout + result.stderr
-    print(output, flush=True)
-    if result.returncode != 0:
+    # provision-dataplane-resources writes a values file to cwd; retry on transient errors.
+    output = ""
+    for attempt in range(1, 4):
+        result = subprocess.run(
+            ["uctl", "selfserve", "provision-dataplane-resources",
+             "--clusterName", cluster_name, "--provider", "metal"],
+            cwd=work_dir, capture_output=True, text=True,
+            env={**os.environ, **_uctl_extra_env()},
+        )
+        output = result.stdout + result.stderr
+        print(output, flush=True)
+        if result.returncode == 0:
+            break
+        low = output.lower()
+        if attempt < 3 and ("503" in output or "unavailable" in low or "internal" in low or "name cannot be empty" in low):
+            print(f"[ci] provision: attempt {attempt} failed (transient), retrying in 20s…", flush=True)
+            _time.sleep(20)
+            continue
         sys.exit(f"[ci] ERROR: uctl provision-dataplane-resources failed (exit {result.returncode})")
 
     # Locate the generated values file.  uctl prints a line like:
