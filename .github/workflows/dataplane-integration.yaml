@@ -124,14 +124,26 @@ jobs:
       - name: Create storage buckets via mc
         if: steps.check.outputs.configured == 'true'
         run: |
-          kubectl run mc-setup \
-            -n "$RUSTFS_NS" \
-            --image=minio/mc \
-            --restart=Never \
-            --env="MC_HOST_store=http://${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}@rustfs.${RUSTFS_NS}.svc.cluster.local:9000" \
-            -- sh -c "mc mb store/$RUSTFS_BUCKET --ignore-existing && echo bucket-ok"
-          kubectl wait --for=condition=Succeeded pod/mc-setup \
-            -n "$RUSTFS_NS" --timeout=60s
+          # Port-forward RustFS so we can reach it from the runner — avoids
+          # spawning a pod (no image pull delay, no Succeeded condition race).
+          kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 &
+          PF_PID=$!
+          trap "kill $PF_PID 2>/dev/null || true" EXIT
+
+          # Wait for the port-forward to be ready.
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
+          # Install mc binary (single static binary, <25 MB).
+          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc \
+            -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+
+          mc alias set store http://localhost:9000 \
+            "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY"
+          mc mb store/"$RUSTFS_BUCKET" --ignore-existing
+          echo "bucket-ok"
 
       # ── Provision dataplane OAuth2 credentials ────────────────────────────
       # uctl selfserve provision-dataplane-resources picks up UNION_API_KEY

@@ -71,6 +71,8 @@ async def _init_client(
     org: str = "",
 ) -> None:
     import flyte
+    if not control_plane_url.startswith(("https://", "http://")):
+        control_plane_url = "https://" + control_plane_url
     kwargs: dict = {
         "endpoint": control_plane_url,
         "project": project,
