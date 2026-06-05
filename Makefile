@@ -64,6 +64,7 @@ gen_version_bump: requirements
 	invoke builder.version-bumper --file charts/controlplane/Chart.yaml
 	invoke builder.version-bumper --file charts/dataplane/Chart.yaml
 	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml
+	invoke builder.version-bumper --file charts/knative-migration/Chart.yaml
 	invoke builder.version-bumper --file charts/sandbox/Chart.yaml
 
 .PHONY: gen_dataplane_release
@@ -74,6 +75,10 @@ gen_dataplane_release: requirements
 gen_dataplane_crds_release: requirements
 	invoke builder.release --chart dataplane-crds
 
+.PHONY: gen_knative_migration_release
+gen_knative_migration_release: requirements
+	invoke builder.release --chart knative-migration
+
 .PHONY: gen_sandbox_release
 gen_sandbox_release: requirements
 	invoke builder.release --chart sandbox
@@ -83,7 +88,7 @@ release-notes-dry-run:
 	./scripts/generate-release-notes.sh
 
 .PHONY: lint
-lint: lint-dataplane lint-dataplane-crds lint-sandbox
+lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox
 
 .PHONY: lint-dataplane
 lint-dataplane:
@@ -92,6 +97,10 @@ lint-dataplane:
 .PHONY: lint-dataplane-crds
 lint-dataplane-crds:
 	helm lint charts/dataplane-crds
+
+.PHONY: lint-knative-migration
+lint-knative-migration:
+	helm lint charts/knative-migration
 
 .PHONY: lint-sandbox
 lint-sandbox:
