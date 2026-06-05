@@ -359,10 +359,6 @@ async def _smoke_test_async(
     import uuid
     import flyte  # type: ignore
 
-    # Init the flyte client first so flyte.TaskEnvironment() inside ci_smoke_task
-    # attaches to the correct project/org when the module is imported below.
-    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-
     # Import the task from ci_smoke_task.py (repo root).
     # The task must live in a module with a clean Python name — this file's path
     # (.github/ci-scripts/ci_dataplane.py) produces '.github.ci-scripts.ci_dataplane'
@@ -372,9 +368,41 @@ async def _smoke_test_async(
         sys.path.insert(0, workspace)
     from ci_smoke_task import hello as _hello  # type: ignore  # noqa: E402
 
+    # Re-init the flyte client after importing ci_smoke_task: the module-level
+    # flyte.TaskEnvironment() call can reset client state (project/org routing).
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    print(
+        f"[ci] smoke-test: client initialised — "
+        f"endpoint={control_plane_url} project={cluster_name} org={org}",
+        flush=True,
+    )
+
     nonce = str(uuid.uuid4())
     print(f"[ci] smoke-test: submitting hello (nonce={nonce})", flush=True)
-    run = await flyte.run.aio(_hello, nonce=nonce)  # type: ignore
+
+    # Retry submission: "no clusters found" can occur if the cluster pool
+    # assignment hasn't propagated to the execution service yet.
+    run = None
+    for attempt in range(1, 7):
+        try:
+            run = await flyte.run.aio(_hello, nonce=nonce)  # type: ignore
+            break
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "no clusters found" in msg or "no cluster" in msg:
+                print(
+                    f"[ci] smoke-test: attempt {attempt}/6 — no clusters found, "
+                    f"retrying in 30s …",
+                    flush=True,
+                )
+                await asyncio.sleep(30)
+                # Re-init client before retry in case state drifted.
+                await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+            else:
+                raise
+    if run is None:
+        raise RuntimeError("smoke-test: run submission failed after 6 attempts (no clusters found)")
+
     print(f"[ci] smoke-test: run={run.name}  url={run.url}", flush=True)
 
     await run.wait.aio(wait_for="terminal")  # type: ignore
