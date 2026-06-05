@@ -557,7 +557,7 @@ async def _verify_app_async(
     control_plane_url: str, api_key: str, cluster_name: str, org: str
 ) -> None:
     """Deploy a FastAPI app, hit internal endpoints, deactivate."""
-    from ci_smoke_task import app_deploy_test  # type: ignore  # noqa: E402
+    from ci_app_task import app_deploy_test  # type: ignore  # noqa: E402
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     print("[ci] verify_app: submitting app_deploy_test", flush=True)
     run = await _submit_with_retry(app_deploy_test, "verify_app")
@@ -574,8 +574,9 @@ async def _run_smoke_suite_async(
 ) -> list[tuple[str, bool, str]]:
     """Run hello first, then all verify tests in parallel. Returns (name, passed, error)."""
     _ensure_workspace_in_path()
-    # Import the module once so all TaskEnvironments register before client init.
+    # Import both task modules so all TaskEnvironments register before client init.
     import ci_smoke_task  # type: ignore  # noqa: F401
+    import ci_app_task    # type: ignore  # noqa: F401
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     print(
         f"[ci] smoke-suite: client initialised — "
