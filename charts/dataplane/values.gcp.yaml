@@ -110,19 +110,9 @@ userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 clusterresourcesync:
   config:
     union:
-      connection:
-        # Control plane gRPC endpoint. Default `dns:///{CONTROLPLANE_HOST}:443`
-        # via CONTROLPLANE_GRPC_ENDPOINT global; override that global to bypass
-        # the nginx ingress.
-        host: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
-
-        # Skip SSL certificate verification for self-signed certs
-        # Set to true for self-signed certificates, false for trusted CA certs
-        insecureSkipVerify: true
-
-      # --- Service-to-service OAuth2 ---
-      # ClusterResourceSync acquires OAuth2 tokens via client_credentials
-      # flow and sends them on outgoing calls to the control plane.
+      # Service-to-service OAuth2 (client_credentials grant) for outgoing calls
+      # to the control plane. Connection wiring (host, TLS) comes from base
+      # values.yaml via the dataplane.cp.endpoint helper.
       auth:
         enable: true
         type: "ClientSecret"
@@ -148,61 +138,24 @@ config:
   core:
     propeller:
       rawoutput-prefix: "gs://{{ .Values.global.METADATA_BUCKET }}"
+  # Selfmanaged auth shape: client_credentials grant; clientId from a global
+  # so the env layer can inject the AUTH_CLIENT_ID without forking the chart.
   admin:
     admin:
-      # Flyteadmin endpoint via CONTROLPLANE_GRPC_ENDPOINT (default
-      # `dns:///{CONTROLPLANE_HOST}:443`). Override the global to bypass nginx.
-      endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
-
-      # Use insecure (non-TLS) connection for intra-cluster HTTP communication
-      insecure: true
-
-      # OAuth2 client credentials for authenticated admin calls
       clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
       clientSecretLocation: "/etc/union/secret/client_secret"
 
   catalog:
-    # Catalog service for task caching and reuse
     catalog-cache:
-
-      type: "cacheservicev2"
-
-      # Cacheservice endpoint via CONTROLPLANE_GRPC_ENDPOINT (default
-      # `dns:///{CONTROLPLANE_HOST}:443`).
-      cache-endpoint: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
-      endpoint: ""
-
-      # Use insecure connection for intra-cluster communication
-      insecure: true
-
-      # Disable admin authentication (direct service-to-service)
       use-admin-auth: false
 
   k8s:
     plugins:
       k8s:
-        # Environment variables injected into all task pods
         default-env-vars:
-          # Optionally increase the log level for all execution pods for debugging
-          # - LOG_LEVEL: "10"
-
-          # Queue endpoint for task pods via CONTROLPLANE_GRPC_ENDPOINT
-          # (default `dns:///{CONTROLPLANE_HOST}:443`).
-          - _U_EP_OVERRIDE: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
-
-          # Assumed queue service is running with TLS disabled since it's intra-cluster,
-          # we can set the following env vars to skip TLS verification for the queue service.
-          - _U_INSECURE: true
+          - _U_EP_OVERRIDE: '{{ include `dataplane.cp.queueEndpoint` . }}'
+          - _U_INSECURE: false
           - _U_INSECURE_SKIP_VERIFY: false
-
-  union:
-    connection:
-      # Control plane connection for Union services via CONTROLPLANE_GRPC_ENDPOINT
-      # (default `dns:///{CONTROLPLANE_HOST}:443`).
-      host: '{{ default (printf `dns:///%s:443` .Values.global.CONTROLPLANE_HOST) .Values.global.CONTROLPLANE_GRPC_ENDPOINT }}'
-
-      # Skip SSL verification for self-signed certificates
-      insecureSkipVerify: true
 
     # --- Service-to-service OAuth2 ---
     # Operator acquires OAuth2 tokens via client_credentials
