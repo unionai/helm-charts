@@ -102,6 +102,9 @@ async def _init_client(
         "endpoint": control_plane_url,
         "project": project,
         "domain": "development",
+        # Delegate image builds to the cluster's buildkit service instead of
+        # trying to run docker buildx on the CI runner (no Docker / no push creds).
+        "image_builder": "remote",
     }
     if org:
         kwargs["org"] = org
