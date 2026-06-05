@@ -64,6 +64,31 @@ def _gha_output(key: str, value: str) -> None:
     print(f"[ci] >> {line.rstrip()}", flush=True)
 
 
+def _uctl_extra_env() -> dict:
+    """Return BYOK_CLIENT_SECRET decoded from UNION_API_KEY for uctl subprocesses.
+
+    The uctl config uses clientSecretEnvVar: BYOK_CLIENT_SECRET, so uctl looks
+    for that env var at call time.  We decode UNION_API_KEY (base64 of
+    host:clientId:clientSecret:None) to extract the secret rather than
+    requiring a separate env var in the workflow.
+    """
+    import base64
+    api_key = os.environ.get("UNION_API_KEY", "")
+    if not api_key:
+        return {}
+    try:
+        decoded = base64.b64decode(api_key + "==").decode()
+        parts = decoded.split(":")
+        # format: host : clientId : clientSecret : None
+        # clientSecret may itself contain ':', so join everything between [2] and [-1]
+        if len(parts) >= 4:
+            client_secret = ":".join(parts[2:-1])
+            return {"BYOK_CLIENT_SECRET": client_secret}
+    except Exception as exc:
+        logger.warning(f"Could not decode UNION_API_KEY for uctl env: {exc}")
+    return {}
+
+
 async def _init_client(
     control_plane_url: str,
     api_key: str,
@@ -100,6 +125,7 @@ def cmd_provision(args: argparse.Namespace) -> None:
         ["uctl", "selfserve", "provision-dataplane-resources",
          "--clusterName", cluster_name, "--provider", "metal"],
         cwd=work_dir, capture_output=True, text=True,
+        env={**os.environ, **_uctl_extra_env()},
     )
     output = result.stdout + result.stderr
     print(output, flush=True)
@@ -222,10 +248,11 @@ async def _setup_routing_async(
     spec_tmp.write(f"clusterPool:\n  id:\n    name: {pool_name}\n")
     spec_tmp.close()
     print(f"[ci] setup-routing: creating cluster pool {pool_name}", flush=True)
+    _uenv = {**os.environ, **_uctl_extra_env()}
     subprocess.run(
         ["uctl", "create", "clusterpool",
          "--clusterPoolSpecFile", spec_tmp.name, "--org", org],
-        check=False,
+        check=False, env=_uenv,
     )
     os.unlink(spec_tmp.name)
 
@@ -234,7 +261,7 @@ async def _setup_routing_async(
     subprocess.run(
         ["uctl", "create", "clusterpoolassignment",
          "--poolName", pool_name, "--clusterName", cluster_name, "--org", org],
-        check=False,
+        check=False, env=_uenv,
     )
 
     # 3. Create project (idempotent)
@@ -267,7 +294,7 @@ async def _setup_routing_async(
         subprocess.run(
             ["uctl", "update", "cluster-pool-attributes", "--force",
              "--attrFile", attr_tmp.name, "--org", org],
-            check=False,
+            check=False, env=_uenv,
         )
         os.unlink(attr_tmp.name)
 
@@ -368,7 +395,10 @@ def cmd_smoke_test(args: argparse.Namespace) -> None:
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
     print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
-    subprocess.run(["uctl", "delete", "cluster", cluster_name], check=False)
+    subprocess.run(
+        ["uctl", "delete", "cluster", cluster_name],
+        check=False, env={**os.environ, **_uctl_extra_env()},
+    )
     print("[ci] teardown: done.", flush=True)
 
 

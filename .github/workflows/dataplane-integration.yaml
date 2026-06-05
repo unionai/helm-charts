@@ -97,17 +97,17 @@ jobs:
 
       - name: Configure uctl client credentials
         if: steps.check.outputs.configured == 'true'
-        env:
-          BYOK_CLIENT_SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
         run: |
-          mkdir -p ~/.flyte
-          printf '%s' "$BYOK_CLIENT_SECRET" > ~/.flyte/client_secret
-          chmod 600 ~/.flyte/client_secret
+          # uctl reads ~/.union/config.yaml by default.
+          # clientSecretEnvVar: the secret is decoded from UNION_API_KEY by
+          # _uctl_extra_env() in ci_dataplane.py and injected at call time.
+          mkdir -p ~/.union
           HOST=$(echo "$CONTROL_PLANE_URL" | sed 's|^https\?://||' | sed 's|/$||')
-          printf 'admin:\n  endpoint: "dns:///%s"\n  insecure: false\n  authType: ClientSecret\n  clientId: "%s"\n  clientSecretLocation: "%s/.flyte/client_secret"\n' \
-            "$HOST" "${{ vars.BYOK_CLIENT_ID }}" "$HOME" \
-            > ~/.flyte/config.yaml
-          echo "uctl configured for $HOST with ClientSecret auth"
+          printf 'admin:\n  endpoint: "dns:///%s"\n  insecure: false\n  authType: ClientSecret\n  clientId: "%s"\n  clientSecretEnvVar: BYOK_CLIENT_SECRET\n' \
+            "$HOST" "${{ vars.BYOK_CLIENT_ID }}" \
+            > ~/.union/config.yaml
+          echo "uctl configured for $HOST (ClientSecret / clientSecretEnvVar)"
+          cat ~/.union/config.yaml
 
       - name: Install Python deps (flyte + flyteplugins-union)
         if: steps.check.outputs.configured == 'true'
