@@ -1,0 +1,228 @@
+name: Dataplane Integration Test
+
+on:
+  pull_request:
+    paths:
+      - 'charts/dataplane/**'
+      - 'charts/knative-operator/**'
+      - 'crds/dataplane/**'
+      - '.github/workflows/dataplane-integration.yaml'
+      - '.github/ci-values/**'
+      - '.github/ci-manifests/**'
+      - '.github/ci-scripts/**'
+
+# One live cluster per PR at a time; new push cancels the in-progress run.
+concurrency:
+  group: dataplane-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  integration-test:
+    name: Deploy dataplane on k3d
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      # Configured via repo Settings → Variables / Secrets:
+      #   BYOK_URL            variable  — e.g. https://byok.us-west-2.union.ai
+      #   BYOK_CLIENT_ID      variable  — OAuth2 client ID
+      #   BYOK_CLIENT_SECRET  secret    — OAuth2 client secret
+      CONTROL_PLANE_URL: ${{ vars.BYOK_URL }}
+
+      # Unique per run → no collision between parallel PRs.
+      CLUSTER_NAME: ci-${{ github.run_id }}
+      UNION_NS: union
+      RUSTFS_NS: rustfs
+      RUSTFS_ACCESS_KEY: rustfsadmin
+      RUSTFS_SECRET_KEY: rustfsadmin
+      RUSTFS_BUCKET: union-data
+      # Pinned to match selfmanaged_common.py; update both together.
+      UCTL_VERSION: "0.1.20"
+      HELM_VERSION: "3.17.3"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Gate the rest of the job on credentials being present.
+      - name: Check credentials are configured
+        id: check
+        env:
+          SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
+        run: |
+          if [ -n "$SECRET" ] && [ -n "${{ vars.BYOK_URL }}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::BYOK_URL or BYOK_CLIENT_SECRET not configured — skipping integration test"
+          fi
+
+      # Build UNION_API_KEY from the three inputs.
+      # The Union SDK and uctl both accept it as base64(host:clientId:clientSecret:None).
+      - name: Construct UNION_API_KEY
+        if: steps.check.outputs.configured == 'true'
+        env:
+          BYOK_CLIENT_SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
+        run: |
+          # Strip the scheme so the key contains only the bare hostname.
+          HOST=$(echo "$CONTROL_PLANE_URL" | sed 's|^https\?://||' | sed 's|/$||')
+          API_KEY=$(printf '%s:%s:%s:None' \
+            "$HOST" \
+            "${{ vars.BYOK_CLIENT_ID }}" \
+            "$BYOK_CLIENT_SECRET" \
+            | base64 -w0)
+          echo "UNION_API_KEY=$API_KEY" >> "$GITHUB_ENV"
+
+      # ── Tool setup ────────────────────────────────────────────────────────
+
+      - name: Install k3d
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+
+      - name: Set up Helm ${{ env.HELM_VERSION }}
+        if: steps.check.outputs.configured == 'true'
+        uses: azure/setup-helm@v4.3.1
+        with:
+          version: v${{ env.HELM_VERSION }}
+
+      - name: Install uctl v${{ env.UCTL_VERSION }}
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          curl -fsSL \
+            "https://github.com/unionai/uctl/releases/download/v${UCTL_VERSION}/uctl_Linux_x86_64.tar.gz" \
+            | sudo tar xz -C /usr/local/bin uctl
+          uctl version
+
+      - name: Install Python deps (flyte + flyteplugins-union)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          pip install --quiet flyte flyteplugins-union
+
+      # ── k3d cluster + registry ────────────────────────────────────────────
+
+      - name: Create k3d cluster with embedded registry
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          # Registry is reachable inside the cluster as k3d-registry:5001.
+          k3d cluster create ci-dataplane \
+            --registry-create k3d-registry:0.0.0.0:5001 \
+            --wait --timeout 120s
+          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+
+      # ── RustFS object store ───────────────────────────────────────────────
+
+      - name: Deploy RustFS
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          kubectl create namespace "$RUSTFS_NS"
+          kubectl apply -n "$RUSTFS_NS" -f .github/ci-manifests/rustfs.yaml
+          kubectl wait --for=condition=Available deploy/rustfs \
+            -n "$RUSTFS_NS" --timeout=120s
+
+      - name: Create storage buckets via mc
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          kubectl run mc-setup \
+            -n "$RUSTFS_NS" \
+            --image=minio/mc \
+            --restart=Never \
+            --env="MC_HOST_store=http://${RUSTFS_ACCESS_KEY}:${RUSTFS_SECRET_KEY}@rustfs.${RUSTFS_NS}.svc.cluster.local:9000" \
+            -- sh -c "mc mb store/$RUSTFS_BUCKET --ignore-existing && echo bucket-ok"
+          kubectl wait --for=condition=Succeeded pod/mc-setup \
+            -n "$RUSTFS_NS" --timeout=60s
+
+      # ── Provision dataplane OAuth2 credentials ────────────────────────────
+      # uctl selfserve provision-dataplane-resources picks up UNION_API_KEY
+      # (set above) for non-interactive auth against the control plane.
+
+      - name: Provision dataplane resources
+        if: steps.check.outputs.configured == 'true'
+        id: provision
+        run: |
+          python .github/ci-scripts/ci_dataplane.py provision \
+            --values-out "$GITHUB_WORKSPACE/values-provision.yaml"
+
+      # ── Helm chart install ─────────────────────────────────────────────────
+
+      - name: Add Helm repos and fetch chart dependencies
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add fluent              https://fluent.github.io/helm-charts
+          helm repo add metrics-server      https://kubernetes-sigs.github.io/metrics-server/
+          helm repo add opencost            https://opencost.github.io/opencost-helm-chart
+          helm repo add nvidia              https://nvidia.github.io/dcgm-exporter/helm-charts
+          helm repo add ingress-nginx       https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm dependency update charts/dataplane
+
+      - name: Install dataplane chart (local PR copy)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          # --take-ownership lets re-runs adopt pre-existing CRDs / namespaces.
+          helm upgrade --install union ./charts/dataplane \
+            -f "$GITHUB_WORKSPACE/values-provision.yaml" \
+            -f .github/ci-values/dataplane.yaml \
+            --namespace "$UNION_NS" \
+            --create-namespace \
+            --force-conflicts \
+            --take-ownership \
+            --wait --timeout 10m
+
+      # ── Validate ──────────────────────────────────────────────────────────
+
+      - name: Wait for cluster to register as healthy
+        if: steps.check.outputs.configured == 'true'
+        id: healthy
+        run: |
+          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360
+
+      # ── Project + cluster pool routing (PR isolation) ─────────────────────
+      # Creates a cluster pool named == CLUSTER_NAME and routes a dedicated
+      # project to it so test executions from this PR never land on another
+      # PR's cluster, even when PRs run in parallel.
+
+      - name: Set up project routing
+        if: steps.check.outputs.configured == 'true'
+        id: routing
+        env:
+          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
+        run: |
+          python .github/ci-scripts/ci_dataplane.py setup-routing
+
+      - name: Create EAGER_API_KEY
+        if: steps.check.outputs.configured == 'true'
+        env:
+          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
+        run: |
+          python .github/ci-scripts/ci_dataplane.py eager-api-key
+
+      - name: Show pod status
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          kubectl get pods -n "$UNION_NS"
+          kubectl get pods -n knative-serving 2>/dev/null || true
+
+      # ── Teardown (always) ─────────────────────────────────────────────────
+
+      - name: Deregister cluster from control plane
+        if: always() && steps.check.outputs.configured == 'true'
+        run: |
+          python .github/ci-scripts/ci_dataplane.py teardown || true
+
+      - name: Delete k3d cluster
+        if: always() && steps.check.outputs.configured == 'true'
+        run: |
+          k3d cluster delete ci-dataplane || true
+
+      # ── Debug dump on failure ─────────────────────────────────────────────
+
+      - name: Collect debug dump
+        if: failure() && steps.check.outputs.configured == 'true'
+        run: |
+          kubectl get pods -A -o wide                               || true
+          kubectl get events -A --sort-by='.lastTimestamp'          || true
+          kubectl describe pods -n "$UNION_NS"                      || true
+          helm status union -n "$UNION_NS"                          || true
