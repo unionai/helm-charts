@@ -62,6 +62,35 @@ dcgm-exporter:
 ingress-nginx:
   enabled: false
 
-# Reduce replicas to 1 for faster pod scheduling in CI.
+# Disable components not needed for basic CI (and that have huge CPU requests).
+# leaseworker default: 4 CPU / 8 Gi — would consume the entire runner.
+leaseworker:
+  enabled: false
+
+# flyteconnector default: 1 CPU × HPA-min-2 = 2 CPUs; not needed for smoke test.
 flyteconnector:
-  replicaCount: 1
+  enabled: false
+
+# Override buildkit resource requests — defaults are 4 CPU / 4 Gi / 50 Gi ephemeral.
+# GitHub Actions ubuntu-latest has ~4 vCPU / 16 GB RAM / ~20 GB free disk.
+# Lower requests let the pod schedule; actual usage will be much less.
+imageBuilder:
+  buildkit:
+    resources:
+      requests:
+        cpu: "500m"
+        memory: "512Mi"
+        ephemeral-storage: "5Gi"
+
+# Lower executor/proxy requests so all pods fit on the runner alongside k3s.
+executor:
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
+
+proxy:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
