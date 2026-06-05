@@ -224,6 +224,23 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py eager-api-key
 
+      # The Flyte SDK running on the runner fetches the storage endpoint from the
+      # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"
+      # (cluster-internal DNS). The runner can't resolve that name, so we:
+      #   1. Start a background port-forward from localhost:9000 → RustFS in cluster.
+      #   2. Add an /etc/hosts alias so the SDK can resolve the hostname to 127.0.0.1.
+      - name: Port-forward RustFS for smoke test storage access
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 &
+          echo "RUSTFS_PF_PID=$!" >> "$GITHUB_ENV"
+          echo "127.0.0.1 rustfs.rustfs.svc.cluster.local" | sudo tee -a /etc/hosts
+          # Wait for port-forward to be ready.
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
       - name: Run smoke test
         if: steps.check.outputs.configured == 'true'
         id: smoke
