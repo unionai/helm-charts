@@ -327,23 +327,31 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
     as a K8s secret into task pods.  The Python SDK ApiKey.create.aio() only
     creates the key on the control plane without triggering the cluster sync.
     """
+    import time
     org_name = _env("ORG_NAME", required=False) or ""
     # --org is a global uctl flag (matches provision step 6 instructions)
     org_flag = ["--org", org_name] if org_name else []
-    result = subprocess.run(
-        ["uctl"] + org_flag + ["create", "apikey", "--keyName", "EAGER_API_KEY"],
-        capture_output=True, text=True,
-        env={**os.environ, **_uctl_extra_env()},
-    )
-    output = result.stdout + result.stderr
-    print(output, flush=True)
-    if result.returncode != 0:
-        # "already exists" is normal on reruns; uctl still propagates the key.
+
+    for attempt in range(1, 6):
+        result = subprocess.run(
+            ["uctl"] + org_flag + ["create", "apikey", "--keyName", "EAGER_API_KEY"],
+            capture_output=True, text=True,
+            env={**os.environ, **_uctl_extra_env()},
+        )
+        output = result.stdout + result.stderr
+        print(output, flush=True)
+        if result.returncode == 0:
+            print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
+            return
         low = output.lower()
         if "already exists" in low or "alreadyexists" in low:
             print("[ci] eager-api-key: key already exists (re-propagated).", flush=True)
-        else:
-            sys.exit(f"[ci] ERROR: uctl create apikey failed (exit {result.returncode})")
+            return
+        if attempt < 5 and ("503" in output or "unavailable" in low or "internal" in low):
+            print(f"[ci] eager-api-key: attempt {attempt} failed (transient), retrying in 15s…", flush=True)
+            time.sleep(15)
+            continue
+        sys.exit(f"[ci] ERROR: uctl create apikey failed (exit {result.returncode})")
     else:
         print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
 
