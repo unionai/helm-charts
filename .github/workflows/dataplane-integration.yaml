@@ -95,6 +95,20 @@ jobs:
             | sudo tar xz -C /usr/local/bin uctl
           uctl version
 
+      - name: Configure uctl client credentials
+        if: steps.check.outputs.configured == 'true'
+        env:
+          BYOK_CLIENT_SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
+        run: |
+          mkdir -p ~/.flyte
+          printf '%s' "$BYOK_CLIENT_SECRET" > ~/.flyte/client_secret
+          chmod 600 ~/.flyte/client_secret
+          HOST=$(echo "$CONTROL_PLANE_URL" | sed 's|^https\?://||' | sed 's|/$||')
+          printf 'admin:\n  endpoint: "dns:///%s"\n  insecure: false\n  authType: ClientSecret\n  clientId: "%s"\n  clientSecretLocation: "%s/.flyte/client_secret"\n' \
+            "$HOST" "${{ vars.BYOK_CLIENT_ID }}" "$HOME" \
+            > ~/.flyte/config.yaml
+          echo "uctl configured for $HOST with ClientSecret auth"
+
       - name: Install Python deps (flyte + flyteplugins-union)
         if: steps.check.outputs.configured == 'true'
         run: |

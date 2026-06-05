@@ -95,12 +95,6 @@ def cmd_provision(args: argparse.Namespace) -> None:
     work_dir = tempfile.mkdtemp(prefix="union-ci-provision-")
     print(f"[ci] provision: working in {work_dir}", flush=True)
 
-    # uctl config init (non-interactive because UNION_API_KEY is in the env)
-    subprocess.run(
-        ["uctl", "config", "init", f"--host={control_plane_url}"],
-        cwd=work_dir, check=True,
-    )
-
     # provision-dataplane-resources writes a values file to cwd
     result = subprocess.run(
         ["uctl", "selfserve", "provision-dataplane-resources",
