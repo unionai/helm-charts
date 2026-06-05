@@ -225,6 +225,14 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py eager-api-key
 
+      - name: Run smoke test
+        if: steps.check.outputs.configured == 'true'
+        id: smoke
+        env:
+          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
+        run: |
+          python .github/ci-scripts/ci_dataplane.py smoke-test
+
       - name: Show pod status
         if: steps.check.outputs.configured == 'true'
         run: |
@@ -252,3 +260,5 @@ jobs:
           kubectl get events -A --sort-by='.lastTimestamp'          || true
           kubectl describe pods -n "$UNION_NS"                      || true
           helm status union -n "$UNION_NS"                          || true
+          echo "=== operator logs ===" && kubectl logs -n "$UNION_NS" -l app=union-operator --tail=100 2>/dev/null || true
+          echo "=== propeller logs ===" && kubectl logs -n "$UNION_NS" -l app=flytepropeller --tail=100 2>/dev/null || true
