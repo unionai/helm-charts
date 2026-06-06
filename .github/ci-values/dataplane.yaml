@@ -45,9 +45,27 @@ imageBuilder:
         insecure = true
 
 # Knative serving is needed for the app smoke test (verify_app).
-# Resource requests are lowered to fit on the ubuntu-latest runner (4 vCPU / 16 GB).
+# The default install pins the 4-vCPU runner at ~96% CPU (HA replicas=2 across
+# activator/autoscaler/controller/webhook/kourier, and kourier-gateway alone
+# requests 1 CPU × 2). That leaves no room for the reusable/app task pods, which
+# then sit in WAITING_FOR_RESOURCES forever. Trim to single-replica and shrink
+# the kourier requests so the whole stack + test pods fit on the runner.
 serving:
   enabled: true
+  # high-availability.replicas — 1 collapses every serving component to a single
+  # pod (activator, autoscaler, controller, webhook, kourier gateway/controller).
+  replicas: 1
+  resources:
+    3scale-kourier-gateway:
+      kourier-gateway:
+        requests:
+          cpu: "100m"
+          memory: 128Mi
+    net-kourier-controller:
+      controller:
+        requests:
+          cpu: "100m"
+          memory: 128Mi
 
 knative-operator:
   enabled: true

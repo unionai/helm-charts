@@ -37,7 +37,9 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     image=flyte.Image.from_debian_base().with_pip_packages(
         "fastapi", "uvicorn", "httpx", "flyteplugins-union"
     ),
-    resources=flyte.Resources(cpu=1, memory="512Mi"),
+    # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
+    # alongside the dataplane and (trimmed) Knative serving stack.
+    resources=flyte.Resources(cpu="250m", memory="256Mi"),
     requires_auth=False,
 )
 
@@ -46,7 +48,7 @@ _app_task_env = flyte.TaskEnvironment(
     image=flyte.Image.from_debian_base().with_pip_packages(
         "fastapi", "uvicorn", "httpx", "flyteplugins-union"
     ),
-    resources=flyte.Resources(cpu=1, memory="512Mi"),
+    resources=flyte.Resources(cpu="250m", memory="256Mi"),
     depends_on=[_app_env],
     cache="disable",
 )
