@@ -10322,6 +10322,22 @@ webhooks:
     failurePolicy: Fail
     sideEffects: None
     name: webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs) from this
+    # fail-closed webhook. It is created in the same release as the webhook's
+    # backend, so on a cold zero-trust install the webhook Service has no Ready
+    # endpoints / no caBundle yet and a fail-closed admission call deadlocks the
+    # install -- the cert's admission depends on the very webhook it bootstraps.
+    #
+    # matchConditions (CEL) keys on the object's immutable identity, NOT a label,
+    # so it is not tenant-bypassable. The Knative serving webhook reconciler
+    # rebuilds .rules/.namespaceSelector/.caBundle on every reconcile but never
+    # touches .matchConditions, so this survives reconciliation (verified against
+    # knative.dev/pkg and empirically on-cluster). matchConditions is GA in k8s
+    # 1.30+ and beta/default-on in 1.28-1.29 (this chart's kubeVersion floor is
+    # 1.28).
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
     timeoutSeconds: 10
     rules:
       - apiGroups:
@@ -10558,6 +10574,11 @@ webhooks:
     failurePolicy: Fail
     sideEffects: None
     name: validation.webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs). See the
+    # matching note on webhook.serving.knative.dev above for the full rationale.
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == 'union' && request.name == 'routing-serving-certs')"
     timeoutSeconds: 10
     rules:
       - apiGroups:
