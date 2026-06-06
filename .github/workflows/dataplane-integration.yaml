@@ -306,6 +306,13 @@ jobs:
           echo "=== propeller logs ===" && kubectl logs -n "$UNION_NS" -l app=flytepropeller --tail=100 2>/dev/null || true
           echo "=== executor logs ===" && kubectl logs -n "$UNION_NS" -l app=executor --tail=100 2>/dev/null || true
           kubectl get pods -A -o wide                               || true
+          # Scheduling diagnostics: any Pending/unschedulable pod (WAITING_FOR_RESOURCES)
+          # plus node allocatable vs. requests — the usual cause on the 4-vCPU runner.
+          echo "=== node allocated resources ===" && kubectl describe nodes 2>&1 | grep -A12 "Allocated resources" || true
+          echo "=== pending pods (all ns) ===" && kubectl get pods -A --field-selector=status.phase=Pending -o wide 2>&1 || true
+          echo "=== describe pending pods ===" && kubectl get pods -A --field-selector=status.phase=Pending \
+            -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.metadata.name}{"\n"}{end}' 2>/dev/null \
+            | while read ns name; do [ -n "$name" ] && echo "--- $ns/$name ---" && kubectl describe pod -n "$ns" "$name" 2>&1 | tail -30; done || true
           helm status union -n "$UNION_NS"                          || true
           kubectl get events -n "$UNION_NS" --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || true
           # Routing diagnostics — verify cluster pool assignment and attributes.

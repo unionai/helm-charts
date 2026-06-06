@@ -412,9 +412,19 @@ def _phase_name(run) -> str:  # type: ignore[no-untyped-def]
     return str(run.phase).rsplit(".", 1)[-1].lower()
 
 
-async def _assert_succeeded(run, label: str) -> None:  # type: ignore[no-untyped-def]
+_ASSERT_TIMEOUT = 600  # seconds — bound per-test wait so a stuck run fails
+
+
+async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -> None:  # type: ignore[no-untyped-def]
     import flyte  # type: ignore
-    await run.wait.aio(wait_for="terminal")  # type: ignore
+    try:
+        await asyncio.wait_for(run.wait.aio(wait_for="terminal"), timeout=timeout)  # type: ignore
+    except asyncio.TimeoutError:
+        run.sync()
+        raise RuntimeError(
+            f"{label}: run {run.name} did not reach a terminal state within "
+            f"{timeout:.0f}s (last phase={run.phase})"
+        )
     run.sync()
     p = _phase_name(run)
     if p != "succeeded":
