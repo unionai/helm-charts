@@ -390,27 +390,39 @@ def _ensure_workspace_in_path() -> None:
         sys.path.insert(0, workspace)
 
 
+_SUBMIT_MAX_ATTEMPTS = 15
+_SUBMIT_RETRY_DELAY  = 30
+
+
 async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-untyped-def]
-    """Submit a task, retrying on 'no clusters found' (pool propagation lag)."""
+    """Submit a task, retrying on 'no clusters found' (pool / capabilities propagation lag).
+
+    Control-plane routing cache can take O(minutes) to reflect newly-published
+    K8s Plugin Config.  15 attempts × 30 s = 7.5 min max retry window.
+    """
     import flyte  # type: ignore
     run = None
-    for attempt in range(1, 7):
+    for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
             run = await flyte.run.aio(task_fn, **kwargs)  # type: ignore
             break
         except Exception as exc:
             msg = str(exc).lower()
             if "no clusters found" in msg or "no cluster" in msg:
-                print(
-                    f"[ci] {label}: attempt {attempt}/6 — no clusters found, "
-                    f"retrying in 30s …",
-                    flush=True,
-                )
-                await asyncio.sleep(30)
+                if attempt < _SUBMIT_MAX_ATTEMPTS:
+                    print(
+                        f"[ci] {label}: attempt {attempt}/{_SUBMIT_MAX_ATTEMPTS} — "
+                        f"no clusters found, retrying in {_SUBMIT_RETRY_DELAY}s …",
+                        flush=True,
+                    )
+                    await asyncio.sleep(_SUBMIT_RETRY_DELAY)
             else:
                 raise
     if run is None:
-        raise RuntimeError(f"{label}: submission failed after 6 attempts (no clusters found)")
+        raise RuntimeError(
+            f"{label}: submission failed after {_SUBMIT_MAX_ATTEMPTS} attempts "
+            f"(no clusters found)"
+        )
     return run
 
 
@@ -591,8 +603,10 @@ async def _run_smoke_suite_async(
     # and publish K8s Plugin Config to the control plane.  Without this, the
     # status-updater can fire before capabilities are set, leaving the cluster
     # unable to schedule tasks ("no clusters found") even while health=healthy.
-    print("[ci] smoke-suite: waiting 90s for operator capabilities to propagate …", flush=True)
-    await asyncio.sleep(90)
+    # 120 s covers the worst-case capabilities-aggregator + control-plane cache lag
+    # in the nominal path; the retry loop in _submit_with_retry handles the tail.
+    print("[ci] smoke-suite: waiting 120s for operator capabilities to propagate …", flush=True)
+    await asyncio.sleep(120)
 
     # Step 1: hello run (needed for verify_logs + verify_io).
     import uuid
