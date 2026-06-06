@@ -241,6 +241,26 @@ jobs:
             sleep 2
           done
 
+      - name: Verify buildkit and registry setup
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          # Registry reachable from host (via k3d port mapping).
+          echo "=== Registry from host ===" && curl -sf http://localhost:5001/v2/ && echo "OK" || echo "FAILED"
+          # All k3d containers and their port bindings.
+          echo "=== k3d containers ===" && docker ps --filter "name=k3d" --format "table {{.Names}}\t{{.Ports}}\t{{.Status}}"
+          # Registry container env / IP (tells us what port it actually listens on).
+          echo "=== k3d registry inspect ===" && docker inspect k3d-k3d-registry 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)[0]; nets=d['NetworkSettings']['Networks']; env=[e for e in d['Config']['Env'] if 'REGISTRY' in e]; ports=d['NetworkSettings']['Ports']; print('Env:', env); print('Ports:', ports); print('IPs:', {k: v['IPAddress'] for k,v in nets.items()})" \
+            || docker inspect k3d-registry 2>/dev/null \
+            | python3 -c "import json,sys; d=json.load(sys.stdin)[0]; nets=d['NetworkSettings']['Networks']; env=[e for e in d['Config']['Env'] if 'REGISTRY' in e]; ports=d['NetworkSettings']['Ports']; print('Env:', env); print('Ports:', ports); print('IPs:', {k: v['IPAddress'] for k,v in nets.items()})" \
+            || echo "registry container not found"
+          # Buildkit configmap content.
+          echo "=== buildkitd configmap ===" && kubectl get configmap union-operator-buildkit -n "$UNION_NS" -o jsonpath='{.data.buildkitd\.toml}' 2>/dev/null || echo "configmap not found"
+          # File in pod and registry reachability via wget.
+          kubectl exec -n "$UNION_NS" deployment/union-operator-buildkit -- sh -c \
+            'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5001 ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5000 ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL' \
+            2>&1 || echo "(buildkit exec failed)"
+
       - name: Run smoke suite
         if: steps.check.outputs.configured == 'true'
         id: smoke
@@ -278,7 +298,10 @@ jobs:
           kubectl get events -n "$UNION_NS" --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || true
           # Routing diagnostics — verify cluster pool assignment and attributes.
           echo "=== uctl cluster status ===" && uctl get cluster "$CLUSTER_NAME" --org "$ORG_NAME" 2>&1 || true
-          echo "=== buildkitd configmap ===" && kubectl get configmap -n "$UNION_NS" -l "app.kubernetes.io/component=buildkit" -o yaml 2>/dev/null || true
+          # Buildkit diagnostics (post-failure view — registry setup also printed by
+          # the "Verify buildkit and registry setup" step above).
+          echo "=== buildkitd logs (post-failure) ===" && kubectl logs -n "$UNION_NS" deployment/union-operator-buildkit --tail=80 2>&1 || true
+          echo "=== buildkitd workers ===" && kubectl exec -n "$UNION_NS" deployment/union-operator-buildkit -- buildctl debug workers 2>&1 || true
 
       # ── Teardown (always) ─────────────────────────────────────────────────
 
