@@ -701,3 +701,32 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- default "default" .Values.union.authz.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+control-plane-library.useAuth
+Resolves .Values.flyte.configmap.adminServer.server.security.useAuth, defaulting to true
+when any level of the path is unset. Emits "true" when auth is on, "" when off, for use as:
+  {{- if include "control-plane-library.useAuth" . }}
+*/}}
+{{- define "control-plane-library.useAuth" -}}
+{{- $useAuth := true -}}
+{{- if hasKey .Values "flyte" -}}
+{{-   $flyte := .Values.flyte -}}
+{{-   if hasKey $flyte "configmap" -}}
+{{-     $cm := $flyte.configmap -}}
+{{-     if hasKey $cm "adminServer" -}}
+{{-       $as := $cm.adminServer -}}
+{{-       if hasKey $as "server" -}}
+{{-         $srv := $as.server -}}
+{{-         if hasKey $srv "security" -}}
+{{-           $sec := $srv.security -}}
+{{-           if hasKey $sec "useAuth" -}}
+{{-             $useAuth = $sec.useAuth -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- if $useAuth -}}true{{- end -}}
+{{- end -}}
