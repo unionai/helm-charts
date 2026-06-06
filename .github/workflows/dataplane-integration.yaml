@@ -229,35 +229,37 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py setup-routing
 
-      # The operator publishes its capabilities (K8s plugin config / supported
-      # task types) to the control plane on a periodic cycle, and first does so
-      # at startup — BEFORE the cluster is assigned to its pool above. The
-      # control plane only routes a task to a cluster whose published
-      # capabilities are visible for the project's pool, and that propagation is
-      # intermittently slow (observed: routes in ~90s on some runs, >12 min on
-      # others → "no clusters found"). Restart the operator now, after routing
-      # is configured, to force an immediate fresh publish into the assigned
-      # pool and make propagation prompt instead of racing a slow re-sync.
-      - name: Re-publish operator capabilities after routing
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # Scale to 0 then back to 1 rather than `rollout restart`: a rolling
-          # restart surges a second operator pod onto the already-CPU-saturated
-          # node (it can't schedule) and waits on the old pod's slow graceful
-          # shutdown, so it times out. Scaling down first frees the slot and
-          # guarantees a clean fresh start (and capability re-publish).
-          OLD=$(kubectl get pods -n "$UNION_NS" -o name 2>/dev/null | grep -E 'pod/union-operator-[0-9a-f]+-' | head -1)
-          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=0
-          [ -n "$OLD" ] && kubectl wait --for=delete "$OLD" -n "$UNION_NS" --timeout=120s || true
-          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=1
-          kubectl rollout status deployment/union-operator -n "$UNION_NS" --timeout=240s
-
       - name: Create EAGER_API_KEY
         if: steps.check.outputs.configured == 'true'
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
           python .github/ci-scripts/ci_dataplane.py eager-api-key
+
+      # Restart the operator ONCE, after BOTH routing and the EAGER_API_KEY have
+      # been configured on the control plane. The operator is responsible for
+      # two CP→cluster syncs that we depend on:
+      #   1. Publishing capabilities (supported task types) for the project's
+      #      pool — first done at startup, BEFORE the cluster was assigned to its
+      #      pool above, so routing propagation is intermittently slow (observed:
+      #      ~90s on some runs, >12 min on others → "no clusters found").
+      #   2. Syncing the EAGER_API_KEY secret into the cluster so the
+      #      union-pod-webhook can inject it into task pods.
+      # A single fresh start now picks up the complete CP state (routed pool +
+      # created key), making both prompt instead of racing slow re-sync cycles.
+      - name: Restart operator to sync capabilities + secrets
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          # Scale to 0 then back to 1 rather than `rollout restart`: a rolling
+          # restart surges a second operator pod onto the already-CPU-saturated
+          # node (it can't schedule) and waits on the old pod's slow graceful
+          # shutdown, so it times out. Scaling down first frees the slot and
+          # guarantees a clean fresh start.
+          OLD=$(kubectl get pods -n "$UNION_NS" -o name 2>/dev/null | grep -E 'pod/union-operator-[0-9a-f]+-' | head -1)
+          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=0
+          [ -n "$OLD" ] && kubectl wait --for=delete "$OLD" -n "$UNION_NS" --timeout=120s || true
+          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=1
+          kubectl rollout status deployment/union-operator -n "$UNION_NS" --timeout=240s
 
       # The Flyte SDK running on the runner fetches the storage endpoint from the
       # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"
