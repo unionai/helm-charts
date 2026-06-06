@@ -300,7 +300,10 @@ jobs:
           # large events/describe output that can truncate the log.
           echo "=== secrets ===" && kubectl get secrets -n "$UNION_NS"                       || true
           echo "=== operator describe ===" && kubectl describe pod -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" 2>&1 | tail -80 || true
-          echo "=== operator logs ===" && kubectl logs -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" --tail=200 2>&1 || true
+          # Drop the usages-aggregator spam (logs a "permanent system failure"
+          # billing warning every 15s) so the capabilities/routing lines that
+          # actually explain "no clusters found" aren't pushed out of the tail.
+          echo "=== operator logs ===" && kubectl logs -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" --tail=400 2>&1 | grep -vE "usages-aggregator|apiserver_stats" | tail -200 || true
           echo "=== operator logs (previous) ===" && kubectl logs -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" --previous --tail=200 2>&1 || true
           echo "=== proxy logs (previous) ===" && kubectl logs -n "$UNION_NS" -l "app.kubernetes.io/name=operator-proxy" --previous --tail=100 2>&1 || true
           echo "=== propeller logs ===" && kubectl logs -n "$UNION_NS" -l app=flytepropeller --tail=100 2>/dev/null || true

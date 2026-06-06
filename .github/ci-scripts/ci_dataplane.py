@@ -443,7 +443,7 @@ def _ensure_workspace_in_path() -> None:
         sys.path.insert(0, workspace)
 
 
-_SUBMIT_MAX_ATTEMPTS = 15
+_SUBMIT_MAX_ATTEMPTS = 24
 _SUBMIT_RETRY_DELAY  = 30
 
 
@@ -451,7 +451,8 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     """Submit a task, retrying on 'no clusters found' (pool / capabilities propagation lag).
 
     Control-plane routing cache can take O(minutes) to reflect newly-published
-    K8s Plugin Config.  15 attempts × 30 s = 7.5 min max retry window.
+    K8s Plugin Config — observed to occasionally exceed 8 min on the shared
+    staging control plane.  24 attempts × 30 s = 12 min max retry window.
     """
     import flyte  # type: ignore
     run = None
