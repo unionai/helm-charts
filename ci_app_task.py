@@ -74,7 +74,10 @@ async def app_deploy_test() -> AppDeployResult:
     import logging as _log
     log = _log.getLogger("ci.app")
     await flyte.init_in_cluster.aio()
-    deployed = flyte.serve(_app_env)
+    # serve()/deactivate() are @syncify wrappers — call the .aio variants from
+    # this async task. Calling the sync wrapper inside the running event loop is
+    # incorrect and can hang/deadlock instead of deploying the app.
+    deployed = await flyte.serve.aio(_app_env)
     internal_url = _app_env.endpoint
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
@@ -103,5 +106,5 @@ async def app_deploy_test() -> AppDeployResult:
             assert resp.status_code == 200, f"/health returned {resp.status_code}"
             assert resp.json().get("status") == "healthy"
     finally:
-        deployed.deactivate(wait=True)
+        await deployed.deactivate.aio(wait=True)
     return AppDeployResult(internal_url=internal_url, public_url=public_url)

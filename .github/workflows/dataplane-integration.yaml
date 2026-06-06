@@ -329,6 +329,11 @@ jobs:
           # why (image pull, RevisionMissing, scale-to-zero, routing not ready).
           echo "=== knative serving objects ===" && kubectl get ksvc,configuration,revision,route,podautoscaler,sks -n "$UNION_NS" 2>&1 | grep -iE "NAME|ci-app|True|False|Unknown" | head -40 || true
           echo "=== knative revision describe ===" && kubectl describe revision -n "$UNION_NS" -l serving.knative.dev/service 2>&1 | grep -iE "Name:|Reason:|Message:|Status:|Type:|Image" | head -40 || true
+          # App + task pod logs: serve() blocks until the app is "activated", so
+          # if verify_app hangs the tester pod's own log shows what it's waiting
+          # on (or any deploy error). Task pods are named <runid>-aN-N; app pods
+          # contain ci-app.
+          echo "=== app / task pod logs ===" && for p in $(kubectl get pods -n "$UNION_NS" -o name 2>/dev/null | grep -iE 'ci-app|[a-z0-9]{20}-a[0-9]'); do echo "--- $p ---"; kubectl logs -n "$UNION_NS" "$p" --tail=60 2>&1 | tail -60; done || true
           echo "=== operator describe ===" && kubectl describe pod -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" 2>&1 | tail -80 || true
           # Drop the usages-aggregator spam (logs a "permanent system failure"
           # billing warning every 15s) so the capabilities/routing lines that
