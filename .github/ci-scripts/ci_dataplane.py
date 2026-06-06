@@ -89,6 +89,24 @@ def _uctl_extra_env() -> dict:
     return {}
 
 
+def _run_uctl(*cmd: str) -> tuple[int, str]:
+    """Run a uctl command, capture output, print it, and return (returncode, output).
+
+    All uctl calls should go through here so their stdout/stderr is always
+    visible in CI logs.  The caller decides whether a non-zero exit is fatal.
+    """
+    result = subprocess.run(
+        list(cmd),
+        capture_output=True,
+        text=True,
+        env={**os.environ, **_uctl_extra_env()},
+    )
+    output = (result.stdout + result.stderr).strip()
+    if output:
+        print(output, flush=True)
+    return result.returncode, output
+
+
 async def _init_client(
     control_plane_url: str,
     api_key: str,
@@ -260,21 +278,30 @@ async def _setup_routing_async(
     spec_tmp.write(f"clusterPool:\n  id:\n    name: {pool_name}\n")
     spec_tmp.close()
     print(f"[ci] setup-routing: creating cluster pool {pool_name}", flush=True)
-    _uenv = {**os.environ, **_uctl_extra_env()}
-    subprocess.run(
-        ["uctl", "create", "clusterpool",
-         "--clusterPoolSpecFile", spec_tmp.name, "--org", org],
-        check=False, env=_uenv,
-    )
-    os.unlink(spec_tmp.name)
+    try:
+        rc, out = _run_uctl(
+            "uctl", "create", "clusterpool",
+            "--clusterPoolSpecFile", spec_tmp.name, "--org", org,
+        )
+        if rc != 0 and "already" not in out.lower():
+            raise RuntimeError(
+                f"uctl create clusterpool exited {rc} (pool={pool_name})\n{out}"
+            )
+    finally:
+        os.unlink(spec_tmp.name)
 
-    # 2. Assign cluster to pool
+    # 2. Assign cluster to pool — critical: without this the pool is empty and
+    # every task submission returns "no clusters found".
     print(f"[ci] setup-routing: assigning {cluster_name} → pool {pool_name}", flush=True)
-    subprocess.run(
-        ["uctl", "create", "clusterpoolassignment",
-         "--poolName", pool_name, "--clusterName", cluster_name, "--org", org],
-        check=False, env=_uenv,
+    rc, out = _run_uctl(
+        "uctl", "create", "clusterpoolassignment",
+        "--poolName", pool_name, "--clusterName", cluster_name, "--org", org,
     )
+    if rc != 0 and "already" not in out.lower():
+        raise RuntimeError(
+            f"uctl create clusterpoolassignment exited {rc} "
+            f"(cluster={cluster_name}, pool={pool_name})\n{out}"
+        )
 
     # 3. Create project (idempotent)
     await _init_client(control_plane_url, api_key, project=project_id, org=org)
@@ -285,6 +312,7 @@ async def _setup_routing_async(
             name=project_id,
             description=f"CI integration test project for {cluster_name}",
         )
+        print(f"[ci] setup-routing: project '{project_id}' created", flush=True)
     except Exception as e:
         print(f"[ci] setup-routing: project create (likely exists): {e}", flush=True)
 
@@ -303,12 +331,18 @@ async def _setup_routing_async(
             f"[ci] setup-routing: routing {project_id}/{domain} → {pool_name}",
             flush=True,
         )
-        subprocess.run(
-            ["uctl", "update", "cluster-pool-attributes", "--force",
-             "--attrFile", attr_tmp.name, "--org", org],
-            check=False, env=_uenv,
-        )
-        os.unlink(attr_tmp.name)
+        try:
+            rc, out = _run_uctl(
+                "uctl", "update", "cluster-pool-attributes", "--force",
+                "--attrFile", attr_tmp.name, "--org", org,
+            )
+            if rc != 0:
+                print(
+                    f"[ci] setup-routing: WARNING routing {domain} failed (rc={rc}): {out[:200]}",
+                    flush=True,
+                )
+        finally:
+            os.unlink(attr_tmp.name)
 
     print(
         f"[ci] setup-routing: done — project '{project_id}' routes to pool '{pool_name}' "
@@ -673,10 +707,7 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
     print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
-    subprocess.run(
-        ["uctl", "delete", "cluster", cluster_name],
-        check=False, env={**os.environ, **_uctl_extra_env()},
-    )
+    _run_uctl("uctl", "delete", "cluster", cluster_name)
     print("[ci] teardown: done.", flush=True)
 
 

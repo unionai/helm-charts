@@ -259,6 +259,8 @@ jobs:
 
       - name: Collect debug dump
         if: failure() && steps.check.outputs.configured == 'true'
+        env:
+          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
           # Re-export kubeconfig in case a prior step reset the context.
           k3d kubeconfig merge ci-dataplane --kubeconfig-merge-default 2>/dev/null || true
@@ -274,6 +276,9 @@ jobs:
           kubectl get pods -A -o wide                               || true
           helm status union -n "$UNION_NS"                          || true
           kubectl get events -n "$UNION_NS" --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || true
+          # Routing diagnostics — verify cluster pool assignment and attributes.
+          echo "=== uctl cluster status ===" && uctl get cluster "$CLUSTER_NAME" --org "$ORG_NAME" 2>&1 || true
+          echo "=== buildkitd configmap ===" && kubectl get configmap -n "$UNION_NS" -l "app.kubernetes.io/component=buildkit" -o yaml 2>/dev/null || true
 
       # ── Teardown (always) ─────────────────────────────────────────────────
 
