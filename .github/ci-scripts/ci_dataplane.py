@@ -156,7 +156,7 @@ def cmd_provision(args: argparse.Namespace) -> None:
         if result.returncode == 0:
             break
         low = output.lower()
-        if attempt < 3 and ("503" in output or "unavailable" in low or "internal" in low or "name cannot be empty" in low):
+        if attempt < 3 and ("503" in output or "unavailable" in low or "internal" in low or "name cannot be empty" in low or "deadline exceeded" in low or "deadlineexceeded" in low):
             print(f"[ci] provision: attempt {attempt} failed (transient), retrying in 20s…", flush=True)
             _time.sleep(20)
             continue
