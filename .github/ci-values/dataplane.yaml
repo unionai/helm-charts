@@ -18,10 +18,13 @@ storage:
   s3ForcePathStyle: true
 
 # Image builder: push/pull via the k3d in-cluster registry.
-# k3d injects k3d-registry into cluster /etc/hosts, port 5001.
+# k3d --registry-create maps host:5001 → container:5000 (no REGISTRY_HTTP_ADDR).
+# Port 5000 is open inside the Docker cluster network; port 5001 is only the
+# host-side mapping. buildkit must push to :5000. k3s containerd is configured
+# to pull from http://k3d-registry:5000 via --registry-config on cluster create.
 imageBuilder:
   enabled: true
-  defaultRepository: "k3d-registry:5001/union"
+  defaultRepository: "k3d-registry:5000/union"
   buildkit:
     enabled: true
     resources:
@@ -33,7 +36,7 @@ imageBuilder:
     # Both the bare hostname and host:port forms are listed because different
     # buildkit versions normalise the registry address differently.
     extraConfig: |
-      [registry."k3d-registry:5001"]
+      [registry."k3d-registry:5000"]
         http = true
         insecure = true
 

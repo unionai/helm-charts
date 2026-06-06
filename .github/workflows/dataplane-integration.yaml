@@ -119,25 +119,21 @@ jobs:
       - name: Create k3d cluster with embedded registry
         if: steps.check.outputs.configured == 'true'
         run: |
-          # Pre-create the registry so it listens on port 5001 BOTH on the host
-          # and inside the Docker cluster network (172.18.x.x:5001).
-          # k3d's --registry-create maps host:5001 → container:5000 without
-          # setting REGISTRY_HTTP_ADDR, so inside the cluster only port 5000 is
-          # open — buildkit can't push to :5001. Pre-creating with
-          # REGISTRY_HTTP_ADDR=0.0.0.0:5001 makes :5001 reachable everywhere.
-          docker run -d \
-            --name k3d-registry \
-            --restart=always \
-            -p 0.0.0.0:5001:5001 \
-            -e REGISTRY_HTTP_ADDR=0.0.0.0:5001 \
-            registry:2
-          # Wait for registry to be ready before attaching it to the cluster.
-          for i in $(seq 1 15); do
-            curl -sf http://localhost:5001/v2/ && break
-            sleep 2
-          done
+          # k3d's --registry-create maps host:5001 → container:5000 (no
+          # REGISTRY_HTTP_ADDR). The registry listens on port 5000 INSIDE the
+          # Docker network; port 5001 is only the host-side mapping. buildkit
+          # doesn't use containerd's mirror config so it can't reach :5001.
+          # Fix: point buildkit (and defaultRepository) at port 5000, and give
+          # k3s a --registry-config so containerd pulls via HTTP on :5000 too.
+          cat > /tmp/k3d-registries.yaml << 'EOF'
+          mirrors:
+            "k3d-registry:5000":
+              endpoint:
+                - "http://k3d-registry:5000"
+          EOF
           k3d cluster create ci-dataplane \
-            --registry-use k3d-registry:5001 \
+            --registry-create k3d-registry:0.0.0.0:5001 \
+            --registry-config /tmp/k3d-registries.yaml \
             --wait --timeout 120s
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
@@ -274,7 +270,7 @@ jobs:
           echo "=== buildkitd configmap ===" && kubectl get configmap union-operator-buildkit -n "$UNION_NS" -o jsonpath='{.data.buildkitd\.toml}' 2>/dev/null || echo "configmap not found"
           # File in pod and registry reachability via wget.
           kubectl exec -n "$UNION_NS" deployment/union-operator-buildkit -- sh -c \
-            'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5001 ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5000 ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL' \
+            'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5000 (cluster-internal) ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5001 (host-mapped) ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL' \
             2>&1 || echo "(buildkit exec failed)"
 
       - name: Run smoke suite
