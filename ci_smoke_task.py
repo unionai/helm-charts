@@ -85,8 +85,11 @@ _reuse_env = flyte.TaskEnvironment(
     ),
     # cpu/replicas kept small: the 4-vCPU CI runner is already near-full with the
     # dataplane + Knative serving stack, so a 2×500m reusable env can't schedule
-    # (WAITING_FOR_RESOURCES). 1 replica still exercises the ReusePolicy path —
-    # the n square() calls run serially on the single persistent actor pod.
+    # (WAITING_FOR_RESOURCES). One replica fits, but reuse_driver itself runs on
+    # this env, so with concurrency=1 the driver holds the only slot and the
+    # reuse_square() calls it awaits can never get one → starvation/deadlock
+    # (the run hangs in RUNNING forever). concurrency=2 gives the single pod a
+    # second slot for the children, exercising the ReusePolicy path on one pod.
     resources=flyte.Resources(memory="256Mi", cpu="250m"),
     cache="disable",
     # The reusable actor re-resolves its environment name from CLUSTER_NAME at
@@ -98,7 +101,7 @@ _reuse_env = flyte.TaskEnvironment(
     env_vars={"CLUSTER_NAME": _cluster},
     reusable=flyte.ReusePolicy(
         replicas=1,
-        concurrency=1,
+        concurrency=2,
         scaledown_ttl=timedelta(minutes=2),
         idle_ttl=timedelta(minutes=5),
     ),
@@ -112,5 +115,5 @@ async def reuse_square(x: int) -> int:
 
 @_reuse_env.task
 async def reuse_driver(n: int) -> list[int]:
-    """Fan out square() calls over the reusable environment (replicas=1, concurrency=1)."""
+    """Fan out square() calls over the reusable environment (replicas=1, concurrency=2)."""
     return list(await asyncio.gather(*(reuse_square(i) for i in range(n))))

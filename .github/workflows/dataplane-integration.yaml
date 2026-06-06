@@ -324,6 +324,11 @@ jobs:
           # Print the most diagnostic information first so it appears before the
           # large events/describe output that can truncate the log.
           echo "=== secrets ===" && kubectl get secrets -n "$UNION_NS"                       || true
+          # Knative serving state for verify_app: if serve() hangs without a
+          # revision pod, the ksvc/configuration/revision/route conditions show
+          # why (image pull, RevisionMissing, scale-to-zero, routing not ready).
+          echo "=== knative serving objects ===" && kubectl get ksvc,configuration,revision,route,podautoscaler,sks -n "$UNION_NS" 2>&1 | grep -iE "NAME|ci-app|True|False|Unknown" | head -40 || true
+          echo "=== knative revision describe ===" && kubectl describe revision -n "$UNION_NS" -l serving.knative.dev/service 2>&1 | grep -iE "Name:|Reason:|Message:|Status:|Type:|Image" | head -40 || true
           echo "=== operator describe ===" && kubectl describe pod -n "$UNION_NS" -l "app.kubernetes.io/name=union-operator" 2>&1 | tail -80 || true
           # Drop the usages-aggregator spam (logs a "permanent system failure"
           # billing warning every 15s) so the capabilities/routing lines that
