@@ -119,9 +119,25 @@ jobs:
       - name: Create k3d cluster with embedded registry
         if: steps.check.outputs.configured == 'true'
         run: |
-          # Registry is reachable inside the cluster as k3d-registry:5001.
+          # Pre-create the registry so it listens on port 5001 BOTH on the host
+          # and inside the Docker cluster network (172.18.x.x:5001).
+          # k3d's --registry-create maps host:5001 → container:5000 without
+          # setting REGISTRY_HTTP_ADDR, so inside the cluster only port 5000 is
+          # open — buildkit can't push to :5001. Pre-creating with
+          # REGISTRY_HTTP_ADDR=0.0.0.0:5001 makes :5001 reachable everywhere.
+          docker run -d \
+            --name k3d-registry \
+            --restart=always \
+            -p 0.0.0.0:5001:5001 \
+            -e REGISTRY_HTTP_ADDR=0.0.0.0:5001 \
+            registry:2
+          # Wait for registry to be ready before attaching it to the cluster.
+          for i in $(seq 1 15); do
+            curl -sf http://localhost:5001/v2/ && break
+            sleep 2
+          done
           k3d cluster create ci-dataplane \
-            --registry-create k3d-registry:0.0.0.0:5001 \
+            --registry-use k3d-registry:5001 \
             --wait --timeout 120s
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
