@@ -40,7 +40,7 @@ async def hello(nonce: str) -> str:
 
 _imgbuild_env = flyte.TaskEnvironment(
     name=f"ci-imgbuild-{_cluster}",
-    image=flyte.Image.from_debian_base(registry="k3d-registry:5001/union").with_pip_packages(
+    image=flyte.Image.from_debian_base().with_pip_packages(
         "requests==2.32.3", "flyteplugins-union"
     ),
     cache="disable",
@@ -60,7 +60,7 @@ async def imgbuild_task(nonce: str) -> str:
 _imgcache_env = flyte.TaskEnvironment(
     name=f"ci-imgcache-{_cluster}",
     image=(
-        flyte.Image.from_debian_base(registry="k3d-registry:5001/union")
+        flyte.Image.from_debian_base()
         .with_pip_packages("requests==2.32.3", "flyteplugins-union")
         .with_env_vars({"CI_CACHE_TEST": "v1"})
     ),
@@ -80,7 +80,7 @@ async def imgcache_task(nonce: str) -> str:
 
 _reuse_env = flyte.TaskEnvironment(
     name=f"ci-reuse-{_cluster}",
-    image=flyte.Image.from_debian_base(registry="k3d-registry:5001/union").with_pip_packages(
+    image=flyte.Image.from_debian_base().with_pip_packages(
         "unionai-reuse>=0.1.10", "flyteplugins-union"
     ),
     resources=flyte.Resources(memory="512Mi", cpu="500m"),
