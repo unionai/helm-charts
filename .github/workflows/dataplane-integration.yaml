@@ -241,8 +241,16 @@ jobs:
       - name: Re-publish operator capabilities after routing
         if: steps.check.outputs.configured == 'true'
         run: |
-          kubectl rollout restart deployment/union-operator -n "$UNION_NS"
-          kubectl rollout status  deployment/union-operator -n "$UNION_NS" --timeout=180s
+          # Scale to 0 then back to 1 rather than `rollout restart`: a rolling
+          # restart surges a second operator pod onto the already-CPU-saturated
+          # node (it can't schedule) and waits on the old pod's slow graceful
+          # shutdown, so it times out. Scaling down first frees the slot and
+          # guarantees a clean fresh start (and capability re-publish).
+          OLD=$(kubectl get pods -n "$UNION_NS" -o name 2>/dev/null | grep -E 'pod/union-operator-[0-9a-f]+-' | head -1)
+          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=0
+          [ -n "$OLD" ] && kubectl wait --for=delete "$OLD" -n "$UNION_NS" --timeout=120s || true
+          kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=1
+          kubectl rollout status deployment/union-operator -n "$UNION_NS" --timeout=240s
 
       - name: Create EAGER_API_KEY
         if: steps.check.outputs.configured == 'true'
