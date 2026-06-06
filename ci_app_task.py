@@ -34,7 +34,7 @@ def _make_fastapi_app():
 _app_env = flyte.app.extras.FastAPIAppEnvironment(
     name=f"ci-app-{_cluster}",
     app=_make_fastapi_app(),
-    image=flyte.Image.from_debian_base().with_pip_packages(
+    image=flyte.Image.from_debian_base(registry="k3d-registry:5001/union").with_pip_packages(
         "fastapi", "uvicorn", "httpx", "flyteplugins-union"
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
@@ -43,7 +43,7 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
 
 _app_task_env = flyte.TaskEnvironment(
     name=f"ci-app-tester-{_cluster}",
-    image=flyte.Image.from_debian_base().with_pip_packages(
+    image=flyte.Image.from_debian_base(registry="k3d-registry:5001/union").with_pip_packages(
         "fastapi", "uvicorn", "httpx", "flyteplugins-union"
     ),
     resources=flyte.Resources(cpu=1, memory="512Mi"),
