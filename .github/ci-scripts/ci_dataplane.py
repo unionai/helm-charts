@@ -44,6 +44,11 @@ logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s %(levelname)-7s %(name)s - %(message)s",
 )
+# Quiet the HTTP client stack: at DEBUG these emit one line per request/response
+# header, flooding the CI log (thousands of lines) and echoing auth-bearing
+# headers. WARNING keeps real errors without the noise.
+for _noisy in ("httpx", "httpcore", "urllib3", "hpack", "h2"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger("ci.dataplane")
 
 
@@ -606,7 +611,7 @@ async def _verify_image_cache_async(
 async def _verify_reusable_async(
     control_plane_url: str, api_key: str, cluster_name: str, org: str
 ) -> None:
-    """Fan out square() calls over a ReusePolicy environment (replicas=2, concurrency=1)."""
+    """Fan out square() calls over a ReusePolicy environment (replicas=1, concurrency=1)."""
     from ci_smoke_task import reuse_driver  # type: ignore  # noqa: E402
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     n = 4  # fixed for reproducibility
@@ -625,7 +630,9 @@ async def _verify_app_async(
     print("[ci] verify_app: submitting app_deploy_test", flush=True)
     run = await _submit_with_retry(app_deploy_test, "verify_app")
     print(f"[ci] verify_app: run={run.name}  url={run.url}", flush=True)
-    await _assert_succeeded(run, "verify_app")
+    # App deploy is the slowest scenario: two image builds (app + tester) plus a
+    # Knative revision cold-start. Allow more headroom than the default 600s.
+    await _assert_succeeded(run, "verify_app", timeout=900)
     print(f"[ci] verify_app: PASSED (run={run.name})", flush=True)
 
 
@@ -668,25 +675,41 @@ async def _run_smoke_suite_async(
     print(f"[ci] smoke-suite: hello PASSED", flush=True)
     run_name = hello_run.name
 
-    # Step 2: all verify tests in parallel.
-    tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
+    results: list[tuple[str, bool, str]] = []
+
+    # Step 2: the light/fast verify tests run in parallel — they reuse the hello
+    # run or spin up short-lived build pods, so they don't contend for long.
+    parallel_tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
         ("verify_logs",          _verify_logs_async(run_name, cluster_name)),
         ("verify_io",            _verify_io_async(run_name)),
         ("verify_image_builder", _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
         ("verify_image_cache",   _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_reusable",      _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_app",           _verify_app_async(control_plane_url, api_key, cluster_name, org)),
     ]
-    names = [n for n, _ in tests]
-    outcomes = await asyncio.gather(*(c for _, c in tests), return_exceptions=True)
-
-    results: list[tuple[str, bool, str]] = []
-    for name, outcome in zip(names, outcomes):
+    p_names = [n for n, _ in parallel_tests]
+    outcomes = await asyncio.gather(*(c for _, c in parallel_tests), return_exceptions=True)
+    for name, outcome in zip(p_names, outcomes):
         if isinstance(outcome, Exception):
             results.append((name, False, str(outcome)[:300]))
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
         else:
             results.append((name, True, ""))
+
+    # Step 3: the heavy tests run sequentially. Each needs a persistent pod
+    # (reusable actor; app revision + tester) that, together with Knative
+    # serving, can't co-schedule alongside the other on the 4-vCPU CI runner —
+    # running them back-to-back lets each use the freed CPU instead of both
+    # parking in WAITING_FOR_RESOURCES.
+    sequential_tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
+        ("verify_reusable",      _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_app",           _verify_app_async(control_plane_url, api_key, cluster_name, org)),
+    ]
+    for name, coro in sequential_tests:
+        try:
+            await coro
+            results.append((name, True, ""))
+        except Exception as outcome:  # noqa: BLE001
+            results.append((name, False, str(outcome)[:300]))
+            print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
 
     # Summary table.
     print("\n[ci] ── smoke suite results ──────────────────────────────────", flush=True)
