@@ -587,6 +587,13 @@ async def _run_smoke_suite_async(
         flush=True,
     )
 
+    # Wait for the operator's capabilities-aggregator to complete its first cycle
+    # and publish K8s Plugin Config to the control plane.  Without this, the
+    # status-updater can fire before capabilities are set, leaving the cluster
+    # unable to schedule tasks ("no clusters found") even while health=healthy.
+    print("[ci] smoke-suite: waiting 90s for operator capabilities to propagate …", flush=True)
+    await asyncio.sleep(90)
+
     # Step 1: hello run (needed for verify_logs + verify_io).
     import uuid
     from ci_smoke_task import hello as _hello  # type: ignore
