@@ -40,6 +40,10 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
+    # See _app_task_env: CLUSTER_NAME is a runner-only var, so the in-pod module
+    # would otherwise resolve names against the "ci-dev" default and mismatch
+    # the registered ci-app-<run-id>. Inject the resolved value.
+    env_vars={"CLUSTER_NAME": _cluster},
     requires_auth=False,
 )
 
@@ -51,6 +55,10 @@ _app_task_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     depends_on=[_app_env],
     cache="disable",
+    # The tester pod calls flyte.serve(_app_env), which re-resolves _app_env.name
+    # from CLUSTER_NAME at runtime. Without this it computes "ci-app-ci-dev"
+    # (the default) and serve() hangs deploying/looking up an unregistered name.
+    env_vars={"CLUSTER_NAME": _cluster},
 )
 
 
@@ -61,6 +69,7 @@ class AppDeployResult(typing.NamedTuple):
 
 @_app_task_env.task
 async def app_deploy_test() -> AppDeployResult:
+    import asyncio
     import httpx  # type: ignore
     import logging as _log
     log = _log.getLogger("ci.app")
@@ -70,10 +79,26 @@ async def app_deploy_test() -> AppDeployResult:
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
     try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(f"{internal_url}/")
-            assert resp.status_code == 200, f"/ returned {resp.status_code}"
-            assert "ci-app-ok" in resp.text, f"unexpected body: {resp.text}"
+        # Knative may still be pulling the image / cold-starting the revision
+        # when serve() returns, so poll "/" until it answers 200 instead of
+        # firing a single un-timed request that hangs forever on a not-yet-ready
+        # endpoint. Bounded so a genuinely broken deploy fails fast with detail.
+        deadline = 300  # seconds
+        interval = 5
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            last_err = "no attempt made"
+            for _ in range(deadline // interval):
+                try:
+                    resp = await client.get(f"{internal_url}/")
+                    if resp.status_code == 200 and "ci-app-ok" in resp.text:
+                        break
+                    last_err = f"/ returned {resp.status_code}: {resp.text[:80]}"
+                except Exception as exc:  # noqa: BLE001 — connection refused / cold start
+                    last_err = f"{type(exc).__name__}: {exc}"
+                await asyncio.sleep(interval)
+            else:
+                raise RuntimeError(f"app / endpoint not ready within {deadline}s: {last_err}")
+            log.info("app: / is ready, checking /health")
             resp = await client.get(f"{internal_url}/health")
             assert resp.status_code == 200, f"/health returned {resp.status_code}"
             assert resp.json().get("status") == "healthy"

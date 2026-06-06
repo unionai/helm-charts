@@ -89,6 +89,13 @@ _reuse_env = flyte.TaskEnvironment(
     # the n square() calls run serially on the single persistent actor pod.
     resources=flyte.Resources(memory="256Mi", cpu="250m"),
     cache="disable",
+    # The reusable actor re-resolves its environment name from CLUSTER_NAME at
+    # pod runtime. CLUSTER_NAME is a runner-only env var, so without this it
+    # defaults to "ci-dev" inside the pod and the actor looks up
+    # "ci-reuse-ci-dev" — which was never registered (it was registered as
+    # ci-reuse-<run-id> from the runner) → "Environment not found in image
+    # cache". Inject the resolved value so the in-pod name matches.
+    env_vars={"CLUSTER_NAME": _cluster},
     reusable=flyte.ReusePolicy(
         replicas=1,
         concurrency=1,
