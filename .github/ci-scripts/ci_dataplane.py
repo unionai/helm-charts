@@ -147,7 +147,11 @@ def cmd_provision(args: argparse.Namespace) -> None:
     for attempt in range(1, 4):
         result = subprocess.run(
             ["uctl", "selfserve", "provision-dataplane-resources",
-             "--clusterName", cluster_name, "--provider", "metal"],
+             "--clusterName", cluster_name, "--provider", "metal",
+             # Default per-retry timeout is 15s with 4 retries = 60s cap.
+             # The provision RPC can take longer on a loaded control plane,
+             # so raise per-retry to 90s and keep 3 retries → up to ~5 min.
+             "--admin.perRetryTimeout", "90s", "--admin.maxRetries", "3"],
             cwd=work_dir, capture_output=True, text=True,
             env={**os.environ, **_uctl_extra_env()},
         )
