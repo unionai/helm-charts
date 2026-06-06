@@ -229,6 +229,21 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py setup-routing
 
+      # The operator publishes its capabilities (K8s plugin config / supported
+      # task types) to the control plane on a periodic cycle, and first does so
+      # at startup — BEFORE the cluster is assigned to its pool above. The
+      # control plane only routes a task to a cluster whose published
+      # capabilities are visible for the project's pool, and that propagation is
+      # intermittently slow (observed: routes in ~90s on some runs, >12 min on
+      # others → "no clusters found"). Restart the operator now, after routing
+      # is configured, to force an immediate fresh publish into the assigned
+      # pool and make propagation prompt instead of racing a slow re-sync.
+      - name: Re-publish operator capabilities after routing
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          kubectl rollout restart deployment/union-operator -n "$UNION_NS"
+          kubectl rollout status  deployment/union-operator -n "$UNION_NS" --timeout=180s
+
       - name: Create EAGER_API_KEY
         if: steps.check.outputs.configured == 'true'
         env:
