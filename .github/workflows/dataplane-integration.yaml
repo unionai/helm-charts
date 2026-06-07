@@ -99,6 +99,11 @@ jobs:
         run: |
           K3D_VER=$(k3d version | awk '/k3d version/{print $3}')
           K3S_TAG=$(k3d version | awk '/k3s version/{print $3}')
+          # Fail fast on a parse miss rather than emitting a malformed
+          # "--image docker.io/rancher/k3s:" that breaks cluster create cryptically.
+          if [ -z "$K3S_TAG" ] || [ -z "$K3D_VER" ]; then
+            echo "ERROR: could not parse k3d/k3s versions:"; k3d version; exit 1
+          fi
           echo "k3s_image=docker.io/rancher/k3s:${K3S_TAG}" >> "$GITHUB_OUTPUT"
           echo "cache_key=k3d-infra-${K3D_VER}-${K3S_TAG}"   >> "$GITHUB_OUTPUT"
           echo "Resolved k3d=$K3D_VER k3s=$K3S_TAG"
@@ -305,19 +310,33 @@ jobs:
           python .github/ci-scripts/ci_dataplane.py eager-api-key
 
       # Restart the operator ONCE, after BOTH routing and the EAGER_API_KEY have
-      # been configured on the control plane. The operator is responsible for
-      # two CP→cluster syncs that we depend on:
+      # been configured on the control plane, AND after the control plane's
+      # ClusterPoolStatus cache has had time to reflect the pool assignment.
+      # The operator is responsible for three CP→cluster syncs we depend on:
       #   1. Publishing capabilities (supported task types) for the project's
       #      pool — first done at startup, BEFORE the cluster was assigned to its
-      #      pool above, so routing propagation is intermittently slow (observed:
-      #      ~90s on some runs, >12 min on others → "no clusters found").
-      #   2. Syncing the EAGER_API_KEY secret into the cluster so the
+      #      pool above, so task routing is intermittently slow ("no clusters
+      #      found").
+      #   2. Subscribing the operator's Lease stream to its assigned cluster pool
+      #      — this is what dispatches deployed Apps (verify_app) to the cluster.
+      #      The operator subscribes on connect using the CP's ClusterPoolStatus,
+      #      which is cached and only refreshes >1 min after the pool assignment.
+      #      If the operator (re)connects before that, the Lease stream subscribes
+      #      to the wrong/old pool and never picks up the app → serve() hangs.
+      #   3. Syncing the EAGER_API_KEY secret into the cluster so the
       #      union-pod-webhook can inject it into task pods.
-      # A single fresh start now picks up the complete CP state (routed pool +
-      # created key), making both prompt instead of racing slow re-sync cycles.
+      # So: wait out the ClusterPoolStatus cache, THEN do a single fresh restart
+      # so the operator reconnects against the refreshed pool membership and
+      # subscribes its Lease stream to this run's pool.
       - name: Restart operator to sync capabilities + secrets
         if: steps.check.outputs.configured == 'true'
         run: |
+          # Let the control plane's ClusterPoolStatus cache reflect the cluster→
+          # pool assignment from setup-routing before the operator reconnects;
+          # otherwise its Lease stream subscribes to the wrong pool and apps are
+          # never dispatched. The cache refreshes >1 min after assignment.
+          echo "Waiting 90s for ClusterPoolStatus to reflect the pool assignment…"
+          sleep 90
           # Scale to 0 then back to 1 rather than `rollout restart`: a rolling
           # restart surges a second operator pod onto the already-CPU-saturated
           # node (it can't schedule) and waits on the old pod's slow graceful
