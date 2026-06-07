@@ -327,8 +327,12 @@ jobs:
           # Knative serving state for verify_app: if serve() hangs without a
           # revision pod, the ksvc/configuration/revision/route conditions show
           # why (image pull, RevisionMissing, scale-to-zero, routing not ready).
-          echo "=== knative serving objects ===" && kubectl get ksvc,configuration,revision,route,podautoscaler,sks -n "$UNION_NS" 2>&1 | grep -iE "NAME|ci-app|True|False|Unknown" | head -40 || true
-          echo "=== knative revision describe ===" && kubectl describe revision -n "$UNION_NS" -l serving.knative.dev/service 2>&1 | grep -iE "Name:|Reason:|Message:|Status:|Type:|Image" | head -40 || true
+          echo "=== knative serving objects (all ns) ===" && kubectl get ksvc,configuration,revision,route,podautoscaler,sks -A 2>&1 | grep -iE "NAME|ci-app|True|False|Unknown" | head -40 || true
+          echo "=== knative revision describe (all ns) ===" && kubectl describe revision -A 2>&1 | grep -iE "Name:|Reason:|Message:|Status:|Type:|Image" | head -50 || true
+          # Confirm the tag-resolution skip list actually reached the running
+          # config-deployment configmap (verify_app revision fails digest
+          # resolution against the HTTP-only k3d registry without it).
+          echo "=== knative config-deployment skip list ===" && kubectl get cm config-deployment -n "$UNION_NS" -o jsonpath='{.data.registries-skipping-tag-resolving}' 2>&1; echo || true
           # App + task pod logs: serve() blocks until the app is "activated", so
           # if verify_app hangs the tester pod's own log shows what it's waiting
           # on (or any deploy error). Task pods are named <runid>-aN-N; app pods

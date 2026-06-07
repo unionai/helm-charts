@@ -58,6 +58,17 @@ serving:
   # high-availability.replicas — 1 collapses every serving component to a single
   # pod (activator, autoscaler, controller, webhook, kourier gateway/controller).
   replicas: 1
+  # Knative resolves each revision's image tag → digest by querying the registry
+  # from the serving controller over HTTPS via cluster DNS. The k3d in-cluster
+  # registry is HTTP-only and not resolvable by coredns, so verify_app's revision
+  # fails: 'failed to resolve image to digest ... Get "https://k3d-registry:5000/
+  # v2/": ... no such host', and the app never activates (serve() hangs).
+  # Skip tag resolution for the k3d registry — list BOTH host:port and host forms
+  # since Knative's match key depends on how the image ref is normalised. The
+  # kubelet still pulls the image fine via containerd's registry mirror.
+  extraConfig:
+    deployment:
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,k3d-registry:5000,k3d-registry"
   resources:
     3scale-kourier-gateway:
       kourier-gateway:
