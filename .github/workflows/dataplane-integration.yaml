@@ -86,6 +86,55 @@ jobs:
           curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
           k3d version
 
+      # ── Cache the Docker Hub infra images k3d pulls at cluster-create time ──
+      # `registry:2` (the embedded registry) and `rancher/k3s` come from Docker
+      # Hub, which rate-limits/times out on shared GitHub runners and aborts the
+      # whole run before any tests execute. Cache them as a docker-save tarball
+      # keyed on the exact k3d+k3s versions, so a cache hit skips Docker Hub
+      # entirely. The key changes automatically when k3d (and thus its default
+      # k3s image) is upgraded.
+      - name: Resolve k3d infra image versions
+        if: steps.check.outputs.configured == 'true'
+        id: k3dimg
+        run: |
+          K3D_VER=$(k3d version | awk '/k3d version/{print $3}')
+          K3S_TAG=$(k3d version | awk '/k3s version/{print $3}')
+          echo "k3s_image=docker.io/rancher/k3s:${K3S_TAG}" >> "$GITHUB_OUTPUT"
+          echo "cache_key=k3d-infra-${K3D_VER}-${K3S_TAG}"   >> "$GITHUB_OUTPUT"
+          echo "Resolved k3d=$K3D_VER k3s=$K3S_TAG"
+
+      - name: Restore k3d infra image cache
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/cache@v4
+        with:
+          path: /tmp/k3d-infra-images
+          key: ${{ steps.k3dimg.outputs.cache_key }}
+
+      - name: Load or pull k3d infra images
+        if: steps.check.outputs.configured == 'true'
+        env:
+          K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
+        run: |
+          DIR=/tmp/k3d-infra-images
+          TAR="$DIR/infra-images.tar"
+          REG="docker.io/library/registry:2"
+          if [ -f "$TAR" ]; then
+            echo "infra-image cache HIT ($(du -h "$TAR" | cut -f1)) — loading"
+            docker load -i "$TAR"
+          else
+            echo "infra-image cache MISS — pulling from Docker Hub (with retries)"
+            mkdir -p "$DIR"
+            for img in "$REG" "$K3S_IMAGE"; do
+              n=0
+              until docker pull "$img"; do
+                n=$((n+1))
+                [ "$n" -ge 5 ] && { echo "giving up pulling $img"; exit 1; }
+                echo "pull $img failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
+              done
+            done
+            docker save "$REG" "$K3S_IMAGE" -o "$TAR"
+          fi
+
       - name: Set up Helm ${{ env.HELM_VERSION }}
         if: steps.check.outputs.configured == 'true'
         uses: azure/setup-helm@v4.3.1
@@ -123,6 +172,8 @@ jobs:
 
       - name: Create k3d cluster with embedded registry
         if: steps.check.outputs.configured == 'true'
+        env:
+          K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
         run: |
           # k3d's --registry-create maps host:5001 → container:5000 (no
           # REGISTRY_HTTP_ADDR). The registry listens on port 5000 INSIDE the
@@ -136,10 +187,22 @@ jobs:
               endpoint:
                 - "http://k3d-registry:5000"
           EOF
-          k3d cluster create ci-dataplane \
-            --registry-create k3d-registry:0.0.0.0:5001 \
-            --registry-config /tmp/k3d-registries.yaml \
-            --wait --timeout 120s
+          # --image pins the pre-loaded k3s image (no Docker Hub pull). Retry the
+          # whole create: a transient Docker/network blip during node bring-up
+          # otherwise fails the entire run, and the registry:2 + k3s images are
+          # already local so a retry is cheap.
+          n=0
+          until k3d cluster create ci-dataplane \
+              --image "$K3S_IMAGE" \
+              --registry-create k3d-registry:0.0.0.0:5001 \
+              --registry-config /tmp/k3d-registries.yaml \
+              --wait --timeout 120s; do
+            n=$((n+1))
+            [ "$n" -ge 3 ] && { echo "k3d cluster create failed after $n attempts"; exit 1; }
+            echo "cluster create failed (attempt $n) — cleaning up and retrying"
+            k3d cluster delete ci-dataplane || true
+            sleep 10
+          done
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
       # ── RustFS object store ───────────────────────────────────────────────
