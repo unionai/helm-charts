@@ -425,10 +425,21 @@ async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -
     try:
         await asyncio.wait_for(run.wait.aio(wait_for="terminal"), timeout=timeout)  # type: ignore
     except asyncio.TimeoutError:
+        # Abort the run on the control plane — wait_for only stopped us waiting;
+        # the run keeps executing (and holding cluster resources) otherwise, and
+        # the teardown's cluster delete leaves an orphaned run on the CP.
+        try:
+            await asyncio.wait_for(
+                run.abort.aio(reason=f"CI {label}: exceeded {timeout:.0f}s wait"),  # type: ignore
+                timeout=30,
+            )
+            print(f"[ci] {label}: aborted run {run.name} after {timeout:.0f}s timeout", flush=True)
+        except Exception as exc:  # noqa: BLE001 — best-effort cleanup
+            print(f"[ci] {label}: abort after timeout failed: {exc}", flush=True)
         run.sync()
         raise RuntimeError(
             f"{label}: run {run.name} did not reach a terminal state within "
-            f"{timeout:.0f}s (last phase={run.phase})"
+            f"{timeout:.0f}s (last phase={run.phase}) — aborted"
         )
     run.sync()
     p = _phase_name(run)
@@ -633,9 +644,11 @@ async def _verify_app_async(
     print("[ci] verify_app: submitting app_deploy_test", flush=True)
     run = await _submit_with_retry(app_deploy_test, "verify_app")
     print(f"[ci] verify_app: run={run.name}  url={run.url}", flush=True)
-    # App deploy is the slowest scenario: two image builds (app + tester) plus a
-    # Knative revision cold-start. Allow more headroom than the default 600s.
-    await _assert_succeeded(run, "verify_app", timeout=900)
+    # App deploy is the heaviest scenario (two image builds + a Knative revision
+    # cold-start), but a healthy run completes in ~1 min (measured) and even a
+    # fully-cold build is a few minutes. The default 600s is ample margin while
+    # still failing/aborting a genuine hang ~5 min sooner than the old 900s.
+    await _assert_succeeded(run, "verify_app")
     print(f"[ci] verify_app: PASSED (run={run.name})", flush=True)
 
 
