@@ -40,6 +40,14 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
+    # Pin the app to THIS run's cluster pool. This MUST be set on the app spec
+    # (it's serialized into the IDL by app_serde at create time) — passing
+    # cluster_pool via with_servecontext() only mutates a local copy AFTER
+    # App.create, so it never reaches the control plane and the app deploys to
+    # the "default" pool (no cluster) → never assigned → never activated →
+    # serve() hangs. The CI's setup-routing creates a pool named == CLUSTER_NAME
+    # (== _cluster) containing this run's k3d dataplane.
+    cluster_pool=_cluster,
     # See _app_task_env: CLUSTER_NAME is a runner-only var, so the in-pod module
     # would otherwise resolve names against the "ci-dev" default and mismatch
     # the registered ci-app-<run-id>. Inject the resolved value.
@@ -77,15 +85,9 @@ async def app_deploy_test() -> AppDeployResult:
     # serve()/deactivate() are @syncify wrappers — call the .aio variants from
     # this async task. Calling the sync wrapper inside the running event loop is
     # incorrect and can hang/deadlock instead of deploying the app.
-    #
-    # cluster_pool is REQUIRED here: a bare serve() sets no pool, so the control
-    # plane schedules the app's Knative revision onto its default/CP cluster —
-    # which can't reach this run's k3d in-cluster registry (k3d-registry:5000 only
-    # exists on the runner's Docker network), so the revision fails to pull the
-    # image. The CI creates a cluster pool named == CLUSTER_NAME containing this
-    # run's k3d dataplane, so pin the app to it; there k3d-registry is reachable
-    # and serving skips tag-resolution for it.
-    deployed = await flyte.with_servecontext(cluster_pool=_cluster).serve.aio(_app_env)
+    # The cluster pool is pinned on _app_env.cluster_pool (must be on the spec
+    # before App.create — see the comment there), so a plain serve() is correct.
+    deployed = await flyte.serve.aio(_app_env)
     internal_url = _app_env.endpoint
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
