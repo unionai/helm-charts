@@ -143,6 +143,7 @@ These features are optional at the chart level, but some may be required for the
 
 - Target status: required when users need Union to build and publish workflow images.
 - Requires: registry write access, builder service account permissions, build cache decision, OpenShift-compatible security policy, and approved image scanning/promotion path.
+- For OpenShift, use the dataplane `values.openshift.yaml` overlay so BuildKit runs in rootless mode with a dedicated service account and an SCC that does not allow privileged containers.
 - If disabled: users must build and push workflow images outside Union, then reference those prebuilt images in workflow registration.
 
 **App serving and Knative**
@@ -337,10 +338,60 @@ Workflow validation:
 Optional capability validation:
 
 - [ ] If image builder is enabled, an approved test build can build and push to the registry.
+- [ ] If rootless BuildKit is enabled, `scripts/validate_rootless_buildkit.sh` passes against the dataplane namespace.
 - [ ] If app serving is enabled, an approved app can be deployed and reached through the approved route.
 - [ ] If bundled monitoring is enabled, dashboards and alert rules are visible to the approved operators.
 - [ ] If GPU telemetry is enabled, GPU metrics appear for a GPU test workload.
 - [ ] If air-gapped validation is in scope, image, chart, telemetry, and upgrade workflows operate without external egress.
+
+## Rootless BuildKit Validation
+
+The dataplane OpenShift overlay configures BuildKit for the non-privileged path. It enables the rootless BuildKit image variant, runs the container as UID/GID 1000, uses the rootless user socket, adds the rootless worker flag, and binds the BuildKit service on TCP port 1234 for the build-image task.
+
+Runtime prerequisites:
+
+- The dataplane namespace must allow the chart-rendered BuildKit SCC or an equivalent pre-created SCC.
+- The BuildKit service account must be allowed to use that SCC.
+- The cluster policy must allow unconfined seccomp for this BuildKit pod.
+- The registry must allow writes to the configured workflow image repository.
+- The deployed image set must include the BuildKit rootless image and any required registry credentials or pull secrets.
+
+Known limitations:
+
+- This path does not use privileged container mode. It depends on rootless BuildKit behavior and may not support every Dockerfile pattern that requires process sandboxing or privileged kernel features.
+- The smoke test can prove BuildKit can build and push one simple image, but the final acceptance check is still an approved Union image-builder workflow that uses the same registry and project/domain configuration as users.
+- Disconnected and air-gapped environments must validate image mirroring, chart distribution, registry writes, and upgrade flow separately.
+
+Render-time validation:
+
+```bash
+helm template charts/dataplane \
+  --namespace union \
+  --kube-version 1.32.0 \
+  --values charts/dataplane/values.aws.yaml \
+  --values charts/dataplane/values.openshift.yaml \
+  --values charts/dataplane/examples/values-test-certs.yaml \
+  --values tests/values/dataplane.openshift.yaml
+```
+
+Cluster validation:
+
+```bash
+KUBECTL_BIN=oc \
+NAMESPACE=union \
+scripts/validate_rootless_buildkit.sh
+```
+
+Build-and-push smoke test:
+
+```bash
+KUBECTL_BIN=oc \
+NAMESPACE=union \
+TARGET_IMAGE=harbor.example.com/union/rootless-buildkit-smoke:$(date +%Y%m%d%H%M%S) \
+scripts/validate_rootless_buildkit.sh
+```
+
+After the smoke test passes, run an approved Union workflow that invokes the registered `build-image` task and pushes to the same registry path. The controlplane chart registers that task through the image-builder bootstrap job when `imageBuilder.bootstrap.enabled` is true.
 
 ## Acceptance Criteria
 
