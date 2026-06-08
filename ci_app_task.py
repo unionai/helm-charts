@@ -41,21 +41,27 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
-    # Empty cluster_pool (NOT omitted — the field defaults to "default", which
-    # would pin the app to the empty "default" pool and bypass routing). An empty
-    # value makes the control plane resolve the app's cluster from the project→
-    # pool routing rules (same path as Runs), so the app lands on this run's pool
-    # via the route created by CI's setup-routing (project == _cluster → pool ==
-    # _cluster, which holds this run's k3d dataplane). Previously the app spec had
-    # to pin cluster_pool=_cluster because App routing ignored the rules; that CP
-    # gap is now fixed, so an empty pool exercises the routing-rule path.
-    cluster_pool="",
+    # cluster_pool is handled below (forced unset) — see the note after this
+    # constructor. It can't be expressed here: the field defaults to the literal
+    # "default" and passing cluster_pool=None to __init__ is ignored (the guard
+    # keeps the default), so we null it on the instance post-construction.
     # See _app_task_env: CLUSTER_NAME is a runner-only var, so the in-pod module
     # would otherwise resolve names against the "ci-dev" default and mismatch
     # the registered ci-app-<run-id>. Inject the resolved value.
     env_vars={"CLUSTER_NAME": _cluster},
     requires_auth=False,
 )
+
+# Send NO cluster_pool so the control plane resolves the app's cluster from the
+# project→pool routing rules (the same path Runs use), landing it on this run's
+# pool via CI's setup-routing (project == _cluster → pool == _cluster, holding
+# this run's k3d dataplane). The SDK can't express "unset": the field defaults
+# to the literal "default" and app_serde serializes it unconditionally, so both
+# omitting it and setting "" make the CP see "default" and pin the app to the
+# (empty) default pool — bypassing routing and hanging serve(). Nulling the
+# field makes app_serde emit Spec(cluster_pool=None), which proto3 drops from
+# the wire entirely, so the create request carries no pool at all.
+_app_env.cluster_pool = None
 
 _app_task_env = flyte.TaskEnvironment(
     name=f"ci-app-tester-{_cluster}",
