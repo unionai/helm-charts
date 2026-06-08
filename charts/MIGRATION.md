@@ -4,6 +4,38 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## controlplane — `actionsLeasor.enabled` toggle (queue/executor deprecation)
+
+### What changed
+
+New top-level chart value `actionsLeasor.enabled` (default `false`). When `true`, the `unionai.configMap` helper patches the executions service ConfigMap so that:
+
+- `useActionsServiceForOrgs: [<global.UNION_ORG>]` — the deployment's own org routes `CreateRun` through the v2 actions service.
+- `rejectLegacySDKVersions: true` — sub-2.0.4 SDK `CreateRun` is hard-rejected.
+
+### Deprecation timeline
+
+| Date | Phase | Customer-visible effect |
+|---|---|---|
+| 2026-06-30 | **Deprecation announced** | Queue + executor services formally marked deprecated. SDK <2.0.4 keeps working via the legacy queue path. `actionsLeasor.enabled` default remains `false`. Customers should plan to upgrade SDKs and (optionally) opt into the v2-actions path. |
+| 2026-07-31 | **Complete switch-over** | Chart default flips to `actionsLeasor.enabled: true`. Queue + executor templates/services are removed. SDK <2.0.4 `CreateRun` hard-fails. `actionsLeasor` knob retained for one more minor release for compatibility, then removed. |
+
+### Migration
+
+| Audience | Action |
+|---|---|
+| Managed multi-tenant CP | None today. Track the 2026-06-30 announcement; coordinate SDK upgrade with customer base before 2026-07-31. |
+| Selfhosted single-tenant | Set `actionsLeasor: { enabled: true }` in `values-overrides.yaml` (or via cloud-side `var.actions_leasor_enabled = true` on `union_extension/{aws,gcp}`). Confirm all in-use SDKs are >=2.0.4. After 2026-07-31, drop the override — it becomes the default. |
+| BYOC | Coordinate SDK upgrade with operator. The chart default flip on 2026-07-31 will turn off the legacy path for any deployment that hasn't already migrated. |
+
+### After 2026-07-31
+
+- `actionsLeasor.enabled: true` becomes the default; queue + executor templates are removed.
+- Env overlays that set `actionsLeasor.enabled: true` explicitly can drop the override.
+- The `unionai.configMap` injection block in `templates/_helpers.tpl` becomes unconditional (or moves into values.yaml as plain defaults) and the toggle itself is dropped.
+
+---
+
 ## dataplane 2026.6.2 — DP→CP connection wiring centralized + TLS-by-default
 
 ### What changed

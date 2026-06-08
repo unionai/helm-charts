@@ -1375,6 +1375,32 @@ services:
 # shard via the actions-shard-id header — the same routing semantics used in
 # Union's managed control plane.
 #
+# actionsLeasor: deployment-wide opt-in for v2-actions CreateRun routing.
+# When enabled:
+#   - This deployment's own UNION_ORG goes through the v2 actions service
+#     (services.executions.configMap.executions.apps.task.useActionsServiceForOrgs
+#     gets [.Values.global.UNION_ORG]).
+#   - Sub-2.0.4 SDK CreateRun requests are hard-rejected
+#     (rejectLegacySDKVersions = true), exercising the queue/executor
+#     decommissioning path.
+# Chart default is off so chart upgrades don't break existing legacy-SDK users
+# in managed multi-tenant deployments. Fresh single-tenant selfhosted envs flip
+# this true in their per-env values-overrides.yaml — no need to duplicate the
+# executions.configMap block. The injection happens in templates/_helpers.tpl
+# (unionai.configMap), see actionsLeasor block there.
+#
+# DEPRECATION TIMELINE
+#   2026-06-30 — queue + executor services formally deprecated. SDK <2.0.4 still
+#                works through the legacy path but customers should migrate.
+#   2026-07-31 — complete switch-over: chart default flips to `enabled: true`,
+#                queue + executor templates are removed, and this knob becomes
+#                a no-op (kept briefly for compatibility, then removed). Any env
+#                still on SDK <2.0.4 after this date will hard-fail CreateRun.
+# After 2026-07-31, env overlays that set `actionsLeasor.enabled: true`
+# explicitly can drop the override entirely.
+actionsLeasor:
+  enabled: false
+
 # Self-hosted runs 10 fixed shards (the same count Union's managed control
 # planes run). Each shard is its own single-replica Deployment owning a
 # contiguous slice of the 1024 partitions. The Watch endpoint is heavy, so this
