@@ -157,9 +157,14 @@ jobs:
       - name: Install uctl v${{ env.UCTL_VERSION }}
         if: steps.check.outputs.configured == 'true'
         run: |
-          curl -fsSL \
-            "https://github.com/unionai/uctl/releases/download/v${UCTL_VERSION}/uctl_Linux_x86_64.tar.gz" \
-            | sudo tar xz -C /usr/local/bin uctl
+          # uctl tarball comes from GitHub releases, which 504s intermittently
+          # on shared runners — retry so a transient blip doesn't kill the run.
+          n=0
+          until [ "$n" -ge 4 ]; do
+            curl -fsSL "https://github.com/unionai/uctl/releases/download/v${UCTL_VERSION}/uctl_Linux_x86_64.tar.gz" | sudo tar xz -C /usr/local/bin uctl && break
+            n=$((n+1)); echo "uctl install failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
+          done
+          [ "$n" -ge 4 ] && { echo "uctl install failed after $n attempts"; exit 1; }
           uctl version
 
       - name: Configure uctl client credentials
@@ -243,9 +248,14 @@ jobs:
             sleep 2
           done
 
-          # Install mc binary (single static binary, <25 MB).
-          curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc \
-            -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc
+          # Install mc binary (single static binary, <25 MB). dl.min.io 504s
+          # intermittently on shared runners — retry.
+          n=0
+          until [ "$n" -ge 4 ]; do
+            curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc && break
+            n=$((n+1)); echo "mc download failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
+          done
+          [ "$n" -ge 4 ] && { echo "mc download failed after $n attempts"; exit 1; }
 
           mc alias set store http://localhost:9000 \
             "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY"
