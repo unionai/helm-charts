@@ -275,16 +275,29 @@ jobs:
 
       # ── Helm chart install ─────────────────────────────────────────────────
 
+      # Cache the 8 subchart .tgz so we don't re-pull them from GitHub releases /
+      # gh-pages every run. Those release-asset downloads 504 intermittently (and
+      # can stay degraded for minutes) on shared runners, killing the run before
+      # any test executes. Keyed on Chart.yaml (dependency versions live there);
+      # a hit restores charts/ + Chart.lock and the fetch step builds offline.
+      - name: Cache Helm chart dependencies
+        if: steps.check.outputs.configured == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            charts/dataplane/charts
+            charts/dataplane/Chart.lock
+          key: helm-deps-v1-${{ hashFiles('charts/dataplane/Chart.yaml') }}
+
       - name: Add Helm repos and fetch chart dependencies
         if: steps.check.outputs.configured == 'true'
         run: |
-          # helm repo update + dependency update fetch chart indexes and tarballs
-          # from gh-pages / GitHub releases, which 504 / time out intermittently
-          # on shared runners (e.g. metrics-server .tgz) and abort the run before
-          # any test executes. Retry the network-bound commands.
+          # On a cache hit the subchart .tgz are already present, so build offline
+          # (no GitHub releases). On a miss, download with a patient retry to ride
+          # out transient 504s; the cache save then primes every later run.
           retry() {
             local n=0
-            until [ "$n" -ge 4 ]; do "$@" && return 0; n=$((n+1)); echo ">> '$*' failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10)); done
+            until [ "$n" -ge 6 ]; do "$@" && return 0; n=$((n+1)); echo ">> '$*' failed (attempt $n) — retrying in $((n*15))s"; sleep $((n*15)); done
             echo ">> '$*' failed after $n attempts"; return 1
           }
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
@@ -293,8 +306,13 @@ jobs:
           helm repo add opencost            https://opencost.github.io/opencost-helm-chart
           helm repo add nvidia              https://nvidia.github.io/dcgm-exporter/helm-charts
           helm repo add ingress-nginx       https://kubernetes.github.io/ingress-nginx
-          retry helm repo update
-          retry helm dependency update charts/dataplane
+          if [ -n "$(ls -A charts/dataplane/charts 2>/dev/null)" ]; then
+            echo ">> subchart tarballs restored from cache — building offline"
+            retry helm dependency build charts/dataplane
+          else
+            retry helm repo update
+            retry helm dependency update charts/dataplane
+          fi
 
       - name: Install dataplane chart (local PR copy)
         if: steps.check.outputs.configured == 'true'
