@@ -12,6 +12,7 @@ import typing
 
 import flyte  # type: ignore
 import flyte.app.extras  # type: ignore
+import flyte.remote  # type: ignore  # App.get — verify assigned_cluster routing
 
 _cluster = os.environ.get("CLUSTER_NAME", "ci-dev")
 
@@ -40,14 +41,12 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
-    # Pin the app to THIS run's cluster pool. This MUST be set on the app spec
-    # (it's serialized into the IDL by app_serde at create time) — passing
-    # cluster_pool via with_servecontext() only mutates a local copy AFTER
-    # App.create, so it never reaches the control plane and the app deploys to
-    # the "default" pool (no cluster) → never assigned → never activated →
-    # serve() hangs. The CI's setup-routing creates a pool named == CLUSTER_NAME
-    # (== _cluster) containing this run's k3d dataplane.
-    cluster_pool=_cluster,
+    # No explicit cluster_pool: the control plane now resolves the app's cluster
+    # from the project→pool routing rules (same path as Runs), so the app is
+    # routed to this run's pool via the route created by CI's setup-routing
+    # (project == _cluster → pool == _cluster, which holds this run's k3d
+    # dataplane). Previously the app spec had to pin cluster_pool=_cluster
+    # because App routing ignored the routing rules; that CP gap is now fixed.
     # See _app_task_env: CLUSTER_NAME is a runner-only var, so the in-pod module
     # would otherwise resolve names against the "ci-dev" default and mismatch
     # the registered ci-app-<run-id>. Inject the resolved value.
@@ -73,6 +72,7 @@ _app_task_env = flyte.TaskEnvironment(
 class AppDeployResult(typing.NamedTuple):
     internal_url: str
     public_url: str
+    assigned_cluster: str
 
 
 @_app_task_env.task
@@ -85,12 +85,31 @@ async def app_deploy_test() -> AppDeployResult:
     # serve()/deactivate() are @syncify wrappers — call the .aio variants from
     # this async task. Calling the sync wrapper inside the running event loop is
     # incorrect and can hang/deadlock instead of deploying the app.
-    # The cluster pool is pinned on _app_env.cluster_pool (must be on the spec
-    # before App.create — see the comment there), so a plain serve() is correct.
+    # No cluster_pool is pinned on _app_env: the control plane resolves the app's
+    # cluster from the project→pool routing rules (see _app_env comment), so a
+    # plain serve() routes to this run's dataplane.
     deployed = await flyte.serve.aio(_app_env)
     internal_url = _app_env.endpoint
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
+
+    # Verify the CP routed the app to THIS run's cluster via the project→pool
+    # routing rules (no explicit cluster_pool pin). status.assigned_cluster is
+    # the cluster the control plane bound the app to; it must equal the run's
+    # cluster (CLUSTER_NAME == _cluster, the only dataplane in this CI). Re-fetch
+    # the app if the watch object's status hasn't populated it yet.
+    assigned_cluster = deployed.pb2.status.assigned_cluster
+    if not assigned_cluster:
+        refreshed = await flyte.remote.App.get.aio(name=_app_env.name)
+        assigned_cluster = refreshed.pb2.status.assigned_cluster
+    log.info(f"app: assigned_cluster={assigned_cluster!r} expected={_cluster!r}")
+    if assigned_cluster != _cluster:
+        raise RuntimeError(
+            f"app routed to wrong cluster: assigned_cluster={assigned_cluster!r} "
+            f"but expected {_cluster!r} (project→pool routing did not resolve to "
+            f"this run's dataplane)"
+        )
+
     try:
         # Knative may still be pulling the image / cold-starting the revision
         # when serve() returns, so poll "/" until it answers 200 instead of
@@ -117,4 +136,8 @@ async def app_deploy_test() -> AppDeployResult:
             assert resp.json().get("status") == "healthy"
     finally:
         await deployed.deactivate.aio(wait=True)
-    return AppDeployResult(internal_url=internal_url, public_url=public_url)
+    return AppDeployResult(
+        internal_url=internal_url,
+        public_url=public_url,
+        assigned_cluster=assigned_cluster,
+    )

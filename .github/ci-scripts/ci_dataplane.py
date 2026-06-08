@@ -649,7 +649,13 @@ async def _verify_app_async(
     # fully-cold build is a few minutes. The default 600s is ample margin while
     # still failing/aborting a genuine hang ~5 min sooner than the old 900s.
     await _assert_succeeded(run, "verify_app")
-    print(f"[ci] verify_app: PASSED (run={run.name})", flush=True)
+    # The task asserts status.assigned_cluster == CLUSTER_NAME internally (it has
+    # no explicit cluster_pool pin), so a succeeded run proves the control plane
+    # routed the app to this run's dataplane via project→pool routing rules.
+    print(
+        f"[ci] verify_app: PASSED (run={run.name}) — app routed to cluster "
+        f"{cluster_name!r} via project routing rules", flush=True
+    )
 
 
 async def _run_smoke_suite_async(
