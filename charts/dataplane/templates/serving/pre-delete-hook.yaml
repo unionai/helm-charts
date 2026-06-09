@@ -31,6 +31,32 @@ subjects:
   name: {{ .Release.Name }}-pre-delete
   namespace: {{ .Release.Namespace }}
 ---
+# Cluster-scoped get on CRDs so the cleanup Job can check whether the
+# knativeservings CRD exists before attempting to delete the CR (see the
+# guard in the Job below). Cluster-scoped, so the name is namespace-qualified
+# to avoid collisions between releases.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-pre-delete-{{ .Release.Namespace }}
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-pre-delete-{{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-pre-delete-{{ .Release.Namespace }}
+subjects:
+- kind: ServiceAccount
+  name: {{ .Release.Name }}-pre-delete
+  namespace: {{ .Release.Namespace }}
+---
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -53,8 +79,11 @@ spec:
         - /bin/sh
         - -c
         - |
-          kubectl delete knativeserving \
-            {{ include "serving.fullname" . }} \
-            --ignore-not-found=true \
-            -n {{ .Release.Namespace }}
+          if kubectl get crd knativeservings.operator.knative.dev >/dev/null 2>&1; then
+            kubectl delete knativeserving {{ include "serving.fullname" . }} \
+              --ignore-not-found=true \
+              --namespace {{ .Release.Namespace }}
+          else
+            echo "knativeservings CRD not installed; nothing to clean up"
+          fi
 {{- end }}

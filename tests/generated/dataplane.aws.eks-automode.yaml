@@ -4875,6 +4875,20 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
+# Source: dataplane/templates/serving/pre-delete-hook.yaml
+# Cluster-scoped get on CRDs so the cleanup Job can check whether the
+# knativeservings CRD exists before attempting to delete the CR (see the
+# guard in the Job below). Cluster-scoped, so the name is namespace-qualified
+# to avoid collisions between releases.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-pre-delete-union
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get"]
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5043,6 +5057,20 @@ subjects:
   - kind: ServiceAccount
     name: knative-operator
     namespace: "union"
+---
+# Source: dataplane/templates/serving/pre-delete-hook.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-pre-delete-union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-pre-delete-union
+subjects:
+- kind: ServiceAccount
+  name: release-name-pre-delete
+  namespace: union
 ---
 # Source: dataplane/charts/dcgm-exporter/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7873,10 +7901,13 @@ spec:
         - /bin/sh
         - -c
         - |
-          kubectl delete knativeserving \
-            union-operator-serving \
-            --ignore-not-found=true \
-            -n union
+          if kubectl get crd knativeservings.operator.knative.dev >/dev/null 2>&1; then
+            kubectl delete knativeserving union-operator-serving \
+              --ignore-not-found=true \
+              --namespace union
+          else
+            echo "knativeservings CRD not installed; nothing to clean up"
+          fi
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
