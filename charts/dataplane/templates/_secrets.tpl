@@ -143,6 +143,8 @@ secrets.eagerClientCreds — multi-key (client_id + client_secret)
 {{- end -}}
 {{- end -}}
 
+{{- define "secrets.eagerOAuthConfig.configMapName" -}}{{ .Release.Name }}-eager-oauth-config{{- end -}}
+
 {{- define "secrets.eagerClientCreds.secretName" -}}
 {{- include "secrets.eagerClientCreds.validate" . -}}
 {{- $s := .Values.secrets.eagerClientCreds -}}

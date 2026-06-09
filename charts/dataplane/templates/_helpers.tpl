@@ -1546,6 +1546,22 @@ union-pod-webhook
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
+{{/* FAB-241 file-mount: when eagerClientCreds is enabled, switch the webhook
+to inject the ConfigMap + Secret as volume mounts instead of env vars for
+matching SecurityContext.Secrets entries. Pre-check is wired by mirrorcheck
+inside flyte. Single customer-facing flag (secrets.eagerClientCreds.enabled)
+auto-derives the entire file-mount path. */}}
+{{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+{{- $_ := set $webhook "fileMount" (dict
+    "enabled" true
+    "secretKeyMatch" "EAGER_API_KEY"
+    "configMapName" (include "secrets.eagerOAuthConfig.configMapName" .)
+    "secretName" (include "secrets.eagerClientCreds.secretName" .)
+    "configMapMountPath" (.Values.mirroring.eagerOAuth.configMapMountPath | default "/etc/flyte/config.yaml")
+    "secretMountPath" (.Values.mirroring.eagerOAuth.secretMountPath | default "/etc/flyte/credentials/client_secret")
+    "managedByLabelValue" (.Values.mirroring.managedByLabelValue | default "union-operator")
+) }}
+{{- end }}
 {{- if include "singleNamespace" . }}
 propeller:
   limit-namespace: {{ .Release.Namespace }}

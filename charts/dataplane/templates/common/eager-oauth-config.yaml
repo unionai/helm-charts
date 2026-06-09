@@ -1,0 +1,32 @@
+{{/*
+eager-auth-config: SDK config.yaml mounted on task pods by the
+flyte-pod-webhook's file-mount path (FAB-241 file-mount workstream).
+
+When secrets.eagerClientCreds.enabled is true and the operator's
+SecretMirrorSyncer is enabled, the operator mirrors this ConfigMap and
+the client_secret Secret into every flyte-typed target NS. Task pods
+mount config.yaml at /etc/flyte/config.yaml and the SDK's
+init_from_config() reads it at startup, replacing the legacy
+_UNION_EAGER_API_KEY env-var path.
+
+Carries app.kubernetes.io/managed-by=union-operator AND the
+union.ai/mirrored-from-namespace=<operator NS> annotation so the
+mirror's cleanup query scopes copies to this install.
+*/}}
+{{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "secrets.eagerOAuthConfig.configMapName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/managed-by: {{ .Values.mirroring.managedByLabelValue | default "union-operator" }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+data:
+  config.yaml: |
+    admin:
+      endpoint: {{ tpl .Values.host . | quote }}
+      clientId: {{ .Values.secrets.eagerClientCreds.clientId | default "" | quote }}
+      clientSecretLocation: {{ .Values.mirroring.eagerOAuth.secretMountPath | default "/etc/flyte/credentials/client_secret" | quote }}
+      authType: ClientSecret
+{{- end }}

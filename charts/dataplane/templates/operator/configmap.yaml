@@ -119,6 +119,28 @@ data:
         referenceConfigmapName: {{ include "union-operator.fullname" . }}
         targetConfigMapName: {{ .Values.imageBuilder.targetConfigMapName | quote }}
     {{- end }}
+    {{- if .Values.mirroring.enabled }}
+      mirroring:
+        enabled: true
+        managedByLabelValue: {{ .Values.mirroring.managedByLabelValue | default "union-operator" | quote }}
+        defaultNamespaceSelector:
+{{ toYaml .Values.mirroring.defaultNamespaceSelector | indent 10 }}
+        provenanceAnnotations:
+          sourceNamespace: union.ai/mirrored-from-namespace
+          sourceName: union.ai/mirrored-from-name
+          sourceVersion: union.ai/mirrored-from-version
+        resources:
+        {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+        - kind: Secret
+          name: {{ include "secrets.eagerClientCreds.secretName" . }}
+        - kind: ConfigMap
+          name: {{ include "secrets.eagerOAuthConfig.configMapName" . }}
+        {{- end }}
+        {{- if .Values.imageBuilder.enabled }}
+        - kind: ConfigMap
+          name: {{ .Values.imageBuilder.targetConfigMapName | default "build-image-config" }}
+        {{- end }}
+    {{- end }}
   {{- with .Values.config.proxy }}
     proxy:
       {{- tpl (toYaml .) $ | nindent 6 }}

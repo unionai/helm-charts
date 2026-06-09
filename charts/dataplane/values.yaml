@@ -1875,6 +1875,35 @@ proxy:
 resourcequota:
   create: false
 
+# -- Operator-side SecretMirrorSyncer config (FAB-241). When enabled, the
+# operator propagates chart-managed Secrets and ConfigMaps from this
+# release's namespace into every namespace matching the selector. The
+# flyte-pod-webhook's file-mount path activates simultaneously when
+# secrets.eagerClientCreds.enabled is true — it pre-checks the
+# mirror is present before injecting volume mounts and denies
+# admission with HTTP 503 on miss so the upstream retry path
+# absorbs operator-mirror lag.
+mirroring:
+  # -- Master switch. When false, SecretMirrorSyncer does not run and
+  # the legacy BuildImageConfigSyncer continues handling build-image
+  # ConfigMap mirror. When true, the new syncer subsumes it.
+  enabled: false
+  # -- Value applied as app.kubernetes.io/managed-by on every mirrored
+  # copy. Stable literal — does NOT incorporate release name. Customer-
+  # overridable for brand/white-label. Stability-critical: changing
+  # post-install orphans previously-mirrored copies.
+  managedByLabelValue: union-operator
+  # -- Default namespace selector applied to every mirror entry that
+  # doesn't override.
+  defaultNamespaceSelector:
+    matchLabels:
+      union.ai/namespace-type: flyte
+  # -- File-mount paths used by the operator config rendering and the
+  # webhook's fileMount block. Defaults match the SDK's expectations.
+  eagerOAuth:
+    configMapMountPath: /etc/flyte/config.yaml
+    secretMountPath: /etc/flyte/credentials/client_secret
+
 # -- Connection secrets for the Union control plane services.
 secrets:
   admin:
