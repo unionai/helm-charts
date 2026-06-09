@@ -1,0 +1,1850 @@
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-0-f288b103
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "0"
+    shard-hash: f288b103
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "0"
+      shard-hash: f288b103
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "0"
+        shard-hash: f288b103
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "0"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-1-f6a76bed
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "1"
+    shard-hash: f6a76bed
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "1"
+      shard-hash: f6a76bed
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "1"
+        shard-hash: f6a76bed
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "1"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-2-44d51338
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "2"
+    shard-hash: 44d51338
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "2"
+      shard-hash: 44d51338
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "2"
+        shard-hash: 44d51338
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "2"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-3-0e2fc543
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "3"
+    shard-hash: 0e2fc543
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "3"
+      shard-hash: 0e2fc543
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "3"
+        shard-hash: 0e2fc543
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "3"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-4-b7f95723
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "4"
+    shard-hash: b7f95723
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "4"
+      shard-hash: b7f95723
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "4"
+        shard-hash: b7f95723
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "4"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-5-3d7905f8
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "5"
+    shard-hash: 3d7905f8
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "5"
+      shard-hash: 3d7905f8
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "5"
+        shard-hash: 3d7905f8
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "5"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-6-a7e57068
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "6"
+    shard-hash: a7e57068
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "6"
+      shard-hash: a7e57068
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "6"
+        shard-hash: a7e57068
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "6"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-7-a5084d4e
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "7"
+    shard-hash: a5084d4e
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "7"
+      shard-hash: a5084d4e
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "7"
+        shard-hash: a5084d4e
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "7"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-8-2e085e60
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "8"
+    shard-hash: 2e085e60
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "8"
+      shard-hash: 2e085e60
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "8"
+        shard-hash: 2e085e60
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "8"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
+---
+# Source: controlplane/templates/actions/deployment-shard.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: actions-9-cf8e9eab
+  namespace: union
+  labels:
+    helm.sh/chart: controlplane-2026.6.3
+    app.kubernetes.io/name: actions
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.6.3"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: shard
+    shard-index: "9"
+    shard-hash: cf8e9eab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: actions
+      app.kubernetes.io/instance: release-name
+      shard-index: "9"
+      shard-hash: cf8e9eab
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        kubectl.kubernetes.io/default-container: actions
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        platform.union.ai/zone: "controlplane"
+        app.kubernetes.io/name: actions
+        app.kubernetes.io/instance: release-name
+        app.kubernetes.io/component: shard
+        shard-index: "9"
+        shard-hash: cf8e9eab
+    spec:
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: actions
+              app.kubernetes.io/component: shard
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: actions
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: actions
+        - name: coordination-scripts
+          configMap:
+            name: actions-coordination
+            defaultMode: 0555
+            items:
+            - key: wait-for-non-peers.sh
+              path: wait-for-non-peers.sh
+      initContainers:
+        - name: actions-migrate
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - migrate
+            - --config
+            - /etc/config/*.yaml
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+        - name: wait-for-non-peers
+          # alpine/k8s pins kubectl to the cluster's k8s minor; matches the
+          # dataplane chart's convention (see dataplane/values.yaml). Override
+          # via .Values.actions.coordination.image.{repository,tag} for air-
+          # gapped/customer-mirrored installs.
+          image: alpine/k8s:1.32.3
+          command: ["/scripts/wait-for-non-peers.sh"]
+          env:
+          - name: SHARD_LABEL_SELECTOR
+            value: "app.kubernetes.io/component=shard,app.kubernetes.io/name=actions"
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: PEER_HASHES
+            valueFrom:
+              configMapKeyRef:
+                name: actions-coordination
+                key: peer-hashes
+          volumeMounts:
+          - name: coordination-scripts
+            mountPath: /scripts
+            readOnly: true
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "10m"
+            limits:
+              memory: "64Mi"
+              cpu: "100m"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000740000
+      containers:
+        - name: actions
+          image: "registry.unionai.cloud/controlplane/services:2026.6.3"
+          imagePullPolicy: IfNotPresent
+          args:
+            - actions
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: SHARD_INDEX
+              value: "9"
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+            limits:
+              cpu: 2
+              memory: 4Gi
+            requests:
+              cpu: 1
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: actions
+                  app.kubernetes.io/instance: release-name
+                  app.kubernetes.io/component: shard
+              topologyKey: "kubernetes.io/hostname"
