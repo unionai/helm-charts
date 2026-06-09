@@ -145,14 +145,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-# SA and RBAC are regular release resources (not hooks) so they exist when the pre-delete Job runs.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-pre-delete
-  namespace: union
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5453,17 +5445,6 @@ rules:
       - create
       - update
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-rules:
-- apiGroups: ["operator.knative.dev"]
-  resources: ["knativeservings"]
-  verbs: ["get", "list", "watch", "delete"]
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5535,21 +5516,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: release-name-pre-delete
-subjects:
-- kind: ServiceAccount
-  name: release-name-pre-delete
-  namespace: union
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
@@ -7410,35 +7376,6 @@ spec:
       command: ["sh"]
       args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
   restartPolicy: Never
-
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-spec:
-  ttlSecondsAfterFinished: 120
-  template:
-    spec:
-      serviceAccountName: release-name-pre-delete
-      restartPolicy: Never
-      containers:
-      - name: cleanup
-        image: bitnami/kubectl:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          kubectl delete knativeserving \
-            union-operator-serving \
-            --ignore-not-found=true \
-            -n union
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
