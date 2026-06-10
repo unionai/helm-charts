@@ -15,37 +15,22 @@ global:
   ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
-  # --- DP entrypoint (CP -> DP) ---
-  DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
-  DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
-
-  # --- Leasor: attached dataplane cluster identifier ---
-  # TEMPORARY. The ship-today way to tell leasor which dataplane cluster its
-  # queues should target. A future control-plane queue/cluster CRUD service
-  # will own this state and deprecate this knob — plan to migrate when that
-  # lands.
+  # --- Leasor: attached dataplane cluster identifier (DEPRECATED) ---
+  # Kept for single-DP backward compatibility. New installs should configure
+  # services.leasor.configMap.leasor.queueSync.queues directly — see that
+  # section below for the multi-cluster shape.
   #
-  # The cluster identifier — same value the corresponding dataplane chart
-  # install sets in its own global.CLUSTER_NAME, which is what leaseworker
-  # reports on StreamLeases and what leasor matches queues against. The
-  # common self-hosted shape is one CP fronting one DP (often intracluster on
-  # the same K8s), so a single string fits. For the rare multi-DP case,
-  # override services.leasor.configMap.leasor.queueSync.queues directly to
-  # enumerate every dataplane.
-  #
-  # Used to auto-generate services.leasor.configMap.leasor.queueSync.queues
-  # (one `default` queue + one per-cluster queue, both containing this name).
-  # No reasonable default — set explicitly.
-  #
-  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
-  # flyteadmin's routing registry (name + endpoint + auth per cluster) used
-  # by RandomClusterSelector for v1 execution dispatch; populate that only
-  # when you actually need flyteadmin v1 multi-cluster routing. This knob is
-  # leasor-only and just carries a name. Empty by default; per-env overlay
-  # populates from the dataplane's cluster_name. The leasor configmap
-  # auto-queue-gen is a no-op when this is empty (see
-  # templates/leasor/configmap.yaml).
+  # When set AND services.leasor.configMap.leasor.queueSync.queues is empty,
+  # templates/leasor/configmap.yaml auto-generates a 2-entry queue list:
+  #   - { name: default,                clusters: [<this value>] }
+  #   - { name: <DATAPLANE_CLUSTER_NAME>, clusters: [<this value>] }
+  # No reasonable default; empty disables auto-gen.
   DATAPLANE_CLUSTER_NAME: ""
+
+  # NOTE: global.DATAPLANE_HOST + global.DATAPLANE_ENDPOINT were removed in
+  # the Phase 2 DP self-registration cleanup. CP→DP routing now reads the
+  # DP's self-reported endpoint from cluster.Spec.ConnectionConfig (the
+  # operator self-reports on every UpdateStatus). See cloud #16362.
 
   # --- Images ---
   # Customer-facing registry default; internal deployments override to private ECR/GCR.
@@ -1305,11 +1290,57 @@ services:
   # router is needed — leasor rides the generic services renderer like queue.
   #
   # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
-  # services renderer. templates/leasor/configmap.yaml builds it instead so
-  # that queueSync.queues can be auto-generated from
-  # global.DATAPLANE_CLUSTER_NAME (one `default` queue + one per-cluster
-  # queue, both containing that name). To bypass auto-generation entirely,
-  # set configMap.leasor.queueSync.queues below explicitly.
+  # services renderer. templates/leasor/configmap.yaml builds it instead so it
+  # can inject per-queue defaults onto each entry of queueSync.queues — see
+  # below for the supported shape and the QueueSpec field reference.
+  #
+  # queueSync.queues — list of leasor.config.QueueSpec entries
+  # (cloud/leasor/config/config.go:121). Each entry routes Actions queued
+  # under (org, project, domain) to one or more dataplane clusters.
+  #
+  # Per-entry defaults (template-injected when the field is absent):
+  #
+  #   org:               global.UNION_ORG     (single-tenant CP convention)
+  #   name:              "default"
+  #   priority:          50  (PriorityMedium — 0=Low, 50=Medium, 100=High)
+  #   fairnessAlgorithm: 1   (FairnessRoundRobin; 0=None=FIFO, 2=Shuffle)
+  #
+  # Caller-owned fields:
+  #
+  #   clusters:         REQUIRED — list of DP cluster_name strings this queue
+  #                     dispatches to. ["*"] matches every connected DP.
+  #
+  # Optional fields (omit unless you need to scope or shape the queue):
+  #
+  #   project:          scope to a single Flyte project (default: "" = all)
+  #   domain:           scope to a single Flyte domain (default: "" = all)
+  #   status:           0=Active (default), 1=Draining, 2=Drained
+  #   maxDepth:         max queued leases (0 = unlimited)
+  #   maxActionConcurrency: max concurrent in-flight actions (0 = unlimited)
+  #   maxRunConcurrency:    max concurrent runs (0 = unlimited)
+  #
+  # Single-DP example (matches what DATAPLANE_CLUSTER_NAME auto-generated):
+  #
+  #   services:
+  #     leasor:
+  #       configMap:
+  #         leasor:
+  #           queueSync:
+  #             source: static
+  #             queues:
+  #               - { clusters: [dp-1] }            # → name=default
+  #               - { name: dp-1, clusters: [dp-1] }
+  #
+  # Multi-DP example (one default that fans out + one per-cluster):
+  #
+  #   queues:
+  #     - { clusters: [dp-east, dp-west] }
+  #     - { name: dp-east, clusters: [dp-east] }
+  #     - { name: dp-west, clusters: [dp-west] }
+  #
+  # Backward compat: if queues is empty AND global.DATAPLANE_CLUSTER_NAME
+  # is set, the template auto-generates the 2-entry single-DP shape. This
+  # path is DEPRECATED — migrate to explicit `queues` above.
   leasor:
     fullnameOverride: "leasor"
     replicaCount: 1
