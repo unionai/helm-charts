@@ -1074,7 +1074,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     account_name {{ tpl . $ }}
 {{- end }}
     auth_type             key
-{{- with .Values.storage.custom.stow.config.key }}
+{{/* fluent-bit's azure_blob output only supports key/sas auth (no workload
+     identity), so it needs its own shared key independent of the executor's
+     stow config. Prefer a dedicated fluentbit.azureBlobSharedKey (which may be
+     a ${ENV} placeholder expanded by fluent-bit at runtime); fall back to the
+     stow config key for backward compatibility. */}}
+{{- $fbSharedKey := .Values.storage.custom.stow.config.key }}
+{{- if .Values.fluentbit.azureBlobSharedKey }}
+{{- $fbSharedKey = .Values.fluentbit.azureBlobSharedKey }}
+{{- end }}
+{{- with $fbSharedKey }}
     shared_key {{ tpl . $ }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
