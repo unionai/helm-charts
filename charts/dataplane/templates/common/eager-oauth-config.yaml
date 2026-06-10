@@ -13,7 +13,15 @@ Carries app.kubernetes.io/managed-by=union-operator AND the
 union.ai/mirrored-from-namespace=<operator NS> annotation so the
 mirror's cleanup query scopes copies to this install.
 */}}
+{{/*
+The endpoint, insecure, and insecureSkipVerify values mirror the
+dataplane's own CP-connection wiring (config.union.connection on the
+chart). For selfmanaged envs with self-signed CP certs, terraform sets
+insecureSkipVerify: true; the chart default is false (managed CP with
+valid cert).
+*/}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+{{- $cpConn := default dict (default dict .Values.config.union).connection -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -25,8 +33,10 @@ metadata:
 data:
   config.yaml: |
     admin:
-      endpoint: {{ tpl .Values.host . | quote }}
+      endpoint: {{ include "dataplane.cp.endpoint" . | quote }}
+      insecure: {{ default false $cpConn.insecure }}
+      insecureSkipVerify: {{ default false $cpConn.insecureSkipVerify }}
       clientId: {{ .Values.secrets.eagerClientCreds.clientId | default "" | quote }}
       clientSecretLocation: {{ .Values.mirroring.eagerOAuth.secretMountPath | default "/etc/flyte/credentials/client_secret" | quote }}
-      authType: ClientSecret
+      authType: ClientCredentials
 {{- end }}
