@@ -1,12 +1,30 @@
 #!/usr/bin/env bash
 #
-# Re-vendor Knative Operator + Serving CRDs at the version pinned in
-# ../VERSION. Pulls from two upstream releases:
+# Re-vendor the two Knative Operator-type CRDs (`knativeservings` and
+# `knativeeventings` in the `operator.knative.dev` group) at the version
+# pinned in ../VERSION. Pulled from `knative/operator`'s `operator.yaml`
+# release manifest (which also bundles RBAC + a Deployment, all filtered
+# out — we only keep CRD documents).
 #
-#   - knative/serving:  serving-crds.yaml  (12 CRDs: serving + networking + autoscaling + caching)
-#   - knative/operator: operator.yaml      (2 CRDs: knativeservings, knativeeventings — filtered from the full operator manifest)
+# Knative *serving* CRDs (12 in groups *.serving.knative.dev,
+# *.networking.internal.knative.dev, *.autoscaling.internal.knative.dev,
+# *.caching.internal.knative.dev) are NOT vendored here — they live in
+# `crds/dataplane/` because the dataplane chart needs them in both
+# zero-trust mode (subchart disabled) and legacy mode (subchart enabled),
+# so the parent chart is the right home. This dir holds only the 2 Operator-
+# type CRDs the knative-operator subchart needs on top of those.
 #
-# Writes one `crd-<name>.yaml` per CRD (verbatim from the upstream releases).
+# When the knative-operator subchart itself is eventually retired (zero-trust
+# becomes the only mode), this entire dir + charts/knative-operator/crds/
+# can be deleted — these 2 CRDs have no consumer outside the subchart.
+#
+# Writes one `crd-<name>.yaml` per CRD to TWO byte-identical locations:
+#
+#   - crds/knative-operator/         → SSA-install mirror (--skip-crds path /
+#                                      dedicated ArgoCD Application)
+#   - charts/knative-operator/crds/  → consumed by Helm's chart `crds/`
+#                                      convention so the subchart auto-installs
+#                                      them on a default `helm install`
 #
 # Bumping Knative:
 #   1. Edit ./VERSION (e.g. v1.17.0).
@@ -14,8 +32,9 @@
 #   3. Review diff, run `make check-vendored-crds`, commit.
 #
 # Usage:
-#   ./scripts/sync.sh                     # default: writes to parent dir
-#   ./scripts/sync.sh /path/to/out/dir    # writes to a custom dir (used by check.sh)
+#   ./scripts/sync.sh                                  # default: writes to vendored dir + chart dir
+#   ./scripts/sync.sh /path/to/out/dir                 # overrides vendored-mirror output (chart dir still default)
+#   ./scripts/sync.sh /path/to/out/dir /chart/out/dir  # overrides both (used by check.sh)
 
 set -euo pipefail
 
@@ -25,6 +44,7 @@ REPO_ROOT="$(cd "${CRD_DIR}/../.." && pwd)"
 
 VERSION_FILE="${CRD_DIR}/VERSION"
 OUT_DIR="${1:-${CRD_DIR}}"
+CHART_OUT_DIR="${2:-${REPO_ROOT}/charts/knative-operator/crds}"
 
 command -v yq   >/dev/null || { echo "ERROR: yq not found in PATH" >&2; exit 1; }
 command -v curl >/dev/null || { echo "ERROR: curl not found in PATH" >&2; exit 1; }
@@ -35,60 +55,55 @@ if [[ -z "${VERSION}" ]]; then
   exit 1
 fi
 
-echo "==> Vendoring Knative CRDs at version ${VERSION}"
-echo "    output dir: ${OUT_DIR}"
+echo "==> Vendoring Knative Operator-type CRDs at version ${VERSION}"
+echo "    vendored mirror dir: ${OUT_DIR}"
+echo "    chart crds dir:      ${CHART_OUT_DIR}"
 
 mkdir -p "${OUT_DIR}"
+mkdir -p "${CHART_OUT_DIR}"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "${TMPDIR}"' EXIT
 
-# 1) knative/serving release ships a CRD-only file.
-curl -fsSL "https://github.com/knative/serving/releases/download/knative-${VERSION}/serving-crds.yaml" \
-  > "${TMPDIR}/serving-crds.yaml"
-
-# 2) knative/operator's operator.yaml bundles CRDs, Deployment, RBAC, etc.
-#    We only want the CRD documents.
+# knative/operator's operator.yaml bundles CRDs, Deployment, RBAC, etc.
+# We only want the CRD documents — and of those, only the 2 in the
+# `operator.knative.dev` group (knativeservings, knativeeventings). The
+# manifest also includes serving CRDs duplicated from knative/serving;
+# those live in crds/dataplane/ and are filtered out here to avoid
+# double-vendoring.
 curl -fsSL "https://github.com/knative/operator/releases/download/knative-${VERSION}/operator.yaml" \
   > "${TMPDIR}/operator-full.yaml"
-yq eval-all 'select(.kind == "CustomResourceDefinition")' "${TMPDIR}/operator-full.yaml" \
-  > "${TMPDIR}/operator-crds.yaml"
+yq eval-all '
+  select(.kind == "CustomResourceDefinition" and .spec.group == "operator.knative.dev")
+' "${TMPDIR}/operator-full.yaml" > "${TMPDIR}/operator-crds.yaml"
 
-# Wipe existing vendored CRDs so removals upstream propagate.
+# Wipe existing CRDs in both output dirs so removals upstream propagate.
 rm -f "${OUT_DIR}"/crd-*.yaml
+rm -f "${CHART_OUT_DIR}"/crd-*.yaml
 
 count=0
-write_crd_docs() {
-  local src="$1"
-  local source_label="$2"
+source_label="knative/operator release knative-${VERSION}/operator.yaml (operator.knative.dev CRDs filtered)"
+doc_count="$(yq eval-all '. | document_index' "${TMPDIR}/operator-crds.yaml" | sort -nu | tail -1)"
 
-  local doc_count
-  doc_count="$(yq eval-all '. | document_index' "${src}" | sort -nu | tail -1)"
+for i in $(seq 0 "${doc_count}"); do
+  kind="$(yq eval-all "select(document_index == ${i}) | .kind // \"\"" "${TMPDIR}/operator-crds.yaml")"
+  [[ "${kind}" == "CustomResourceDefinition" ]] || continue
 
-  for i in $(seq 0 "${doc_count}"); do
-    local kind
-    kind="$(yq eval-all "select(document_index == ${i}) | .kind // \"\"" "${src}")"
-    if [[ "${kind}" != "CustomResourceDefinition" ]]; then continue; fi
+  crd_name="$(yq eval-all "select(document_index == ${i}) | .metadata.name" "${TMPDIR}/operator-crds.yaml")"
+  [[ -n "${crd_name}" && "${crd_name}" != "null" ]] || continue
 
-    local crd_name
-    crd_name="$(yq eval-all "select(document_index == ${i}) | .metadata.name" "${src}")"
-    if [[ -z "${crd_name}" || "${crd_name}" == "null" ]]; then continue; fi
+  doc="$(yq eval-all "select(document_index == ${i})" "${TMPDIR}/operator-crds.yaml")"
 
-    local doc
-    doc="$(yq eval-all "select(document_index == ${i})" "${src}")"
+  payload="$(
+    echo "# AUTO-GENERATED — do not edit. Run \`make vendor-crds\` from the repo root to regenerate."
+    echo "# Source: ${source_label}"
+    echo "${doc}"
+  )"
 
-    local dst="${OUT_DIR}/crd-${crd_name}.yaml"
-    {
-      echo "# AUTO-GENERATED — do not edit. Run scripts/sync.sh in this directory to regenerate."
-      echo "# Source: ${source_label} ${VERSION}"
-      echo "${doc}"
-    } > "${dst}"
+  echo "${payload}" > "${OUT_DIR}/crd-${crd_name}.yaml"
+  echo "${payload}" > "${CHART_OUT_DIR}/crd-${crd_name}.yaml"
 
-    count=$((count + 1))
-  done
-}
+  count=$((count + 1))
+done
 
-write_crd_docs "${TMPDIR}/serving-crds.yaml"   "knative/serving release knative-${VERSION}/serving-crds.yaml"
-write_crd_docs "${TMPDIR}/operator-crds.yaml"  "knative/operator release knative-${VERSION}/operator.yaml (CRDs filtered)"
-
-echo "==> Wrote ${count} CRD manifests"
+echo "==> Wrote ${count} operator CRD manifests to each output dir"

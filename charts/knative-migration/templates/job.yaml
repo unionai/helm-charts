@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  backoffLimit: {{ .Values.job.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.job.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.job.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "knative-migration.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "knative-migration.fullname" . }}
+      restartPolicy: Never
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: cleanup
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: NS
+              value: {{ .Release.Namespace | quote }}
+            - name: CR
+              value: {{ .Values.knativeServingName | quote }}
+            - name: ADOPTION_ENABLED
+              value: {{ .Values.adoption.enabled | quote }}
+            - name: TARGET_RELEASE
+              value: {{ include "knative-migration.adoption.targetRelease" . | quote }}
+            - name: TARGET_NAMESPACE
+              value: {{ include "knative-migration.adoption.targetNamespace" . | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          command:
+            - /bin/sh
+            - -c
+            - |
+{{ .Files.Get "files/cleanup.sh" | indent 14 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,49 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- $shards := (include "actions.shardsConfig" . | fromJson).partitions -}}
+{{- $isSharded := gt (len $shards) 1 -}}
+{{- range $idx, $shard := $shards }}
+{{- $hash := "" -}}
+{{- $name := "" -}}
+{{- if $isSharded -}}
+{{- $hash = include "actions.shardHash" (dict "Root" $ "shardIndex" $idx) -}}
+{{- $name = printf "%s-%d-%s" (include "actions.fullname" $) $idx $hash -}}
+{{- else -}}
+{{- $name = include "actions.fullname" $ -}}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ include "actions.namespace" $ }}
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    {{- include "actions.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: shard
+    {{- if $isSharded }}
+    shard-index: "{{ $idx }}"
+    shard-hash: {{ $hash }}
+    {{- end }}
+spec:
+  type: {{ $.Values.actions.service.type }}
+  ports:
+    - name: grpc
+      port: {{ if $isSharded }}8080{{ else }}{{ $.Values.actions.service.grpcport }}{{ end }}
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: {{ if $isSharded }}8089{{ else }}{{ $.Values.actions.service.httpport }}{{ end }}
+      protocol: TCP
+      targetPort: 8089
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    {{- include "actions.selectorLabels" $ | nindent 4 }}
+    {{- if $isSharded }}
+    shard-index: "{{ $idx }}"
+    shard-hash: {{ $hash }}
+    {{- end }}
+{{- end }}
+{{- end }}

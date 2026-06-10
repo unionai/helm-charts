@@ -1,87 +1,44 @@
-# ============================================================================
-# Union Dataplane Configuration for AWS
-# ============================================================================
-# This file provides a production-ready template for deploying Union dataplane
-# on AWS EKS. Replace the placeholder values below with your actual configuration.
-#
-# For more details, see: https://docs.union.ai/deployment/
-# ============================================================================
-
-# Before deployment, replace these placeholders in the globals section below.
-# The globals section makes these values accessible to both the chart and
-# future subcharts, ensuring consistent configuration across all components.
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 1: Global Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# These values are accessible to both the chart and all potential subcharts.
+# Union Dataplane — AWS overlay.
+# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
+# annotations, not by this overlay.
 
 global:
+  # --- Identity ---
+  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks
+  CLUSTER_NAME: ""              # Unique cluster identifier
+  ORG_NAME: ""                  # Organization name (must match controlplane)
 
-  # 1. UNION_CONTROL_PLANE_HOST - Union control plane hostname
-  #    Format: "hostname" (no protocol prefix for standard BYOC)
-  #    Example: "mycompany.unionai.cloud" or "union.example.com"
-  #    Source: Provided by Union team for BYOC deployments
-  UNION_CONTROL_PLANE_HOST: ""
+  # --- Storage ---
+  METADATA_BUCKET: ""           # S3 bucket for workflow metadata
+  FAST_REGISTRATION_BUCKET: ""  # S3 bucket for code uploads
 
-  # 2. CLUSTER_NAME - Unique cluster identifier
-  #    Format: Lowercase alphanumeric with hyphens
-  #    Example: "prod-us-east-1" or "staging-cluster"
-  #    Note: Must be unique within your organization
-  CLUSTER_NAME: ""
-
-  # 3. ORG_NAME - Organization name
-  #    Format: RFC 1123 compliant (lowercase alphanumeric and hyphens)
-  #    Example: "acme-corp" or "my-organization"
-  #    Source: Provided by Union team
-  ORG_NAME: ""
-
-  # 4. CLIENT_ID - Client ID for dataplane authentication
-  #    Format: String provided by Union team
-  #    Example: "dataplane-prod-client"
-  #    Source: Provided by Union team
-  CLIENT_ID: ""
-
-  # 5. METADATA_BUCKET - S3 bucket for workflow metadata
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-metadata-bucket"
-  #    Note: Bucket must exist before deployment
-  METADATA_BUCKET: ""
-
-  # 6. S3_FAST_REGISTRATION_BUCKET - S3 bucket for code uploads
-  #    Format: Valid S3 bucket name
-  #    Example: "my-union-fast-registration-bucket"
-  #    Note: Can be same as metadata bucket or separate
-  FAST_REGISTRATION_BUCKET: ""
-
-  # 1. AWS_ACCOUNT_ID - AWS account ID (used for ECR registry URL)
-  #    Format: 12-digit AWS account ID
-  #    Example: "123456789012"
-  AWS_ACCOUNT_ID: ""
-
-  # 2. AWS_REGION - AWS region for S3 buckets
-  #    Format: AWS region code
-  #    Example: "us-east-1", "us-west-2", "eu-west-1"
+  # --- AWS ---
+  AWS_ACCOUNT_ID: ""            # 12-digit account ID (used for ECR registry URL)
   AWS_REGION: ""
 
-  # 3. BACKEND_IAM_ROLE_ARN - IAM role for Union backend services
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-backend-role"
-  #    Permissions: S3 access, ECR (if private images)
-  BACKEND_IAM_ROLE_ARN: ""
+  # --- AWS IAM (IRSA) ---
+  # Format: arn:aws:iam::<account>:role/<role-name>
+  BACKEND_IAM_ROLE_ARN: ""      # IAM role for Union backend services
+  WORKER_IAM_ROLE_ARN: ""       # IAM role for workflow execution pods
 
-  # 3. WORKER_IAM_ROLE_ARN - IAM role for workflow execution pods
-  #    Format: Full ARN
-  #    Example: "arn:aws:iam::123456789012:role/union-worker-role"
-  #    Permissions: S3 access, AWS services used by workflows
-  WORKER_IAM_ROLE_ARN: ""
+  # --- Images ---
+  IMAGE_REPOSITORY_PREFIX: "public.ecr.aws/p0i0a9q8"
 
-  # ----------------------------------------------------------------------------
-  # Note: For self-hosted intra-cluster deployments (control plane and dataplane
-  # in the same cluster), use values.aws.selfhosted-intracluster.yaml instead.
-  # That file is self-contained and includes all necessary configuration.
-  # ----------------------------------------------------------------------------
+  # --- DP -> CP routing ---
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
+
+  # DEPRECATED — long-term plan is to remove this once propeller injects
+  # OAuth credentials into task pods (see chart MIGRATION.md). Until then it
+  # remains as the auth-less escape hatch task pods need (their queue events
+  # bypass nginx auth via this endpoint). Empty falls through to
+  # CONTROLPLANE_GRPC_ENDPOINT; for intracluster set the queue Service URL
+  # via examples/values.aws.intracluster.yaml.
+  QUEUE_GRPC_ENDPOINT: ""
+
+  # --- Service-to-Service OAuth2 ---
+  AUTH_CLIENT_ID: ""            # client_credentials client ID
+  OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
 # SECTION 2: Core Identity Configuration (REQUIRED)
@@ -106,13 +63,15 @@ storage:
   enableMultiContainer: true
 
 # ----------------------------------------------------------------------------
-# Image Builder Authentication (OPTIONAL)
+# SECTION 3.5: Image Configuration
 # ----------------------------------------------------------------------------
-# By default, the image builder uses authenticationType: "noop". Uncomment and
-# set "aws" if you want the builder to authenticate to ECR via the AWS provider
-# credential chain (IRSA / EC2 instance profile).
-# imageBuilder:
-#   authenticationType: aws
+# Image configuration for Union dataplane components
+# Images are pulled from Union's public ECR registry
+
+image:
+  union:
+    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
+    # tag will be set from Chart.AppVersion or can be overridden
 
 # ----------------------------------------------------------------------------
 # SECTION 4: IAM Roles (REQUIRED for AWS)
@@ -128,33 +87,220 @@ additionalServiceAccountAnnotations:
 userRoleAnnotationKey: eks.amazonaws.com/role-arn
 userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
-# Identify the AWS Secrets Manager backend so the operator can report a canonical
-# secret store identity to the control plane (used for cluster-pool drift detection).
-# These fields are read only when proxy.secretManager.type is AWS.
+# ----------------------------------------------------------------------------
+# SECTION 2: Cluster Resource Sync Configuration
+# ----------------------------------------------------------------------------
+# Syncs Kubernetes resources (namespaces, service accounts, quotas) with
+# the control plane using intra-cluster communication.
+
+clusterresourcesync:
+  config:
+    union:
+      # Service-to-service OAuth2 (client_credentials grant) for outgoing calls
+      # to the control plane. Connection wiring (host, TLS) comes from base
+      # values.yaml via the dataplane.cp.endpoint helper.
+      auth:
+        enable: true
+        type: "ClientSecret"
+        clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+        clientSecretLocation: "/etc/union/secret/client_secret"
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: "5m"
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+
+# ----------------------------------------------------------------------------
+# Core Service Configuration
+# ----------------------------------------------------------------------------
+
 config:
+  sharedService:
+    security:
+      singleTenantOrgID: '{{ .Values.global.ORG_NAME }}'
+
+  # Selfmanaged auth shape: client_credentials grant; clientId from a global
+  # so the env layer can inject the AUTH_CLIENT_ID without forking the chart.
+  admin:
+    admin:
+      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+      clientSecretLocation: "/etc/union/secret/client_secret"
+
+  catalog:
+    catalog-cache:
+      use-admin-auth: false
+
+  k8s:
+    plugins:
+      k8s:
+        default-env-vars:
+          - _U_EP_OVERRIDE: '{{ include `dataplane.cp.queueEndpoint` . }}'
+          - _U_INSECURE: false
+          - _U_INSECURE_SKIP_VERIFY: false
+
+  # Operator acquires OAuth2 tokens via client_credentials and sends them on
+  # outgoing calls to the control plane. Connection wiring (host, TLS) is in
+  # base values.yaml via the dataplane.cp.endpoint helper.
+  union:
+    auth:
+      enable: true
+      type: "ClientSecret"
+      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+      clientSecretLocation: "/etc/union/secret/client_secret"
+      authorizationMetadataKey: "flyte-authorization"
+      tokenRefreshWindow: "5m"
+
+  # Identify the AWS Secrets Manager backend so the operator can report a canonical
+  # secret store identity to the control plane (used for cluster-pool drift detection).
+  # These fields are read only when proxy.secretManager.type is AWS.
   proxy:
     smConfig:
       awsConfig:
         account: '{{ .Values.global.AWS_ACCOUNT_ID }}'
         region: '{{ .Values.global.AWS_REGION }}'
 
+  operator:
+    # Disable Cloudflare tunnel (not needed for intra-cluster)
+    enableTunnelService: false
+
+    # Disable billable usage collector (typically for Union-managed control planes)
+    billableUsageCollector:
+      enabled: false
+
 # ----------------------------------------------------------------------------
-# SECTION 5: Authentication Secrets (REQUIRED)
+# Executor Configuration
 # ----------------------------------------------------------------------------
-# Client credentials for authenticating with the Union control plane.
-# These will be provided by the Union team for managed control planes.
+# Configure how workflow tasks are executed.
+
+executor:
+  config:
+    unionAuth:
+      # --- API key injection ---
+      # Injects the EAGER_API_KEY secret into task pods
+      # for authenticated eager-mode execution.
+      injectSecret: true
+      secretName: "EAGER_API_KEY"
+
+# ----------------------------------------------------------------------------
+# Ingress Configuration
+# ----------------------------------------------------------------------------
+# Configure ingress for external access to dataplane services.
+
+# Extra Kubernetes objects to be deployed alongside Union
+extraObjects: []
+
+# Ingress configuration for Union dataplane and serving
+ingress:
+  dataproxy:
+    class: "dataplane"
+  enabled: true
+
+  # Ingress architecture for serving will change in the future.
+  # This is a temporary configuration for intra-cluster deployments.
+  serving:
+    # Knative wildcard hostname matching for *.apps.<CONTROLPLANE_HOST>.
+    # CONTROLPLANE_HOST is contractually a bare hostname (no port).
+    hostOverride: '*.apps.{{ .Values.global.CONTROLPLANE_HOST }}'
+    # Assume the same ingress class as the dataproxy
+    class: "dataplane"
+
+# NGINX Ingress controller for dataplane
+ingress-nginx:
+  enabled: true
+
+  # Service name for the ingress controller
+  # This creates a service: "dataplane-nginx-controller"
+  # External traffic enters through this service
+  fullnameOverride: "dataplane-nginx"
+
+  controller:
+    service:
+      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
+      # Change to LoadBalancer or NodePort for external access
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
+
+    ingressClassResource:
+      # Ingress class name used in Ingress resources
+      name: "dataplane"
+
+# ----------------------------------------------------------------------------
+# Operator Configuration
+# ----------------------------------------------------------------------------
+
+operator:
+  # Disable Cloudflare tunnel (not needed for intra-cluster deployment)
+  enableTunnelService: false
+
+# ----------------------------------------------------------------------------
+# Monitoring Configuration
+# ----------------------------------------------------------------------------
+
+# kube-prometheus-stack monitoring subchart (selfhosted-intracluster specific).
+#
+# In selfhosted-intracluster mode, the controlplane and dataplane share a
+# single cluster. The controlplane chart owns the full monitoring stack
+# (operator, prometheus, grafana, kube-state-metrics, node-exporter).
+# In selfhosted-intracluster mode, the controlplane owns the full
+# kube-prometheus-stack (Prometheus operator, Prometheus, Grafana, etc.).
+# The DP does NOT enable the monitoring subchart (monitoring.enabled: false)
+# to avoid cluster-scoped resource conflicts (ClusterRole, webhooks, etc.).
+#
+# Union monitoring resources (ServiceMonitors, PrometheusRules, Dashboards)
+# are independent of the subchart and enabled by their own flags.
+# The CP Prometheus discovers them across namespaces via nil-selector config.
+#
+# To enable alerting rules (PrometheusRule alert groups), set
+# monitoring.alerting.enabled to true in your environment-specific
+# values overlay. This should be paired with AlertManager configuration
+# to route alerts to Grafana or another notification target.
+#
+# The full `monitoring:` block (kube-prometheus-stack subchart) is configured
+# at the bottom of this file under "Monitoring Configuration (AWS/EKS specific)".
+
+# Union-features Prometheus for metrics collection and cost tracking
+prometheus:
+  prometheusOperator:
+    admissionWebhooks:
+      # Disable admission webhooks by default
+      # Enable if you have cert-manager installed
+      enabled: false
+
+      # Optional: Enable webhooks with cert-manager
+      # enabled: true
+      # certManager:
+      #   enabled: true
+      #   issuerRef:
+      #     group: "cert-manager.io"
+      #     kind: "ClusterIssuer"
+      #     name: "selfsigned-issuer"
+
+      patch:
+        enabled: false
+
+# ----------------------------------------------------------------------------
+# Secrets Configuration
+# ----------------------------------------------------------------------------
 
 secrets:
   admin:
-    # Client ID for dataplane authentication
-    clientId: '{{ .Values.global.CLIENT_ID }}'
+    # --- OAuth secret configuration ---
+    # Mounts union-secret-auth K8s Secret with the client_secret into dataplane pods.
+    # Set create: false when using ExternalSecrets to provision the secret.
+    enable: true
+    create: false
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
+    clientSecret: "placeholder"
 
-    # Client secret for dataplane authentication (keep this secure!)
-    clientSecret: ""
+# ----------------------------------------------------------------------------
+# App Serving Configuration (Work in Progress)
+# ----------------------------------------------------------------------------
 
-    # Whether to create the Kubernetes secret
-    # Set to false if you manage secrets externally (e.g., via External Secrets Operator)
-    create: true
+serving:
+  auth:
+    # Disable authentication for serving (work in progress)
+    enabled: false
 
 # ----------------------------------------------------------------------------
 # SECTION 6: Logging Configuration (REQUIRED)
@@ -176,6 +322,8 @@ fluentbit:
 
 # DCGM Exporter
 dcgm-exporter:
+
+  # dcgm-exporter
   enabled: true
 
   # Configure AWS specific affinity
@@ -319,127 +467,26 @@ dcgm-exporter:
   #    tolerations to ensure it only runs on GPU nodes.
   # tolerations: []
 
-executor:
-  task_logs:
-    plugins:
-      # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-      logs:
-        cloudwatch-enabled: false
-        kubernetes-enabled: false
-        templates:
-          - displayName: Cloudwatch Logs
-            templateUris:
-              - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}'
-      k8s-array:
-        logs:
-          config:
-            cloudwatch-enabled: false
-            kubernetes-enabled: false
-            templates:
-              - displayName: Cloudwatch Logs
-                templateUris:
-                  - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}'
-      fasttask:
-        logs:
-          cloudwatch-enabled: false
-          kubernetes-enabled: false
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
-          templates:
-            - displayName: Cloudwatch Logs
-              templateUris:
-                - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-{{`{{.containerName}}`}}$3Fstart$3D{{`{{.taskStartTimeUnixMs}}`}}$26end$3D{{`{{.taskEndTimeUnixMs}}`}}'
-      dask:
-        # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-        logs:
-          # -- One option is to enable cloudwatch logging for EKS, update the region and log group accordingly
-          cloudwatch-enabled: false
-          kubernetes-enabled: false
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
-          templates:
-            - displayName: "Cloudwatch Logs"
-              scheme: TaskExecution
-              templateUris:
-                - 'https://{{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}.console.aws.amazon.com/cloudwatch/home?region={{ ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3") }}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-job-runner'
-            - displayName: Dask Dashboard
-              linkType: dashboard
-              scheme: TaskExecution
-              templateUris:
-                - "/dataplane/dask/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/status"
-      ray:
-        logs:
-          dynamic-log-links:
-            - vscode:
-                displayName: VSCode
-                linkType: ide
-                templateUris:
-                  - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.rayClusterName}}`}}-head/"
-          templates:
-            - displayName: "Ray Dashboard"
-              linkType: dashboard
-              scheme: TaskExecution
-              templateUris:
-                - "/dataplane/ray/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
-            - displayName: "Cloudwatch Logs (Ray All)"
-              scheme: TaskExecution
-              templateUris:
-                - 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask$3FlogStreamNameFilter$3Dkube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.executionName}}`}}-{{`{{.nodeID}}`}}-{{`{{.taskRetryAttempt}}`}}'
-      spark:
-        logs:
-          mixed:
-            cloudwatch-enabled: true
-            kubernetes-enabled: false
-            cloudwatch-template-uri: 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask/log-events/kube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}.cont-spark-kubernetes-driver'
-            dynamic-log-links:
-              - vscode:
-                  displayName: VSCode
-                  linkType: ide
-                  templateUris:
-                    - "/dataplane/pod/v1/generated_name/6060/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.podName}}`}}/"
-            templates:
-              - displayName: Spark Driver UI
-                linkType: dashboard
-                templateUris:
-                  - "/dataplane/spark/v1/generated_name/task/{{`{{.executionProject}}`}}/{{`{{.executionDomain}}`}}/{{`{{.executionName}}`}}/{{`{{.nodeID}}`}}/{{`{{.taskRetryAttempt}}`}}/{{.Values.clusterName}}/{{`{{.namespace}}`}}/{{`{{.taskProject}}`}}/{{`{{.taskDomain}}`}}/{{`{{.taskID}}`}}/{{`{{.taskVersion}}`}}/{{`{{.generatedName}}`}}/"
-          all-user:
-            cloudwatch-enabled: true
-            kubernetes-enabled: false
-            cloudwatch-template-uri: 'https://{{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}.console.aws.amazon.com/cloudwatch/home?region={{ternary .Values.storage.s3.region "us-east-2" (eq .Values.storage.type "s3")}}#logsV2:log-groups/log-group/$252Funion$252Fcluster-{{.Values.clusterName}}$252Ftask$3FlogStreamNameFilter$3Dkube.namespace-{{`{{.namespace}}`}}.pod-{{`{{.podName}}`}}'
-        spark-config-default:
-          # We override the default credentials chain provider for Hadoop so that
-          # it can use the serviceAccount based IAM role or ec2 metadata based.
-          # This is more in line with how AWS works
-          - spark.hadoop.fs.s3a.aws.credentials.provider: "com.amazonaws.auth.DefaultAWSCredentialsProviderChain"
-          - spark.eventLog.enabled: "true"
-          - spark.eventLog.dir: "{{.Values.storage.sparkBucketPrefix}}/spark-events"
-          - spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version: "2"
-          - spark.kubernetes.allocation.batch.size: "50"
-          - spark.hadoop.fs.s3a.acl.default: "BucketOwnerFullControl"
-          - spark.hadoop.fs.s3n.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
-          - spark.hadoop.fs.AbstractFileSystem.s3n.impl: "org.apache.hadoop.fs.s3a.S3A"
-          - spark.hadoop.fs.s3.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
-          - spark.hadoop.fs.AbstractFileSystem.s3.impl: "org.apache.hadoop.fs.s3a.S3A"
-          - spark.hadoop.fs.s3a.impl: "org.apache.hadoop.fs.s3a.S3AFileSystem"
-          - spark.hadoop.fs.AbstractFileSystem.s3a.impl: "org.apache.hadoop.fs.s3a.S3A"
-          - spark.hadoop.fs.s3a.multipart.threshold: "536870912"
-          - spark.blacklist.enabled: "true"
-          - spark.blacklist.timeout: "5m"
-          - spark.task.maxfailures: "8"
-          - spark.ui.proxyRedirectUri: "{{.Values.cloudUrl}}"
-          - spark.kubernetes.submission.connectionTimeout: "30000"
-          - spark.kubernetes.submission.requestTimeout: "30000"
-          - spark.kubernetes.driver.connectionTimeout: "30000"
-          - spark.kubernetes.driver.requestTimeout: "30000"
-        spark-history-server-url: "{{.Values.cloudUrl}}/spark-history-server/org/{{.Release.Namespace}}/cluster/{{.Values.clusterName}}"
+
+# ----------------------------------------------------------------------------
+# Image Builder (BuildKit) Configuration
+# ----------------------------------------------------------------------------
+# Rootless buildkit requires the kernel sysctl user.max_user_namespaces > 0.
+# EKS managed node groups and Auto Mode nodes do not set this by default,
+# so rootless buildkit fails with "no space left on device" (ENOSPC from the
+# kernel when user namespace creation is denied). Use privileged mode instead.
+imageBuilder:
+  # Image builder defaults to authenticationType: "noop". Uncomment to
+  # authenticate to ECR via the AWS provider credential chain
+  # (IRSA / EC2 instance profile).
+  # authenticationType: aws
+  buildkit:
+    rootless: false
+
+flytepropeller: {}
+
+flytepropellerwebhook: {}
+
 
 # ----------------------------------------------------------------------------
 # Monitoring Configuration (AWS/EKS specific)
@@ -447,9 +494,13 @@ executor:
 
 # EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
 # Their metrics endpoints are not accessible from within the cluster.
+# -- Control plane namespace for cross-namespace RBAC (secretsWatcher).
+controlplaneNamespace: "union-cp"
+
 # Disable scraping and alerting rules for these components to avoid
 # false-positive TargetDown and *Down alerts.
 monitoring:
+  enabled: false
   kubeControllerManager:
     enabled: false
   kubeScheduler:

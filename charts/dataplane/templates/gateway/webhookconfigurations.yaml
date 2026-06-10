@@ -1,0 +1,361 @@
+{{- if .Values.zero_trust.enabled }}
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: config.webhook.serving.knative.dev
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.knativeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+webhooks:
+  - admissionReviewVersions: ["v1", "v1beta1"]
+    clientConfig:
+      service:
+        name: webhook
+        namespace: {{ .Release.Namespace }}
+    failurePolicy: Ignore
+    sideEffects: None
+    name: config.webhook.serving.knative.dev
+    objectSelector:
+      matchExpressions:
+        - key: app.kubernetes.io/name
+          operator: In
+          values: ["knative-serving"]
+        - key: app.kubernetes.io/component
+          operator: In
+          values: ["autoscaler", "controller", "logging", "networking", "observability", "tracing", "net-certmanager"]
+    timeoutSeconds: 10
+---
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: webhook.serving.knative.dev
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.knativeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+webhooks:
+  - admissionReviewVersions: ["v1", "v1beta1"]
+    clientConfig:
+      service:
+        name: webhook
+        namespace: {{ .Release.Namespace }}
+    failurePolicy: Fail
+    sideEffects: None
+    name: webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs) from this
+    # fail-closed webhook. It is created in the same release as the webhook's
+    # backend, so on a cold zero-trust install the webhook Service has no Ready
+    # endpoints / no caBundle yet and a fail-closed admission call deadlocks the
+    # install -- the cert's admission depends on the very webhook it bootstraps.
+    #
+    # matchConditions (CEL) keys on the object's immutable identity, NOT a label,
+    # so it is not tenant-bypassable. The Knative serving webhook reconciler
+    # rebuilds .rules/.namespaceSelector/.caBundle on every reconcile but never
+    # touches .matchConditions, so this survives reconciliation (verified against
+    # knative.dev/pkg and empirically on-cluster). matchConditions is GA in k8s
+    # 1.30+ and beta/default-on in 1.28-1.29 (this chart's kubeVersion floor is
+    # 1.28).
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == '{{ .Release.Namespace }}' && request.name == 'routing-serving-certs')"
+    timeoutSeconds: 10
+    rules:
+      - apiGroups:
+          - autoscaling.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - metrics
+          - metrics/status
+        scope: "*"
+      - apiGroups:
+          - autoscaling.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - podautoscalers
+          - podautoscalers/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - certificates
+          - certificates/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - ingresses
+          - ingresses/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - serverlessservices
+          - serverlessservices/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - configurations
+          - configurations/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - revisions
+          - revisions/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - routes
+          - routes/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - services
+          - services/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1beta1
+        operations:
+          - CREATE
+          - UPDATE
+        resources:
+          - domainmappings
+          - domainmappings/status
+        scope: "*"
+---
+# Copyright 2020 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: validation.webhook.serving.knative.dev
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.knativeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: webhook
+webhooks:
+  - admissionReviewVersions: ["v1", "v1beta1"]
+    clientConfig:
+      service:
+        name: webhook
+        namespace: {{ .Release.Namespace }}
+    failurePolicy: Fail
+    sideEffects: None
+    name: validation.webhook.serving.knative.dev
+    # Exempt ONLY the bootstrap Certificate (routing-serving-certs). See the
+    # matching note on webhook.serving.knative.dev above for the full rationale.
+    matchConditions:
+      - name: exclude-bootstrap-routing-cert
+        expression: "!(request.resource.group == 'networking.internal.knative.dev' && request.resource.resource == 'certificates' && request.namespace == '{{ .Release.Namespace }}' && request.name == 'routing-serving-certs')"
+    timeoutSeconds: 10
+    rules:
+      - apiGroups:
+          - autoscaling.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - metrics
+          - metrics/status
+        scope: "*"
+      - apiGroups:
+          - autoscaling.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - podautoscalers
+          - podautoscalers/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - certificates
+          - certificates/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - ingresses
+          - ingresses/status
+        scope: "*"
+      - apiGroups:
+          - networking.internal.knative.dev
+        apiVersions:
+          - v1alpha1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - serverlessservices
+          - serverlessservices/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - configurations
+          - configurations/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - revisions
+          - revisions/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - routes
+          - routes/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - services
+          - services/status
+        scope: "*"
+      - apiGroups:
+          - serving.knative.dev
+        apiVersions:
+          - v1beta1
+        operations:
+          - CREATE
+          - UPDATE
+          - DELETE
+        resources:
+          - domainmappings
+          - domainmappings/status
+        scope: "*"
+{{- end }}

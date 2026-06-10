@@ -1,0 +1,21 @@
+knative-migration {{ .Chart.Version }} installed into namespace "{{ .Release.Namespace }}".
+
+This chart runs a one-shot Job ({{ include "knative-migration.fullname" . }})
+that prepares the cluster for the zero-trust dataplane upgrade:
+
+  - Deletes KnativeServing/{{ .Values.knativeServingName }} (in
+    "{{ .Release.Namespace }}") with --wait=true. The operator's finalizer
+    tears down all Deployments, Services, ConfigMaps, HPAs, PDBs,
+    ClusterRoles, ClusterRoleBindings, and WebhookConfigurations it
+    installed from the KnativeServing manifest.
+  - (Optional, adoption.enabled) Stamps Helm ownership metadata onto the
+    12 Knative Serving CRDs so the subsequent `helm upgrade dataplane`
+    can claim them. User CRs of these types are preserved.
+  - Deletes the knativeservings.operator.knative.dev and
+    knativeeventings.operator.knative.dev CRDs.
+
+Inspect with:
+  kubectl logs -n {{ .Release.Namespace }} \
+    -l app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/name={{ include "knative-migration.name" . }}
+
+The Job is idempotent; re-running it on an already-clean cluster is a no-op.

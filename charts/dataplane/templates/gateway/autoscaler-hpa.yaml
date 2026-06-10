@@ -1,0 +1,156 @@
+{{- if .Values.zero_trust.enabled }}
+# Copyright 2018 The Knative Authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     https://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+{{- $comp := index .Values.gateway.components "autoscaler-hpa" }}
+{{- $container := index $comp.containers "autoscaler-hpa" }}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autoscaler-hpa
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.knativeLabels" . | nindent 4 }}
+    app.kubernetes.io/component: autoscaler-hpa
+    autoscaling.knative.dev/autoscaler-provider: hpa
+    {{- with $comp.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with $comp.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  replicas: {{ $comp.replicas | default 1 }}
+  selector:
+    matchLabels:
+      app: autoscaler-hpa
+  template:
+    metadata:
+      labels:
+        app: autoscaler-hpa
+        app.kubernetes.io/component: autoscaler-hpa
+        app.kubernetes.io/name: knative-serving
+        app.kubernetes.io/version: "1.16.0"
+        {{- with $comp.labels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with $comp.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with $comp.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: controller
+      containers:
+        - name: autoscaler-hpa
+          {{- if $container.image.repository }}
+          image: {{ $container.image.repository }}{{- if $container.image.tag }}:{{ $container.image.tag }}{{- end }}
+          {{- else }}
+          image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:64166849fc5fd9b03ab2c1ebca72e70b826cf30e731b1fa3cdf725cdd30d6210
+          {{- end }}
+          {{- with $container.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $container.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- if $container.resources }}
+          resources:
+            {{- toYaml $container.resources | nindent 12 }}
+          {{- else }}
+          resources:
+            requests:
+              cpu: 30m
+              memory: 40Mi
+            limits:
+              cpu: 300m
+              memory: 400Mi
+          {{- end }}
+          env:
+            - name: SYSTEM_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CONFIG_LOGGING_NAME
+              value: config-logging
+            - name: CONFIG_OBSERVABILITY_NAME
+              value: config-observability
+            - name: METRICS_DOMAIN
+              value: knative.dev/serving
+            {{- with $container.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with $container.envFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: metrics
+              containerPort: 9090
+            - name: profiling
+              containerPort: 8008
+            - name: probes
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /readiness
+              port: probes
+            periodSeconds: 5
+            failureThreshold: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: probes
+            periodSeconds: 5
+            failureThreshold: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- include "gateway.knativeLabels" . | nindent 4 }}
+    app: autoscaler-hpa
+    app.kubernetes.io/component: autoscaler-hpa
+    autoscaling.knative.dev/autoscaler-provider: hpa
+  name: autoscaler-hpa
+  namespace: {{ .Release.Namespace }}
+spec:
+  ports:
+    - name: http-metrics
+      port: 9090
+      targetPort: 9090
+    - name: http-profiling
+      port: 8008
+      targetPort: 8008
+  selector:
+    app: autoscaler-hpa
+{{- end }}

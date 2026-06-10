@@ -3,6 +3,7 @@
 Storage helpers.  This migrates all of the storage configurations to
 the stow based options to provide additional configuration flexibility.
 */}}
+
 {{- define "storage.base" -}}
 {{- if or (eq .Values.storage.provider "compat") (eq .Values.storage.provider "oci") }}
   type: stow
@@ -10,8 +11,16 @@ the stow based options to provide additional configuration flexibility.
     kind: s3
     config:
       auth_type: accesskey
+      {{- if .Values.storage.credentialsSecretRef.name }}
+      {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+      {{- if $secret }}
+      access_key_id: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
+      secret_key: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
+      {{- end }}
+      {{- else }}
       access_key_id: {{ .Values.storage.accessKey }}
       secret_key: {{ .Values.storage.secretKey }}
+      {{- end }}
       disable_ssl: {{ .Values.storage.disableSSL }}
       endpoint: {{ .Values.storage.endpoint }}
       region: {{ .Values.storage.region }}
@@ -26,8 +35,16 @@ the stow based options to provide additional configuration flexibility.
     auth-type: {{ .Values.storage.authType }}
     region: {{ .Values.storage.region }}
     {{- if eq .Values.storage.authType "accesskey" }}
+    {{- if .Values.storage.credentialsSecretRef.name }}
+    {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+    {{- if $secret }}
+    access-key: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
+    secret-key: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
+    {{- end }}
+    {{- else }}
     access-key: {{ .Values.storage.accessKey }}
     secret-key: {{ .Values.storage.secretKey }}
+    {{- end }}
     {{- end }}
 {{- else if eq .Values.storage.provider "gcs" }}
   type: stow

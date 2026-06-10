@@ -202,6 +202,68 @@
       port:
         name: grpc
 
+# v2 leasor / actions / pluginState / eventsProxy — every gRPC service the
+# leaseworker calls. Routed through the streaming ingress (long timeouts) so
+# LeasorService.StreamLeases and ActionsService.WatchForUpdates work.
+# Catch-all `Service` + `Service/*` pair mirrors the AdminService pattern
+# higher up in this block.
+- path: /cloudidl.workflow.v2.LeasorService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: leasor
+      port:
+        name: grpc
+- path: /cloudidl.workflow.v2.LeasorService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: leasor
+      port:
+        name: grpc
+- path: /flyteidl2.actions.ActionsService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /flyteidl2.actions.ActionsService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /cloudidl.pluginstate.PluginStateService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /cloudidl.pluginstate.PluginStateService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /flyteidl2.workflow.EventsProxyService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: executions
+      port:
+        name: grpc
+- path: /flyteidl2.workflow.EventsProxyService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: executions
+      port:
+        name: grpc
+
 - path: /flyteidl2.workflow.RunLogsService/TailLogs
   pathType: ImplementationSpecific
   backend:
@@ -1492,13 +1554,17 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end}}
   {{- if .Values.ingress.enableProtectedConsoleIngress }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsWithoutSignin }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- else }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotations }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- end}}
 spec:
   {{- with .Values.ingress.className }}
@@ -1509,12 +1575,7 @@ spec:
     {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end }}
   rules:
-    - {{ with .Values.ingress.host -}}
-      host: {{ tpl . $ }}
-      {{ end -}}
-      http:
-        paths:
-          {{- include "protectedHttpRoutes" . | nindent 10 }}
+    {{- include "controlPlaneLibrary.ingressRules" (dict "context" . "pathsTpls" (list "protectedHttpRoutes")) | nindent 4 }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -1532,9 +1593,11 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsGrpc }}
   {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end}}
+  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
@@ -1544,13 +1607,7 @@ spec:
     {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end }}
   rules:
-    - {{ with .Values.ingress.host -}}
-      host: {{ tpl . $ }}
-      {{ end -}}
-      http:
-        paths:
-          {{- include "protectedGrpcRoutes" . | nindent 10 }}
-          {{- include "appsProtectedConnectRoutes" . | nindent 10 }}
+    {{- include "controlPlaneLibrary.ingressRules" (dict "context" . "pathsTpls" (list "protectedGrpcRoutes" "appsProtectedConnectRoutes")) | nindent 4 }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -1568,9 +1625,11 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsGrpc }}
   {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end}}
+  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
@@ -1580,11 +1639,5 @@ spec:
     {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end }}
   rules:
-    - {{ with .Values.ingress.host -}}
-      host: {{ tpl . $ }}
-      {{ end -}}
-      http:
-        paths:
-          {{- include "protectedGrpcStreamingRoutes" . | nindent 10 }}
-          {{- include "appsProtectedStreamingRoutes" . | nindent 10 }}
+    {{- include "controlPlaneLibrary.ingressRules" (dict "context" . "pathsTpls" (list "protectedGrpcStreamingRoutes" "appsProtectedStreamingRoutes")) | nindent 4 }}
 {{- end }}
