@@ -3,12 +3,23 @@
 Bespoke ConfigMap for leasor. Mirrors what the generic services renderer
 (templates/configmap.yaml) would produce — same name, same labels, same
 unionai.configMap-style merge of global .Values.configMap with
-.Values.services.leasor.configMap — and then auto-generates
-queueSync.queues from .Values.global.DATAPLANE_CLUSTER_NAME: one `default`
-queue + one per-cluster queue, both containing that single cluster name. The
-auto-generation is skipped if services.leasor.configMap.leasor.queueSync.queues
-is already set explicitly (full override — use that to enumerate clusters in
-the rare multi-DP case).
+.Values.services.leasor.configMap — then defaults each entry of
+queueSync.queues so callers can write terser overlays.
+
+Per-queue defaults injected when the field is absent from an entry:
+  org:               .Values.global.UNION_ORG  (single-tenant CP convention)
+  name:              "default"
+  priority:          50  (PriorityMedium — see cloud/leasor/config:Priority)
+  fairnessAlgorithm: 1   (FairnessRoundRobin)
+
+The caller still owns `clusters: [...]` (required — there is no sensible
+default) and any other QueueSpec field (project / domain / status /
+maxDepth / maxActionConcurrency / maxRunConcurrency).
+
+Backward compat: if `queueSync.queues` is empty AND
+.Values.global.DATAPLANE_CLUSTER_NAME is non-empty, we auto-generate a
+2-entry list ({name: default, clusters: [X]}, {name: X, clusters: [X]}).
+This path is DEPRECATED — new installs should configure queues directly.
 */ -}}
 {{- $service := dict "config" .Values.services.leasor "key" "leasor" "Release" .Release "Values" .Values "Chart" .Chart -}}
 
@@ -20,20 +31,32 @@ the rare multi-DP case).
   {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") -}}
 {{- end -}}
 
-{{- /* Auto-generate queueSync.queues unless explicitly set. */ -}}
+{{- /* Normalize queueSync.queues. */ -}}
 {{- $leasor    := index $merged "leasor"    | default dict -}}
 {{- $queueSync := index $leasor "queueSync" | default dict -}}
 {{- $existing  := index $queueSync "queues" | default list -}}
-{{- $cluster   := .Values.global.DATAPLANE_CLUSTER_NAME | default "" -}}
-{{- $org       := .Values.global.UNION_ORG | default "" -}}
-{{- if and (eq (len $existing) 0) (ne $cluster "") (ne $org "") -}}
-  {{- $queues := list -}}
-  {{- /* default queue pointing at the attached cluster */ -}}
-  {{- $queues = append $queues (dict "org" $org "name" "default"  "priority" 50 "fairnessAlgorithm" 1 "clusters" (list $cluster)) -}}
-  {{- /* per-cluster queue with the same name as the cluster */ -}}
-  {{- $queues = append $queues (dict "org" $org "name" $cluster   "priority" 50 "fairnessAlgorithm" 1 "clusters" (list $cluster)) -}}
-  {{- $_ := set $queueSync "queues" $queues -}}
+{{- $defaultOrg := .Values.global.UNION_ORG | default "" -}}
+
+{{- /* DEPRECATED auto-generation from DATAPLANE_CLUSTER_NAME. */ -}}
+{{- $deprecatedCluster := .Values.global.DATAPLANE_CLUSTER_NAME | default "" -}}
+{{- if and (eq (len $existing) 0) (ne $deprecatedCluster "") (ne $defaultOrg "") -}}
+  {{- $existing = list -}}
+  {{- $existing = append $existing (dict "name" "default"          "clusters" (list $deprecatedCluster)) -}}
+  {{- $existing = append $existing (dict "name" $deprecatedCluster "clusters" (list $deprecatedCluster)) -}}
   {{- if not (hasKey $queueSync "source") -}}{{- $_ := set $queueSync "source" "static" -}}{{- end -}}
+{{- end -}}
+
+{{- if gt (len $existing) 0 -}}
+  {{- $defaulted := list -}}
+  {{- range $q := $existing -}}
+    {{- $entry := deepCopy $q -}}
+    {{- if not (hasKey $entry "org")               -}}{{- $_ := set $entry "org"               $defaultOrg -}}{{- end -}}
+    {{- if not (hasKey $entry "name")              -}}{{- $_ := set $entry "name"              "default"   -}}{{- end -}}
+    {{- if not (hasKey $entry "priority")          -}}{{- $_ := set $entry "priority"          50          -}}{{- end -}}
+    {{- if not (hasKey $entry "fairnessAlgorithm") -}}{{- $_ := set $entry "fairnessAlgorithm" 1           -}}{{- end -}}
+    {{- $defaulted = append $defaulted $entry -}}
+  {{- end -}}
+  {{- $_ := set $queueSync "queues" $defaulted -}}
   {{- $_ := set $leasor "queueSync" $queueSync -}}
   {{- $_ := set $merged "leasor" $leasor -}}
 {{- end -}}
