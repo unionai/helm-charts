@@ -1,0 +1,26 @@
+{{- if include "dataplane.dp.host" . }}
+{{/*
+ConfigMap rendering the DP's self-reported connection_config as a JSON
+file the operator reads at startup and ships in every UpdateStatus to
+the controlplane (UpdateStatusRequest.connection_config). The CP prefers
+this over the legacy admin-set DataplaneIngressURL when present.
+
+Gated on .Values.updateStatus.connectionConfig.host being non-empty so
+charts consumed by envs that don't set it (BYOC, self-managed, legacy
+selfhosted with admin-set URL) emit no resource.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "union-operator.fullname" . }}-connection
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "operator.labels" . | nindent 4 }}
+data:
+  connection_config.json: |
+    {
+      "endpoint": "{{ include "dataplane.dp.endpoint" . }}",
+      "insecure": {{ .Values.updateStatus.connectionConfig.insecure }},
+      "insecureSkipVerify": {{ .Values.updateStatus.connectionConfig.insecureSkipVerify }}
+    }
+{{- end }}
