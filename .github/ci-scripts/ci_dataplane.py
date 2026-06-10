@@ -635,6 +635,27 @@ async def _verify_reusable_async(
     print(f"[ci] verify_reusable: PASSED (run={run.name})", flush=True)
 
 
+async def _dump_app_state(app_name: str) -> None:
+    """Print an app's spec.cluster_pool + full status from the control plane.
+
+    Diagnostic for verify_app failures: shows whether the CP resolved the
+    (unset) cluster_pool via routing rules — status.assigned_cluster — and the
+    CP-side failure reason. Contains no credentials; best-effort only.
+    """
+    try:
+        import flyte.remote  # type: ignore
+        app = await flyte.remote.App.get.aio(name=app_name)
+        pb = app.pb2
+        print(f"[ci] verify_app: app {app_name!r} CP state:", flush=True)
+        print(f"[ci]   spec.cluster_pool       = {pb.spec.cluster_pool!r}", flush=True)
+        print(f"[ci]   status.assigned_cluster = {pb.status.assigned_cluster!r}", flush=True)
+        # Full status block (deployment state, conditions, failure message).
+        for line in str(pb.status).splitlines():
+            print(f"[ci]   status| {line}", flush=True)
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not mask the real error
+        print(f"[ci] verify_app: could not fetch app state: {exc}", flush=True)
+
+
 async def _verify_app_async(
     control_plane_url: str, api_key: str, cluster_name: str, org: str
 ) -> None:
@@ -648,13 +669,20 @@ async def _verify_app_async(
     # cold-start), but a healthy run completes in ~1 min (measured) and even a
     # fully-cold build is a few minutes. The default 600s is ample margin while
     # still failing/aborting a genuine hang ~5 min sooner than the old 900s.
-    await _assert_succeeded(run, "verify_app")
-    # The task asserts status.assigned_cluster == CLUSTER_NAME internally (it has
-    # no explicit cluster_pool pin), so a succeeded run proves the control plane
-    # routed the app to this run's dataplane via project→pool routing rules.
+    try:
+        await _assert_succeeded(run, "verify_app")
+    except Exception:
+        # Dump the app's spec + status from the CP (assigned_cluster, deployment
+        # state, failure message) so the run log shows WHERE the CP routed it and
+        # WHY it failed, instead of just the SDK's generic "deployment has failed".
+        await _dump_app_state(f"ci-app-{cluster_name}")
+        raise
+    # The task asserts status.assigned_cluster == CLUSTER_NAME internally, so a
+    # succeeded run proves the control plane dispatched the app to this run's
+    # dataplane (explicit cluster_pool pin — see ci_app_task.py).
     print(
-        f"[ci] verify_app: PASSED (run={run.name}) — app routed to cluster "
-        f"{cluster_name!r} via project routing rules", flush=True
+        f"[ci] verify_app: PASSED (run={run.name}) — app assigned to cluster "
+        f"{cluster_name!r}", flush=True
     )
 
 

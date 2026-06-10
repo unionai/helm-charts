@@ -41,27 +41,19 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
-    # cluster_pool is handled below (forced unset) — see the note after this
-    # constructor. It can't be expressed here: the field defaults to the literal
-    # "default" and passing cluster_pool=None to __init__ is ignored (the guard
-    # keeps the default), so we null it on the instance post-construction.
+    # Pin the app to this run's cluster pool explicitly. Routing pool-less apps
+    # via project→pool rules (the path Runs use) isn't reliably deployed on the
+    # shared staging CP — verified 2026-06-10: an app sent with NO cluster_pool
+    # field (proto3 field absent on the wire) failed deployment after the CP fix
+    # was overridden. Re-test the rule-based path by removing this pin once the
+    # CP fix is durably rolled out.
+    cluster_pool=_cluster,
     # See _app_task_env: CLUSTER_NAME is a runner-only var, so the in-pod module
     # would otherwise resolve names against the "ci-dev" default and mismatch
     # the registered ci-app-<run-id>. Inject the resolved value.
     env_vars={"CLUSTER_NAME": _cluster},
     requires_auth=False,
 )
-
-# Send NO cluster_pool so the control plane resolves the app's cluster from the
-# project→pool routing rules (the same path Runs use), landing it on this run's
-# pool via CI's setup-routing (project == _cluster → pool == _cluster, holding
-# this run's k3d dataplane). The SDK can't express "unset": the field defaults
-# to the literal "default" and app_serde serializes it unconditionally, so both
-# omitting it and setting "" make the CP see "default" and pin the app to the
-# (empty) default pool — bypassing routing and hanging serve(). Nulling the
-# field makes app_serde emit Spec(cluster_pool=None), which proto3 drops from
-# the wire entirely, so the create request carries no pool at all.
-_app_env.cluster_pool = None
 
 _app_task_env = flyte.TaskEnvironment(
     name=f"ci-app-tester-{_cluster}",
@@ -94,19 +86,16 @@ async def app_deploy_test() -> AppDeployResult:
     # serve()/deactivate() are @syncify wrappers — call the .aio variants from
     # this async task. Calling the sync wrapper inside the running event loop is
     # incorrect and can hang/deadlock instead of deploying the app.
-    # No cluster_pool is pinned on _app_env: the control plane resolves the app's
-    # cluster from the project→pool routing rules (see _app_env comment), so a
-    # plain serve() routes to this run's dataplane.
     deployed = await flyte.serve.aio(_app_env)
     internal_url = _app_env.endpoint
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
 
-    # Verify the CP routed the app to THIS run's cluster via the project→pool
-    # routing rules (no explicit cluster_pool pin). status.assigned_cluster is
-    # the cluster the control plane bound the app to; it must equal the run's
-    # cluster (CLUSTER_NAME == _cluster, the only dataplane in this CI). Re-fetch
-    # the app if the watch object's status hasn't populated it yet.
+    # Verify the CP bound the app to THIS run's cluster (the explicit
+    # cluster_pool pin resolved to the run's dataplane). status.assigned_cluster
+    # is the cluster the control plane dispatched the app to; it must equal the
+    # run's cluster (CLUSTER_NAME == _cluster, the only dataplane in this CI).
+    # Re-fetch the app if the watch object's status hasn't populated it yet.
     assigned_cluster = deployed.pb2.status.assigned_cluster
     if not assigned_cluster:
         refreshed = await flyte.remote.App.get.aio(name=_app_env.name)
@@ -115,8 +104,7 @@ async def app_deploy_test() -> AppDeployResult:
     if assigned_cluster != _cluster:
         raise RuntimeError(
             f"app routed to wrong cluster: assigned_cluster={assigned_cluster!r} "
-            f"but expected {_cluster!r} (project→pool routing did not resolve to "
-            f"this run's dataplane)"
+            f"but expected {_cluster!r}"
         )
 
     try:
