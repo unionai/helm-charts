@@ -18,23 +18,7 @@ data:
 {{ tpl (toYaml .Values.config.enabled_plugins.tasks) $ | indent 6 }}
 {{- end }}
   config.yaml: |
-    {{- /*
-         When the chart-managed eager-credentials file-mount path is on
-         (secrets.eagerClientCreds.enabled), the SDK reads OAuth creds + config
-         + CA from mounted files via init_from_config(). The legacy
-         _UNION_EAGER_API_KEY env var is redundant; flip injectSecret false
-         so leaseworker/executor/operator-apps stop appending EAGER_API_KEY
-         to SecurityContext.Secrets and the webhook never emits the env var
-         on task pods. Users can still set injectSecret explicitly via
-         values-overrides to preserve a hybrid setup if needed.
-    */}}
-    {{- $executorConfig := deepCopy (.Values.executor.config | default dict) }}
-    {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
-    {{- $unionAuth := deepCopy (index $executorConfig "unionAuth" | default dict) }}
-    {{- $_ := set $unionAuth "injectSecret" false }}
-    {{- $_ = set $executorConfig "unionAuth" $unionAuth }}
-    {{- end }}
-    {{- with $executorConfig }}
+    {{- with .Values.executor.config }}
     executor:
       {{- tpl (toYaml .) $ | nindent 6 }}
     {{- end }}
