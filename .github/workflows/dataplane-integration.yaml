@@ -223,6 +223,69 @@ jobs:
           done
           kubectl wait --for=condition=Ready nodes --all --timeout=120s
 
+      # ── Pre-warm the build base image (registry-throttle mitigation) ───────
+      # buildkit builds task images FROM the default base
+      #   ghcr.io/flyteorg/flyte:py<runner-python>-v<installed-flyte-version>
+      # pulling it from ghcr.io once per run. On shared runners that pull can be
+      # throttled (429/5xx). Mirror the base into the in-cluster k3d registry so
+      # buildkit (configured with a ghcr.io→k3d-registry mirror in ci-values)
+      # serves it locally. Entirely best-effort: every failure path exits 0 and
+      # buildkit just falls back to ghcr.io as before.
+      - name: Resolve build base image ref
+        if: steps.check.outputs.configured == 'true'
+        id: baseref
+        run: |
+          PYMM=$(python -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
+          VER=$(python -c 'from flyte._version import __version__ as v; print(v)' 2>/dev/null || echo "")
+          # A dev/local version (contains "+", "dev") doesn't map to a published
+          # ghcr base (from_debian_base builds from python:slim instead), so the
+          # mirror would be unused — emit an empty tag to skip the pre-warm.
+          if [ -z "$VER" ] || printf '%s' "$VER" | grep -qiE 'dev|\+'; then
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            echo "cache_key=build-base-none" >> "$GITHUB_OUTPUT"
+            echo "skipping pre-warm: flyte version='${VER}' is not a published base"
+          else
+            echo "tag=py${PYMM}-v${VER}" >> "$GITHUB_OUTPUT"
+            echo "cache_key=build-base-py${PYMM}-v${VER}" >> "$GITHUB_OUTPUT"
+            echo "base tag: py${PYMM}-v${VER}"
+          fi
+
+      - name: Restore build base image cache
+        if: steps.check.outputs.configured == 'true' && steps.baseref.outputs.tag != ''
+        uses: actions/cache@v4
+        with:
+          path: /tmp/build-base
+          key: ${{ steps.baseref.outputs.cache_key }}
+
+      - name: Pre-warm build base image into k3d registry
+        if: steps.check.outputs.configured == 'true' && steps.baseref.outputs.tag != ''
+        env:
+          TAG: ${{ steps.baseref.outputs.tag }}
+        run: |
+          set -uo pipefail
+          REF="ghcr.io/flyteorg/flyte:${TAG}"
+          DEST="localhost:5001/flyteorg/flyte:${TAG}"   # host map → k3d-registry:5000/flyteorg/flyte
+          echo "pre-warm: $REF -> $DEST"
+          DIR=/tmp/build-base; TAR="$DIR/base.tar"; mkdir -p "$DIR"
+          [ -f "$TAR" ] && { echo "base cache HIT — loading"; docker load -i "$TAR" || true; }
+          if ! docker image inspect "$REF" >/dev/null 2>&1; then
+            n=0
+            until docker pull "$REF"; do
+              n=$((n+1))
+              [ "$n" -ge 6 ] && { echo "base pull failed after $n — skipping (buildkit will use ghcr.io)"; exit 0; }
+              echo "base pull failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
+            done
+            docker save "$REF" -o "$TAR" || true
+          fi
+          docker tag "$REF" "$DEST" || { echo "tag failed — skipping"; exit 0; }
+          n=0
+          until docker push "$DEST"; do
+            n=$((n+1))
+            [ "$n" -ge 6 ] && { echo "push to k3d registry failed after $n — skipping (buildkit will use ghcr.io)"; exit 0; }
+            echo "push failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
+          done
+          echo "pre-warm OK — base served from k3d registry at $DEST"
+
       # ── RustFS object store ───────────────────────────────────────────────
 
       - name: Deploy RustFS
