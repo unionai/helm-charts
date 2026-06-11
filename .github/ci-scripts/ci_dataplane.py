@@ -888,8 +888,52 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
 
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
+    # ORG_NAME is produced by the wait-healthy step; absent if the run failed
+    # before then (in which case setup-routing never ran, so there are no pool/
+    # assignment/project/attributes to clean up — only the cluster delete below).
+    org = os.environ.get("ORG_NAME", "").strip()
+
     print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
     _run_uctl("uctl", "delete", "cluster", cluster_name)
+
+    if not org:
+        print("[ci] teardown: ORG_NAME unset — skipping pool/routing cleanup.", flush=True)
+        print("[ci] teardown: done.", flush=True)
+        return
+
+    # setup-routing creates a pool, assignment, project and per-domain routing
+    # attributes all keyed by this run's id (pool == project == cluster_name).
+    # `delete cluster` leaves every one of them orphaned on the shared staging
+    # control plane, so each CI run would otherwise leak ~6 objects that
+    # accumulate indefinitely. Clean them up best-effort (a failed delete must
+    # never fail the always() teardown step). Order: routing attrs → assignment
+    # → pool, so nothing references the pool when it's removed; the project can
+    # only be archived (Flyte has no project delete).
+    def _best_effort(label: str, *cmd: str) -> None:
+        rc, _ = _run_uctl(*cmd)
+        if rc != 0:
+            print(f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True)
+
+    for domain in ("development", "staging", "production"):
+        _best_effort(
+            f"routing/{domain}",
+            "uctl", "delete", "cluster-pool-attributes",
+            "-p", cluster_name, "-d", domain, "--org", org,
+        )
+    _best_effort(
+        "assignment",
+        "uctl", "delete", "clusterpoolassignment",
+        "--clusterName", cluster_name, "--poolName", cluster_name, "--org", org,
+    )
+    _best_effort(
+        "pool",
+        "uctl", "delete", "clusterpool", cluster_name, "--org", org,
+    )
+    # Projects can't be deleted, only archived — leaves no schedulable routing.
+    _best_effort(
+        "project",
+        "uctl", "update", "project", "-p", cluster_name, "--archive", "--org", org,
+    )
     print("[ci] teardown: done.", flush=True)
 
 
