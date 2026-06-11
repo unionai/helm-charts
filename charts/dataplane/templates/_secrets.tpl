@@ -162,6 +162,47 @@ secrets.eagerClientCreds — multi-key (client_id + client_secret)
 {{- end -}}
 
 {{/*
+secrets.internalCaCert — single-key (ca.crt) trust bundle for the CP
+internal-tls cert. Cluster operators typically wire `existingSecret.name`
+to an ExternalSecret-managed Secret (`internal-ca-bundle`); chart users
+without ExternalSecrets supply the PEM inline via `value`.
+*/}}
+
+{{- define "secrets.internalCaCert.caCertCanonical" -}}ca.crt{{- end -}}
+
+{{- define "secrets.internalCaCert.computedName" -}}{{ .Release.Name }}-internal-ca{{- end -}}
+
+{{- define "secrets.internalCaCert.enabled" -}}
+{{- $s := .Values.secrets.internalCaCert -}}
+{{- if $s.enabled -}}true{{- else -}}false{{- end -}}
+{{- end -}}
+
+{{- define "secrets.internalCaCert.validate" -}}
+{{- $s := .Values.secrets.internalCaCert -}}
+{{- if $s.enabled -}}
+  {{- $hasExternal := $s.existingSecret.name -}}
+  {{- $hasInline := $s.value -}}
+  {{- if and $hasExternal $hasInline -}}
+    {{- fail "secrets.internalCaCert: set either existingSecret.name OR value, not both" -}}
+  {{- end -}}
+  {{- if not (or $hasExternal $hasInline) -}}
+    {{- fail "secrets.internalCaCert.enabled=true requires existingSecret.name or value" -}}
+  {{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "secrets.internalCaCert.secretName" -}}
+{{- include "secrets.internalCaCert.validate" . -}}
+{{- $s := .Values.secrets.internalCaCert -}}
+{{- if $s.existingSecret.name -}}{{ $s.existingSecret.name }}{{- else -}}{{ include "secrets.internalCaCert.computedName" . }}{{- end -}}
+{{- end -}}
+
+{{- define "secrets.internalCaCert.caCertKey" -}}
+{{- $s := .Values.secrets.internalCaCert -}}
+{{- default (include "secrets.internalCaCert.caCertCanonical" .) $s.existingSecret.caCertKey -}}
+{{- end -}}
+
+{{/*
 secrets.imageBuilder.push — buildkit push credentials (opaque KV)
 */}}
 

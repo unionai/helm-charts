@@ -1546,20 +1546,59 @@ union-pod-webhook
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
-{{/* FAB-241 file-mount: when eagerClientCreds is enabled, switch the webhook
-to inject the ConfigMap + Secret as volume mounts instead of env vars for
-matching SecurityContext.Secrets entries. Pre-check is wired by mirrorcheck
-inside flyte. Single customer-facing flag (secrets.eagerClientCreds.enabled)
-auto-derives the entire file-mount path. */}}
+{{/* FAB-241 file-mount: list-of-corev1-Volume/VolumeMount pairs the
+flytepropeller webhook injects onto matching task pods. Two unconditional
+entries (config.yaml ConfigMap + client_secret Secret) plus a conditional
+ca.crt Secret when secrets.internalCaCert is enabled. Mirror-presence in
+the target NS (managedByLabelValue) is what gates injection at admission
+time; no magic Flyte-secret-key string. */}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+{{- $mounts := list
+    (dict
+      "volume" (dict
+        "name" "union-eager-auth-config"
+        "configMap" (dict "name" (include "secrets.eagerOAuthConfig.configMapName" .))
+      )
+      "volumeMount" (dict
+        "name" "union-eager-auth-config"
+        "mountPath" "/etc/flyte/config.yaml"
+        "subPath" "config.yaml"
+        "readOnly" true
+      )
+    )
+    (dict
+      "volume" (dict
+        "name" "union-eager-client-secret"
+        "secret" (dict "secretName" (include "secrets.eagerClientCreds.secretName" .))
+      )
+      "volumeMount" (dict
+        "name" "union-eager-client-secret"
+        "mountPath" "/etc/flyte/credentials/client_secret"
+        "subPath" "client_secret"
+        "readOnly" true
+      )
+    )
+}}
+{{- if eq (include "secrets.internalCaCert.enabled" .) "true" }}
+{{- $mounts = append $mounts
+    (dict
+      "volume" (dict
+        "name" "union-internal-ca"
+        "secret" (dict "secretName" (include "secrets.internalCaCert.secretName" .))
+      )
+      "volumeMount" (dict
+        "name" "union-internal-ca"
+        "mountPath" "/etc/flyte/credentials/ca.crt"
+        "subPath" "ca.crt"
+        "readOnly" true
+      )
+    )
+}}
+{{- end }}
 {{- $_ := set $webhook "fileMount" (dict
     "enabled" true
-    "secretKeyMatch" "EAGER_API_KEY"
-    "configMapName" (include "secrets.eagerOAuthConfig.configMapName" .)
-    "secretName" (include "secrets.eagerClientCreds.secretName" .)
-    "configMapMountPath" (.Values.mirroring.eagerOAuth.configMapMountPath | default "/etc/flyte/config.yaml")
-    "secretMountPath" (.Values.mirroring.eagerOAuth.secretMountPath | default "/etc/flyte/credentials/client_secret")
     "managedByLabelValue" (.Values.mirroring.managedByLabelValue | default "union-operator")
+    "mounts" $mounts
 ) }}
 {{- end }}
 {{- if include "singleNamespace" . }}

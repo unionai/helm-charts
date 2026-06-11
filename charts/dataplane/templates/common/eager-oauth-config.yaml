@@ -12,16 +12,16 @@ _UNION_EAGER_API_KEY env-var path.
 Carries app.kubernetes.io/managed-by=union-operator AND the
 union.ai/mirrored-from-namespace=<operator NS> annotation so the
 mirror's cleanup query scopes copies to this install.
-*/}}
-{{/*
-The endpoint, insecure, and insecureSkipVerify values mirror the
-dataplane's own CP-connection wiring (config.union.connection on the
-chart). For selfmanaged envs with self-signed CP certs, terraform sets
-insecureSkipVerify: true; the chart default is false (managed CP with
-valid cert).
+
+Endpoint uses the chart's `dataplane.cp.endpoint` helper, which resolves
+to the CP's internal hostname (control-plane.internal.<full_domain>) —
+covered by the cert-manager-issued `controlplane-internal-tls` SAN. The
+SDK trusts the issuing CA via caCertFilePath, mounted from
+secrets.internalCaCert. Both `insecure` and `insecureSkipVerify` are
+deliberately omitted; the SDK defaults to verify, which is the only
+correct behavior under this trust chain.
 */}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
-{{- $cpConn := default dict (default dict .Values.config.union).connection -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,14 +33,11 @@ metadata:
 data:
   config.yaml: |
     admin:
-      {{/* Use the PUBLIC CP hostname (Values.host = global.UNION_CONTROL_PLANE_HOST)
-           so the SDK's OAuth + gRPC traffic hits a name covered by the CP TLS
-           cert SAN. The chart helper dataplane.cp.endpoint would resolve to
-           the INTERNAL CONTROLPLANE_HOST which is not in the cert. */}}
-      endpoint: {{ printf "dns:///%s:443" (tpl .Values.host .) | quote }}
-      insecure: {{ default false $cpConn.insecure }}
-      insecureSkipVerify: {{ default false $cpConn.insecureSkipVerify }}
+      endpoint: {{ include "dataplane.cp.endpoint" . | quote }}
       clientId: {{ .Values.secrets.eagerClientCreds.clientId | default "" | quote }}
-      clientSecretLocation: {{ .Values.mirroring.eagerOAuth.secretMountPath | default "/etc/flyte/credentials/client_secret" | quote }}
+      clientSecretLocation: "/etc/flyte/credentials/client_secret"
       authType: ClientCredentials
+      {{- if eq (include "secrets.internalCaCert.enabled" .) "true" }}
+      caCertFilePath: "/etc/flyte/credentials/ca.crt"
+      {{- end }}
 {{- end }}
