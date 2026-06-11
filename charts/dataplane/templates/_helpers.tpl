@@ -783,6 +783,16 @@ plugins:
       {{ include "var.FLYTE_AWS_ACCESS_KEY_ID" . | indent 6 }}
       {{ include "var.FLYTE_AWS_SECRET_ACCESS_KEY" . | indent 6 }}
       {{- end }}
+      {{- /*
+           When the file-mount path is on, the SDK config + creds live at
+           /etc/flyte/config.yaml on the task pod (mounted by the webhook from
+           the eager-oauth-config ConfigMap). Point the SDK at it via the
+           standard FLYTECTL_CONFIG env var so init_in_cluster()'s
+           resolve_config_path() picks it up.
+      */}}
+      {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+      - FLYTECTL_CONFIG: "/etc/flyte/config.yaml"
+      {{- end }}
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
       {{- end }}
