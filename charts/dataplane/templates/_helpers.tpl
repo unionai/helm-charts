@@ -1088,6 +1088,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
     container_name        {{ .Values.storage.custom.container }}
+{{/* Default to block blobs: append blobs cap at 50,000 blocks per blob, which
+     long-lived pods exhaust (409 BlockCountExceedsLimit). Block blobs commit
+     far fewer, larger blocks. Override via fluentbit.azureBlobType if needed. */}}
+    blob_type             {{ .Values.fluentbit.azureBlobType | default "blockblob" }}
     tls                   on
 {{- else }}
 [OUTPUT]
