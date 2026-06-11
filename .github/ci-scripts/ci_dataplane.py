@@ -39,6 +39,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import typing
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -444,7 +445,19 @@ async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -
     run.sync()
     p = _phase_name(run)
     if p != "succeeded":
-        raise RuntimeError(f"{label}: run {run.name} ended in phase={run.phase}")
+        # Surface the run's underlying failure reason (ImagePullBackOff, grace
+        # period exceeded, app endpoint not ready, …) into the exception message
+        # so the scenario-level retry classifier (_is_transient) can tell a
+        # transient infra/registry blip from a real product failure. Falls back
+        # to the bare phase if error_info isn't populated.
+        detail = ""
+        try:
+            act = run.pb2.action
+            if act.HasField("error_info"):
+                detail = f": {act.error_info.kind}: {act.error_info.message}"
+        except Exception:  # noqa: BLE001 — diagnostics must never mask the phase error
+            pass
+        raise RuntimeError(f"{label}: run {run.name} ended in phase={run.phase}{detail}")
 
 
 def _ensure_workspace_in_path() -> None:
@@ -491,6 +504,78 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
             f"(no clusters found)"
         )
     return run
+
+
+# ── scenario-level transient retry ───────────────────────────────────────────
+#
+# A full CI re-run re-provisions the whole cluster (~20–25 min), so a single
+# transient blip in one scenario shouldn't sink the suite. Retry a scenario once
+# on a *transient* failure (infra / registry / propagation), but never on a
+# deterministic one (assertion mismatch, wrong cluster, missing outputs) — those
+# must fail loudly so we don't mask a real regression with a flaky pass.
+#
+# Classification is by substring on the exception message; _assert_succeeded
+# enriches its message with the run's error_info so reasons like
+# "Back-off pulling image" / "Grace period [3m0s] exceeded" / "endpoint not
+# ready within …" reach this matcher.
+_TRANSIENT_SIGNATURES = (
+    "no clusters found",
+    "no cluster",                 # routing/capabilities propagation lag
+    "imagepullbackoff",
+    "errimagepull",
+    "back-off pulling",           # registry throttling / pull backoff
+    "grace period",               # pod reaped while pull/create still backing off
+    "not ready within",           # endpoint cold-start / activation lag
+    "did not reach a terminal state",  # _assert_succeeded wait timeout (resource starvation)
+    "connection refused",
+    "connection reset",
+    "connection aborted",
+    "deadline exceeded",
+    "timed out",
+    "etcdserver",                 # transient control-plane store contention
+    "503",
+    "502",
+    "504",
+    "temporarily unavailable",
+    "service unavailable",
+    "too many requests",          # 429 registry rate-limit
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(sig in msg for sig in _TRANSIENT_SIGNATURES)
+
+
+_SCENARIO_MAX_ATTEMPTS = 2
+_SCENARIO_RETRY_DELAY  = 15
+
+
+async def _run_scenario_with_retry(name: str, factory):  # type: ignore[no-untyped-def]
+    """Run a scenario, retrying once on a transient failure.
+
+    `factory` is a zero-arg callable returning a *fresh* coroutine each call (a
+    coroutine can only be awaited once, so a retry needs a new one). Returns the
+    factory's result so callers that need it (e.g. hello → run object) can use it.
+    """
+    last: BaseException | None = None
+    for attempt in range(1, _SCENARIO_MAX_ATTEMPTS + 1):
+        try:
+            return await factory()
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            if attempt < _SCENARIO_MAX_ATTEMPTS and _is_transient(exc):
+                print(
+                    f"[ci] {name}: attempt {attempt}/{_SCENARIO_MAX_ATTEMPTS} hit a "
+                    f"transient failure ({str(exc)[:160]}) — retrying scenario in "
+                    f"{_SCENARIO_RETRY_DELAY}s …",
+                    flush=True,
+                )
+                await asyncio.sleep(_SCENARIO_RETRY_DELAY)
+                continue
+            raise
+    assert last is not None
+    raise last
 
 
 # ── smoke-test (hello only) ──────────────────────────────────────────────────
@@ -713,15 +798,21 @@ async def _run_smoke_suite_async(
     print("[ci] smoke-suite: waiting 120s for operator capabilities to propagate …", flush=True)
     await asyncio.sleep(120)
 
-    # Step 1: hello run (needed for verify_logs + verify_io).
+    # Step 1: hello run (needed for verify_logs + verify_io). Wrapped in the
+    # scenario retry so a transient pod/pull blip on the gating run doesn't sink
+    # the whole suite before any verification has a chance to run.
     import uuid
     from ci_smoke_task import hello as _hello  # type: ignore
 
-    nonce = str(uuid.uuid4())
-    print(f"[ci] smoke-suite: submitting hello (nonce={nonce})", flush=True)
-    hello_run = await _submit_with_retry(_hello, "hello", nonce=nonce)
-    print(f"[ci] smoke-suite: hello run={hello_run.name}  url={hello_run.url}", flush=True)
-    await _assert_succeeded(hello_run, "hello")
+    async def _do_hello():  # type: ignore[no-untyped-def]
+        nonce = str(uuid.uuid4())
+        print(f"[ci] smoke-suite: submitting hello (nonce={nonce})", flush=True)
+        r = await _submit_with_retry(_hello, "hello", nonce=nonce)
+        print(f"[ci] smoke-suite: hello run={r.name}  url={r.url}", flush=True)
+        await _assert_succeeded(r, "hello")
+        return r
+
+    hello_run = await _run_scenario_with_retry("hello", _do_hello)
     print(f"[ci] smoke-suite: hello PASSED", flush=True)
     run_name = hello_run.name
 
@@ -729,14 +820,18 @@ async def _run_smoke_suite_async(
 
     # Step 2: the light/fast verify tests run in parallel — they reuse the hello
     # run or spin up short-lived build pods, so they don't contend for long.
-    parallel_tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
-        ("verify_logs",          _verify_logs_async(run_name, cluster_name)),
-        ("verify_io",            _verify_io_async(run_name)),
-        ("verify_image_builder", _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_image_cache",   _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
+    # Each is a factory (zero-arg) so _run_scenario_with_retry can re-invoke it.
+    parallel_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
+        ("verify_logs",          lambda: _verify_logs_async(run_name, cluster_name)),
+        ("verify_io",            lambda: _verify_io_async(run_name)),
+        ("verify_image_builder", lambda: _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_image_cache",   lambda: _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
     ]
     p_names = [n for n, _ in parallel_tests]
-    outcomes = await asyncio.gather(*(c for _, c in parallel_tests), return_exceptions=True)
+    outcomes = await asyncio.gather(
+        *(_run_scenario_with_retry(n, f) for n, f in parallel_tests),
+        return_exceptions=True,
+    )
     for name, outcome in zip(p_names, outcomes):
         if isinstance(outcome, Exception):
             results.append((name, False, str(outcome)[:300]))
@@ -749,13 +844,13 @@ async def _run_smoke_suite_async(
     # serving, can't co-schedule alongside the other on the 4-vCPU CI runner —
     # running them back-to-back lets each use the freed CPU instead of both
     # parking in WAITING_FOR_RESOURCES.
-    sequential_tests: list[tuple[str, "asyncio.coroutine"]] = [  # type: ignore
-        ("verify_reusable",      _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_app",           _verify_app_async(control_plane_url, api_key, cluster_name, org)),
+    sequential_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
+        ("verify_reusable",      lambda: _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_app",           lambda: _verify_app_async(control_plane_url, api_key, cluster_name, org)),
     ]
-    for name, coro in sequential_tests:
+    for name, factory in sequential_tests:
         try:
-            await coro
+            await _run_scenario_with_retry(name, factory)
             results.append((name, True, ""))
         except Exception as outcome:  # noqa: BLE001
             results.append((name, False, str(outcome)[:300]))

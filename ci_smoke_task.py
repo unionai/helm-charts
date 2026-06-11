@@ -29,7 +29,10 @@ _cluster = os.environ.get("CLUSTER_NAME", "ci-dev")
 _smoke_env = flyte.TaskEnvironment(name=f"ci-smoke-{_cluster}", cache="disable")
 
 
-@_smoke_env.task
+# retries=2: a transient pod/registry blip (ImagePullBackOff, throttled base-image
+# pull, CRI hiccup) is re-tried in-cluster by propeller on a fresh pod instead of
+# failing the scenario — far cheaper than re-running the whole ~25-min CI job.
+@_smoke_env.task(retries=2)
 async def hello(nonce: str) -> str:
     import logging as _log
     _log.getLogger("ci.hello").info(f"hello nonce={nonce}")
@@ -47,7 +50,7 @@ _imgbuild_env = flyte.TaskEnvironment(
 )
 
 
-@_imgbuild_env.task
+@_imgbuild_env.task(retries=2)  # tolerate transient base-image pull / build blips
 async def imgbuild_task(nonce: str) -> str:
     import logging as _log
     import requests  # type: ignore
@@ -68,7 +71,7 @@ _imgcache_env = flyte.TaskEnvironment(
 )
 
 
-@_imgcache_env.task
+@_imgcache_env.task(retries=2)  # tolerate transient base-image pull / build blips
 async def imgcache_task(nonce: str) -> str:
     import logging as _log
     import requests  # type: ignore
@@ -108,12 +111,12 @@ _reuse_env = flyte.TaskEnvironment(
 )
 
 
-@_reuse_env.task
+@_reuse_env.task(retries=2)  # tolerate transient pull/scheduling blips on the actor
 async def reuse_square(x: int) -> int:
     return x * x
 
 
-@_reuse_env.task
+@_reuse_env.task(retries=2)  # tolerate transient pull/scheduling blips on the actor
 async def reuse_driver(n: int) -> list[int]:
     """Fan out square() calls over the reusable environment (replicas=1, concurrency=2)."""
     return list(await asyncio.gather(*(reuse_square(i) for i in range(n))))

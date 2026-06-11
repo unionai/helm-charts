@@ -47,6 +47,24 @@ imageBuilder:
         http = true
         insecure = true
 
+# Image-pull resilience for the shared CI runner.
+# flytepropeller's k8s plugin reaps a pod stuck in ImagePullBackOff once
+# image-pull-backoff-grace-period elapses (default 3m) — seen as
+# "Grace period [3m0s] exceeded ... Back-off pulling image". On shared GitHub
+# runners, ghcr.io / Docker Hub pulls intermittently throttle (429 / 5xx) and
+# recover on containerd's own (widening) backoff schedule, but the 3m cap reaps
+# them first and fails the task. Widen the grace so a throttled-but-progressing
+# pull can finish; this pairs with the per-task retries=2 (which re-pull on a
+# fresh pod) and the scenario-level retry in ci_dataplane.py. create-container
+# grace is widened too for transient CRI hiccups. These deep-merge into the base
+# config.k8s.plugins.k8s map (default-pod-template-name etc. are preserved).
+config:
+  k8s:
+    plugins:
+      k8s:
+        image-pull-backoff-grace-period: 8m
+        create-container-error-grace-period: 8m
+
 # Knative serving is needed for the app smoke test (verify_app).
 # The default install pins the 4-vCPU runner at ~96% CPU (HA replicas=2 across
 # activator/autoscaler/controller/webhook/kourier, and kourier-gateway alone
