@@ -170,13 +170,24 @@ secrets:
 
 fluentbit:
   serviceAccount:
-    name: fluentbit-system
-    # Workload Identity annotation to grant FluentBit write access to Azure Blob Storage.
-    # The managed identity must have a federated credential for the fluentbit-system
-    # service account and the Storage Blob Data Contributor role on the storage account.
+    name: union-system
     annotations: {}
-    # annotations:
-    #   azure.workload.identity/client-id: "<CLIENT_ID>"
+  # fluent-bit's azure_blob output only supports shared-key (or SAS) auth — it
+  # does NOT support workload/managed identity, unlike the executor which reads
+  # storage.custom.stow.config.key (leave that empty to use Workload Identity).
+  # Set the storage account shared key here so it stays decoupled from the
+  # executor's storage config. To keep the key out of the rendered ConfigMap,
+  # use a ${ENV} placeholder that fluent-bit expands at runtime and inject the
+  # value via fluentbit.env from a Kubernetes secret, e.g.:
+  #
+  # azureBlobSharedKey: "${AZURE_STORAGE_SHARED_KEY}"
+  # env:
+  #   - name: AZURE_STORAGE_SHARED_KEY
+  #     valueFrom:
+  #       secretKeyRef:
+  #         name: fluentbit-azure-key
+  #         key: shared_key
+  azureBlobSharedKey: ""
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Workload Identity Pod Labels (REQUIRED)
