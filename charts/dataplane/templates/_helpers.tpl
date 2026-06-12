@@ -1556,12 +1556,25 @@ union-pod-webhook
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
-{{/* FAB-241 file-mount: list-of-corev1-Volume/VolumeMount pairs the
-flytepropeller webhook injects onto matching task pods. Two unconditional
-entries (config.yaml ConfigMap + client_secret Secret) plus a conditional
-ca.crt Secret when secrets.internalCaCert is enabled. Mirror-presence in
-the target NS (managedByLabelValue) is what gates injection at admission
-time; no magic Flyte-secret-key string. */}}
+{{/* file-mount block lives on the leaseworker and executor configs
+(see "dataplane.fileMountConfig" below). The webhook no longer carries
+fileMount; controllers inject at pod-creation time. */}}
+{{- if include "singleNamespace" . }}
+propeller:
+  limit-namespace: {{ .Release.Namespace }}
+{{- end }}
+webhook:
+{{- tpl (toYaml $webhook) . | nindent 2 }}
+{{- end -}}
+
+{{/*
+  Controller-side fileMount block, included by both leaseworker and
+  executor configs. Replaces the legacy webhook fileMount path.
+
+  Unconditional entries: config.yaml ConfigMap + client_secret Secret.
+  Conditional ca.crt Secret when secrets.internalCaCert is enabled.
+*/}}
+{{- define "dataplane.fileMountConfig" -}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
 {{- $mounts := list
     (dict
@@ -1605,16 +1618,10 @@ time; no magic Flyte-secret-key string. */}}
     )
 }}
 {{- end }}
-{{- $_ := set $webhook "fileMount" (dict
-    "enabled" true
-    "managedByLabelValue" (.Values.mirroring.managedByLabelValue | default "union-operator")
-    "mounts" $mounts
-) }}
+fileMount:
+  enabled: true
+  managedByLabelValue: {{ .Values.mirroring.managedByLabelValue | default "union-operator" | quote }}
+  mounts:
+{{ toYaml $mounts | indent 4 }}
 {{- end }}
-{{- if include "singleNamespace" . }}
-propeller:
-  limit-namespace: {{ .Release.Namespace }}
-{{- end }}
-webhook:
-{{- tpl (toYaml $webhook) . | nindent 2 }}
 {{- end -}}

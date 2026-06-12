@@ -21,14 +21,11 @@ data:
 {{- end }}
   config.yaml: |
     {{- /*
-         When the chart-managed eager-credentials file-mount path is on
-         (secrets.eagerClientCreds.enabled), the SDK reads OAuth creds + config
-         + CA from mounted files via init_from_config(). The legacy
-         _UNION_EAGER_API_KEY env var is redundant; flip injectSecret false
-         so leaseworker stops appending EAGER_API_KEY to
-         SecurityContext.Secrets and the webhook never emits the env var
-         on task pods. Users can still set injectSecret explicitly via
-         values-overrides to preserve a hybrid setup if needed.
+         When eagerClientCreds is enabled, the controller injects OAuth
+         creds + config + CA bundle on every task pod at Create-time and
+         the SDK reads them via init_from_config(). The legacy
+         _UNION_EAGER_API_KEY env var is redundant; flip injectSecret
+         false so EAGER_API_KEY is not appended to SecurityContext.Secrets.
     */}}
     {{- $leaseworkerConfig := deepCopy (.Values.leaseworker.config | default dict) }}
     {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
@@ -64,6 +61,7 @@ data:
     {{- end }}
     leaseworker:
       {{- tpl (toYaml $leaseworkerConfig) $ | nindent 6 }}
+      {{- include "dataplane.fileMountConfig" . | nindent 6 }}
     union:
       {{- with .Values.config.union.connection }}
       connection:

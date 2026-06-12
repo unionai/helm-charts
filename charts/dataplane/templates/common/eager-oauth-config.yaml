@@ -1,25 +1,20 @@
 {{/*
-eager-auth-config: SDK config.yaml mounted on task pods by the
-flyte-pod-webhook's file-mount path (FAB-241 file-mount workstream).
+SDK config.yaml mounted on task pods by the controller-side file-mount
+path. When secrets.eagerClientCreds.enabled is true, the operator
+mirrors this ConfigMap (and the client_secret Secret) into every
+flyte-typed target NS. Task pods mount config.yaml at
+/etc/flyte/config.yaml and the SDK's init_from_config() reads it at
+startup, replacing the legacy _UNION_EAGER_API_KEY env-var path.
 
-When secrets.eagerClientCreds.enabled is true and the operator's
-SecretMirrorSyncer is enabled, the operator mirrors this ConfigMap and
-the client_secret Secret into every flyte-typed target NS. Task pods
-mount config.yaml at /etc/flyte/config.yaml and the SDK's
-init_from_config() reads it at startup, replacing the legacy
-_UNION_EAGER_API_KEY env-var path.
-
-Carries app.kubernetes.io/managed-by=union-operator AND the
+Carries app.kubernetes.io/managed-by=union-operator and the
 union.ai/mirrored-from-namespace=<operator NS> annotation so the
 mirror's cleanup query scopes copies to this install.
 
-Endpoint uses the chart's `dataplane.cp.endpoint` helper, which resolves
-to the CP's internal hostname (control-plane.internal.<full_domain>) —
-covered by the cert-manager-issued `controlplane-internal-tls` SAN. The
-SDK trusts the issuing CA via caCertFilePath, mounted from
-secrets.internalCaCert. Both `insecure` and `insecureSkipVerify` are
-deliberately omitted; the SDK defaults to verify, which is the only
-correct behavior under this trust chain.
+Endpoint resolves to the CP's internal hostname via the
+dataplane.cp.endpoint helper, covered by the cert-manager-issued
+controlplane-internal-tls SAN. The SDK trusts the issuing CA via
+caCertFilePath (secrets.internalCaCert); insecure / insecureSkipVerify
+are deliberately omitted.
 */}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
 apiVersion: v1
