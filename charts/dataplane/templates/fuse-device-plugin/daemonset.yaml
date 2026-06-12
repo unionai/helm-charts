@@ -63,12 +63,19 @@ spec:
           resources:
             {{- toYaml .Values.fuseDevicePlugin.resources | nindent 12 }}
           volumeMounts:
+            # must stay read-write: the plugin creates its gRPC registration
+            # socket in this directory.
             - name: device-plugin
               mountPath: /var/lib/kubelet/device-plugins
+            # read-only: discovery only stats/watches device nodes, and device
+            # I/O is unaffected by a ro bind mount — this just blocks
+            # mknod/chmod/unlink of host nodes from inside the container.
             - name: dev
               mountPath: /dev
+              readOnly: true
             - name: config
               mountPath: /root/config
+              readOnly: true
       volumes:
         - name: device-plugin
           hostPath:
