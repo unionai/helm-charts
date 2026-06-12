@@ -1556,8 +1556,17 @@ union-pod-webhook
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
-{{/* file-mount block lives on the leaseworker and executor configs
-(see "dataplane.fileMountConfig" below). The webhook no longer carries
+{{- /* When chart-managed pull is enabled, controllers handle imagePullSecrets
+       via podInjectConfig; turn off the webhook's lazy mirror path. */}}
+{{- if eq (include "secrets.imageBuilder.pull.enabled" .) "true" }}
+{{- $emsc := deepCopy (index $webhook "embeddedSecretManagerConfig" | default dict) }}
+{{- $ips := deepCopy (index $emsc "imagePullSecrets" | default dict) }}
+{{- $_ := set $ips "enabled" false }}
+{{- $_ = set $emsc "imagePullSecrets" $ips }}
+{{- $_ = set $webhook "embeddedSecretManagerConfig" $emsc }}
+{{- end }}
+{{/* podInject block lives on the leaseworker and executor configs
+(see "dataplane.podInjectConfig" below). The webhook no longer carries
 fileMount; controllers inject at pod-creation time. */}}
 {{- if include "singleNamespace" . }}
 propeller:
@@ -1568,15 +1577,24 @@ webhook:
 {{- end -}}
 
 {{/*
-  Controller-side fileMount block, included by both leaseworker and
-  executor configs. Replaces the legacy webhook fileMount path.
+  Controller-side podInject block, included by both leaseworker and
+  executor configs. Replaces the legacy webhook fileMount path AND the
+  webhook's lazy image-pull-secret injection.
 
-  Unconditional entries: config.yaml ConfigMap + client_secret Secret.
-  Conditional ca.crt Secret when secrets.internalCaCert is enabled.
+  Mounts: eager config.yaml + client_secret unconditionally;
+  internal-ca.crt when secrets.internalCaCert is enabled.
+
+  ImagePullSecrets: image-builder-pull when secrets.imageBuilder.pull
+  is enabled — chart-mirrored into every task NS by the operator's
+  ManifestMirrorSyncer.
 */}}
-{{- define "dataplane.fileMountConfig" -}}
-{{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
-{{- $mounts := list
+{{- define "dataplane.podInjectConfig" -}}
+{{- $hasFileMounts := eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
+{{- $hasImagePull := eq (include "secrets.imageBuilder.pull.enabled" .) "true" }}
+{{- if or $hasFileMounts $hasImagePull }}
+{{- $mounts := list }}
+{{- if $hasFileMounts }}
+{{- $mounts = list
     (dict
       "volume" (dict
         "name" "union-eager-auth-config"
@@ -1618,10 +1636,17 @@ webhook:
     )
 }}
 {{- end }}
-fileMount:
+{{- end }}
+{{- $imagePullSecrets := list }}
+{{- if $hasImagePull }}
+{{- $imagePullSecrets = append $imagePullSecrets (dict "name" (include "secrets.imageBuilder.pull.secretName" .)) }}
+{{- end }}
+podInject:
   enabled: true
   managedByLabelValue: {{ .Values.mirroring.managedByLabelValue | default "union-operator" | quote }}
   mounts:
 {{ toYaml $mounts | indent 4 }}
+  imagePullSecrets:
+{{ toYaml $imagePullSecrets | indent 4 }}
 {{- end }}
 {{- end -}}
