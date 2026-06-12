@@ -12,8 +12,8 @@ provision       Run `uctl selfserve provision-dataplane-resources`, write the
                 generated values file to disk, emit ORG_NAME.
 wait-healthy    Poll Cluster.get until enabled+healthy. Emit ORG_NAME.
 setup-routing   Create cluster pool + project, assign this run's cluster (and
-                its implicit queue) to them → ensures this PR's test run only
-                hits our cluster.
+                its implicit queue) to them, route all domains → ensures this
+                PR's test run only hits our cluster.
 eager-api-key   Create EAGER_API_KEY (idempotent).
 smoke-test      Submit and wait for the hello workflow on our project.
 teardown        Deregister the cluster from the control plane.
@@ -282,7 +282,13 @@ async def _setup_routing_async(
       * CreateCluster also auto-creates an org-level queue named after the
         cluster, bound to that pool and pinned to exactly this cluster;
       * runs route via that queue (flyte.with_runcontext(queue=...) in
-        _submit_with_retry); apps route via spec.cluster_pool (ci_app_task.py).
+        _submit_with_retry); apps route via spec.cluster_pool (ci_app_task.py);
+      * the project/domain → pool CLUSTER_ASSIGNMENT attributes are still
+        load-bearing for the DATAPROXY: CreateUploadLocation resolves the
+        project's pool to pick which cluster's object store receives the
+        fast-registration code bundle (dataproxy/service/cluster_selector.go).
+        Without them our project resolves to the org default pool and bundles
+        land in some other cluster's bucket → task pods 404 on download.
     Each PR still gets its own pool (== cluster == queue == project name), so
     parallel PRs can't land on each other's dataplane.
     """
@@ -354,9 +360,43 @@ async def _setup_routing_async(
     except Exception as e:
         print(f"[ci] setup-routing: project create (likely exists): {e}", flush=True)
 
+    # 5. Route all three domains → pool (CLUSTER_ASSIGNMENT attributes). Run
+    # scheduling no longer reads these, but the dataproxy and app pool
+    # resolution still do (see docstring) — without them fast-registration
+    # uploads go to the default pool's object store and every task 404s
+    # downloading its code bundle. Fatal on failure: better a clear error here
+    # than a cryptic FileNotFoundError 20 minutes into the smoke suite.
+    for domain in ("development", "staging", "production"):
+        attr_tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=f"-{domain}.yaml", delete=False
+        )
+        attr_tmp.write(
+            f"domain: {domain}\n"
+            f"project: {project_id}\n"
+            f"clusterPoolName: {pool_name}\n"
+        )
+        attr_tmp.close()
+        print(
+            f"[ci] setup-routing: routing {project_id}/{domain} → {pool_name}",
+            flush=True,
+        )
+        try:
+            rc, out = _run_uctl(
+                "uctl", "update", "cluster-pool-attributes", "--force",
+                "--attrFile", attr_tmp.name, "--org", org,
+            )
+            if rc != 0:
+                raise RuntimeError(
+                    f"uctl update cluster-pool-attributes exited {rc} "
+                    f"({project_id}/{domain} → {pool_name})\n{out[:400]}"
+                )
+        finally:
+            os.unlink(attr_tmp.name)
+
     print(
         f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}', "
-        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}'",
+        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}' "
+        f"(dev/staging/prod attributes set)",
         flush=True,
     )
     return project_id
@@ -906,9 +946,12 @@ def cmd_teardown(args: argparse.Namespace) -> None:
         print("[ci] teardown: done.", flush=True)
         return
 
-    # setup-routing creates a pool, an implicit queue and a project, all keyed
-    # by this run's id (pool == queue == project == cluster_name). Clean up
-    # best-effort (a failed delete must never fail the always() teardown step):
+    # setup-routing creates a pool, an implicit queue, a project and per-domain
+    # routing attributes, all keyed by this run's id (pool == queue == project
+    # == cluster_name). Clean up best-effort (a failed delete must never fail
+    # the always() teardown step):
+    #   * delete the per-domain CLUSTER_ASSIGNMENT attributes (still used by
+    #     dataproxy/app routing).
     #   * drain the queue — queues have NO delete RPC, so draining (stops new
     #     submissions) is the most we can do; the cluster delete above already
     #     removed the cluster from the queue's spec.
@@ -951,6 +994,12 @@ def cmd_teardown(args: argparse.Namespace) -> None:
         if rc != 0:
             print(f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True)
 
+    for domain in ("development", "staging", "production"):
+        _best_effort(
+            f"routing/{domain}",
+            "uctl", "delete", "cluster-pool-attributes",
+            "-p", cluster_name, "-d", domain, "--org", org,
+        )
     # Projects can't be deleted, only archived — leaves no schedulable routing.
     _best_effort(
         "project",
