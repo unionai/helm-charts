@@ -533,7 +533,15 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
             break
         except Exception as exc:
             msg = str(exc).lower()
-            if "no clusters found" in msg or "no cluster" in msg:
+            # 'cluster "<name>" not found' is the same propagation-lag class as
+            # "no clusters found": the run service's cluster/queue cache hasn't
+            # caught up with the CreateCluster from setup-routing yet (observed
+            # to hit one submission while parallel ones on the same queue pass).
+            if (
+                "no clusters found" in msg
+                or "no cluster" in msg
+                or ("cluster" in msg and "not found" in msg)
+            ):
                 if attempt < _SUBMIT_MAX_ATTEMPTS:
                     print(
                         f"[ci] {label}: attempt {attempt}/{_SUBMIT_MAX_ATTEMPTS} — "
@@ -589,6 +597,11 @@ _TRANSIENT_SIGNATURES = (
 
 def _is_transient(exc: Exception) -> bool:
     msg = str(exc).lower()
+    # 'cluster "<name>" not found' — CP cluster/queue cache lag right after
+    # setup-routing's CreateCluster (same class as "no clusters found", but the
+    # message shape doesn't contain that substring).
+    if "cluster" in msg and "not found" in msg:
+        return True
     return any(sig in msg for sig in _TRANSIENT_SIGNATURES)
 
 
