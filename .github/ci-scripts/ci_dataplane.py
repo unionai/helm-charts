@@ -539,16 +539,20 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     import flyte  # type: ignore
     queue = os.environ.get("CLUSTER_NAME", "") or None
     run = None
+    last_err = ""
     for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
             run = await flyte.with_runcontext(queue=queue).run.aio(task_fn, **kwargs)  # type: ignore
             break
         except Exception as exc:
-            msg = str(exc).lower()
-            # 'cluster "<name>" not found' is the same propagation-lag class as
-            # "no clusters found": the run service's cluster/queue cache hasn't
-            # caught up with the CreateCluster from setup-routing yet (observed
-            # to hit one submission while parallel ones on the same queue pass).
+            last_err = str(exc)
+            msg = last_err.lower()
+            # 'cluster "<name>" not found' is related but distinct from
+            # "no clusters found": the former means our cluster is missing from
+            # the workflow service's enabled-clusters cache (not ENABLED yet, or
+            # cache lag); the latter means that cache returned nothing at all.
+            # Both are propagation-lag classes worth the retry window — print
+            # the REAL message so the two are distinguishable in CI logs.
             if (
                 "no clusters found" in msg
                 or "no cluster" in msg
@@ -557,18 +561,38 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
                 if attempt < _SUBMIT_MAX_ATTEMPTS:
                     print(
                         f"[ci] {label}: attempt {attempt}/{_SUBMIT_MAX_ATTEMPTS} — "
-                        f"no clusters found, retrying in {_SUBMIT_RETRY_DELAY}s …",
+                        f"{last_err[:160]} — retrying in {_SUBMIT_RETRY_DELAY}s …",
                         flush=True,
                     )
+                    # Every 5th attempt, dump the cluster's CP-side state so a
+                    # long retry stretch shows WHY (e.g. state flapped out of
+                    # ENABLED, which evicts it from the workflow service's
+                    # cluster cache and yields 'cluster "<name>" not found').
+                    if attempt % 5 == 0 and queue:
+                        await _dump_cluster_state(queue)
                     await asyncio.sleep(_SUBMIT_RETRY_DELAY)
             else:
                 raise
     if run is None:
         raise RuntimeError(
             f"{label}: submission failed after {_SUBMIT_MAX_ATTEMPTS} attempts "
-            f"(no clusters found)"
+            f"(last error: {last_err[:300]})"
         )
     return run
+
+
+async def _dump_cluster_state(cluster_name: str) -> None:
+    """Print the cluster's control-plane state/health (best-effort diagnostic)."""
+    try:
+        from flyteplugins.union.remote import Cluster  # type: ignore
+        c = await Cluster.get.aio(name=cluster_name)  # type: ignore
+        print(
+            f"[ci]   diagnostic: cluster {cluster_name!r} CP state={c.state!r} "
+            f"health={c.health!r} pools={c.pools}",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never fail the retry loop
+        print(f"[ci]   diagnostic: Cluster.get failed: {exc}", flush=True)
 
 
 # ── scenario-level transient retry ───────────────────────────────────────────
