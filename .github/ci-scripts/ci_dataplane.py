@@ -488,15 +488,27 @@ async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -
         # Surface the run's underlying failure reason (ImagePullBackOff, grace
         # period exceeded, app endpoint not ready, …) into the exception message
         # so the scenario-level retry classifier (_is_transient) can tell a
-        # transient infra/registry blip from a real product failure. Falls back
-        # to the bare phase if error_info isn't populated.
+        # transient infra/registry blip from a real product failure.
+        # error_info lives on the ActionDetails proto (what the SDK's own run
+        # watcher prints) — run.pb2.action.error_info is routinely EMPTY, which
+        # used to starve the classifier (observed: verify_app's "endpoint not
+        # ready within 300s … 530" got no scenario retry). Falls back to
+        # run.pb2.action, then to the bare phase.
         detail = ""
         try:
-            act = run.pb2.action
-            if act.HasField("error_info"):
-                detail = f": {act.error_info.kind}: {act.error_info.message}"
+            details = await run.details.aio()  # type: ignore
+            err = details.action_details.error_info
+            if err is not None:
+                detail = f": {err.kind}: {err.message}"
         except Exception:  # noqa: BLE001 — diagnostics must never mask the phase error
             pass
+        if not detail:
+            try:
+                act = run.pb2.action
+                if act.HasField("error_info"):
+                    detail = f": {act.error_info.kind}: {act.error_info.message}"
+            except Exception:  # noqa: BLE001
+                pass
         raise RuntimeError(f"{label}: run {run.name} ended in phase={run.phase}{detail}")
 
 
