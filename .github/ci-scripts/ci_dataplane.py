@@ -11,8 +11,9 @@ Commands
 provision       Run `uctl selfserve provision-dataplane-resources`, write the
                 generated values file to disk, emit ORG_NAME.
 wait-healthy    Poll Cluster.get until enabled+healthy. Emit ORG_NAME.
-setup-routing   Create clusterpool, assign cluster, create project, route all
-                domains → ensures this PR's test run only hits our cluster.
+setup-routing   Create cluster pool + project, assign this run's cluster (and
+                its implicit queue) to them → ensures this PR's test run only
+                hits our cluster.
 eager-api-key   Create EAGER_API_KEY (idempotent).
 smoke-test      Submit and wait for the hello workflow on our project.
 teardown        Deregister the cluster from the control plane.
@@ -271,50 +272,77 @@ async def _setup_routing_async(
     control_plane_url: str,
     api_key: str,
 ) -> str:
-    """Create clusterpool + assignment + project + per-domain routes.
+    """Create cluster pool + project, and pin this run's cluster + queue to them.
 
-    Each PR gets its own cluster pool (named == cluster_name), a matching
-    project, and routing rules that pin development/staging/production
-    executions exclusively to this cluster.  Parallel PRs never share a
-    cluster pool and therefore can't land on each other's dataplane.
+    The control plane dropped the clusterpoolassignment / cluster-pool-attributes
+    APIs with the queue-based routing rework (flyteplugins-union #37). New model:
+      * a cluster registered by the operator heartbeat is POOL-LESS until an
+        explicit CreateCluster assigns it a pool — a one-shot operation: the
+        pool can never be changed afterwards;
+      * CreateCluster also auto-creates an org-level queue named after the
+        cluster, bound to that pool and pinned to exactly this cluster;
+      * runs route via that queue (flyte.with_runcontext(queue=...) in
+        _submit_with_retry); apps route via spec.cluster_pool (ci_app_task.py).
+    Each PR still gets its own pool (== cluster == queue == project name), so
+    parallel PRs can't land on each other's dataplane.
     """
     from flyte.remote import Project  # type: ignore
+    from flyteplugins.union.remote import Cluster, ClusterPool, Queue  # type: ignore
 
     pool_name  = cluster_name
     project_id = cluster_name
 
-    # 1. Create cluster pool
-    spec_tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False)
-    spec_tmp.write(f"clusterPool:\n  id:\n    name: {pool_name}\n")
-    spec_tmp.close()
+    await _init_client(control_plane_url, api_key, project=project_id, org=org)
+
+    # 1. Create cluster pool. The config kwargs are required by the client API
+    # but effectively placeholders: for a pool with a single cluster the control
+    # plane overwrites the pool config with whatever the operator reports
+    # (object store / secret store) on its next status upsert.
     print(f"[ci] setup-routing: creating cluster pool {pool_name}", flush=True)
     try:
-        rc, out = _run_uctl(
-            "uctl", "create", "clusterpool",
-            "--clusterPoolSpecFile", spec_tmp.name, "--org", org,
+        await ClusterPool.create.aio(  # type: ignore
+            pool_name,
+            object_store_uri=f"s3://{os.environ.get('RUSTFS_BUCKET', 'union-data')}",
+            secret_store_type="KUBERNETES",
         )
-        if rc != 0 and "already" not in out.lower():
-            raise RuntimeError(
-                f"uctl create clusterpool exited {rc} (pool={pool_name})\n{out}"
-            )
-    finally:
-        os.unlink(spec_tmp.name)
+        print(f"[ci] setup-routing: pool '{pool_name}' created", flush=True)
+    except Exception as e:
+        if "already" not in str(e).lower():
+            raise RuntimeError(f"create cluster pool {pool_name}: {e}") from e
+        print(f"[ci] setup-routing: pool '{pool_name}' already exists", flush=True)
 
-    # 2. Assign cluster to pool — critical: without this the pool is empty and
-    # every task submission returns "no clusters found".
+    # 2. Assign the (heartbeat-registered, pool-less) cluster to the pool.
+    # CreateCluster upserts the existing cluster row with the pool name and
+    # auto-creates the implicit queue '<cluster_name>' pinned to this cluster.
+    # Critical: without this the cluster belongs to no pool and every task
+    # submission returns "no clusters found". Idempotent: re-running with the
+    # same pool is a no-op; a DIFFERENT pool fails ("cannot change cluster
+    # pool"), which is fatal and means the cluster name collided with a
+    # previous run's cluster.
     print(f"[ci] setup-routing: assigning {cluster_name} → pool {pool_name}", flush=True)
-    rc, out = _run_uctl(
-        "uctl", "create", "clusterpoolassignment",
-        "--poolName", pool_name, "--clusterName", cluster_name, "--org", org,
-    )
-    if rc != 0 and "already" not in out.lower():
-        raise RuntimeError(
-            f"uctl create clusterpoolassignment exited {rc} "
-            f"(cluster={cluster_name}, pool={pool_name})\n{out}"
+    await Cluster.create.aio(cluster_name, cluster_pool_name=pool_name)  # type: ignore
+
+    # 3. Sanity-check the implicit queue; create it explicitly if the CP didn't
+    # (belt and braces — older CP builds may not auto-create it).
+    try:
+        q = await Queue.get.aio(cluster_name)  # type: ignore
+        print(
+            f"[ci] setup-routing: queue '{cluster_name}' exists "
+            f"(pool={q.cluster_pool!r} clusters={q.clusters})",
+            flush=True,
+        )
+    except Exception:
+        print(f"[ci] setup-routing: implicit queue missing — creating '{cluster_name}'", flush=True)
+        await Queue.create.aio(  # type: ignore
+            cluster_name,
+            run_concurrency=0,      # 0 == no limit (matches the implicit queue)
+            action_concurrency=0,
+            depth=0,
+            clusters=[cluster_name],
+            cluster_pool=pool_name,
         )
 
-    # 3. Create project (idempotent)
-    await _init_client(control_plane_url, api_key, project=project_id, org=org)
+    # 4. Create project (idempotent)
     print(f"[ci] setup-routing: creating project {project_id}", flush=True)
     try:
         await Project.create.aio(  # type: ignore
@@ -326,37 +354,9 @@ async def _setup_routing_async(
     except Exception as e:
         print(f"[ci] setup-routing: project create (likely exists): {e}", flush=True)
 
-    # 4. Route all three domains
-    for domain in ("development", "staging", "production"):
-        attr_tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=f"-{domain}.yaml", delete=False
-        )
-        attr_tmp.write(
-            f"domain: {domain}\n"
-            f"project: {project_id}\n"
-            f"clusterPoolName: {pool_name}\n"
-        )
-        attr_tmp.close()
-        print(
-            f"[ci] setup-routing: routing {project_id}/{domain} → {pool_name}",
-            flush=True,
-        )
-        try:
-            rc, out = _run_uctl(
-                "uctl", "update", "cluster-pool-attributes", "--force",
-                "--attrFile", attr_tmp.name, "--org", org,
-            )
-            if rc != 0:
-                print(
-                    f"[ci] setup-routing: WARNING routing {domain} failed (rc={rc}): {out[:200]}",
-                    flush=True,
-                )
-        finally:
-            os.unlink(attr_tmp.name)
-
     print(
-        f"[ci] setup-routing: done — project '{project_id}' routes to pool '{pool_name}' "
-        f"(dev/staging/prod)",
+        f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}', "
+        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}'",
         flush=True,
     )
     return project_id
@@ -474,6 +474,10 @@ _SUBMIT_RETRY_DELAY  = 30
 async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-untyped-def]
     """Submit a task, retrying on 'no clusters found' (pool / capabilities propagation lag).
 
+    Every run is pinned to this PR's queue (named == CLUSTER_NAME, created by
+    setup-routing's CreateCluster) so it can only land on this run's dataplane —
+    project/domain → pool routing rules no longer exist on the control plane.
+
     Control-plane routing cache can take O(minutes) to reflect newly-published
     K8s Plugin Config — observed to occasionally exceed 12 min on the shared
     staging control plane (capability→routing propagation is intermittently
@@ -481,10 +485,11 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     job budget even with the sequential heavy tests after it.
     """
     import flyte  # type: ignore
+    queue = os.environ.get("CLUSTER_NAME", "") or None
     run = None
     for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
-            run = await flyte.run.aio(task_fn, **kwargs)  # type: ignore
+            run = await flyte.with_runcontext(queue=queue).run.aio(task_fn, **kwargs)  # type: ignore
             break
         except Exception as exc:
             msg = str(exc).lower()
@@ -890,7 +895,7 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
     # ORG_NAME is produced by the wait-healthy step; absent if the run failed
     # before then (in which case setup-routing never ran, so there are no pool/
-    # assignment/project/attributes to clean up — only the cluster delete below).
+    # queue/project to clean up — only the cluster delete below).
     org = os.environ.get("ORG_NAME", "").strip()
 
     print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
@@ -901,34 +906,51 @@ def cmd_teardown(args: argparse.Namespace) -> None:
         print("[ci] teardown: done.", flush=True)
         return
 
-    # setup-routing creates a pool, assignment, project and per-domain routing
-    # attributes all keyed by this run's id (pool == project == cluster_name).
-    # `delete cluster` leaves every one of them orphaned on the shared staging
-    # control plane, so each CI run would otherwise leak ~6 objects that
-    # accumulate indefinitely. Clean them up best-effort (a failed delete must
-    # never fail the always() teardown step). Order: routing attrs → assignment
-    # → pool, so nothing references the pool when it's removed; the project can
-    # only be archived (Flyte has no project delete).
+    # setup-routing creates a pool, an implicit queue and a project, all keyed
+    # by this run's id (pool == queue == project == cluster_name). Clean up
+    # best-effort (a failed delete must never fail the always() teardown step):
+    #   * drain the queue — queues have NO delete RPC, so draining (stops new
+    #     submissions) is the most we can do; the cluster delete above already
+    #     removed the cluster from the queue's spec.
+    #   * delete the pool — today this returns FailedPrecondition because the
+    #     drained queue still references it; attempted anyway so cleanup starts
+    #     working the moment the CP allows deleting pools with drained queues.
+    #     Until then each run leaks one empty pool + one drained queue on the
+    #     shared staging CP.
+    #   * archive the project (Flyte has no project delete).
+    async def _drain_and_delete_async() -> None:
+        from flyteplugins.union.remote import ClusterPool, Queue  # type: ignore
+        control_plane_url = _env("CONTROL_PLANE_URL", required=False)
+        api_key = _env("UNION_API_KEY", required=False)
+        if not control_plane_url:
+            print("[ci] teardown: CONTROL_PLANE_URL unset — skipping queue/pool cleanup.", flush=True)
+            return
+        await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+        try:
+            await Queue.drain.aio(cluster_name)  # type: ignore
+            print(f"[ci] teardown: queue '{cluster_name}' drained", flush=True)
+        except Exception as e:
+            print(f"[ci] teardown: queue drain failed (ignored): {str(e)[:200]}", flush=True)
+        try:
+            await ClusterPool.delete.aio(cluster_name)  # type: ignore
+            print(f"[ci] teardown: pool '{cluster_name}' deleted", flush=True)
+        except Exception as e:
+            print(
+                f"[ci] teardown: pool delete failed (ignored — pools with queues "
+                f"are not deletable yet): {str(e)[:200]}",
+                flush=True,
+            )
+
+    try:
+        asyncio.run(_drain_and_delete_async())
+    except Exception as e:  # noqa: BLE001 — teardown must never fail the job
+        print(f"[ci] teardown: queue/pool cleanup failed (ignored): {str(e)[:200]}", flush=True)
+
     def _best_effort(label: str, *cmd: str) -> None:
         rc, _ = _run_uctl(*cmd)
         if rc != 0:
             print(f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True)
 
-    for domain in ("development", "staging", "production"):
-        _best_effort(
-            f"routing/{domain}",
-            "uctl", "delete", "cluster-pool-attributes",
-            "-p", cluster_name, "-d", domain, "--org", org,
-        )
-    _best_effort(
-        "assignment",
-        "uctl", "delete", "clusterpoolassignment",
-        "--clusterName", cluster_name, "--poolName", cluster_name, "--org", org,
-    )
-    _best_effort(
-        "pool",
-        "uctl", "delete", "clusterpool", cluster_name, "--org", org,
-    )
     # Projects can't be deleted, only archived — leaves no schedulable routing.
     _best_effort(
         "project",
