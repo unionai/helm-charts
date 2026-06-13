@@ -1556,18 +1556,13 @@ union-pod-webhook
 {{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
-{{- /* When chart-managed pull is enabled, controllers handle imagePullSecrets
-       via podInjectConfig; turn off the webhook's lazy mirror path. */}}
-{{- if eq (include "secrets.imageBuilder.pull.enabled" .) "true" }}
-{{- $emsc := deepCopy (index $webhook "embeddedSecretManagerConfig" | default dict) }}
-{{- $ips := deepCopy (index $emsc "imagePullSecrets" | default dict) }}
-{{- $_ := set $ips "enabled" false }}
-{{- $_ = set $emsc "imagePullSecrets" $ips }}
-{{- $_ = set $webhook "embeddedSecretManagerConfig" $emsc }}
-{{- end }}
-{{/* podInject block lives on the leaseworker and executor configs
-(see "dataplane.podInjectConfig" below). The webhook no longer carries
-fileMount; controllers inject at pod-creation time. */}}
+{{/* podInject (controller-side) and the webhook's embeddedSecretManager
+are independent image-pull paths and the chart does not couple them:
+secrets.imageBuilder.pull provides the DEFAULT pull secret for every
+task pod via the controller, while webhook.embeddedSecretManagerConfig
+.imagePullSecrets is configured independently to support Flyte-secret-
+provided pull secrets per task. The chart never mutates the webhook
+config from the controller path. */}}
 {{- if include "singleNamespace" . }}
 propeller:
   limit-namespace: {{ .Release.Namespace }}
@@ -1578,15 +1573,10 @@ webhook:
 
 {{/*
   Controller-side podInject block, included by both leaseworker and
-  executor configs. Replaces the legacy webhook fileMount path AND the
-  webhook's lazy image-pull-secret injection.
-
-  Mounts: eager config.yaml + client_secret unconditionally;
-  internal-ca.crt when secrets.internalCaCert is enabled.
-
-  ImagePullSecrets: image-builder-pull when secrets.imageBuilder.pull
-  is enabled — chart-mirrored into every task NS by the operator's
-  ManifestMirrorSyncer.
+  executor configs. mounts: eager config.yaml + client_secret when
+  eagerClientCreds is enabled, plus internal-ca.crt when internalCaCert
+  is enabled. imagePullSecrets: the default pull secret when
+  imageBuilder.pull is enabled.
 */}}
 {{- define "dataplane.podInjectConfig" -}}
 {{- $hasFileMounts := eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
@@ -1602,7 +1592,7 @@ webhook:
       )
       "volumeMount" (dict
         "name" "union-eager-auth-config"
-        "mountPath" "/etc/flyte/config.yaml"
+        "mountPath" (include "secrets.eagerOAuth.configMapMountPath" .)
         "subPath" "config.yaml"
         "readOnly" true
       )
@@ -1614,8 +1604,8 @@ webhook:
       )
       "volumeMount" (dict
         "name" "union-eager-client-secret"
-        "mountPath" "/etc/flyte/credentials/client_secret"
-        "subPath" "client_secret"
+        "mountPath" (include "secrets.eagerOAuth.secretMountPath" .)
+        "subPath" (include "secrets.eagerClientCreds.clientSecretKey" .)
         "readOnly" true
       )
     )
@@ -1629,8 +1619,8 @@ webhook:
       )
       "volumeMount" (dict
         "name" "union-internal-ca"
-        "mountPath" "/etc/flyte/credentials/ca.crt"
-        "subPath" "ca.crt"
+        "mountPath" (include "secrets.eagerOAuth.caCertMountPath" .)
+        "subPath" (include "secrets.internalCaCert.caCertKey" .)
         "readOnly" true
       )
     )

@@ -1,20 +1,9 @@
 {{/*
-SDK config.yaml mounted on task pods by the controller-side file-mount
-path. When secrets.eagerClientCreds.enabled is true, the operator
-mirrors this ConfigMap (and the client_secret Secret) into every
-flyte-typed target NS. Task pods mount config.yaml at
-/etc/flyte/config.yaml and the SDK's init_from_config() reads it at
-startup, replacing the legacy _UNION_EAGER_API_KEY env-var path.
-
-Carries app.kubernetes.io/managed-by=union-operator and the
-union.ai/mirrored-from-namespace=<operator NS> annotation so the
-mirror's cleanup query scopes copies to this install.
-
-Endpoint resolves to the CP's internal hostname via the
-dataplane.cp.endpoint helper, covered by the cert-manager-issued
-controlplane-internal-tls SAN. The SDK trusts the issuing CA via
-caCertFilePath (secrets.internalCaCert); insecure / insecureSkipVerify
-are deliberately omitted.
+SDK config.yaml the controller file-mounts on task pods when
+secrets.eagerClientCreds.enabled is true. The operator mirrors this
+ConfigMap into flyte-typed task namespaces; the SDK reads it via
+init_from_config() at startup. TLS posture (insecure / insecureSkipVerify)
+is operator-configurable; the default verifies against the mounted CA.
 */}}
 {{- if eq (include "secrets.eagerClientCreds.enabled" .) "true" }}
 apiVersion: v1
@@ -23,16 +12,25 @@ metadata:
   name: {{ include "secrets.eagerOAuthConfig.configMapName" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/managed-by: {{ .Values.mirroring.managedByLabelValue | default "union-operator" }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
+    {{- include "secrets.managedObjectLabels" . | nindent 4 }}
+  {{- with .Values.secrets.commonAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 data:
   config.yaml: |
     admin:
       endpoint: {{ include "dataplane.cp.endpoint" . | quote }}
       clientId: {{ .Values.secrets.eagerClientCreds.clientId | default "" | quote }}
-      clientSecretLocation: "/etc/flyte/credentials/client_secret"
+      clientSecretLocation: {{ include "secrets.eagerOAuth.secretMountPath" . | quote }}
       authType: ClientCredentials
+      {{- if .Values.secrets.eagerClientCreds.insecure }}
+      insecure: true
+      {{- end }}
+      {{- if .Values.secrets.eagerClientCreds.insecureSkipVerify }}
+      insecureSkipVerify: true
+      {{- end }}
       {{- if eq (include "secrets.internalCaCert.enabled" .) "true" }}
-      caCertFilePath: "/etc/flyte/credentials/ca.crt"
+      caCertFilePath: {{ include "secrets.eagerOAuth.caCertMountPath" . | quote }}
       {{- end }}
 {{- end }}

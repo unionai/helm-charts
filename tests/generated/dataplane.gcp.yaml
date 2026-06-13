@@ -158,6 +158,75 @@ data:
   client_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
 
 ---
+# Source: dataplane/templates/common/eager-client-creds-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-eager-client-creds
+  namespace: union
+  labels:
+    app.kubernetes.io/managed-by: union-operator
+    app.kubernetes.io/instance: release-name
+    team: ml-platform
+  annotations:
+    example.com/owner: ml-platform
+type: Opaque
+data:
+  client_id: dGVzdC1lYWdlci1jbGllbnQtaWQ=
+  client_secret: dGVzdC1ub3QtcmVhbC1lYWdlci1zZWNyZXQ=
+
+---
+# Source: dataplane/templates/common/image-builder-push-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-image-builder-push
+  namespace: union
+  labels:
+    app.kubernetes.io/managed-by: union-operator
+    app.kubernetes.io/instance: release-name
+    team: ml-platform
+  annotations:
+    example.com/owner: ml-platform
+type: Opaque
+data:
+  token: dGVzdC1ub3QtcmVhbC1wdXNoLXRva2Vu
+
+---
+# Source: dataplane/templates/common/image-pull-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-image-builder-pull
+  namespace: union
+  labels:
+    app.kubernetes.io/managed-by: union-operator
+    app.kubernetes.io/instance: release-name
+    team: ml-platform
+  annotations:
+    example.com/owner: ml-platform
+type: kubernetes.io/dockerconfigjson
+data:
+  .dockerconfigjson: eyJhdXRocyI6e319
+
+---
+# Source: dataplane/templates/common/internal-ca-secret.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-internal-ca
+  namespace: union
+  labels:
+    app.kubernetes.io/managed-by: union-operator
+    app.kubernetes.io/instance: release-name
+    team: ml-platform
+  annotations:
+    example.com/owner: ml-platform
+type: Opaque
+data:
+  ca.crt: dGVzdC1ub3QtcmVhbC1jYS1wZW0=
+
+---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
 apiVersion: v1
 kind: Secret
@@ -717,6 +786,29 @@ data:
   cluster_name: "test-e2e-gcp"
 
 ---
+# Source: dataplane/templates/common/eager-oauth-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-eager-oauth-config
+  namespace: union
+  labels:
+    app.kubernetes.io/managed-by: union-operator
+    app.kubernetes.io/instance: release-name
+    team: ml-platform
+  annotations:
+    example.com/owner: ml-platform
+data:
+  config.yaml: |
+    admin:
+      endpoint: "dns:///byok.us-west-2.union.ai:443"
+      clientId: "test-eager-client-id"
+      clientSecretLocation: "/etc/flyte/credentials/client_secret"
+      authType: ClientCredentials
+      insecureSkipVerify: true
+      caCertFilePath: "/etc/flyte/credentials/ca.crt"
+
+---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -952,10 +1044,43 @@ data:
           gpu: 256
           memory: 2Ti
       unionAuth:
-        injectSecret: true
+        injectSecret: false
         secretName: EAGER_API_KEY
       workerName: 'byok-test-e2e-gcp-worker1'
       
+      podInject:
+        enabled: true
+        managedByLabelValue: "union-operator"
+        mounts:
+          - volume:
+              configMap:
+                name: release-name-eager-oauth-config
+              name: union-eager-auth-config
+            volumeMount:
+              mountPath: /etc/flyte/config.yaml
+              name: union-eager-auth-config
+              readOnly: true
+              subPath: config.yaml
+          - volume:
+              name: union-eager-client-secret
+              secret:
+                secretName: release-name-eager-client-creds
+            volumeMount:
+              mountPath: /etc/flyte/credentials/client_secret
+              name: union-eager-client-secret
+              readOnly: true
+              subPath: client_secret
+          - volume:
+              name: union-internal-ca
+              secret:
+                secretName: release-name-internal-ca
+            volumeMount:
+              mountPath: /etc/flyte/credentials/ca.crt
+              name: union-internal-ca
+              readOnly: true
+              subPath: ca.crt
+        imagePullSecrets:
+          - name: release-name-image-builder-pull
     union:
       connection:
         host: 'dns:///byok.us-west-2.union.ai:443'
@@ -1014,7 +1139,8 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - FLYTECTL_CONFIG: /etc/flyte/config.yaml
         default-memory: 100Mi
         default-pod-template-name: task-template
         disable-inject-owner-references: true
@@ -3493,10 +3619,43 @@ data:
       maxActions: 2000
       organization: 'byok'
       unionAuth:
-        injectSecret: true
+        injectSecret: false
         secretName: EAGER_API_KEY
       workerName: worker1
       
+      podInject:
+        enabled: true
+        managedByLabelValue: "union-operator"
+        mounts:
+          - volume:
+              configMap:
+                name: release-name-eager-oauth-config
+              name: union-eager-auth-config
+            volumeMount:
+              mountPath: /etc/flyte/config.yaml
+              name: union-eager-auth-config
+              readOnly: true
+              subPath: config.yaml
+          - volume:
+              name: union-eager-client-secret
+              secret:
+                secretName: release-name-eager-client-creds
+            volumeMount:
+              mountPath: /etc/flyte/credentials/client_secret
+              name: union-eager-client-secret
+              readOnly: true
+              subPath: client_secret
+          - volume:
+              name: union-internal-ca
+              secret:
+                secretName: release-name-internal-ca
+            volumeMount:
+              mountPath: /etc/flyte/credentials/ca.crt
+              name: union-internal-ca
+              readOnly: true
+              subPath: ca.crt
+        imagePullSecrets:
+          - name: release-name-image-builder-pull
       task_resources:
         defaults:
           cpu: 100m
@@ -3566,7 +3725,8 @@ data:
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - FLYTECTL_CONFIG: /etc/flyte/config.yaml
         default-memory: 100Mi
         default-pod-template-name: task-template
         co-pilot:
@@ -3605,7 +3765,8 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars: []
+        default-env-vars:
+        - FLYTECTL_CONFIG: /etc/flyte/config.yaml
         default-memory: 100Mi
         default-pod-template-name: task-template
   config.yaml: |
@@ -3673,6 +3834,31 @@ data:
           union.ai/namespace-type: flyte
         referenceConfigmapName: union-operator
         targetConfigMapName: "build-image-config"
+      mirroring:
+        enabled: true
+        managedByLabelValue: "union-operator"
+        defaultNamespaceSelector:
+          matchLabels:
+            union.ai/namespace-type: flyte
+        provenanceAnnotations:
+          sourceNamespace: union.ai/mirrored-from-namespace
+          sourceName: union.ai/mirrored-from-name
+          sourceVersion: union.ai/mirrored-from-version
+        resources:
+        - kind: Secret
+          name: release-name-eager-client-creds
+        - kind: ConfigMap
+          name: release-name-eager-oauth-config
+        - kind: Secret
+          name: release-name-internal-ca
+        - kind: ConfigMap
+          name: build-image-config
+        - kind: Secret
+          name: release-name-image-builder-pull
+        - kind: Secret
+          name: release-name-image-builder-push
+        - kind: Secret
+          name: my-custom-mirrored-secret
     proxy:
       persistedLogs:
         objectStore:
@@ -6506,7 +6692,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "982315b150c409ed212b6afc2fddaca1ec6fef098b02fadb34d0f443aecbf10"
+        configChecksum: "4f3c49d2181b80fc05200b55d5f48cca57847c519845d200eb14c6dce5caa23"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6608,7 +6794,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1b0d2775915a10a7067683ec6d149b24d87bd5fd2f39cc3f477d19ed6d4d714"
+        configChecksum: "4d59d0cd00813ed986480485529495ea1c2f5452d257d7d2ec902d15b565c19"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6715,7 +6901,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9183963bb2ce976b0859e384acc0ca0869e4f569d47e90480665a56be41442a"
+        configChecksum: "68b3864edead1561ec46631bec99c1dae4cd1b53b251b34175d91ee15d8ec53"
         
       labels:
         
@@ -6853,7 +7039,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9183963bb2ce976b0859e384acc0ca0869e4f569d47e90480665a56be41442a"
+        configChecksum: "68b3864edead1561ec46631bec99c1dae4cd1b53b251b34175d91ee15d8ec53"
         
       labels:
         
@@ -6979,7 +7165,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "982315b150c409ed212b6afc2fddaca1ec6fef098b02fadb34d0f443aecbf10"
+        configChecksum: "4f3c49d2181b80fc05200b55d5f48cca57847c519845d200eb14c6dce5caa23"
         
     spec:
       securityContext:
@@ -7163,6 +7349,8 @@ metadata:
 template:
   spec:
     serviceAccountName: union
+    imagePullSecrets:
+      - name: release-name-image-builder-pull
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop

@@ -264,3 +264,34 @@ secrets.imageBuilder.pull — image pull (imagePullSecrets dockerconfigjson). Ab
 {{- $s := .Values.secrets.imageBuilder.pull -}}
 {{- if $s.existingSecret.name -}}{{ $s.existingSecret.name }}{{- else -}}{{ include "secrets.imageBuilder.pull.computedName" . }}{{- end -}}
 {{- end -}}
+
+{{/*
+Common labels for chart-managed Secrets + ConfigMaps that the operator
+mirrors into task namespaces. app.kubernetes.io/managed-by is load-bearing
+— the ManifestMirrorSyncer (and the controller-side MirrorChecker cache)
+select mirror sources on it, so it always derives from
+mirroring.managedByLabelValue and is not user-overridable. secrets.commonLabels
+is appended for arbitrary user metadata.
+*/}}
+{{- define "secrets.managedObjectLabels" -}}
+app.kubernetes.io/managed-by: {{ .Values.mirroring.managedByLabelValue | default "union-operator" }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- with .Values.secrets.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{/*
+Eager OAuth file-mount paths. The same values feed both the SDK config.yaml
+(clientSecretLocation / caCertFilePath) and the controller's podInject volume
+mounts, so they stay consistent. Overridable via mirroring.eagerOAuth.
+*/}}
+{{- define "secrets.eagerOAuth.configMapMountPath" -}}
+{{- dig "eagerOAuth" "configMapMountPath" "/etc/flyte/config.yaml" .Values.mirroring -}}
+{{- end -}}
+{{- define "secrets.eagerOAuth.secretMountPath" -}}
+{{- dig "eagerOAuth" "secretMountPath" "/etc/flyte/credentials/client_secret" .Values.mirroring -}}
+{{- end -}}
+{{- define "secrets.eagerOAuth.caCertMountPath" -}}
+{{- dig "eagerOAuth" "caCertMountPath" "/etc/flyte/credentials/ca.crt" .Values.mirroring -}}
+{{- end -}}

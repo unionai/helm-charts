@@ -1875,37 +1875,44 @@ proxy:
 resourcequota:
   create: false
 
-# -- Operator-side SecretMirrorSyncer config (FAB-241). When enabled, the
-# operator propagates chart-managed Secrets and ConfigMaps from this
-# release's namespace into every namespace matching the selector. The
-# flyte-pod-webhook's file-mount path activates simultaneously when
-# secrets.eagerClientCreds.enabled is true — it pre-checks the
-# mirror is present before injecting volume mounts and denies
-# admission with HTTP 503 on miss so the upstream retry path
-# absorbs operator-mirror lag.
+# -- Operator-side resource mirroring. When enabled, the operator copies
+# chart-managed Secrets + ConfigMaps from this namespace into every
+# namespace matching the selector so task pods can reference them.
 mirroring:
-  # -- Master switch. When false, SecretMirrorSyncer does not run and
-  # the legacy BuildImageConfigSyncer continues handling build-image
-  # ConfigMap mirror. When true, the new syncer subsumes it.
+  # -- Master switch. When false, the legacy BuildImageConfigSyncer
+  # continues handling the build-image ConfigMap mirror; when true the
+  # unified syncer subsumes it.
   enabled: false
   # -- Value applied as app.kubernetes.io/managed-by on every mirrored
-  # copy. Stable literal — does NOT incorporate release name. Customer-
-  # overridable for brand/white-label. Stability-critical: changing
-  # post-install orphans previously-mirrored copies.
+  # copy. Stable literal — does NOT incorporate release name. Changing
+  # it post-install orphans previously-mirrored copies.
   managedByLabelValue: union-operator
   # -- Default namespace selector applied to every mirror entry that
   # doesn't override.
   defaultNamespaceSelector:
     matchLabels:
       union.ai/namespace-type: flyte
-  # -- File-mount paths used by the operator config rendering and the
-  # webhook's fileMount block. Defaults match the SDK's expectations.
+  # -- Eager-OAuth file-mount paths. Shared by the SDK config.yaml render
+  # and the controller's podInject volume mounts so they stay consistent.
   eagerOAuth:
     configMapMountPath: /etc/flyte/config.yaml
     secretMountPath: /etc/flyte/credentials/client_secret
+    caCertMountPath: /etc/flyte/credentials/ca.crt
+  # -- Additional resources to mirror, appended to the chart-managed
+  # preset entries. Each item is `{kind: Secret|ConfigMap, name: <name>}`
+  # with an optional per-entry `namespaceSelector`.
+  extraResources: []
 
 # -- Connection secrets for the Union control plane services.
 secrets:
+  # -- Extra labels added to every chart-managed Secret + ConfigMap (eager
+  # creds, internal CA, image-builder pull/push, eager OAuth config). The
+  # app.kubernetes.io/managed-by label is always set from
+  # mirroring.managedByLabelValue and is not overridable here.
+  commonLabels: {}
+  # -- Extra annotations added to every chart-managed Secret + ConfigMap.
+  commonAnnotations: {}
+
   admin:
     # -- Reference an externally-provisioned Secret. When set, the chart skips creating its own
     # -- regardless of the legacy `create` flag.
@@ -1922,7 +1929,10 @@ secrets:
     # -- The client id used to authenticate to the control plane.  This will be provided by Union.
     clientId: dataplane-operator
 
-  # -- Eager-execution API key (DP → CP callback). Replaces post-install `flyte create secret EAGER_API_KEY`.
+  # -- DEPRECATED (removal targeted one release after file-mount adoption is
+  # confirmed). Legacy composite EAGER_API_KEY for the DP → CP callback.
+  # Superseded by `eagerClientCreds` + the controller file-mount path; kept
+  # only for the migration-coexistence window. Prefer `eagerClientCreds`.
   eagerApiKey:
     # -- Reference an externally-provisioned Secret (Whisper, sealed-secrets, external-secrets, etc.).
     existingSecret:
@@ -1954,14 +1964,21 @@ secrets:
     # Prefer existingSecret.name — inline values end up in rendered values
     # files and CI artifacts.
     clientSecret: ""
+    # -- Render `insecure: true` into the eager SDK config.yaml (plaintext
+    # DP→CP, no TLS). Default verifies TLS.
+    insecure: false
+    # -- Render `insecureSkipVerify: true` into the eager SDK config.yaml
+    # (TLS without chain verification). Workaround for environments where the
+    # runtime SDK cannot consume caCertFilePath (see flyte-sdk #1182); prefer
+    # secrets.internalCaCert so the chain verifies properly.
+    insecureSkipVerify: false
 
-  # -- Internal-CA trust bundle (`ca.crt`) used by the SDK to verify the
-  # CP `internal-tls` cert on the DP→CP gRPC path. Distinct from
-  # `eagerClientCreds`: trust material, not OAuth creds, so independent
-  # lifecycle and IAM scope (cluster operators typically point at an
-  # ExternalSecret-managed `internal-ca-bundle`). Single key inside the
-  # Secret: `ca.crt`. Picked up by the FAB-241 mirror + propeller
-  # webhook file-mount path when `secrets.internalCaCert.enabled` is true.
+  # -- Internal-CA trust bundle (`ca.crt`) the SDK uses to verify the CP
+  # `internal-tls` cert on the DP→CP gRPC path. Distinct from
+  # `eagerClientCreds` (trust material, not OAuth creds) so it carries an
+  # independent lifecycle and IAM scope — operators typically point at an
+  # ExternalSecret-managed bundle. Single key: `ca.crt`. Mirrored + file-
+  # mounted on task pods when `secrets.internalCaCert.enabled` is true.
   internalCaCert:
     existingSecret:
       # -- Name of the existing Secret. When set, the chart skips creating its own.
