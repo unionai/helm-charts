@@ -130,15 +130,14 @@ secrets.eagerClientCreds — multi-key (client_id + client_secret)
 {{- $s := .Values.secrets.eagerClientCreds -}}
 {{- if $s.enabled -}}
   {{- $hasExternal := $s.existingSecret.name -}}
-  {{- $hasInline := or $s.clientId $s.clientSecret -}}
-  {{- if and $hasExternal $hasInline -}}
-    {{- fail "secrets.eagerClientCreds: set either existingSecret.name OR clientId/clientSecret, not both" -}}
+  {{- if and $hasExternal $s.clientSecret -}}
+    {{- fail "secrets.eagerClientCreds: set either existingSecret.name OR an inline clientSecret, not both" -}}
   {{- end -}}
-  {{- if not (or $hasExternal $hasInline) -}}
-    {{- fail "secrets.eagerClientCreds.enabled=true requires existingSecret.name or clientId+clientSecret" -}}
+  {{- if not (or $hasExternal $s.clientSecret) -}}
+    {{- fail "secrets.eagerClientCreds.enabled=true requires existingSecret.name or an inline clientSecret" -}}
   {{- end -}}
-  {{- if and $hasInline (or (not $s.clientId) (not $s.clientSecret)) -}}
-    {{- fail "secrets.eagerClientCreds: both clientId and clientSecret must be set for inline credentials" -}}
+  {{- if and $s.clientSecret (not $s.clientId) -}}
+    {{- fail "secrets.eagerClientCreds: clientId must be set alongside an inline clientSecret" -}}
   {{- end -}}
 {{- end -}}
 {{- end -}}
