@@ -1,0 +1,87 @@
+# ============================================================================
+# Zero-trust metrics push — Dataplane example overlay
+# ============================================================================
+# Turns on zero-trust dataplane mode AND configures the in-cluster
+# operator-prometheus (the `prometheus` subchart) to PUSH its metrics to the
+# control plane's metrics-gateway via Prometheus remote_write, authenticated
+# with the dataplane's OAuth2 client credentials.
+#
+# This is an EXAMPLE. Copy it, fill in the two placeholders marked
+# `# >>> EDIT`, and layer it on top of your base + platform values:
+#
+#   helm repo add unionai https://unionai.github.io/helm-charts
+#   helm upgrade --install unionai-dataplane unionai/dataplane \
+#     --namespace union \
+#     --values values.aws.yaml \
+#     --values values-zero-trust.example.yaml \
+#     --wait
+#
+# Prerequisites:
+#   - secrets.admin.enable is true (the default) so the `union-secret-auth` Secret
+#     exists in the release namespace with key `app_secret`. The prometheus pod
+#     mounts ONLY that key as the OAuth2 client_secret.
+#   - global.UNION_CONTROL_PLANE_HOST is set in your base values — the
+#     remote_write URL below is derived from it automatically.
+#
+# Not supported for selfhosted-intracluster deployments.
+# ============================================================================
+
+# Zero-trust mode: installs the Kourier+Envoy gateway, dataproxy backend, and
+# tunnel-service dataplane ingress. The knative-operator subchart must be
+# disabled separately — Helm evaluates that subchart condition at parse time
+# and cannot derive it from zero_trust.enabled.
+zero_trust:
+  enabled: true
+knative-operator:
+  enabled: false
+
+# operator-prometheus remote_write -> control-plane metrics-gateway.
+# These keys flow straight into the upstream `prometheus` subchart.
+prometheus:
+  server:
+    # HA de-duplication tag. Expanded at RUNTIME by prometheus'
+    # expand-external-labels feature (Go os.Expand `${VAR}` form), fed by the
+    # POD_NAME env var below — this is NOT rendered by Helm.
+    global:
+      external_labels:
+        __replica__: ${POD_NAME}
+
+    # Required for the ${POD_NAME} expansion in external_labels above.
+    extraFlags:
+      - enable-feature=expand-external-labels
+
+    env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+
+    # Project ONLY the app_secret key of union-secret-auth into the pod as the
+    # OAuth2 client_secret file. Other keys in the Secret stay invisible.
+    extraSecretMounts:
+      - name: prometheus-remote-write-secret
+        secretName: union-secret-auth
+        mountPath: /etc/prometheus/secrets/app_secret
+        subPath: app_secret
+        readOnly: true
+
+    remoteWrite:
+        # `url` auto-derives from global.UNION_CONTROL_PLANE_HOST — the subchart
+        # runs `tpl` on this field. Leave as-is unless your gateway differs.
+      - url: "https://{{ .Values.global.UNION_CONTROL_PLANE_HOST }}/metrics/remote_write"
+        oauth2:
+          # >>> EDIT: OAuth2 client_id. Format: "<org>-<cluster>-operator"
+          #          (== global.ORG_NAME + "-" + global.CLUSTER_NAME + "-operator").
+          #          The subchart does NOT template this field — type the literal.
+          client_id: "<ORG_NAME>-<CLUSTER_NAME>-operator"
+
+          # >>> EDIT: OAuth2 token endpoint. Format:
+          #          "https://<UNION_CONTROL_PLANE_HOST>/auth/token".
+          #          The subchart does NOT template this field — type the literal.
+          token_url: "https://<UNION_CONTROL_PLANE_HOST>/auth/token"
+
+          # client_secret is read from the projected file mounted above.
+          client_secret_file: /etc/prometheus/secrets/app_secret
+
+          scopes:
+            - all
