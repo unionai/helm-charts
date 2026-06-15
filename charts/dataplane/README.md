@@ -112,6 +112,28 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --wait
 ```
 
+### Push prometheus metrics to the control plane
+
+Zero-trust dataplanes can push the in-cluster operator-prometheus metrics to
+the control-plane metrics-gateway via Prometheus `remote_write`, authenticated
+with the dataplane's OAuth2 client credentials. Start from the example overlay
+and fill in the placeholders:
+
+```bash
+curl -O https://raw.githubusercontent.com/unionai/helm-charts/main/charts/dataplane/examples/values-zero-trust.example.yaml
+# Edit values-zero-trust.example.yaml — replace the `# >>> EDIT` placeholders:
+#   - oauth2.client_id:  "<ORG_NAME>-<CLUSTER_NAME>-operator"
+#   - oauth2.token_url:  "https://<UNION_CONTROL_PLANE_HOST>/auth/token"
+# The remote_write URL derives from global.UNION_CONTROL_PLANE_HOST automatically.
+```
+
+Layer it on top of your base values at install time
+(`--values values-zero-trust.example.yaml`). The OAuth2 client_secret is read
+from the existing `union-secret-auth` Secret (key `app_secret`); no extra
+secret wiring is required. This assumes `secrets.admin.enable: true` (the
+default); if you manage `union-secret-auth` yourself, make sure it contains the
+`app_secret` key.
+
 > **Not supported for selfhosted-intracluster deployments.**
 
 ### Before you upgrade
