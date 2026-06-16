@@ -1,0 +1,50 @@
+{{- /*
+Dataplane-owned prometheus.yml ConfigMap. Set as prometheus.server.configMapOverrideName
+so the upstream subchart skips its own cm.yaml and the prometheus Deployment mounts this
+instead. We re-assemble prometheus.yml from the subchart's already-merged values so scrape
+jobs / rule files stay values-driven, and we inject a remote_write block whose oauth2
+client_id/token_url are DERIVED from globals (the subchart cannot tpl those fields).
+*/ -}}
+{{- if and .Values.prometheus.enabled .Values.prometheus.server.configMapOverrideName }}
+{{- $prom := .Values.prometheus }}
+{{- /* Inject the HA-dedup external label only in zero-trust mode; deepCopy avoids mutating .Values. */ -}}
+{{- $global := deepCopy $prom.server.global }}
+{{- if .Values.zero_trust.enabled }}
+{{- $externalLabels := $global.external_labels | default dict }}
+{{- $_ := set $externalLabels "__replica__" "${POD_NAME}" }}
+{{- $_ := set $global "external_labels" $externalLabels }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-{{ $prom.server.configMapOverrideName }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+data:
+  allow-snippet-annotations: "false"
+{{- range $key, $value := $prom.serverFiles }}
+{{- if ne $key "prometheus.yml" }}
+  {{ $key }}: |
+{{ toYaml $value | default "{}" | indent 4 }}
+{{- end }}
+{{- end }}
+  prometheus.yml: |
+    global:
+{{ $global | toYaml | trimSuffix "\n" | indent 6 }}
+{{- if .Values.zero_trust.enabled }}
+{{- $remoteWrite := list (dict
+      "url" (printf "https://%s/metrics/remote_write" .Values.global.UNION_CONTROL_PLANE_HOST)
+      "oauth2" (dict
+        "client_id" (include "dataplane.prometheus.oauth2.clientId" .)
+        "token_url" (include "dataplane.prometheus.oauth2.tokenUrl" .)
+        "client_secret_file" "/etc/prometheus/secrets/app_secret"
+        "scopes" (list "all"))) }}
+    remote_write:
+{{ toYaml $remoteWrite | indent 4 }}
+{{- end }}
+{{ toYaml (index $prom.serverFiles "prometheus.yml") | indent 4 }}
+{{- if $prom.extraScrapeConfigs }}
+{{ tpl $prom.extraScrapeConfigs $ | indent 4 }}
+{{- end }}
+{{- end }}

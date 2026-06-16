@@ -1533,6 +1533,21 @@ union-pod-webhook
 {{- end -}}
 
 {{/*
+OAuth2 client_id for the operator-prometheus remote_write push.
+Format mirrors the cloud operator_app_id: "<org>-<cluster>-operator".
+*/}}
+{{- define "dataplane.prometheus.oauth2.clientId" -}}
+{{- printf "%s-%s-operator" .Values.global.ORG_NAME .Values.global.CLUSTER_NAME -}}
+{{- end -}}
+
+{{/*
+OAuth2 token endpoint for the operator-prometheus remote_write push.
+*/}}
+{{- define "dataplane.prometheus.oauth2.tokenUrl" -}}
+{{- printf "https://%s/auth/token" .Values.global.UNION_CONTROL_PLANE_HOST -}}
+{{- end -}}
+
+{{/*
   Webhook-only minimal config: webhook block with serviceName/secretName set to the chart webhook
   name and localCert true, plus the propeller flags the webhook process needs at runtime
   (e.g. limit-namespace in singleNamespace mode).
