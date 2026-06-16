@@ -126,9 +126,10 @@ nothing to configure** — the endpoint, `client_id`
 
 This assumes the `global` values (`ORG_NAME`, `CLUSTER_NAME`,
 `UNION_CONTROL_PLANE_HOST`) are populated — they are by the GitOps tooling — and
-that `union-secret-auth` carries the `app_secret` key, which it does whenever
-`secrets.admin.enable: true` (the default). If you manage that Secret yourself,
-ensure it contains `app_secret`.
+that `union-secret-auth` carries the `app_secret` key. The chart creates that
+Secret only when `secrets.admin.enable: true` **and** `secrets.admin.create: true`;
+on the `aws`/`gcp` platform defaults `create: false`, so an external provisioner
+(e.g. ExternalSecrets) must supply `union-secret-auth` with an `app_secret` key.
 
 > **Not supported for selfhosted-intracluster deployments.**
 

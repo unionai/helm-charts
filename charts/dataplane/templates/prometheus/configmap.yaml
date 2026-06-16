@@ -56,16 +56,19 @@ data:
 {{- end }}
 {{- if $.Values.zero_trust.enabled }}
 {{- /* The oauth2 client_secret_file is read from the optional union-secret-auth mount.
-       That Secret's app_secret key only exists when secrets.admin is enabled, so fail
-       loudly here rather than letting remote_write auth fail silently at runtime. */ -}}
+       That Secret's app_secret key is provided by the chart only when secrets.admin is
+       enabled (and created, or supplied externally when create=false), so fail loudly
+       on disabled admin rather than letting remote_write auth fail silently at runtime. */ -}}
 {{- if not $.Values.secrets.admin.enable }}
 {{- fail "zero_trust metrics remote_write requires secrets.admin.enable=true so union-secret-auth provides the app_secret used as the prometheus oauth2 client_secret_file" }}
 {{- end }}
+{{- /* client_id mirrors the cloud operator_app_id "<org>-<cluster>-operator"; token_url
+       resolves through dataplane.cp.host so it honors global.CONTROLPLANE_HOST and the legacy global. */ -}}
 {{- $remoteWrites = append $remoteWrites (dict
       "url" (printf "https://%s/metrics/remote_write" (include "dataplane.cp.host" $))
       "oauth2" (dict
-        "client_id" (include "dataplane.prometheus.oauth2.clientId" $)
-        "token_url" (include "dataplane.prometheus.oauth2.tokenUrl" $)
+        "client_id" (printf "%s-%s-operator" $.Values.global.ORG_NAME $.Values.global.CLUSTER_NAME)
+        "token_url" (printf "https://%s/auth/token" (include "dataplane.cp.host" $))
         "client_secret_file" "/etc/prometheus/secrets/app_secret"
         "scopes" (list "all"))) }}
 {{- end }}
