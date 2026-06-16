@@ -52,7 +52,10 @@ data:
 {{- /* Mirror upstream remoteWrite (tpl's url), then inject the derived zero-trust entry. */ -}}
 {{- $remoteWrites := list }}
 {{- range $remoteWrite := $prom.server.remoteWrite }}
-{{- $remoteWrites = tpl $remoteWrite.url $ | set $remoteWrite "url" | append $remoteWrites }}
+{{- /* deepCopy avoids mutating .Values when we tpl the url. */ -}}
+{{- $rw := deepCopy $remoteWrite }}
+{{- $_ := set $rw "url" (tpl $remoteWrite.url $) }}
+{{- $remoteWrites = append $remoteWrites $rw }}
 {{- end }}
 {{- if $.Values.zero_trust.enabled }}
 {{- /* The oauth2 client_secret_file is read from the optional union-secret-auth mount.
@@ -80,7 +83,10 @@ data:
     remote_read:
 {{- $remoteReads := list }}
 {{- range $remoteRead := $prom.server.remoteRead }}
-{{- $remoteReads = tpl $remoteRead.url $ | set $remoteRead "url" | append $remoteReads }}
+{{- /* deepCopy avoids mutating .Values when we tpl the url. */ -}}
+{{- $rr := deepCopy $remoteRead }}
+{{- $_ := set $rr "url" (tpl $remoteRead.url $) }}
+{{- $remoteReads = append $remoteReads $rr }}
 {{- end }}
 {{ toYaml $remoteReads | indent 4 }}
 {{- end }}
