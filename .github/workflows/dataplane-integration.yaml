@@ -184,7 +184,10 @@ jobs:
       - name: Install Python deps
         if: steps.check.outputs.configured == 'true'
         run: |
-          pip install --quiet flyte flyteplugins-union fastapi uvicorn httpx
+          # flyteplugins-union >= 0.4.1 is required: the control plane dropped
+          # the clusterpoolassignment / cluster-pool-attributes APIs in favor of
+          # queue-based routing, which older clients don't speak.
+          pip install --quiet flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx
 
       # ── k3d cluster + registry ────────────────────────────────────────────
 
@@ -405,9 +408,10 @@ jobs:
           python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360
 
       # ── Project + cluster pool routing (PR isolation) ─────────────────────
-      # Creates a cluster pool named == CLUSTER_NAME and routes a dedicated
-      # project to it so test executions from this PR never land on another
-      # PR's cluster, even when PRs run in parallel.
+      # Creates a cluster pool named == CLUSTER_NAME, assigns this run's
+      # cluster to it (CreateCluster — also auto-creates the queue used to pin
+      # runs), and creates a dedicated project, so test executions from this PR
+      # never land on another PR's cluster, even when PRs run in parallel.
 
       - name: Set up project routing
         if: steps.check.outputs.configured == 'true'
