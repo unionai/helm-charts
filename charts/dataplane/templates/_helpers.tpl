@@ -1533,18 +1533,32 @@ union-pod-webhook
 {{- end -}}
 
 {{/*
+Required accessors for the identity globals. Fail rendering with a clear message when
+unset so features that mandate them surface misconfiguration at template time rather
+than rendering broken values. Reuse wherever these globals are mandatory.
+*/}}
+{{- define "dataplane.global.orgName" -}}
+{{- .Values.global.ORG_NAME | required "global.ORG_NAME is required" -}}
+{{- end -}}
+
+{{- define "dataplane.global.clusterName" -}}
+{{- .Values.global.CLUSTER_NAME | required "global.CLUSTER_NAME is required" -}}
+{{- end -}}
+
+{{/*
 OAuth2 client_id for the operator-prometheus remote_write push.
 Format mirrors the cloud operator_app_id: "<org>-<cluster>-operator".
 */}}
 {{- define "dataplane.prometheus.oauth2.clientId" -}}
-{{- printf "%s-%s-operator" .Values.global.ORG_NAME .Values.global.CLUSTER_NAME -}}
+{{- printf "%s-%s-operator" (include "dataplane.global.orgName" .) (include "dataplane.global.clusterName" .) -}}
 {{- end -}}
 
 {{/*
-OAuth2 token endpoint for the operator-prometheus remote_write push.
+OAuth2 token endpoint for the operator-prometheus remote_write push. Resolves the CP host
+through the canonical helper so it honors global.CONTROLPLANE_HOST and the legacy global.
 */}}
 {{- define "dataplane.prometheus.oauth2.tokenUrl" -}}
-{{- printf "https://%s/auth/token" .Values.global.UNION_CONTROL_PLANE_HOST -}}
+{{- printf "https://%s/auth/token" (include "dataplane.cp.host.required" .) -}}
 {{- end -}}
 
 {{/*

@@ -20,6 +20,15 @@ Override surface (globals declared at the top of values.yaml):
 {{- coalesce $cp $legacy -}}
 {{- end -}}
 
+{{/*
+Like dataplane.cp.host, but fails rendering when no control-plane host is resolvable.
+Use wherever a CP host is mandatory (e.g. zero-trust metrics remote_write) so a missing
+host surfaces at template time instead of as a broken URL at runtime.
+*/}}
+{{- define "dataplane.cp.host.required" -}}
+{{- include "dataplane.cp.host" . | required "A control-plane host is required: set global.CONTROLPLANE_HOST (or legacy global.UNION_CONTROL_PLANE_HOST)" -}}
+{{- end -}}
+
 {{- define "dataplane.cp.endpoint" -}}
 {{- $host := include "dataplane.cp.host" . -}}
 {{- $defaultEp := "" -}}
