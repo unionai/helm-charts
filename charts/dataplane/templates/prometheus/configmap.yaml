@@ -14,8 +14,10 @@ Keep this in sync with the upstream prometheus subchart's templates/cm.yaml on s
 */ -}}
 {{- if and .Values.prometheus.enabled .Values.prometheus.server.configMapOverrideName }}
 {{- $prom := .Values.prometheus }}
-{{- /* deepCopy avoids mutating .Values when we inject the HA-dedup external label. */ -}}
-{{- $global := deepCopy $prom.server.global }}
+{{- /* deepCopy avoids mutating .Values when we inject the HA-dedup external label.
+       default dict guards `helm lint` (and any deps-absent render), where the prometheus
+       subchart's default server.global is not merged in and would otherwise be nil. */ -}}
+{{- $global := deepCopy ($prom.server.global | default dict) }}
 {{- if .Values.zero_trust.enabled }}
 {{- $externalLabels := $global.external_labels | default dict }}
 {{- /* __replica__ dedups THIS cluster's prometheus replicas against each other. The
