@@ -87,6 +87,56 @@ successful connection to the control plane.
 
 ---
 
+## Zero-trust mode (BYOC only)
+
+Zero-trust mode is gated by a single values flag, `zero_trust.enabled`.
+Set it to `true` in your override file alongside disabling the
+`knative-operator` subchart (Helm evaluates that condition at parse time
+and can't derive it from `zero_trust.enabled`):
+
+```yaml
+# values.aws.byoc.yaml (or similar)
+zero_trust:
+  enabled: true
+knative-operator:
+  enabled: false
+```
+
+Install:
+
+```bash
+helm upgrade --install unionai-dataplane unionai/dataplane \
+  --namespace union \
+  --values values.aws.yaml \
+  --values values.aws.byoc.yaml \
+  --wait
+```
+
+> **Not supported for selfhosted-intracluster deployments.**
+
+### Before you upgrade
+
+Existing dataplanes **must** run the [`knative-migration`](../knative-migration/README.md) chart before upgrading. Skipping this step deadlocks the upgrade.
+
+### Gateway pod scheduling
+
+Gateway components do **not** honor the chart-wide `global.podAnnotations`, `global.podLabels`, `global.scheduling.*`, or `additionalPodSpec` helpers. Set placement per component:
+
+```yaml
+gateway:
+  components:
+    envoy:
+      annotations: {}
+      labels: {}
+      affinity: {}
+      replicas: 2
+    kourier-controller:
+      affinity: {}
+    # activator, autoscaler, autoscaler-hpa, controller, webhook
+```
+
+---
+
 ## Logging (FluentBit)
 
 The data plane deploys [FluentBit](https://fluentbit.io/) as a DaemonSet to collect container logs from every node and write them to the `persisted-logs/` path in the configured object store. FluentBit runs under the `fluentbit-system` Kubernetes service account, which must have write access to the storage bucket.

@@ -202,6 +202,68 @@
       port:
         name: grpc
 
+# v2 leasor / actions / pluginState / eventsProxy — every gRPC service the
+# leaseworker calls. Routed through the streaming ingress (long timeouts) so
+# LeasorService.StreamLeases and ActionsService.WatchForUpdates work.
+# Catch-all `Service` + `Service/*` pair mirrors the AdminService pattern
+# higher up in this block.
+- path: /cloudidl.workflow.v2.LeasorService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: leasor
+      port:
+        name: grpc
+- path: /cloudidl.workflow.v2.LeasorService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: leasor
+      port:
+        name: grpc
+- path: /flyteidl2.actions.ActionsService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /flyteidl2.actions.ActionsService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /cloudidl.pluginstate.PluginStateService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /cloudidl.pluginstate.PluginStateService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: actions
+      port:
+        name: grpc
+- path: /flyteidl2.workflow.EventsProxyService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: executions
+      port:
+        name: grpc
+- path: /flyteidl2.workflow.EventsProxyService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: executions
+      port:
+        name: grpc
+
 - path: /flyteidl2.workflow.RunLogsService/TailLogs
   pathType: ImplementationSpecific
   backend:
@@ -1492,13 +1554,17 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end}}
   {{- if .Values.ingress.enableProtectedConsoleIngress }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsWithoutSignin }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- else }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotations }}
   {{- toYaml . | nindent 4 }}
   {{- end}}
+  {{- end }}
   {{- end}}
 spec:
   {{- with .Values.ingress.className }}
@@ -1527,9 +1593,11 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsGrpc }}
   {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end}}
+  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}
@@ -1557,9 +1625,11 @@ metadata:
   {{- toYaml . | nindent 4 }}
   {{- end }}
   {{- end }}
+  {{- if include "control-plane-library.useAuth" . }}
   {{- with .Values.ingress.protectedIngressAnnotationsGrpc }}
   {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end}}
+  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . | quote }}

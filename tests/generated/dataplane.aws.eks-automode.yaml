@@ -141,14 +141,6 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-# SA and RBAC are regular release resources (not hooks) so they exist when the pre-delete Job runs.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-pre-delete
-  namespace: union
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -1059,11 +1051,9 @@ data:
         - connector-service
   config.yaml: |
     leaseworker:
-      actionsServiceAddress: http://actions-service:8089
       capacity: 100000
       cluster: 'test-cluster-name'
       dispatcherCount: 512
-      leasorAddress: http://leasor-service:8090
       limit-namespace: union
       namespace-template: union
       organization: 'test-org-name'
@@ -1082,7 +1072,8 @@ data:
       workerName: 'test-org-name-test-cluster-name-worker1'
     union:
       connection:
-        host: dns:///test-controlplane-host
+        host: 'dns:///test-controlplane-host:443'
+        insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'test-client-id'
@@ -1092,14 +1083,16 @@ data:
     admin:
       clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///test-controlplane-host
+      endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
+      insecureSkipVerify: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///test-controlplane-host
-      endpoint: dns:///test-controlplane-host
+      cache-endpoint: 'dns:///test-controlplane-host:443'
+      endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
+      insecure-skip-verify: false
       type: cacheservicev2
       use-admin-auth: true
     logger:
@@ -3651,7 +3644,8 @@ data:
       template: union
     union:
       connection:
-        host: dns:///test-controlplane-host
+        host: 'dns:///test-controlplane-host:443'
+        insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'test-client-id'
@@ -3661,14 +3655,16 @@ data:
     admin:
       clientId: 'test-client-id'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///test-controlplane-host
+      endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
+      insecureSkipVerify: false
     authorizer:
       type: noop
     catalog-cache:
-      cache-endpoint: dns:///test-controlplane-host
-      endpoint: dns:///test-controlplane-host
+      cache-endpoint: 'dns:///test-controlplane-host:443'
+      endpoint: 'dns:///test-controlplane-host:443'
       insecure: false
+      insecure-skip-verify: false
       type: cacheservicev2
       use-admin-auth: true
     logger:
@@ -3797,7 +3793,8 @@ data:
   config.yaml: |
     union:
       connection:
-        host: dns:///test-controlplane-host
+        host: 'dns:///test-controlplane-host:443'
+        insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'test-client-id'
@@ -3817,6 +3814,7 @@ data:
       tunnel:
         enableDirectToAppIngress: true
         deploymentToRestart: union-operator-proxy
+        appIngressOriginURL: "http://kourier-internal"
       limitNamespace: union
       disableClusterPermissions: true
       apps:
@@ -3868,6 +3866,7 @@ data:
         k8sConfig:
           namespace: 'union'
         type: 'K8s'
+        webhookHostTemplate: union-pod-webhook-headless.%s.svc
   logger.yaml: |
     logger:
       formatter:
@@ -5441,17 +5440,6 @@ rules:
     resources: ["volumeattachments"]
     verbs: ["list", "watch"]
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-rules:
-- apiGroups: ["operator.knative.dev"]
-  resources: ["knativeservings"]
-  verbs: ["get", "list", "watch", "delete"]
----
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5658,21 +5646,6 @@ roleRef:
   kind: Role
   name: union-operator-prometheus-rbac
 
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: release-name-pre-delete
-subjects:
-- kind: ServiceAccount
-  name: release-name-pre-delete
-  namespace: union
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 # Create a binding from Role -> ServiceAccount
@@ -7021,7 +6994,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a5757435ca6a577d1148deba1b4d649e24e6d1913c7606a9a30ee15e1254b25"
+        configChecksum: "e60d1991c51a392fc4200858d2748de7eaaa5118560c5ff356586d4e71622c7"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7046,7 +7019,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -7123,7 +7096,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "8eb2b32d034fb0f8963dcdcb4544781f80d59220bd79e6f6b9d9beee2a9f3fb"
+        configChecksum: "7e6d9cf29217331900d6f98451f30c124cf499ec32a6b87574c1dde9b71b1c2"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7147,7 +7120,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: IfNotPresent
           command:
             - executorv2
@@ -7230,7 +7203,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "6aaf41a3d4860ee886d9eedb9f59d0aabe19b9a38878667de0618b45b4a9764"
+        configChecksum: "3941617ca74250edd86d02dbd6447e327be0d4f61a82b08f75861b25cf9506b"
         
       labels:
         
@@ -7255,7 +7228,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -7323,7 +7296,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -7368,7 +7341,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "6aaf41a3d4860ee886d9eedb9f59d0aabe19b9a38878667de0618b45b4a9764"
+        configChecksum: "3941617ca74250edd86d02dbd6447e327be0d4f61a82b08f75861b25cf9506b"
         
       labels:
         
@@ -7391,7 +7364,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -7408,9 +7381,9 @@ spec:
               name: secret-volume
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.6.0"
+              value: "2026.6.6"
             - name: HELM_APP_VERSION
-              value: "2026.6.0"
+              value: "2026.6.6"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -7494,7 +7467,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "a5757435ca6a577d1148deba1b4d649e24e6d1913c7606a9a30ee15e1254b25"
+        configChecksum: "e60d1991c51a392fc4200858d2748de7eaaa5118560c5ff356586d4e71622c7"
         
     spec:
       securityContext:
@@ -7505,7 +7478,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.6"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -7843,35 +7816,6 @@ spec:
   restartPolicy: Never
 
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-spec:
-  ttlSecondsAfterFinished: 120
-  template:
-    spec:
-      serviceAccountName: release-name-pre-delete
-      restartPolicy: Never
-      containers:
-      - name: cleanup
-        image: bitnami/kubectl:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          kubectl delete knativeserving \
-            union-operator-serving \
-            --ignore-not-found=true \
-            -n union
-
----
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: batch/v1
 kind: Job
@@ -7913,10 +7857,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.6.0
+    helm.sh/chart: dataplane-2026.6.6
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/version: "2026.6.6"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -7963,10 +7907,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.6.0
+      helm.sh/chart: dataplane-2026.6.6
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.6.0"
+      app.kubernetes.io/version: "2026.6.6"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:

@@ -197,14 +197,14 @@ clusterresourcesync:
       connection:
         # This is the defacto configuration for Union managed control planes.
         # -- Host to connect to
-        host: 'dns:///{{ tpl .Values.host . }}'
+        host: '{{ include "dataplane.cp.endpoint" . }}'
 
         # -- Whether to connect over insecure channel
         # insecure: false
 
         # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
         # Caution: shouldn't be used for production use cases
-        # insecureSkipVerify: false
+        insecureSkipVerify: false
 
         # -- Minimum timeout for establishing a connection
         # minConnectTimeout: "10s"
@@ -322,19 +322,21 @@ config:
       rate: 500
       capacity: 1000
     admin:
-      endpoint: 'dns:///{{ tpl .Values.host . }}'
+      endpoint: '{{ include "dataplane.cp.endpoint" . }}'
       clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
       clientSecretLocation: /etc/union/secret/client_secret
       insecure: false
+      insecureSkipVerify: false
   authorizer:
     type: noop
   # -- Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config)
   # Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config)
   catalog:
     catalog-cache:
-      cache-endpoint: 'dns:///{{ tpl .Values.host . }}'
-      endpoint: 'dns:///{{ tpl .Values.host . }}'
+      cache-endpoint: '{{ include "dataplane.cp.endpoint" . }}'
+      endpoint: '{{ include "dataplane.cp.endpoint" . }}'
       insecure: false
+      insecure-skip-verify: false
       type: cacheservicev2
       use-admin-auth: true
   # -- Optional catalog cache configuration, rendered as catalog_cache.yaml for propeller.
@@ -537,6 +539,8 @@ config:
       enabled: "{{ .Values.proxy.secretManager.enabled }}"
       # -- The type of secret manager to use.
       type: "{{ .Values.proxy.secretManager.type }}"
+      # -- Template for the union-pod-webhook headless service host used for secret cache invalidation. %s is replaced with the operator pod namespace.
+      webhookHostTemplate: "union-pod-webhook-headless.%s.svc"
       # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
@@ -605,14 +609,14 @@ config:
     connection:
       # This is the defacto configuration for Union managed control planes.
       # -- Host to connect to
-      host: 'dns:///{{ tpl .Values.host . }}'
+      host: '{{ include "dataplane.cp.endpoint" . }}'
 
       # -- Whether to connect over insecure channel
       # insecure: false
 
       # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
       # Caution: shouldn't be used for production use cases
-      # insecureSkipVerify: false
+      insecureSkipVerify: false
 
       # -- Minimum timeout for establishing a connection
       # minConnectTimeout: "10s"
@@ -986,8 +990,10 @@ leaseworker:
     organization: "{{ tpl .Values.orgName . }}"
     cluster: "{{ tpl .Values.clusterName . }}"
     workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
-    leasorAddress: http://leasor-service:8090
-    actionsServiceAddress: http://actions-service:8089
+    # Leaseworker dials leasor + actions via the URL set in the union.connection
+    # block on the controlplane chart (see `union.connection.host`); the
+    # leasor/actions endpoints are not separately configurable on the
+    # leaseworker today.
     unionAuth:
       injectSecret: true
       secretName: EAGER_API_KEY
@@ -1375,6 +1381,11 @@ image:
   flytecopilot:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
+    pullPolicy: IfNotPresent
+  # -- Union envoy build for the zero-trust gateway.
+  envoy:
+    repository: public.ecr.aws/p0i0a9q8/envoy
+    tag: ""
     pullPolicy: IfNotPresent
 
 metrics-server:
@@ -1783,6 +1794,14 @@ prometheus:
 #   identified.
 low_privilege: true
 
+# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# gateway (replaces the knative-operator path), the dataproxy backend, and
+# the tunnel-service dataplane ingress. Customers must also set
+# `knative-operator.enabled: false` because Helm evaluates that subchart
+# condition at parse time and can't derive it from this flag.
+zero_trust:
+  enabled: false
+
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
@@ -1911,11 +1930,40 @@ storage:
   metadataPrefix: ""
   # -- Define custom configurations for the object storage.  Only used if the provider is set to "custom".
   custom: { }
+  # -- Reference to a Kubernetes Secret containing storage credentials.
+  # When set, credentials are omitted from ConfigMaps. An init container reads two flat
+  # keys from the secret and writes the YAML credential fragment to a temporary volume,
+  # which is merged with the component's config at startup.
+  #
+  # Create the secret with flat keys:
+  #   kubectl create secret generic storage-credentials -n <namespace> \
+  #     --from-literal=access_key_id=<key> \
+  #     --from-literal=secret_key=<secret>
+  #
+  # Then set credentialsSecretRef.name to the secret name. Key names are configurable
+  # via accessKeyIdKey and secretKeyKey if your secret uses different field names.
+  credentialsSecretRef:
+    # -- Name of the Kubernetes Secret. Leave empty to disable (credentials go in ConfigMaps).
+    name: ""
+    # -- Key in the secret that holds the access key ID.
+    accessKeyIdKey: access_key_id
+    # -- Key in the secret that holds the secret key.
+    secretKeyKey: secret_key
   # -- Injects the object storage access information into the pod environment variables.  Needed for providers that only support access and secret key based authentication.
   injectPodEnvVars: true
   # -- Define GCP specific configuration for object storage.
   gcp:
     projectId: ""
+
+# -- Tunnel-service ingress config consumed by the union-operator's tunnel sidecar.
+# The dataplane ingress is gated by `zero_trust.enabled` (templates evaluate
+# that flag directly); only the origin URL override is configurable here.
+tunnelService:
+  dataplane:
+    originURL: ""
+  apps:
+    enableGlobalIngress: true
+    originURL: ""
 
 # -- Configure app serving and knative.
 serving:
@@ -2065,6 +2113,15 @@ imageBuilder:
     oci:
       # -- maxParalelism limits the number of concurrent builds, default is 0 (unbounded)
       maxParallelism: 0
+
+    # -- Extra TOML configuration appended verbatim to buildkitd.toml.
+    # -- Use to configure insecure registries, mirrors, etc.
+    # -- Example:
+    # --   extraConfig: |
+    # --     [registry."myregistry:5001"]
+    # --       http = true
+    # --       insecure = true
+    extraConfig: ""
 
     pdb:
       # -- Minimum available pods
@@ -2266,3 +2323,289 @@ monitoring:
         requests:
           cpu: "500m"
           memory: "1Gi"
+
+# -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
+# `zero_trust.enabled: true`; the templates gate on that flag directly.
+gateway:
+  service:
+    httpAppsPort: 80
+    httpStaticPort: 8888
+
+  # -- Enables Union's auth integration across the kourier-gateway.
+  auth:
+    enable: true
+    tenantAuthURL: ""
+    tenantAuthSignInURL: ""
+    tenantControlPlaneURL: ""
+    organization: ""
+
+  components:
+    envoy:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gateway
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        envoy:
+          image:
+            repository: '{{ .Values.image.envoy.repository }}'
+            tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    kourier-controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - net-kourier-controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image:
+            repository: '{{ .Values.image.union.repository }}'
+            tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+
+    activator:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - activator
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        activator:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 20
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image: {}
+
+    autoscaler:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler:
+          image: {}
+
+    autoscaler-hpa:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler-hpa
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler-hpa:
+          image: {}
+
+    webhook:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - webhook
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        webhook:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+  config:
+    defaults:
+      max-revision-timeout-seconds: "6000"
+    deployment:
+      progress-deadline: "30m"
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-dnsconfig: "enabled"
+      kubernetes.podspec-dnspolicy: "enabled"
+      kubernetes.podspec-fieldref: "enabled"
+      kubernetes.podspec-hostaliases: "enabled"
+      kubernetes.podspec-init-containers: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-persistent-volume-claim: "enabled"
+      kubernetes.podspec-persistent-volume-write: "enabled"
+      kubernetes.podspec-priorityclassname: "enabled"
+      kubernetes.podspec-runtimeclassname: "enabled"
+      kubernetes.podspec-schedulername: "enabled"
+      kubernetes.podspec-securitycontext: "enabled"
+      kubernetes.podspec-shareprocessnamespace: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-topologyspreadconstraints: "enabled"
+      kubernetes.podspec-volumes-emptydir: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+    kourier: {}
+    autoscaler: {}
+    certmanager: {}
+    domain: {}
+    gc: {}
+    leader-election: {}
+    logging: {}
+    observability: {}
+    tracing: {}
+
+# -- union-dataproxy backend. Rendered when `zero_trust.enabled: true`; the
+# templates gate on that flag directly.
+dataproxy:
+  serviceAccount:
+    create: true
+    name: dataproxy-system
+    annotations: {}
+  replicas: 1
+  service:
+    port: 8080
+  podAnnotations: { }
+  podLabels: { }
+  priorityClassName: ""
+  imagePullSecrets: []
+  podEnv: { }
+  # -- nodeSelector constraints for the dataproxy pods
+  nodeSelector: { }
+  # -- topologySpreadConstraints for the dataproxy pods
+  topologySpreadConstraints: { }
+  # -- tolerations for the dataproxy pods
+  tolerations: [ ]
+  # -- affinity configurations for the dataproxy pods
+  affinity: { }
+  # -- nodeName constraint for the dataproxy pods
+  nodeName: ""
+  podSecurityContext: { }
+  securityContext: { }
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 250Mi
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []

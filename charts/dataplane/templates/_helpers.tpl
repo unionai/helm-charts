@@ -749,14 +749,28 @@ app.kubernetes.io/component: kube-state-metrics
 {{- end -}}
 
 {{- define "var.FLYTE_AWS_ACCESS_KEY_ID" -}}
+{{- if .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- if $secret }}
+- FLYTE_AWS_ACCESS_KEY_ID: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
+{{- end }}
+{{- else }}
 {{- with .Values.storage.accessKey }}
 - FLYTE_AWS_ACCESS_KEY_ID: {{ toYaml . }}
+{{- end }}
 {{- end }}
 {{- end -}}
 
 {{- define "var.FLYTE_AWS_SECRET_ACCESS_KEY" -}}
+{{- if .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- if $secret }}
+- FLYTE_AWS_SECRET_ACCESS_KEY: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
+{{- end }}
+{{- else }}
 {{- with .Values.storage.secretKey }}
 - FLYTE_AWS_SECRET_ACCESS_KEY: {{ toYaml . }}
+{{- end }}
 {{- end }}
 {{- end -}}
 
@@ -1060,11 +1074,24 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     account_name {{ tpl . $ }}
 {{- end }}
     auth_type             key
-{{- with .Values.storage.custom.stow.config.key }}
+{{/* fluent-bit's azure_blob output only supports key/sas auth (no workload
+     identity), so it needs its own shared key independent of the executor's
+     stow config. Prefer a dedicated fluentbit.azureBlobSharedKey (which may be
+     a ${ENV} placeholder expanded by fluent-bit at runtime); fall back to the
+     stow config key for backward compatibility. */}}
+{{- $fbSharedKey := .Values.storage.custom.stow.config.key }}
+{{- if .Values.fluentbit.azureBlobSharedKey }}
+{{- $fbSharedKey = .Values.fluentbit.azureBlobSharedKey }}
+{{- end }}
+{{- with $fbSharedKey }}
     shared_key {{ tpl . $ }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
     container_name        {{ .Values.storage.custom.container }}
+{{/* Default to block blobs: append blobs cap at 50,000 blocks per blob, which
+     long-lived pods exhaust (409 BlockCountExceedsLimit). Block blobs commit
+     far fewer, larger blocks. Override via fluentbit.azureBlobType if needed. */}}
+    blob_type             {{ .Values.fluentbit.azureBlobType | default "blockblob" }}
     tls                   on
 {{- else }}
 [OUTPUT]

@@ -406,6 +406,22 @@ IfNotPresent
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
 
+{{- /* actionsLeasor.enabled: opt this deployment's own UNION_ORG into v2-actions
+       CreateRun routing and hard-reject sub-2.0.4 SDKs. Chart default is off so
+       chart upgrades don't break existing legacy-SDK users; single-tenant
+       selfhosted envs flip the toggle in values-overrides.yaml. The run service
+       reads useActionsServiceForOrgs + rejectLegacySDKVersions out of the
+       executions configmap (services.executions.configMap.executions.task
+       in values.yaml), so we patch that path before rendering. */}}
+{{- if and (eq .key "executions") (hasKey .Values "actionsLeasor") .Values.actionsLeasor.enabled }}
+  {{- $executions := index $merged "executions" | default dict }}
+  {{- $task := index $executions "task" | default dict }}
+  {{- $_ := set $task "useActionsServiceForOrgs" (list .Values.global.UNION_ORG) }}
+  {{- $_ := set $task "rejectLegacySDKVersions" true }}
+  {{- $_ := set $executions "task" $task }}
+  {{- $_ := set $merged "executions" $executions }}
+{{- end }}
+
 {{- if hasKey .Values "logging" }}
   {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") }}
 {{- end }}
@@ -700,4 +716,33 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- else -}}
 {{- default "default" .Values.union.authz.serviceAccount.name -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+control-plane-library.useAuth
+Resolves .Values.flyte.configmap.adminServer.server.security.useAuth, defaulting to true
+when any level of the path is unset. Emits "true" when auth is on, "" when off, for use as:
+  {{- if include "control-plane-library.useAuth" . }}
+*/}}
+{{- define "control-plane-library.useAuth" -}}
+{{- $useAuth := true -}}
+{{- if hasKey .Values "flyte" -}}
+{{-   $flyte := .Values.flyte -}}
+{{-   if hasKey $flyte "configmap" -}}
+{{-     $cm := $flyte.configmap -}}
+{{-     if hasKey $cm "adminServer" -}}
+{{-       $as := $cm.adminServer -}}
+{{-       if hasKey $as "server" -}}
+{{-         $srv := $as.server -}}
+{{-         if hasKey $srv "security" -}}
+{{-           $sec := $srv.security -}}
+{{-           if hasKey $sec "useAuth" -}}
+{{-             $useAuth = $sec.useAuth -}}
+{{-           end -}}
+{{-         end -}}
+{{-       end -}}
+{{-     end -}}
+{{-   end -}}
+{{- end -}}
+{{- if $useAuth -}}true{{- end -}}
 {{- end -}}
