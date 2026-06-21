@@ -60,6 +60,12 @@ spec:
         - name: smarter-device-manager
           image: "{{ .Values.fuseDevicePlugin.image.repository }}:{{ .Values.fuseDevicePlugin.image.tag }}"
           imagePullPolicy: {{ .Values.fuseDevicePlugin.image.pullPolicy }}
+          # /dev is mounted read-only below, so the default terminationMessagePath
+          # of /dev/termination-log cannot be created by runc — it races the ro
+          # remount of /dev and intermittently fails container init with
+          # "make mountpoint ...: read-only file system". Point it at the
+          # writable rootfs instead.
+          terminationMessagePath: /var/log/union-fuse-termination.log
           terminationMessagePolicy: FallbackToLogsOnError
           securityContext:
             {{- toYaml .Values.fuseDevicePlugin.securityContext | nindent 12 }}
