@@ -422,6 +422,24 @@ IfNotPresent
   {{- $_ := set $merged "executions" $executions }}
 {{- end }}
 
+{{- /* apiKeyOverrides: render identity.app.apiKeyOverrides file locations from the
+       seeded-secret references on services.identity. The Secrets are mounted by
+       deployment.yaml; locations derive from controlplane.apiKeyOverride.mountDir
+       so they match the volumeMount paths exactly. Reference-only — only paths,
+       never secret material, reach the rendered config. */}}
+{{- if and (eq .key "identity") .config.apiKeyOverrides }}
+  {{- $identity := index $merged "identity" | default dict }}
+  {{- $app := index $identity "app" | default dict }}
+  {{- $overrides := dict }}
+  {{- range $keyName, $entry := .config.apiKeyOverrides }}
+    {{- $dir := include "controlplane.apiKeyOverride.mountDir" $keyName }}
+    {{- $_ := set $overrides $keyName (dict "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
+  {{- end }}
+  {{- $_ := set $app "apiKeyOverrides" $overrides }}
+  {{- $_ := set $identity "app" $app }}
+  {{- $_ := set $merged "identity" $identity }}
+{{- end }}
+
 {{- if hasKey .Values "logging" }}
   {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") }}
 {{- end }}
@@ -429,6 +447,41 @@ IfNotPresent
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
+
+{{/*
+apiKeyOverrides helpers — secret-by-reference overrides for system API keys
+consumed by the identity service's ApiKeyService.CreateKey. Each entry references
+a pre-created K8s Secret holding the OAuth client_id + client_secret; the chart
+mounts it and renders identity.app.apiKeyOverrides with the resulting file paths.
+Mount dir and config locations both derive from controlplane.apiKeyOverride.mountDir
+so they cannot drift.
+*/}}
+{{- define "controlplane.apiKeyOverride.mountDir" -}}
+/etc/secrets/apikey/{{ . }}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.volumeName" -}}
+apikey-{{ . | lower | replace "_" "-" }}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.clientIdKey" -}}
+{{- default "client_id" .existingSecret.clientIdKey -}}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.clientSecretKey" -}}
+{{- default "client_secret" .existingSecret.clientSecretKey -}}
+{{- end -}}
+
+{{/* Fail fast if any apiKeyOverrides entry omits existingSecret.name (reference is mandatory). */}}
+{{- define "controlplane.apiKeyOverrides.validate" -}}
+{{- range $svcKey, $svc := .Values.services -}}
+{{- range $keyName, $entry := ($svc.apiKeyOverrides | default dict) -}}
+{{- if not (($entry.existingSecret).name) -}}
+{{- fail (printf "services.%s.apiKeyOverrides.%s: existingSecret.name is required (reference-only, no inline secret)" $svcKey $keyName) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Renders a complete tree, even values that contains template.
