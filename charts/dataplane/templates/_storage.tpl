@@ -74,7 +74,9 @@ the stow based options to provide additional configuration flexibility.
     {{- end -}}
   {{- end -}}
 
+  {{- if $custom }}
   {{- tpl (toYaml $custom) $ | nindent 2 }}
+  {{- end }}
 {{- else }}
 {{- fail "invalid provider" }}
 {{- end }}
