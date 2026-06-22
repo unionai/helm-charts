@@ -1392,6 +1392,46 @@ metrics-server:
   enabled: false
 
 # -- nodeobserver contains the configuration information for the node observer service.
+fuseDevicePlugin:
+  # -- Enable the FUSE device-plugin DaemonSet. Advertises host /dev/fuse as an
+  # extended resource so unprivileged pods that request it (smarter-devices/fuse)
+  # can perform in-pod FUSE mounts with only CAP_SYS_ADMIN — no privileged pod.
+  # Opt-in: disabled by default; enable per cluster where unprivileged FUSE is wanted.
+  enabled: false
+  image:
+    repository: registry.gitlab.com/arm-research/smarter/smarter-device-manager
+    tag: v1.20.11
+    pullPolicy: IfNotPresent
+  # -- Devices the manager advertises (smarter-device-manager conf.yaml format).
+  # One entry per extended resource; nummaxdevices is the per-node claim count.
+  devices:
+    - devicematch: ^fuse$
+      nummaxdevices: 1000
+  # -- The plugin itself needs SYS_ADMIN to read host devices and register with
+  # kubelet; the workloads it serves stay unprivileged.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ "ALL" ]
+      add: [ "SYS_ADMIN" ]
+  # -- Run only where unprivileged FUSE is wanted; empty = all nodes.
+  nodeSelector: { }
+  # -- Tolerate everything so it lands on every (selected) node, incl. tainted.
+  tolerations:
+    - operator: Exists
+  affinity: { }
+  # -- Override the priorityClass (defaults to operator.priorityClassName).
+  priorityClassName: ""
+  # -- Additional pod annotations.
+  podAnnotations: { }
+  resources:
+    limits:
+      cpu: 100m
+      memory: 15Mi
+    requests:
+      cpu: 10m
+      memory: 15Mi
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
