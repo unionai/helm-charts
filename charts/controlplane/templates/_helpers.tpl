@@ -430,10 +430,13 @@ IfNotPresent
 {{- if and (eq .key "identity") .config.apiKeyOverrides }}
   {{- $identity := index $merged "identity" | default dict }}
   {{- $app := index $identity "app" | default dict }}
-  {{- $overrides := dict }}
+  {{- /* Render as a LIST with the key as a value field (`key`), not a map keyed
+         by name: config loading (viper) lowercases map keys, which would mangle
+         the case-sensitive system key name. As a value the case is preserved. */}}
+  {{- $overrides := list }}
   {{- range $keyName, $entry := .config.apiKeyOverrides }}
     {{- $dir := include "controlplane.apiKeyOverride.mountDir" $keyName }}
-    {{- $_ := set $overrides $keyName (dict "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
+    {{- $overrides = append $overrides (dict "key" $keyName "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
   {{- end }}
   {{- $_ := set $app "apiKeyOverrides" $overrides }}
   {{- $_ := set $identity "app" $app }}
