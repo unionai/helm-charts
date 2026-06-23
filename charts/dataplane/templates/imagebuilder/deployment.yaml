@@ -16,10 +16,13 @@ spec:
       {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- if or .Values.imageBuilder.buildkit.rootless .Values.imageBuilder.buildkit.podAnnotations }}
+      {{- if or .Values.imageBuilder.buildkit.rootless .Values.imageBuilder.buildkit.podAnnotations (and .Values.imageBuilder.buildkit.openShift.enabled .Values.imageBuilder.buildkit.openShift.securityContextConstraints.pinRequiredSCC) }}
       annotations:
         {{- if .Values.imageBuilder.buildkit.rootless }}
         container.apparmor.security.beta.kubernetes.io/buildkit: unconfined
+        {{- end }}
+        {{- if and .Values.imageBuilder.buildkit.openShift.enabled .Values.imageBuilder.buildkit.openShift.securityContextConstraints.pinRequiredSCC }}
+        openshift.io/required-scc: {{ include "imagebuilder.buildkit.openShiftSccName" . | quote }}
         {{- end }}
         {{- with .Values.imageBuilder.buildkit.podAnnotations }}
         {{ toYaml . | nindent 8 }}
@@ -90,6 +93,9 @@ spec:
               type: Unconfined
             runAsUser: 1000
             runAsGroup: 1000
+            {{- if .Values.imageBuilder.buildkit.openShift.enabled }}
+            allowPrivilegeEscalation: true
+            {{- end }}
           {{- else }}
             privileged: true
           {{- end }}

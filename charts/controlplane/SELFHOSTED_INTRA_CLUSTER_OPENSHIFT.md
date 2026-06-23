@@ -352,6 +352,8 @@ Runtime prerequisites:
 
 - The dataplane namespace must allow the chart-rendered BuildKit SCC or an equivalent pre-created SCC.
 - The BuildKit service account must be allowed to use that SCC.
+- The BuildKit SCC and pod must allow privilege escalation for the rootless UID/GID mapping path while still disallowing privileged containers.
+- The BuildKit pod template should pin the resolved SCC with `openshift.io/required-scc` so admission uses the SCC that the chart binds to the BuildKit service account.
 - The cluster policy must allow unconfined seccomp for this BuildKit pod.
 - The registry must allow writes to the configured workflow image repository.
 - The deployed image set must include the BuildKit rootless image and any required registry credentials or pull secrets.
@@ -381,6 +383,8 @@ KUBECTL_BIN=oc \
 NAMESPACE=union \
 scripts/validate_rootless_buildkit.sh
 ```
+
+The script verifies the rootless BuildKit deployment shape, the dedicated service account, `allowPrivilegeEscalation: true`, `hostUsers: false`, required SCC pinning, SCC `use` permission, and the admitted pod SCC before checking BuildKit workers.
 
 Build-and-push smoke test:
 
