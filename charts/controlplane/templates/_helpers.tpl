@@ -443,6 +443,24 @@ IfNotPresent
   {{- $_ := set $merged "identity" $identity }}
 {{- end }}
 
+{{- /* The dataproxy builds an api/v1 clientset for the control-plane authorizer
+       (service-credential-authenticated DP->CP authorizer requests); that
+       clientset's auth-metadata/admin connection dials union.connection.host.
+       The shared union.connection block carries only TLS flags, so derive the
+       host from the internal CP endpoint (connection.rootTenantURLPattern) — the
+       single source of truth — rather than duplicating it in values. Without it
+       the dataproxy gets an empty gRPC target and crashloops. */}}
+{{- if eq .key "dataproxy" }}
+  {{- $rootPattern := index (index $merged "connection" | default dict) "rootTenantURLPattern" }}
+  {{- if $rootPattern }}
+    {{- $union := index $merged "union" | default dict }}
+    {{- $unionConn := index $union "connection" | default dict }}
+    {{- $_ := set $unionConn "host" $rootPattern }}
+    {{- $_ := set $union "connection" $unionConn }}
+    {{- $_ := set $merged "union" $union }}
+  {{- end }}
+{{- end }}
+
 {{- if hasKey .Values "logging" }}
   {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") }}
 {{- end }}
