@@ -281,12 +281,17 @@ ingress:
   # namespace (typically provisioned by cert-manager via extraObjects, or by
   # an external-secrets ExternalSecret in your environment overlay).
   #
-  # Example — one secret covering the public host and the in-cluster alias:
+  # Split TLS by trust domain — one secret can't cover both. A public ACME /
+  # Let's Encrypt issuer can't mint a cert for non-resolvable in-cluster names,
+  # and in-cluster clients still verify the hostname/SAN, so the public host and
+  # the svc FQDN each need their own cert (selected by SNI):
   # tls:
-  #   - hosts:
+  #   - hosts:                                    # public — Let's Encrypt cert
   #       - '{{ .Values.global.UNION_HOST }}'
+  #     secretName: my-controlplane-public-tls-secret
+  #   - hosts:                                    # intracluster — self-signed cert
   #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-  #     secretName: my-controlplane-tls-secret
+  #     secretName: my-controlplane-internal-tls-secret
   tls: []
 
   # Host to use for all ingress objects.
@@ -2197,11 +2202,9 @@ ingress-nginx:
         http: 80
         https: 443
 
-    # TLS certificate for all HTTPS connections.
-    # The nginx-ingress subchart does not support Helm templating in extraArgs,
-    # so the TLS secret reference must be set as a literal value in your
-    # environment-specific values overlay.
-    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
+    # Extra args for the ingress-nginx controller. The subchart does not support
+    # Helm templating here, so any values must be literals. Per-host TLS is
+    # configured via `ingress.tls` above.
     extraArgs: {}
 
     admissionWebhooks:
