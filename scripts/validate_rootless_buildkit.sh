@@ -64,6 +64,10 @@ run_as_user="$(jsonpath "deployment/${DEPLOYMENT}" "{.spec.template.spec.contain
 run_as_group="$(jsonpath "deployment/${DEPLOYMENT}" "{.spec.template.spec.containers[?(@.name==\"${CONTAINER}\")].securityContext.runAsGroup}")"
 seccomp_type="$(jsonpath "deployment/${DEPLOYMENT}" "{.spec.template.spec.containers[?(@.name==\"${CONTAINER}\")].securityContext.seccompProfile.type}")"
 privileged="$(jsonpath "deployment/${DEPLOYMENT}" "{.spec.template.spec.containers[?(@.name==\"${CONTAINER}\")].securityContext.privileged}")"
+allow_privilege_escalation="$(jsonpath "deployment/${DEPLOYMENT}" "{.spec.template.spec.containers[?(@.name==\"${CONTAINER}\")].securityContext.allowPrivilegeEscalation}")"
+service_account="$(jsonpath "deployment/${DEPLOYMENT}" '{.spec.template.spec.serviceAccountName}')"
+host_users="$(jsonpath "deployment/${DEPLOYMENT}" '{.spec.template.spec.hostUsers}')"
+required_scc="$(jsonpath "deployment/${DEPLOYMENT}" '{.spec.template.metadata.annotations.openshift\.io/required-scc}')"
 annotations="$(jsonpath "deployment/${DEPLOYMENT}" '{.spec.template.metadata.annotations}')"
 mounts="$(jsonpath "deployment/${DEPLOYMENT}" "{range .spec.template.spec.containers[?(@.name==\"${CONTAINER}\")].volumeMounts[*]}{.mountPath}{\"\\n\"}{end}")"
 
@@ -74,6 +78,11 @@ require_contains "${args}" "--oci-worker-no-process-sandbox" "BuildKit args"
 [[ "${run_as_group}" == "1000" ]] || die "BuildKit runAsGroup must be 1000; got: ${run_as_group}"
 [[ "${seccomp_type}" == "Unconfined" ]] || die "BuildKit seccompProfile.type must be Unconfined; got: ${seccomp_type}"
 [[ "${privileged}" != "true" ]] || die "BuildKit securityContext must not set privileged=true"
+[[ "${allow_privilege_escalation}" == "true" ]] || die "BuildKit allowPrivilegeEscalation must be true for OpenShift rootless mode; got: ${allow_privilege_escalation}"
+[[ "${host_users}" == "false" ]] || die "BuildKit hostUsers must be false for OpenShift rootless mode; got: ${host_users}"
+[[ -n "${service_account}" ]] || die "BuildKit serviceAccountName must be set"
+[[ "${service_account}" != "union-system" ]] || die "BuildKit must not use the common union-system service account"
+[[ -n "${required_scc}" ]] || die "BuildKit pod template must set openshift.io/required-scc"
 require_contains "${annotations}" "container.apparmor.security.beta.kubernetes.io/buildkit:unconfined" "pod annotations"
 require_contains "${mounts}" "/home/user/.local/share/buildkit" "BuildKit volume mounts"
 
@@ -81,6 +90,14 @@ pod="$("${KUBECTL_BIN}" -n "${NAMESPACE}" get pod \
   -l app.kubernetes.io/name=imagebuilder-buildkit \
   -o jsonpath='{.items[0].metadata.name}')"
 [[ -n "${pod}" ]] || die "no BuildKit pod found in namespace ${NAMESPACE}"
+
+info "Checking BuildKit SCC access"
+can_use_scc="$("${KUBECTL_BIN}" auth can-i use "scc/${required_scc}" \
+  --as "system:serviceaccount:${NAMESPACE}:${service_account}" \
+  -n "${NAMESPACE}")"
+[[ "${can_use_scc}" == "yes" ]] || die "service account ${service_account} cannot use SCC ${required_scc}; got: ${can_use_scc}"
+admitted_scc="$(jsonpath "pod/${pod}" '{.metadata.annotations.openshift\.io/scc}')"
+[[ "${admitted_scc}" == "${required_scc}" ]] || die "BuildKit pod must be admitted with SCC ${required_scc}; got: ${admitted_scc}"
 
 info "Checking BuildKit workers in pod ${pod}"
 "${KUBECTL_BIN}" -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER}" -- \

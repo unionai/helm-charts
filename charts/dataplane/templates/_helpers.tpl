@@ -1518,6 +1518,8 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- define "buildkit.serviceAccountName" -}}
 {{- if .Values.imageBuilder.buildkit.serviceAccount.forceDedicated -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- else if and .Values.imageBuilder.buildkit.openShift.enabled (include "useCommonServiceAccount" .) -}}
+{{- fail "imageBuilder.buildkit.serviceAccount.forceDedicated must be true when imageBuilder.buildkit.openShift.enabled is true so the BuildKit SCC is not bound to the common service account" -}}
 {{- else if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
@@ -1526,12 +1528,26 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 
 {{/*
+Return true when the chart should create the BuildKit OpenShift SCC.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftCreateScc" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- if and (include "imagebuilder.buildkit.enabled" .) .Values.imageBuilder.buildkit.openShift.enabled $scc.create (not $scc.existingName) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Create the name of OpenShift SecurityContextConstraints to use for buildkit.
 */}}
 {{- define "imagebuilder.buildkit.openShiftSccName" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
 {{- $defaultName := printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .) -}}
-{{- $legacyName := .Values.imageBuilder.buildkit.openShift.securityContextConstraints.existingName -}}
-{{- default (default $defaultName $legacyName) .Values.imageBuilder.buildkit.openShift.securityContextConstraints.name | trunc 63 | trimSuffix "-" -}}
+{{- if $scc.existingName -}}
+{{- $scc.existingName | trunc 63 | trimSuffix "-" -}}
+{{- else if and (not $scc.create) $scc.name -}}
+{{- $scc.name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- default $defaultName $scc.name | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "buildkit.serviceAccount.annotations" -}}
