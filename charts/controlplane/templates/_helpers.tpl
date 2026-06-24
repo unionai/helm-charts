@@ -68,13 +68,24 @@ Notes:
 {{- end }}
 {{- end }}
 
+{{/*
+Resolve a per-service `service:` block by deep-merging chart-wide
+defaults (`.Values.service`) with any per-service override
+(`services.<key>.service`). Per-service keys win on conflict; nested
+maps (e.g. `annotations`) merge recursively.
+
+Callers can override just one field — e.g.
+`services.cluster.service.annotations: {...}` — without having to
+redeclare grpcport/httpport/etc.
+*/}}
 {{- define "unionai.service" -}}
-{{- if and (hasKey .config "service") }}
-{{ toYaml .config.service }}
-{{- else if and (hasKey .Values "service") }}
-{{ toYaml .Values.service }}
+{{- $defaults := .Values.service | default dict }}
+{{- $override := dict }}
+{{- if hasKey .config "service" }}
+{{- $override = (index .config "service") | default dict }}
 {{- end }}
-{{- end }}
+{{- toYaml (mergeOverwrite (deepCopy $defaults) $override) }}
+{{- end -}}
 
 
 {{- define "unionai.affinity" -}}

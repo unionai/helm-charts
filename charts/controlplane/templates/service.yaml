@@ -3,6 +3,8 @@
 ---
 {{- $service := dict "config" $serviceConfig "key" $serviceKey "Release" $.Release "Values" $.Values "Chart" $.Chart}}
 {{- if not $service.config.disabled }}
+{{- $svc := include "unionai.service" $service | fromYaml }}
+{{- $shared := include "unionai.sharedService" $service | fromYaml }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -10,9 +12,11 @@ metadata:
   labels:
     platform.union.ai/prometheus-group: "union-services"
     {{- include "unionai.labels" $service | nindent 4 }}
+  {{- with $svc.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
 spec:
-  {{- $svc := include "unionai.service" $service | fromYaml }}
-  {{- $shared := include "unionai.sharedService" $service | fromYaml }}
   type: {{ $svc.type | default "ClusterIP" }}
   ports:
     - name: grpc
