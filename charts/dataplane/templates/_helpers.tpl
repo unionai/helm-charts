@@ -419,6 +419,17 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "fuseDevicePlugin.selectorLabels" -}}
+app.kubernetes.io/name: fuse-device-plugin
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "fuseDevicePlugin.labels" -}}
+{{- include "fuseDevicePlugin.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}
@@ -1074,11 +1085,24 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     account_name {{ tpl . $ }}
 {{- end }}
     auth_type             key
-{{- with .Values.storage.custom.stow.config.key }}
+{{/* fluent-bit's azure_blob output only supports key/sas auth (no workload
+     identity), so it needs its own shared key independent of the executor's
+     stow config. Prefer a dedicated fluentbit.azureBlobSharedKey (which may be
+     a ${ENV} placeholder expanded by fluent-bit at runtime); fall back to the
+     stow config key for backward compatibility. */}}
+{{- $fbSharedKey := .Values.storage.custom.stow.config.key }}
+{{- if .Values.fluentbit.azureBlobSharedKey }}
+{{- $fbSharedKey = .Values.fluentbit.azureBlobSharedKey }}
+{{- end }}
+{{- with $fbSharedKey }}
     shared_key {{ tpl . $ }}
 {{- end }}
     path                  {{ .Values.config.proxy.persistedLogs.objectStore.prefix }}
     container_name        {{ .Values.storage.custom.container }}
+{{/* Default to block blobs: append blobs cap at 50,000 blocks per blob, which
+     long-lived pods exhaust (409 BlockCountExceedsLimit). Block blobs commit
+     far fewer, larger blocks. Override via fluentbit.azureBlobType if needed. */}}
+    blob_type             {{ .Values.fluentbit.azureBlobType | default "blockblob" }}
     tls                   on
 {{- else }}
 [OUTPUT]
