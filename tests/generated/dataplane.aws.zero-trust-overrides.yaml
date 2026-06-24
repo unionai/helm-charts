@@ -545,6 +545,21 @@ data:
                             - "test-cluster-name.dp.override.example.com"
                           routes:
                             - match:
+                                prefix: "/spark-history-server/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
+                                prefix: "/dataplane/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
+                                prefix: "/prometheus/cluster/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
                                 prefix: "/"
                               route:
                                 cluster: dataproxy
@@ -604,6 +619,19 @@ data:
               "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
               explicit_http_config:
                 http2_protocol_options: {}
+        - name: dataproxy-http
+          connect_timeout: 0.25s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: dataproxy-http
+            endpoints:
+              lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: union-operator-dataproxy
+                        port_value: 8089
     stats_config:
       stats_tags:
         - tag_name: name
@@ -2485,7 +2513,13 @@ data:
       insecure: false
       insecureSkipVerify: false
     authorizer:
-      type: noop
+      authorizerClient:
+        credentials: ServiceCredentials
+        grpcConfig:
+          host: 'dns:///override.example.com:443'
+          insecure: false
+          insecureSkipVerify: false
+      type: Authorizer
     catalog-cache:
       cache-endpoint: 'dns:///override.example.com:443'
       endpoint: 'dns:///override.example.com:443'
@@ -5036,7 +5070,13 @@ data:
       insecure: false
       insecureSkipVerify: false
     authorizer:
-      type: noop
+      authorizerClient:
+        credentials: ServiceCredentials
+        grpcConfig:
+          host: 'dns:///override.example.com:443'
+          insecure: false
+          insecureSkipVerify: false
+      type: Authorizer
     catalog-cache:
       cache-endpoint: 'dns:///override.example.com:443'
       endpoint: 'dns:///override.example.com:443'
@@ -5142,7 +5182,13 @@ data:
       security:
         singleTenantOrgID: 'test-org-name'
     authorizer:
-      type: noop
+      authorizerClient:
+        credentials: ServiceCredentials
+        grpcConfig:
+          host: 'dns:///override.example.com:443'
+          insecure: false
+          insecureSkipVerify: false
+      type: Authorizer
     operator:
       enabled: true
       enableTunnelService: false
@@ -5257,10 +5303,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.6.6
+    helm.sh/chart: dataplane-2026.6.7
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.6.6"
+    app.kubernetes.io/version: "2026.6.7"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -7217,6 +7263,10 @@ spec:
   type: ClusterIP
   ports:
     - port: 8080
+      targetPort: connect
+      protocol: TCP
+      name: connect
+    - port: 8089
       targetPort: http
       protocol: TCP
       name: http
@@ -8363,7 +8413,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "45204f68fce2b927b143a343157f0e777caeadf8d1b250dca6283f3b8fff9e9"
+        configChecksum: "08e9f861e75854b37201605a819f448e45ccca85b7f0a46420b4f8576290ba0"
         
       labels:
         
@@ -8407,8 +8457,11 @@ spec:
             - --config
             - /etc/union/config/*.yaml
           ports:
-            - name: http
+            - name: connect
               containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
               protocol: TCP
             - name: debug
               containerPort: 10254
@@ -9007,7 +9060,7 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 3d842e1075e4a1feb4082f3aaec810aad3eb13865e0902606b7f62ac37bb821b
+        checksum/bootstrap-config: 306b128fa144680c8467cd3bd9e8ba4a0093e770fa31827faedfc01f52075c60
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
@@ -9482,7 +9535,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "92b621c136a0ecdf3cc5c2fbd1f67cd8e1b2d388db186bf6195571a68d3bd32"
+        configChecksum: "994485eaa5a9f324cc252f2562068c8c548b069c63111972b7b72f42b50d243"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9584,7 +9637,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7a112992af05aa6b13d1e3c7fda27241e6c387446bc7fb3029a046388660805"
+        configChecksum: "54ec19cafa6b996c6863a064233da24801537d272bb3cf14ab5bc73be65c853"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9691,7 +9744,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "45204f68fce2b927b143a343157f0e777caeadf8d1b250dca6283f3b8fff9e9"
+        configChecksum: "08e9f861e75854b37201605a819f448e45ccca85b7f0a46420b4f8576290ba0"
         
       labels:
         
@@ -9803,7 +9856,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "45204f68fce2b927b143a343157f0e777caeadf8d1b250dca6283f3b8fff9e9"
+        configChecksum: "08e9f861e75854b37201605a819f448e45ccca85b7f0a46420b4f8576290ba0"
         
       labels:
         
@@ -9929,7 +9982,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "92b621c136a0ecdf3cc5c2fbd1f67cd8e1b2d388db186bf6195571a68d3bd32"
+        configChecksum: "994485eaa5a9f324cc252f2562068c8c548b069c63111972b7b72f42b50d243"
         
     spec:
       securityContext:
