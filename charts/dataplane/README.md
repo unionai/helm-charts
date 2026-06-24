@@ -125,8 +125,7 @@ nothing to configure** — the endpoint, `client_id`
 `union-secret-auth` Secret (key `app_secret`).
 
 This assumes the `global` values (`ORG_NAME`, `CLUSTER_NAME`,
-`CONTROLPLANE_HOST`, falling back to the legacy `host`) are populated — they are
-by the GitOps tooling — and
+`CONTROLPLANE_HOST`, falling back to the legacy `host`) are populated and
 that `union-secret-auth` carries the `app_secret` key. The chart creates that
 Secret only when `secrets.admin.enable: true` **and** `secrets.admin.create: true`;
 on the `aws`/`gcp` platform defaults `create: false`, so an external provisioner
