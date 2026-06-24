@@ -8,9 +8,11 @@ Mirrors the cloud repo (operator/deploy/helm/templates/_helpers.tpl):
 {{- end }}
 
 {{/*
-Envoy route entry for the dataproxy backend.
-Included by gateway.extraRoutes when dataproxy.enabled is true.
-NOTE: prefix "/" is a catch-all — must be the last route in the virtual host.
+Envoy route entry for the dataproxy backend (Connect server, port 8080).
+Catch-all (prefix "/") — handles gRPC + Connect-RPC. Included by
+gateway.extraRoutes when dataproxy.enabled is true.
+NOTE: prefix "/" is a catch-all — must be the LAST route in the virtual host;
+more specific prefix routes (see dataproxy.envoyHttpRoute) go above it.
 */}}
 {{- define "dataproxy.envoyRoute" -}}
 - match:
@@ -21,7 +23,35 @@ NOTE: prefix "/" is a catch-all — must be the last route in the virtual host.
 {{- end -}}
 
 {{/*
-Envoy cluster entry for the dataproxy backend.
+Envoy route entries for the dataproxy HTTP/1.1 gateway (port 8089). These are
+browser-facing reverse-proxy routes, not Connect-RPC, so they target the
+dataproxy-http cluster. Must appear BEFORE dataproxy.envoyRoute (the catch-all).
+  - /spark-history-server/ and /dataplane/ : reverse-proxy to operator-proxy.
+  - /prometheus/cluster/ : scoped so only the ACTION_ADMINISTER_ACCOUNT-authz'd
+    dataproxy handler (/prometheus/cluster/{cluster}/{path}) is edge-reachable;
+    the internal no-op-authz /prometheus/org/... route stays unexposed.
+Included by gateway.extraRoutes when dataproxy.enabled is true.
+*/}}
+{{- define "dataproxy.envoyHttpRoute" -}}
+- match:
+    prefix: "/spark-history-server/"
+  route:
+    cluster: dataproxy-http
+    timeout: 3600s
+- match:
+    prefix: "/dataplane/"
+  route:
+    cluster: dataproxy-http
+    timeout: 3600s
+- match:
+    prefix: "/prometheus/cluster/"
+  route:
+    cluster: dataproxy-http
+    timeout: 3600s
+{{ end -}}
+
+{{/*
+Envoy cluster entry for the dataproxy backend (Connect server, port 8080, HTTP/2).
 Included by gateway.extraClusters when dataproxy.enabled is true.
 */}}
 {{- define "dataproxy.envoyCluster" -}}
@@ -43,6 +73,28 @@ Included by gateway.extraClusters when dataproxy.enabled is true.
       "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
       explicit_http_config:
         http2_protocol_options: {}
+{{ end -}}
+
+{{/*
+Envoy cluster entry for the dataproxy HTTP/1.1 gateway (port 8089). Hosts the
+browser-facing reverse-proxy routes (/spark-history-server/, /dataplane/,
+/prometheus/cluster/). No http2_protocol_options -> HTTP/1.1 upstream.
+Included by gateway.extraClusters when dataproxy.enabled is true.
+*/}}
+{{- define "dataproxy.envoyHttpCluster" -}}
+- name: dataproxy-http
+  connect_timeout: 0.25s
+  type: STRICT_DNS
+  lb_policy: ROUND_ROBIN
+  load_assignment:
+    cluster_name: dataproxy-http
+    endpoints:
+      lb_endpoints:
+        - endpoint:
+            address:
+              socket_address:
+                address: {{ include "dataproxy.fullname" . }}
+                port_value: {{ .Values.dataproxy.service.httpPort }}
 {{- end -}}
 
 {{/*

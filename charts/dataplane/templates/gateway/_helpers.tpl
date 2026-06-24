@@ -52,6 +52,7 @@ Place more specific routes above it or they will be shadowed.
 */}}
 {{- define "gateway.extraRoutes" -}}
 {{- if .Values.zero_trust.enabled }}
+{{- include "dataproxy.envoyHttpRoute" . }}
 {{- include "dataproxy.envoyRoute" . }}
 {{- end }}
 {{- end -}}
@@ -63,5 +64,6 @@ To add a new backend, add a conditional include block here.
 {{- define "gateway.extraClusters" -}}
 {{- if .Values.zero_trust.enabled }}
 {{- include "dataproxy.envoyCluster" . }}
+{{- include "dataproxy.envoyHttpCluster" . }}
 {{- end }}
 {{- end -}}
