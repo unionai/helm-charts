@@ -71,6 +71,68 @@ def _gha_output(key: str, value: str) -> None:
     print(f"[ci] >> {line.rstrip()}", flush=True)
 
 
+def _diag_exc(exc: BaseException, label: str) -> None:
+    """Print the FULL exception chain for a build/run submission failure.
+
+    The flyte SDK collapses the underlying transport error into a generic
+    ``RuntimeSystemError("Flyte system is currently unavailable. …")`` (see
+    flyte/_run.py: the CreateRun handler maps connectrpc ``Code.UNAVAILABLE`` to
+    that string), but chains the real error via ``raise … from e``. The remote
+    image build submits a CreateRun for the control-plane system image-builder
+    task (project=system, domain=production, name=build-image), so a failing
+    build surfaces only the wrapper text in the smoke summary.
+
+    This walks the ``__cause__`` / ``__context__`` chain and extracts the
+    connectrpc/gRPC ``code`` + ``message`` + ``details`` so the CI log shows the
+    ACTUAL control-plane status (e.g. UNAVAILABLE vs UNAUTHENTICATED vs
+    NOT_FOUND) instead of the generic wrapper. Purely diagnostic — never raises.
+    """
+    import traceback
+    print(f"\n[ci] +-- {label}: full error diagnostic -------------------------", flush=True)
+    seen: set[int] = set()
+    e: BaseException | None = exc
+    depth = 0
+    while e is not None and id(e) not in seen and depth < 12:
+        seen.add(id(e))
+        cls = f"{type(e).__module__}.{type(e).__qualname__}"
+        print(f"[ci] | [{depth}] {cls}: {e}", flush=True)
+        # connectrpc.ConnectError exposes .code/.message/.details as properties;
+        # grpc.aio.AioRpcError exposes .code()/.details() as callables — handle both.
+        code = getattr(e, "code", None)
+        if code is not None:
+            try:
+                code_val = code() if callable(code) else code
+            except Exception:  # noqa: BLE001
+                code_val = code
+            cname = getattr(code_val, "name", None) or getattr(code_val, "value", None) or code_val
+            print(f"[ci] |      code    = {cname!r}", flush=True)
+        msg = getattr(e, "message", None)
+        if msg and not callable(msg):
+            print(f"[ci] |      message = {msg!r}", flush=True)
+        details = getattr(e, "details", None)
+        if details is not None:
+            try:
+                dval = details() if callable(details) else details
+                if dval:
+                    print(f"[ci] |      details = {dval!r}", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+        des = getattr(e, "debug_error_string", None)
+        if callable(des):
+            try:
+                print(f"[ci] |      debug   = {des()!r}", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+        e = e.__cause__ or e.__context__
+        depth += 1
+    print("[ci] | traceback:", flush=True)
+    for line in "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    ).splitlines():
+        print(f"[ci] |   {line}", flush=True)
+    print("[ci] +-----------------------------------------------------------", flush=True)
+
+
 def _uctl_extra_env() -> dict:
     """Return BYOK_CLIENT_SECRET decoded from UNION_API_KEY for uctl subprocesses.
 
@@ -930,6 +992,7 @@ async def _run_smoke_suite_async(
         if isinstance(outcome, Exception):
             results.append((name, False, str(outcome)[:300]))
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
+            _diag_exc(outcome, f"smoke-suite/{name}")
         else:
             results.append((name, True, ""))
 
@@ -949,6 +1012,7 @@ async def _run_smoke_suite_async(
         except Exception as outcome:  # noqa: BLE001
             results.append((name, False, str(outcome)[:300]))
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
+            _diag_exc(outcome, f"smoke-suite/{name}")
 
     # Summary table.
     print("\n[ci] ── smoke suite results ──────────────────────────────────", flush=True)
@@ -1057,6 +1121,95 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     print("[ci] teardown: done.", flush=True)
 
 
+# ── probe-image-builder (diagnostic) ─────────────────────────────────────────
+
+async def _probe_image_builder_async(
+    control_plane_url: str,
+    api_key: str,
+    cluster_name: str,
+    org: str,
+) -> None:
+    """Isolate the remote image-build submission and dump the REAL error.
+
+    Every failing CI run since ~2026-06-22 fails exactly the four smoke tests
+    that build a custom image (verify_image_builder/_image_cache/_reusable/_app)
+    with the generic "Flyte system is currently unavailable", while the two that
+    reuse the prebuilt base image (verify_logs/_io) pass — and it reproduces on
+    identical flyte / flyteplugins-union versions that previously passed. That
+    points at the control-plane image-builder backend, not this repo. This probe
+    exercises ONLY the build path and prints the underlying connectrpc status so
+    the cause (UNAVAILABLE vs UNAUTHENTICATED vs NOT_FOUND vs misroute) is
+    unambiguous. It is best-effort and always exits 0 — it never gates the job.
+    """
+    import flyte  # type: ignore
+
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    print(
+        f"[ci] probe-image-builder: client initialised — "
+        f"endpoint={control_plane_url} project={cluster_name} org={org}",
+        flush=True,
+    )
+
+    # 1) Where does the SDK route image builds? (project/domain/task name)
+    try:
+        from flyte._internal.imagebuild import remote_builder as _rb  # type: ignore
+        print(
+            "[ci] probe: image-builder route — "
+            f"project={_rb.IMAGE_TASK_PROJECT!r} domain={_rb.IMAGE_TASK_DOMAIN!r} "
+            f"task={_rb.IMAGE_TASK_NAME!r} "
+            f"(FLYTE_IMAGEBUILDER_TASK_DOMAIN={os.environ.get('FLYTE_IMAGEBUILDER_TASK_DOMAIN', '(unset)')})",
+            flush=True,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ci] probe: could not import remote_builder constants: {exc}", flush=True)
+        _rb = None  # type: ignore
+
+    # 2) Does the system build-image task resolve? Distinguishes "builder not
+    #    enabled" (RemoteTaskNotFoundError) from "builder enabled but the run
+    #    submission is rejected" (the case we actually see).
+    if _rb is not None:
+        try:
+            from flyte import remote  # type: ignore
+            t = await remote.Task.get(  # type: ignore
+                name=_rb.IMAGE_TASK_NAME,
+                project=_rb.IMAGE_TASK_PROJECT,
+                domain=_rb.IMAGE_TASK_DOMAIN,
+                auto_version="latest",
+            )
+            print(f"[ci] probe: system build-image task RESOLVED — {t}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print("[ci] probe: system build-image task lookup FAILED:", flush=True)
+            _diag_exc(exc, "probe/Task.get(build-image)")
+
+    # 3) Attempt one isolated remote image build and dump the underlying error.
+    #    A fresh minimal env forces a real build (the failing builds are never
+    #    cached); if it ever succeeds that is equally useful signal.
+    try:
+        img = flyte.Image.from_debian_base().with_pip_packages("requests==2.32.3")
+        probe_env = flyte.TaskEnvironment(name=f"ci-probe-{cluster_name}", image=img)
+        print("[ci] probe: submitting isolated remote image build …", flush=True)
+        cache = await flyte.build_images.aio(probe_env)  # type: ignore
+        print(f"[ci] probe: image build SUCCEEDED — cache={cache}", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print("[ci] probe: image build FAILED:", flush=True)
+        _diag_exc(exc, "probe/build_images")
+
+
+def cmd_probe_image_builder(args: argparse.Namespace) -> None:
+    try:
+        asyncio.run(
+            _probe_image_builder_async(
+                _env("CONTROL_PLANE_URL"),
+                _env("UNION_API_KEY", required=False),
+                _env("CLUSTER_NAME"),
+                _env("ORG_NAME", required=False),
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — diagnostic step must never fail the job
+        print(f"[ci] probe-image-builder: probe wrapper error (ignored): {exc}", flush=True)
+        _diag_exc(exc, "probe-image-builder/wrapper")
+
+
 # ── main ────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1076,6 +1229,7 @@ def main() -> None:
     sub.add_parser("eager-api-key")
     sub.add_parser("smoke-test")
     sub.add_parser("run-smoke-suite")
+    sub.add_parser("probe-image-builder")
     sub.add_parser("teardown")
 
     args = p.parse_args()
@@ -1086,6 +1240,7 @@ def main() -> None:
         "eager-api-key":    cmd_eager_api_key,
         "smoke-test":       cmd_smoke_test,
         "run-smoke-suite":  cmd_run_smoke_suite,
+        "probe-image-builder": cmd_probe_image_builder,
         "teardown":         cmd_teardown,
     }[args.command](args)
 

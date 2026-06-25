@@ -504,6 +504,20 @@ jobs:
             'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5000 (cluster-internal) ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5001 (host-mapped) ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL' \
             2>&1 || echo "(buildkit exec failed)"
 
+      # Diagnostic: the remote image build submits a CreateRun for the
+      # control-plane system image-builder task (system/production/build-image);
+      # when that backend is down the SDK collapses the connectrpc error into a
+      # generic "Flyte system is currently unavailable". This probe exercises ONLY
+      # the build path and prints the underlying connectrpc code + message so the
+      # real cause is visible up-front. Best-effort — never gates the job.
+      - name: Probe remote image builder (diagnostic)
+        if: steps.check.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
+        run: |
+          python .github/ci-scripts/ci_dataplane.py probe-image-builder
+
       - name: Run smoke suite
         if: steps.check.outputs.configured == 'true'
         id: smoke
