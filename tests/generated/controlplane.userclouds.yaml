@@ -3027,6 +3027,8 @@ data:
       numBuckets: 256
       partitions:
       - - 0
+      queueSync:
+        source: crud
       shardIndex: 0
       skipPartitionCheckForDevbox: true
       totalPartitions: 1
@@ -14551,6 +14553,22 @@ spec:
                 name: organizations
                 port:
                   name: grpc
+          # SettingsService backs the project/domain default-queue → cluster-pool
+          # resolution used by run creation and dataproxy cluster routing.
+          - path: /flyteidl2.settings.SettingsService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  name: grpc
+          - path: /flyteidl2.settings.SettingsService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: organizations
+                port:
+                  name: grpc
           - path: /cloudidl.cloudaccounts.CloudAccountsService/*
             pathType: ImplementationSpecific
             backend:
@@ -14685,6 +14703,38 @@ spec:
                 port:
                   name: connect
           - path: /cloudidl.clusterconfig.ClusterConfigService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  name: connect
+          # queue CRUD API — served by the cluster binary. Used by the console (Create/
+          # Update/List/Get/Drain) and by the leasor crud queue source (ListQueues) +
+          # its leasor→cluster drain callback (InternalQueueService). The streaming
+          # WatchQueueMetrics method is routed via protectedGrpcStreamingRoutes.
+          - path: /cloudidl.queue.QueueService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  name: connect
+          - path: /cloudidl.queue.QueueService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  name: connect
+          - path: /cloudidl.queue.InternalQueueService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  name: connect
+          - path: /cloudidl.queue.InternalQueueService
             pathType: ImplementationSpecific
             backend:
               service:
@@ -15411,6 +15461,16 @@ spec:
                 name: queue
                 port:
                   name: grpc
+          # queue CRUD WatchQueueMetrics is server-streaming (proxies leasor metrics);
+          # route it through the streaming ingress so the console's live metrics view
+          # isn't cut by the unary read timeout. Served by the cluster binary (connect).
+          - path: /cloudidl.queue.QueueService/WatchQueueMetrics
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: cluster
+                port:
+                  name: connect
           
           # v2 leasor / actions / pluginState / eventsProxy — every gRPC service the
           # leaseworker calls. Routed through the streaming ingress (long timeouts) so
