@@ -1170,12 +1170,15 @@ async def _probe_image_builder_async(
     if _rb is not None:
         try:
             from flyte import remote  # type: ignore
-            t = await remote.Task.get(  # type: ignore
+            # Task.get returns a LazyEntity synchronously; the real network
+            # lookup happens in .fetch() (awaitable).
+            lazy = remote.Task.get(  # type: ignore
                 name=_rb.IMAGE_TASK_NAME,
                 project=_rb.IMAGE_TASK_PROJECT,
                 domain=_rb.IMAGE_TASK_DOMAIN,
                 auto_version="latest",
             )
+            t = await lazy.fetch.aio()  # type: ignore
             print(f"[ci] probe: system build-image task RESOLVED — {t}", flush=True)
         except Exception as exc:  # noqa: BLE001
             print("[ci] probe: system build-image task lookup FAILED:", flush=True)
