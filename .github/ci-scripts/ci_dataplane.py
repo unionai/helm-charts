@@ -1226,26 +1226,45 @@ async def _probe_image_builder_async(
             print("[ci] probe: system build-image task lookup FAILED:", flush=True)
             _diag_exc(exc, "probe/Task.get(build-image)")
 
-    # 3) Attempt one isolated remote image build and dump the underlying error.
+    # 3) Attempt an isolated remote image build and dump the underlying error.
     #    A fresh minimal env forces a real build (the failing builds are never
-    #    cached); if it ever succeeds that is equally useful signal.
-    try:
-        img = flyte.Image.from_debian_base().with_pip_packages("requests==2.32.3")
-        probe_env = flyte.TaskEnvironment(name=f"ci-probe-{cluster_name}", image=img)
-        print("[ci] probe: submitting isolated remote image build …", flush=True)
-        cache = await flyte.build_images.aio(probe_env)  # type: ignore
-        print(f"[ci] probe: image build SUCCEEDED — cache={cache}", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        print("[ci] probe: image build FAILED:", flush=True)
-        _diag_exc(exc, "probe/build_images")
-        # The build runs on the dataplane, so a failed submission is most often
-        # the CP no longer routing build runs here. Capture BOTH sides of that
-        # decision: the CP's view of this cluster's health (Cluster.get) and the
-        # operator's CP-connection/heartbeat state — to tell "CP dropped us as a
-        # healthy build target" apart from a true CP-backend/transport error.
-        print("[ci] probe: --- CP-side cluster health at build-failure time ---", flush=True)
-        await _dump_cluster_state(cluster_name)
-        _dump_operator_connection()
+    #    cached). Retry on TRANSIENT failures — the build run is created in this
+    #    cluster's project/domain, so for the first ~2 min after the cluster goes
+    #    healthy the workflow-service cluster cache / capabilities haven't
+    #    propagated and CreateRun returns NOT_FOUND "no clusters found for action"
+    #    (the same lag the smoke suite's 120s wait + _submit_with_retry absorb).
+    #    Retrying those means a FAILED verdict here reflects a *real* persistent
+    #    build problem (e.g. the 06-24 UNAVAILABLE), not propagation lag.
+    img = flyte.Image.from_debian_base().with_pip_packages("requests==2.32.3")
+    probe_env = flyte.TaskEnvironment(name=f"ci-probe-{cluster_name}", image=img)
+    _MAX, _DELAY = 10, 30
+    for attempt in range(1, _MAX + 1):
+        try:
+            print(f"[ci] probe: submitting isolated remote image build (attempt {attempt}/{_MAX}) …", flush=True)
+            cache = await flyte.build_images.aio(probe_env)  # type: ignore
+            print(f"[ci] probe: image build SUCCEEDED — cache={cache}", flush=True)
+            break
+        except Exception as exc:  # noqa: BLE001
+            if attempt < _MAX and _is_transient(exc):
+                print(
+                    f"[ci] probe: build attempt {attempt}/{_MAX} transient "
+                    f"({str(exc)[:140]}) — retrying in {_DELAY}s …",
+                    flush=True,
+                )
+                await asyncio.sleep(_DELAY)
+                continue
+            # Persistent and/or non-transient (e.g. UNAVAILABLE) → the real signal.
+            print(f"[ci] probe: image build FAILED after {attempt} attempt(s):", flush=True)
+            _diag_exc(exc, "probe/build_images")
+            # The build runs on the dataplane, so a failed submission is most often
+            # the CP no longer routing build runs here. Capture BOTH sides of that
+            # decision: the CP's view of this cluster's health (Cluster.get) and the
+            # operator's CP-connection/heartbeat state — to tell "CP dropped us as a
+            # healthy build target" apart from a true CP-backend/transport error.
+            print("[ci] probe: --- CP-side cluster health at build-failure time ---", flush=True)
+            await _dump_cluster_state(cluster_name)
+            _dump_operator_connection()
+            break
 
 
 def cmd_probe_image_builder(args: argparse.Namespace) -> None:
