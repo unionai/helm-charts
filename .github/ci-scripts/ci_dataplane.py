@@ -641,10 +641,20 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
             # cache lag); the latter means that cache returned nothing at all.
             # Both are propagation-lag classes worth the retry window — print
             # the REAL message so the two are distinguishable in CI logs.
+            #
+            # "cluster pool [default] config … is still syncing and hasn't
+            # updated its object store" is the same class one layer down: the
+            # remote image build submits its run queue-less → the [default] pool,
+            # whose config sync lags right after the cluster/operator restart.
+            # It resolves once the pool config syncs, so it's worth the same
+            # retry window (UNMASKED via _diag_exc — the SDK shows only the
+            # generic "Flyte system is currently unavailable" for it).
             if (
                 "no clusters found" in msg
                 or "no cluster" in msg
                 or ("cluster" in msg and "not found" in msg)
+                or "still syncing" in msg
+                or "hasn't updated its object store" in msg
             ):
                 if attempt < _SUBMIT_MAX_ATTEMPTS:
                     print(
@@ -698,6 +708,8 @@ async def _dump_cluster_state(cluster_name: str) -> None:
 _TRANSIENT_SIGNATURES = (
     "no clusters found",
     "no cluster",                 # routing/capabilities propagation lag
+    "still syncing",              # [default] cluster-pool config sync lag (queue-less image build)
+    "hasn't updated its object store",  # same: pool config not yet flushed to object store
     "imagepullbackoff",
     "errimagepull",
     "back-off pulling",           # registry throttling / pull backoff
