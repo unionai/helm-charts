@@ -1247,33 +1247,44 @@ def _cadvisor_counters(scrape: str) -> dict:
     return res
 
 
-def _fmt_cpu_delta(prev: dict, cur: dict, key, dt: float) -> str:
-    """Format cores-used + CFS-throttle% for one container over [prev,cur]."""
-    a, b = prev.get(key), cur.get(key)
+def _fmt_cpu_delta(prev: dict, cur: dict, ns: str, pod: str, dt: float) -> str:
+    """Format cores-used + CFS-throttle% for a POD over [prev,cur].
+
+    The container name in cAdvisor is NOT necessarily the chart app name, so we
+    aggregate by pod: sum CPU usage across the pod's containers, and report the
+    throttle% of its busiest (max-usage) container — the one that would stall the
+    operator if CPU-starved. Avoids a hardcoded container-name that silently
+    misses (the bug that produced `operator=n/a`).
+    """
+    def _pod_containers(d: dict) -> dict:
+        return {k[2]: v for k, v in d.items() if k[0] == ns and k[1] == pod and k[2] not in ("", "POD")}
+    a, b = _pod_containers(prev), _pod_containers(cur)
     if not b:
         return "n/a"
     if not a or dt <= 0:
         return "warming"
-    cores = (b["usage"] - a["usage"]) / dt
-    dper = b["periods"] - a["periods"]
-    dthr = b["throttled"] - a["throttled"]
+    cores = sum(b[c]["usage"] - a[c]["usage"] for c in b if c in a) / dt
+    # busiest container drives the throttle reading
+    busy = max(b, key=lambda c: (b[c]["usage"] - a.get(c, b[c])["usage"]) if c in a else 0.0)
+    dper = b[busy]["periods"] - a.get(busy, b[busy])["periods"]
+    dthr = b[busy]["throttled"] - a.get(busy, b[busy])["throttled"]
     thr = (dthr / dper * 100.0) if dper > 0 else 0.0
     return f"{cores:.2f}c thr={thr:.0f}%"
 
 
 def _resolve_targets(ns: str) -> dict:
-    """Map {label: (ns, pod, container)} for the pods whose CPU we track.
+    """Map {label: (ns, pod)} for the pods whose CPU we track.
 
-    Container name == the operator/proxy container; on these charts it equals
-    the deployment's app name. Re-resolved each tick so a restart is followed.
+    Re-resolved each tick so a restart (new pod name) is followed. CPU is then
+    aggregated across whatever containers that pod has (see _fmt_cpu_delta).
     """
     targets: dict = {}
     op = _pod_for_label(ns, "app.kubernetes.io/name=union-operator")
     if op:
-        targets["operator"] = (ns, op, "union-operator")
+        targets["operator"] = (ns, op)
     px = _pod_for_label(ns, "app.kubernetes.io/name=operator-proxy")
     if px:
-        targets["proxy"] = (ns, px, "operator-proxy")
+        targets["proxy"] = (ns, px)
     return targets
 
 
@@ -1349,11 +1360,11 @@ async def _sample_health_async(
         if op:
             j = subprocess.run(
                 ["kubectl", "get", "pod", "-n", ns, op, "-o",
-                 "jsonpath={range .spec.containers[?(@.name=='union-operator')]}"
-                 "req={.resources.requests.cpu} lim={.resources.limits.cpu}{end}"],
+                 "jsonpath={range .spec.containers[*]}{.name}:req={.resources.requests.cpu}"
+                 "/lim={.resources.limits.cpu} {end}"],
                 capture_output=True, text=True, check=False,
             )
-            print(f"[ci] hsample: operator CPU {j.stdout.strip() or '(unset)'}", flush=True)
+            print(f"[ci] hsample: operator pod={op} container CPU req/lim: {j.stdout.strip() or '(unset)'}", flush=True)
     except Exception:  # noqa: BLE001
         pass
 
@@ -1383,8 +1394,8 @@ async def _sample_health_async(
                 dt = tick - prev_t if prev_t else 0.0
                 targets = _resolve_targets(ns)
                 parts = []
-                for label, key in targets.items():
-                    parts.append(f"{label}={_fmt_cpu_delta(prev_counters, cur_counters, key, dt)}")
+                for label, (tns, tpod) in targets.items():
+                    parts.append(f"{label}={_fmt_cpu_delta(prev_counters, cur_counters, tns, tpod, dt)}")
                 node_key = ("", "<node>", "")
                 if node_key in cur_counters and node_key in prev_counters and dt > 0:
                     ncores = (cur_counters[node_key]["usage"] - prev_counters[node_key]["usage"]) / dt
@@ -1472,7 +1483,7 @@ def _dump_operator_connection() -> None:
             time.sleep(2.0)
             s2 = _cadvisor_counters(_cadvisor_scrape(node))
             targets = _resolve_targets(ns)
-            parts = [f"{lbl}={_fmt_cpu_delta(s1, s2, key, 2.0)}" for lbl, key in targets.items()]
+            parts = [f"{lbl}={_fmt_cpu_delta(s1, s2, tns, tpod, 2.0)}" for lbl, (tns, tpod) in targets.items()]
             nk = ("", "<node>", "")
             if nk in s1 and nk in s2:
                 parts.append(f"node={(s2[nk]['usage'] - s1[nk]['usage']) / 2.0:.2f}c")
