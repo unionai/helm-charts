@@ -488,7 +488,12 @@ jobs:
         run: |
           # require 3 consecutive healthy polls (~30s+) so a transient healthy
           # blip during the post-restart flap doesn't let tests start early.
-          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360 --stable 3
+          # --require-pools: health='healthy' alone is insufficient — run
+          # 28180756189 saw health='healthy' pools=[] while the [default] pool
+          # config was still syncing to the object store, so the queue-less image
+          # build hit UNAVAILABLE "[default] pool config still syncing". Gate on a
+          # non-empty pool list too (setup-routing already assigned the pool).
+          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360 --stable 3 --require-pools
 
       # The Flyte SDK running on the runner fetches the storage endpoint from the
       # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"

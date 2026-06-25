@@ -290,6 +290,7 @@ async def _wait_healthy_async(
     api_key: str,
     timeout: int,
     stable: int = 1,
+    require_pools: bool = False,
 ) -> str:
     """Poll Cluster.get until the cluster is enabled+healthy.
 
@@ -299,13 +300,22 @@ async def _wait_healthy_async(
     can be a transient blip immediately before the cluster drops back to
     unhealthy — which is exactly what makes downstream builds/runs flake). Any
     non-healthy observation resets the streak.
+
+    `require_pools` additionally requires the cluster to report a NON-EMPTY pool
+    list before counting an observation as healthy. `health='healthy'` alone is
+    insufficient post-restart: run 28180756189 showed `health='healthy' pools=[]`
+    while the `[default]` pool config was still syncing to the object store, so
+    the queue-less image build hit UNAVAILABLE "[default] pool config still
+    syncing". Only set this AFTER setup-routing has assigned a pool (the initial
+    registration wait legitimately sees `pools=[]`).
     """
     from flyteplugins.union.remote import Cluster  # type: ignore
 
     await _init_client(control_plane_url, api_key, project=cluster_name)
     print(
         f"[ci] wait-healthy: polling Cluster.get(name={cluster_name}) "
-        f"(timeout={timeout}s, require {stable} consecutive healthy)",
+        f"(timeout={timeout}s, require {stable} consecutive healthy"
+        f"{', non-empty pools' if require_pools else ''})",
         flush=True,
     )
     deadline = time.time() + timeout
@@ -316,27 +326,33 @@ async def _wait_healthy_async(
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
             state  = cluster.state
             health = cluster.health
+            pools  = cluster.pools
             org    = cluster.organization or ""
             if org:
                 last_org = org
-            if state == "enabled" and health == "healthy":
+            pools_ok = bool(pools) if require_pools else True
+            if state == "enabled" and health == "healthy" and pools_ok:
                 streak += 1
-                print(f"[ci]   state={state} health={health} org={org} (healthy {streak}/{stable})", flush=True)
+                print(f"[ci]   state={state} health={health} pools={pools} org={org} (healthy {streak}/{stable})", flush=True)
                 if streak >= stable:
-                    print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
+                    print(f"[ci] wait-healthy: HEALTHY (org={org}, pools={pools})", flush=True)
                     return org
             else:
+                reason = ""
+                if require_pools and not pools_ok and state == "enabled" and health == "healthy":
+                    reason = " — healthy but pools=[] (pool config still syncing)"
                 if streak:
-                    print(f"[ci]   state={state} health={health} org={org} — healthy streak reset", flush=True)
+                    print(f"[ci]   state={state} health={health} pools={pools} org={org}{reason} — healthy streak reset", flush=True)
                 else:
-                    print(f"[ci]   state={state} health={health} org={org}", flush=True)
+                    print(f"[ci]   state={state} health={health} pools={pools} org={org}{reason}", flush=True)
                 streak = 0
         except Exception as e:
             print(f"[ci]   Cluster.get error: {e}", flush=True)
             streak = 0
         await asyncio.sleep(15)
     raise RuntimeError(
-        f"Cluster {cluster_name} did not stay enabled+healthy "
+        f"Cluster {cluster_name} did not stay enabled+healthy"
+        f"{'+pooled' if require_pools else ''} "
         f"({stable} consecutive) within {timeout}s (last_org={last_org!r})"
     )
 
@@ -347,7 +363,8 @@ def cmd_wait_healthy(args: argparse.Namespace) -> None:
     api_key           = _env("UNION_API_KEY", required=False)
     org = asyncio.run(
         _wait_healthy_async(
-            cluster_name, control_plane_url, api_key, args.timeout, stable=args.stable
+            cluster_name, control_plane_url, api_key, args.timeout,
+            stable=args.stable, require_pools=args.require_pools,
         )
     )
     _gha_output("org_name", org)
@@ -732,8 +749,36 @@ _TRANSIENT_SIGNATURES = (
 )
 
 
+def _exc_chain_text(exc: BaseException) -> str:
+    """Concatenate the message of an exception AND its whole cause/context chain.
+
+    CRITICAL: the flyte SDK collapses the real transport error into a generic
+    ``RuntimeSystemError("Flyte system is currently unavailable …")`` wrapper and
+    chains the actual connectrpc error via ``raise … from e``. So the transient
+    signatures (e.g. "still syncing") live in ``exc.__cause__``, NOT in
+    ``str(exc)``. Matching only ``str(exc)`` (the old behaviour) meant the retry
+    NEVER fired for these wrapped errors — the probe failed after 1 attempt. Walk
+    the chain (same traversal as ``_diag_exc``) so the signature is found wherever
+    in the chain it sits. Also fold in connectrpc ``.message`` (the wire text is
+    on the ConnectError attribute, not always in ``str``).
+    """
+    parts: list[str] = []
+    seen: set[int] = set()
+    e: typing.Optional[BaseException] = exc
+    depth = 0
+    while e is not None and id(e) not in seen and depth < 12:
+        seen.add(id(e))
+        parts.append(str(e))
+        m = getattr(e, "message", None)
+        if m and not callable(m):
+            parts.append(str(m))
+        e = e.__cause__ or e.__context__
+        depth += 1
+    return " || ".join(parts).lower()
+
+
 def _is_transient(exc: Exception) -> bool:
-    msg = str(exc).lower()
+    msg = _exc_chain_text(exc)
     # 'cluster "<name>" not found' — CP cluster/queue cache lag right after
     # setup-routing's CreateCluster (same class as "no clusters found", but the
     # message shape doesn't contain that substring).
@@ -1627,6 +1672,12 @@ def main() -> None:
         "--stable", type=int, default=1,
         help="Require N consecutive healthy observations (use >1 after an "
              "operator restart when CP health flaps).",
+    )
+    p_wait.add_argument(
+        "--require-pools", action="store_true",
+        help="Also require a non-empty pool list (health='healthy' alone can "
+             "have pools=[] while the [default] pool config is still syncing). "
+             "Use only AFTER setup-routing has assigned a pool.",
     )
 
     sub.add_parser("setup-routing")
