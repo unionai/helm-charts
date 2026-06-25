@@ -288,31 +288,55 @@ async def _wait_healthy_async(
     control_plane_url: str,
     api_key: str,
     timeout: int,
+    stable: int = 1,
 ) -> str:
+    """Poll Cluster.get until the cluster is enabled+healthy.
+
+    `stable` is the number of CONSECUTIVE healthy observations required before
+    returning. Use stable=1 for the initial registration wait; use stable>1
+    after an operator restart, when CP-side health flaps (a single healthy poll
+    can be a transient blip immediately before the cluster drops back to
+    unhealthy — which is exactly what makes downstream builds/runs flake). Any
+    non-healthy observation resets the streak.
+    """
     from flyteplugins.union.remote import Cluster  # type: ignore
 
     await _init_client(control_plane_url, api_key, project=cluster_name)
     print(
         f"[ci] wait-healthy: polling Cluster.get(name={cluster_name}) "
-        f"(timeout={timeout}s)",
+        f"(timeout={timeout}s, require {stable} consecutive healthy)",
         flush=True,
     )
     deadline = time.time() + timeout
+    streak = 0
+    last_org = ""
     while time.time() < deadline:
         try:
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
             state  = cluster.state
             health = cluster.health
             org    = cluster.organization or ""
-            print(f"[ci]   state={state} health={health} org={org}", flush=True)
+            if org:
+                last_org = org
             if state == "enabled" and health == "healthy":
-                print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
-                return org
+                streak += 1
+                print(f"[ci]   state={state} health={health} org={org} (healthy {streak}/{stable})", flush=True)
+                if streak >= stable:
+                    print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
+                    return org
+            else:
+                if streak:
+                    print(f"[ci]   state={state} health={health} org={org} — healthy streak reset", flush=True)
+                else:
+                    print(f"[ci]   state={state} health={health} org={org}", flush=True)
+                streak = 0
         except Exception as e:
             print(f"[ci]   Cluster.get error: {e}", flush=True)
+            streak = 0
         await asyncio.sleep(15)
     raise RuntimeError(
-        f"Cluster {cluster_name} did not become enabled+healthy within {timeout}s"
+        f"Cluster {cluster_name} did not stay enabled+healthy "
+        f"({stable} consecutive) within {timeout}s (last_org={last_org!r})"
     )
 
 
@@ -321,7 +345,9 @@ def cmd_wait_healthy(args: argparse.Namespace) -> None:
     control_plane_url = _env("CONTROL_PLANE_URL")
     api_key           = _env("UNION_API_KEY", required=False)
     org = asyncio.run(
-        _wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout)
+        _wait_healthy_async(
+            cluster_name, control_plane_url, api_key, args.timeout, stable=args.stable
+        )
     )
     _gha_output("org_name", org)
 
@@ -1296,6 +1322,11 @@ def main() -> None:
 
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=300)
+    p_wait.add_argument(
+        "--stable", type=int, default=1,
+        help="Require N consecutive healthy observations (use >1 after an "
+             "operator restart when CP health flaps).",
+    )
 
     sub.add_parser("setup-routing")
     sub.add_parser("eager-api-key")

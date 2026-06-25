@@ -472,6 +472,24 @@ jobs:
           kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=1
           kubectl rollout status deployment/union-operator -n "$UNION_NS" --timeout=240s
 
+      # `kubectl rollout status` above only confirms the operator POD is Ready —
+      # NOT that the control plane has marked the cluster healthy again. CP-side
+      # health lags pod-readiness: immediately after the restart the cluster
+      # flaps to health=unhealthy, and while unhealthy the CP "could not select a
+      # cluster" for this org/domain, so data-proxy uploads, image builds, and
+      # even task runs (hello) fail intermittently (observed: operator restarted,
+      # cluster still health=unhealthy ~1–4 min later, hello bounced
+      # RUNNING→QUEUED ×3 then FAILED). Re-wait for the operator to re-establish a
+      # healthy CP connection BEFORE the probe/smoke suite, so tests run against a
+      # stably-healthy cluster (and fail loudly if it never recovers, instead of
+      # flaking on build/run errors downstream).
+      - name: Wait for operator to re-register healthy (post-restart)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          # require 3 consecutive healthy polls (~30s+) so a transient healthy
+          # blip during the post-restart flap doesn't let tests start early.
+          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360 --stable 3
+
       # The Flyte SDK running on the runner fetches the storage endpoint from the
       # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"
       # (cluster-internal DNS). The runner can't resolve that name, so we:
