@@ -60,7 +60,8 @@ spec:
     # cluster — part 2 of 2 (queue CRUD API; served by the cluster binary —
     # cloudidl.queue.QueueService is the CRUD/Resolve API used by the console and
     # the leasor crud queue source; InternalQueueService is the leasor→cluster
-    # drain callback. InternalQueueManagerService stays leasor-internal.)
+    # drain callback. The cluster→leasor InternalQueueManagerService metrics
+    # stream is routed under the leasor rule below.)
     - matches:
         - method: {service: "cloudidl.queue.QueueService"}
         - method: {service: "cloudidl.queue.InternalQueueService"}
@@ -144,9 +145,14 @@ spec:
       backendRefs:
         - name: queue
           port: 80
-    # leasor (v2 — queue/lease equivalent for v2 actions/leasor stack)
+    # leasor (v2 — queue/lease equivalent for v2 actions/leasor stack).
+    # InternalQueueManagerService is the live queue-metrics stream the cluster
+    # binary consumes to back QueueService.WatchQueueMetrics; leasor owns the
+    # in-memory QueueManager. Pre-wired so it works on a code bump with no chart
+    # change (server impl is pending — currently returns Unimplemented).
     - matches:
         - method: {service: "cloudidl.workflow.v2.LeasorService"}
+        - method: {service: "cloudidl.queue.InternalQueueManagerService"}
       backendRefs:
         - name: leasor
           port: 80
