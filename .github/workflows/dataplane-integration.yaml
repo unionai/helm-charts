@@ -527,6 +527,24 @@ jobs:
             'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5000 (cluster-internal) ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5001 (host-mapped) ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL' \
             2>&1 || echo "(buildkit exec failed)"
 
+      # Diagnostic: root-cause WHY the CP-reported cluster health flaps unhealthy
+      # mid-run (the flap is what makes the queue-less image build fail). This
+      # background sampler runs THROUGH the probe + smoke suite — the window where
+      # the flap bites, AFTER the wait-healthy gate passes — and time-aligns the
+      # CP health verdict with the operator pod's CPU usage + CFS-throttle% (read
+      # from the kubelet's built-in cAdvisor, no metrics-server needed). If the
+      # operator is throttled exactly when health drops → CI-runner CPU
+      # starvation; if health drops while the operator is idle → CP-side cause.
+      # Backgrounded (survives across steps, like the RustFS port-forward below);
+      # its timeline is dumped by the "Dump health+CPU sampler timeline" step.
+      - name: Start health+CPU sampler (background)
+        if: steps.check.outputs.configured == 'true'
+        run: |
+          nohup python .github/ci-scripts/ci_dataplane.py sample-health \
+            --duration 1500 --interval 8 > /tmp/hsample.log 2>&1 &
+          echo "HSAMPLE_PID=$!" >> "$GITHUB_ENV"
+          echo "health+CPU sampler started (pid $!) → /tmp/hsample.log"
+
       # Diagnostic: the remote image build submits a CreateRun for the
       # control-plane system image-builder task (system/production/build-image);
       # when that backend is down the SDK collapses the connectrpc error into a
@@ -554,6 +572,21 @@ jobs:
         run: |
           kubectl get pods -n "$UNION_NS"
           kubectl get pods -n knative-serving 2>/dev/null || true
+
+      # The decisive flap diagnostic: dump the sampler's timeline (always, since
+      # the failure is in the smoke step above). Read the "*** HEALTH TRANSITION"
+      # lines: what was the operator's CPU/throttle% at the instant CP health
+      # dropped? High thr% at the edge ⇒ CI-runner CPU starvation (fix = resource
+      # the operator / bigger runner). Idle operator at the edge ⇒ CP-side cause.
+      - name: Dump health+CPU sampler timeline
+        if: always() && steps.check.outputs.configured == 'true'
+        run: |
+          echo "=== health+CPU sampler timeline (CP health vs operator CPU/CFS-throttle) ==="
+          if [ -f /tmp/hsample.log ]; then cat /tmp/hsample.log; else echo "(no sampler log produced)"; fi
+          echo "=== flap edges + throttle highlights ==="
+          grep -aE "TRANSITION|thr=[1-9][0-9]*%|checker|heartbeat|cp=unhealthy|cp=err" /tmp/hsample.log 2>/dev/null | tail -80 || true
+          [ -n "${HSAMPLE_PID:-}" ] && kill "$HSAMPLE_PID" 2>/dev/null || true
+          echo "(sampler stopped)"
 
       # ── Debug dump on failure (before teardown so cluster still exists) ────
 

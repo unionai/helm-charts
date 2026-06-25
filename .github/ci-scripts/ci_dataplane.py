@@ -36,6 +36,7 @@ import asyncio
 import glob
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -1161,6 +1162,265 @@ def cmd_teardown(args: argparse.Namespace) -> None:
 
 # ── probe-image-builder (diagnostic) ─────────────────────────────────────────
 
+# ── operator CPU / CFS-throttle probe (resource-starvation hypothesis) ────────
+#
+# The open question on the CI dataplane flap is WHY CP-reported Cluster.get
+# health drops to `unhealthy` mid-run. Strong prior: the 4-vCPU GitHub runner is
+# CPU-saturated (k3d server + operator + buildkit + rustfs + knative + task
+# pods), so the union-operator pod gets CFS-throttled, misses heartbeats / fails
+# its own health probes → CP marks the cluster unhealthy → flap.
+#
+# To settle CPU-starvation-vs-CP-side we read the kubelet's built-in cAdvisor
+# metrics (`container_cpu_cfs_throttled_periods_total` etc.) directly via the
+# apiserver node proxy. This needs NO metrics-server and gives the gold-standard
+# throttle signal per container. All best-effort; never raises.
+
+_CADV_RE = re.compile(
+    r"^(container_cpu_(?:usage_seconds|cfs_throttled_periods|cfs_periods)_total)"
+    r"\{([^}]*)\}\s+([0-9eE.+-]+)"
+)
+
+
+def _parse_labels(s: str) -> dict:
+    return dict(re.findall(r'(\w+)="([^"]*)"', s))
+
+
+def _first_node_name() -> typing.Optional[str]:
+    out = subprocess.run(
+        ["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}"],
+        capture_output=True, text=True, check=False,
+    )
+    n = out.stdout.strip()
+    return n or None
+
+
+def _pod_for_label(ns: str, selector: str) -> typing.Optional[str]:
+    out = subprocess.run(
+        ["kubectl", "get", "pods", "-n", ns, "-l", selector,
+         "-o", "jsonpath={.items[0].metadata.name}"],
+        capture_output=True, text=True, check=False,
+    )
+    n = out.stdout.strip()
+    return n or None
+
+
+def _cadvisor_scrape(node: str) -> str:
+    """Raw cAdvisor metrics for a node (best-effort, '' on failure)."""
+    out = subprocess.run(
+        ["kubectl", "get", "--raw", f"/api/v1/nodes/{node}/proxy/metrics/cadvisor"],
+        capture_output=True, text=True, check=False,
+    )
+    return out.stdout
+
+
+def _cadvisor_counters(scrape: str) -> dict:
+    """Parse a cAdvisor scrape into {(namespace, pod, container): {usage, throttled, periods}}.
+
+    The node-root cgroup (whole-machine CPU) is keyed as ('', '<node>', '').
+    """
+    res: dict = {}
+    for line in scrape.splitlines():
+        m = _CADV_RE.match(line)
+        if not m:
+            continue
+        metric, labels, val = m.group(1), _parse_labels(m.group(2)), m.group(3)
+        try:
+            v = float(val)
+        except ValueError:
+            continue
+        ns = labels.get("namespace", "")
+        pod = labels.get("pod", "")
+        c = labels.get("container", "")
+        if not pod and labels.get("id") == "/":
+            key = ("", "<node>", "")  # whole-node root cgroup
+        elif pod and c:
+            key = (ns, pod, c)
+        else:
+            continue
+        d = res.setdefault(key, {"usage": 0.0, "throttled": 0.0, "periods": 0.0})
+        if metric == "container_cpu_usage_seconds_total":
+            d["usage"] = v
+        elif metric == "container_cpu_cfs_throttled_periods_total":
+            d["throttled"] = v
+        elif metric == "container_cpu_cfs_periods_total":
+            d["periods"] = v
+    return res
+
+
+def _fmt_cpu_delta(prev: dict, cur: dict, key, dt: float) -> str:
+    """Format cores-used + CFS-throttle% for one container over [prev,cur]."""
+    a, b = prev.get(key), cur.get(key)
+    if not b:
+        return "n/a"
+    if not a or dt <= 0:
+        return "warming"
+    cores = (b["usage"] - a["usage"]) / dt
+    dper = b["periods"] - a["periods"]
+    dthr = b["throttled"] - a["throttled"]
+    thr = (dthr / dper * 100.0) if dper > 0 else 0.0
+    return f"{cores:.2f}c thr={thr:.0f}%"
+
+
+def _resolve_targets(ns: str) -> dict:
+    """Map {label: (ns, pod, container)} for the pods whose CPU we track.
+
+    Container name == the operator/proxy container; on these charts it equals
+    the deployment's app name. Re-resolved each tick so a restart is followed.
+    """
+    targets: dict = {}
+    op = _pod_for_label(ns, "app.kubernetes.io/name=union-operator")
+    if op:
+        targets["operator"] = (ns, op, "union-operator")
+    px = _pod_for_label(ns, "app.kubernetes.io/name=operator-proxy")
+    if px:
+        targets["proxy"] = (ns, px, "operator-proxy")
+    return targets
+
+
+def _operator_checker_tail(ns: str, since: str = "25s", n: int = 14) -> None:
+    """Print the operator's recent per-health-checker / heartbeat verdicts.
+
+    `health=unhealthy` is a CP-side aggregate; the operator computes the
+    underlying signals (proxy/executor/propeller-health-checker, heartbeat-
+    updater, tunnel-updater). At a flap edge these lines say WHICH signal went
+    bad first. Best-effort; never raises.
+    """
+    _CHECKER_KEYS = (
+        "health-checker", "health checker", "healthcheck",
+        "heartbeat", "tunnel", "capabilit", "unhealthy", "degraded",
+        "not ready", "reconnect", "disconnect", "lease",
+    )
+    try:
+        out = subprocess.run(
+            ["kubectl", "logs", "-n", ns, "-l", "app.kubernetes.io/name=union-operator",
+             "--tail=400", "--all-containers", f"--since={since}"],
+            capture_output=True, text=True, check=False,
+        )
+        lines = (out.stdout + out.stderr).splitlines()
+        keep = [ln for ln in lines if any(k in ln.lower() for k in _CHECKER_KEYS)]
+        print(f"[ci] hsample:   operator checker/heartbeat lines (last {n} of {len(keep)} in {since}):", flush=True)
+        for ln in keep[-n:]:
+            print(f"[ci] hsample:     {ln[:240]}", flush=True)
+        if not keep:
+            print("[ci] hsample:     (none matched — see raw debug dump)", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[ci] hsample:   checker tail failed: {exc}", flush=True)
+
+
+async def _sample_health_async(
+    cluster_name: str,
+    control_plane_url: str,
+    api_key: str,
+    duration: int,
+    interval: int,
+) -> None:
+    """Continuously time-align CP cluster health with operator CPU/CFS-throttle.
+
+    Runs as a background process spanning the probe + smoke suite (the window
+    where the flap actually bites, AFTER the wait-healthy gate passes). Each tick
+    prints one line: elapsed, CP health, operator/proxy cores-used + throttle%,
+    whole-node cores. On a health TRANSITION it also dumps the operator's recent
+    per-checker/heartbeat verdicts — so the log shows, at the flap edge, whether
+    the operator was being CPU-throttled and which health signal dropped first.
+
+    This is the decisive diagnostic for resource-starvation vs CP-side cause.
+    Best-effort and always exits 0 — it must never gate or fail the job.
+    """
+    from flyteplugins.union.remote import Cluster  # type: ignore
+
+    ns = os.environ.get("UNION_NS", "union")
+    # CP-health sampling needs the flyte client; CPU/throttle sampling does NOT.
+    # If init fails, keep sampling CPU (the decisive starvation signal) anyway.
+    cp_ok = True
+    try:
+        await _init_client(control_plane_url, api_key, project=cluster_name)
+    except Exception as e:  # noqa: BLE001
+        cp_ok = False
+        print(f"[ci] hsample: flyte init failed ({str(e)[:120]}) — CPU-only sampling", flush=True)
+    node = _first_node_name()
+    print(
+        f"[ci] hsample: starting health+CPU sampler — cluster={cluster_name} "
+        f"node={node} ns={ns} duration={duration}s interval={interval}s",
+        flush=True,
+    )
+    # One-time: operator container CPU request/limit for context.
+    try:
+        op = _pod_for_label(ns, "app.kubernetes.io/name=union-operator")
+        if op:
+            j = subprocess.run(
+                ["kubectl", "get", "pod", "-n", ns, op, "-o",
+                 "jsonpath={range .spec.containers[?(@.name=='union-operator')]}"
+                 "req={.resources.requests.cpu} lim={.resources.limits.cpu}{end}"],
+                capture_output=True, text=True, check=False,
+            )
+            print(f"[ci] hsample: operator CPU {j.stdout.strip() or '(unset)'}", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
+
+    deadline = time.time() + duration
+    prev_counters: dict = {}
+    prev_t = 0.0
+    prev_health: typing.Optional[str] = None
+    t0 = time.time()
+    while time.time() < deadline:
+        tick = time.time()
+        # CP-reported health (the signal that gates build/run routing).
+        health = "?"
+        if cp_ok:
+            try:
+                c = await Cluster.get.aio(name=cluster_name)  # type: ignore
+                health = f"{c.health}"
+            except Exception as e:  # noqa: BLE001
+                health = f"err({str(e)[:40]})"
+        else:
+            health = "no-cp-client"
+        # CPU / CFS-throttle for operator + proxy + whole node.
+        cpu_str = "cpu=n/a"
+        cur_counters: dict = {}
+        if node:
+            try:
+                cur_counters = _cadvisor_counters(_cadvisor_scrape(node))
+                dt = tick - prev_t if prev_t else 0.0
+                targets = _resolve_targets(ns)
+                parts = []
+                for label, key in targets.items():
+                    parts.append(f"{label}={_fmt_cpu_delta(prev_counters, cur_counters, key, dt)}")
+                node_key = ("", "<node>", "")
+                if node_key in cur_counters and node_key in prev_counters and dt > 0:
+                    ncores = (cur_counters[node_key]["usage"] - prev_counters[node_key]["usage"]) / dt
+                    parts.append(f"node={ncores:.2f}c")
+                cpu_str = " ".join(parts) if parts else "cpu=warming"
+            except Exception as e:  # noqa: BLE001
+                cpu_str = f"cpu=err({str(e)[:40]})"
+        elapsed = int(tick - t0)
+        flap = prev_health is not None and health != prev_health
+        marker = " *** HEALTH TRANSITION" if flap else ""
+        print(f"[ci] hsample +{elapsed:>4}s cp={health} {cpu_str}{marker}", flush=True)
+        if flap:
+            # At the flap edge, surface which operator signal went bad.
+            _operator_checker_tail(ns, since=f"{max(interval * 2, 20)}s")
+        prev_counters = cur_counters or prev_counters
+        prev_t = tick
+        prev_health = health
+        await asyncio.sleep(interval)
+    print(f"[ci] hsample: sampler finished after {int(time.time() - t0)}s", flush=True)
+
+
+def cmd_sample_health(args: argparse.Namespace) -> None:
+    try:
+        asyncio.run(
+            _sample_health_async(
+                _env("CLUSTER_NAME"),
+                _env("CONTROL_PLANE_URL"),
+                _env("UNION_API_KEY", required=False),
+                args.duration,
+                args.interval,
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 — diagnostic must never fail the job
+        print(f"[ci] hsample: sampler wrapper error (ignored): {exc}", flush=True)
+
+
 def _dump_operator_connection() -> None:
     """Dump the operator's control-plane connection / heartbeat health.
 
@@ -1201,6 +1461,24 @@ def _dump_operator_connection() -> None:
         except Exception as exc:  # noqa: BLE001
             print(f"[ci] probe: {label} log dump failed: {exc}", flush=True)
 
+    # Per-checker verdicts + a one-shot operator CPU/CFS-throttle snapshot: was
+    # the operator CPU-starved (throttled) at failure time, and which health
+    # signal dropped? This is the resource-starvation-vs-CP-side discriminator.
+    _operator_checker_tail(ns, since="60s", n=20)
+    node = _first_node_name()
+    if node:
+        try:
+            s1 = _cadvisor_counters(_cadvisor_scrape(node))
+            time.sleep(2.0)
+            s2 = _cadvisor_counters(_cadvisor_scrape(node))
+            targets = _resolve_targets(ns)
+            parts = [f"{lbl}={_fmt_cpu_delta(s1, s2, key, 2.0)}" for lbl, key in targets.items()]
+            nk = ("", "<node>", "")
+            if nk in s1 and nk in s2:
+                parts.append(f"node={(s2[nk]['usage'] - s1[nk]['usage']) / 2.0:.2f}c")
+            print(f"[ci] probe: operator CPU/throttle @failure — {' '.join(parts)}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ci] probe: CPU/throttle snapshot failed: {exc}", flush=True)
 
 
 async def _probe_image_builder_async(
@@ -1345,6 +1623,15 @@ def main() -> None:
     sub.add_parser("smoke-test")
     sub.add_parser("run-smoke-suite")
     sub.add_parser("probe-image-builder")
+    p_sample = sub.add_parser("sample-health")
+    p_sample.add_argument(
+        "--duration", type=int, default=1200,
+        help="How long to sample (s). Span the probe + smoke suite window.",
+    )
+    p_sample.add_argument(
+        "--interval", type=int, default=8,
+        help="Seconds between CP-health + CPU/throttle samples.",
+    )
     sub.add_parser("teardown")
 
     args = p.parse_args()
@@ -1356,6 +1643,7 @@ def main() -> None:
         "smoke-test":       cmd_smoke_test,
         "run-smoke-suite":  cmd_run_smoke_suite,
         "probe-image-builder": cmd_probe_image_builder,
+        "sample-health":    cmd_sample_health,
         "teardown":         cmd_teardown,
     }[args.command](args)
 
