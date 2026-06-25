@@ -1123,6 +1123,48 @@ def cmd_teardown(args: argparse.Namespace) -> None:
 
 # ── probe-image-builder (diagnostic) ─────────────────────────────────────────
 
+def _dump_operator_connection() -> None:
+    """Dump the operator's control-plane connection / heartbeat health.
+
+    The image build runs ON the dataplane (its build run is created in this
+    cluster's project/domain and executes on the in-cluster buildkit). The
+    control plane only routes a build run here while it considers the cluster
+    healthy, and that health is driven by the operator's heartbeat + tunnel
+    connection to the CP. On a build failure this shows whether the operator→CP
+    connection was actually alive at that moment, or whether the CP had stopped
+    seeing this dataplane as a healthy build target. Best-effort; never raises.
+    """
+    import shutil
+    ns = os.environ.get("UNION_NS", "union")
+    if not shutil.which("kubectl"):
+        print("[ci] probe: kubectl not on PATH — skipping operator connection dump", flush=True)
+        return
+    _KEYS = (
+        "heartbeat", "tunnel", "connect", "register", "health", "control plane",
+        "controlplane", "control-plane", "unavailable", "disconnect", "reconnect",
+        "capabilit", "\"level\":\"error\"", "\"level\":\"warning\"",
+    )
+    for label, selector in (
+        ("operator",       "app.kubernetes.io/name=union-operator"),
+        ("operator-proxy", "app.kubernetes.io/name=operator-proxy"),
+    ):
+        try:
+            out = subprocess.run(
+                ["kubectl", "logs", "-n", ns, "-l", selector, "--tail=600", "--all-containers"],
+                capture_output=True, text=True, check=False,
+            )
+            lines = (out.stdout + out.stderr).splitlines()
+            keep = [ln for ln in lines if any(k in ln.lower() for k in _KEYS)]
+            print(f"[ci] probe: --- {label} CP-connection/health lines (last 25 of {len(keep)}) ---", flush=True)
+            if not keep:
+                print("[ci] probe:   (no matching lines — check raw debug dump)", flush=True)
+            for ln in keep[-25:]:
+                print(f"[ci] probe:   {ln[:240]}", flush=True)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[ci] probe: {label} log dump failed: {exc}", flush=True)
+
+
+
 async def _probe_image_builder_async(
     control_plane_url: str,
     api_key: str,
@@ -1196,6 +1238,14 @@ async def _probe_image_builder_async(
     except Exception as exc:  # noqa: BLE001
         print("[ci] probe: image build FAILED:", flush=True)
         _diag_exc(exc, "probe/build_images")
+        # The build runs on the dataplane, so a failed submission is most often
+        # the CP no longer routing build runs here. Capture BOTH sides of that
+        # decision: the CP's view of this cluster's health (Cluster.get) and the
+        # operator's CP-connection/heartbeat state — to tell "CP dropped us as a
+        # healthy build target" apart from a true CP-backend/transport error.
+        print("[ci] probe: --- CP-side cluster health at build-failure time ---", flush=True)
+        await _dump_cluster_state(cluster_name)
+        _dump_operator_connection()
 
 
 def cmd_probe_image_builder(args: argparse.Namespace) -> None:
