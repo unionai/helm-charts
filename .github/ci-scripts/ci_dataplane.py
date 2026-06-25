@@ -321,6 +321,7 @@ async def _wait_healthy_async(
     deadline = time.time() + timeout
     streak = 0
     last_org = ""
+    diagnosed_err = False  # dump the full Cluster.get error chain only once
     while time.time() < deadline:
         try:
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
@@ -363,6 +364,15 @@ async def _wait_healthy_async(
                 streak = 0
         except Exception as e:
             print(f"[ci]   Cluster.get error: {e}", flush=True)
+            # `'Headers' object is not callable` (seen fleet-wide from ~15:50 on
+            # 2026-06-25) is a CLIENT-side TypeError raised inside Cluster.get's
+            # error path — it MASKS whatever the control plane actually returned
+            # (same swallow-the-real-error pattern as "Flyte system unavailable").
+            # Dump the full chain+traceback ONCE so we see where it's raised and
+            # the underlying response, instead of just the opaque TypeError.
+            if not diagnosed_err:
+                diagnosed_err = True
+                _diag_exc(e, "wait-healthy/Cluster.get")
             streak = 0
         await asyncio.sleep(15)
     raise RuntimeError(
