@@ -326,11 +326,26 @@ async def _wait_healthy_async(
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
             state  = cluster.state
             health = cluster.health
-            pools  = cluster.pools
             org    = cluster.organization or ""
             if org:
                 last_org = org
-            pools_ok = bool(pools) if require_pools else True
+            # Only read .pools when we actually gate on it. `.pools` is a LAZY
+            # property that fires a secondary fetch; in the not-yet-routed initial
+            # registration state (org='', no pools assigned) flyteplugins-union
+            # 0.4.3 raises "'Headers' object is not callable" from that fetch,
+            # which would sink the whole poll and time out the initial gate (this
+            # was a self-inflicted regression — the initial gate never needs pools).
+            # Read it only for --require-pools (post-restart, cluster already
+            # routed, the context where .pools is known to work), and defensively.
+            pools = "(not checked)"
+            pools_ok = True
+            if require_pools:
+                try:
+                    pools = cluster.pools
+                    pools_ok = bool(pools)
+                except Exception as pe:  # noqa: BLE001
+                    pools = f"(pools fetch error: {str(pe)[:80]})"
+                    pools_ok = False
             if state == "enabled" and health == "healthy" and pools_ok:
                 streak += 1
                 print(f"[ci]   state={state} health={health} pools={pools} org={org} (healthy {streak}/{stable})", flush=True)
