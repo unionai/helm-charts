@@ -1,11 +1,6 @@
 name: Dataplane Integration Test
 
 on:
-  # TEMPORARY (debug only — revert before merge): run on push to the debug branch
-  # so the instrumented diagnostics can be exercised without opening a PR.
-  push:
-    branches:
-      - jeev/debug-integration-test-failures
   pull_request:
     paths:
       - 'charts/dataplane/**'
@@ -192,20 +187,7 @@ jobs:
           # flyteplugins-union >= 0.4.1 is required: the control plane dropped
           # the clusterpoolassignment / cluster-pool-attributes APIs in favor of
           # queue-based routing, which older clients don't speak.
-          #
-          # flyte >= 2.5.5: connectrpc 0.11.0 (released 2026-06-25T15:40 UTC)
-          # changed RequestContext.request_headers from a callable method to a
-          # plain attribute. flyte's auth interceptor
-          # (flyte/remote/_client/auth/_interceptors/default_metadata.py) still
-          # calls ctx.request_headers() → "TypeError: 'Headers' object is not
-          # callable" on EVERY connectrpc RPC, so Cluster.get/run dies and
-          # wait-healthy times out. flyte 2.5.4 declared connectrpc<1.0.0 (allowed
-          # the broken 0.11.0); flyte 2.5.5+ caps connectrpc<0.11, so it pulls the
-          # last-good 0.10.1. Require >=2.5.5 so the cap is in effect (the unpinned
-          # resolve already lands on 2.5.6, but be explicit). flyte still calls
-          # request_headers() as a method, so this is a dep-cap, not a code fix —
-          # relax once flyte is genuinely connectrpc-0.11 compatible.
-          pip install --quiet 'flyte>=2.5.5' 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx
+          pip install --quiet flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx
 
       # ── k3d cluster + registry ────────────────────────────────────────────
 
@@ -485,33 +467,6 @@ jobs:
           kubectl scale deployment/union-operator -n "$UNION_NS" --replicas=1
           kubectl rollout status deployment/union-operator -n "$UNION_NS" --timeout=240s
 
-      # `kubectl rollout status` above only confirms the operator POD is Ready —
-      # NOT that the control plane has marked the cluster healthy again. CP-side
-      # health lags pod-readiness: immediately after the restart the cluster
-      # flaps to health=unhealthy, and while unhealthy the CP "could not select a
-      # cluster" for this org/domain, so data-proxy uploads, image builds, and
-      # even task runs (hello) fail intermittently (observed: operator restarted,
-      # cluster still health=unhealthy ~1–4 min later, hello bounced
-      # RUNNING→QUEUED ×3 then FAILED). Re-wait for the operator to re-establish a
-      # healthy CP connection BEFORE the probe/smoke suite, so tests run against a
-      # stably-healthy cluster (and fail loudly if it never recovers, instead of
-      # flaking on build/run errors downstream).
-      - name: Wait for operator to re-register healthy (post-restart)
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # require 3 consecutive healthy polls (~30s+) so a transient healthy
-          # blip during the post-restart flap doesn't let tests start early.
-          #
-          # NOTE: do NOT gate on non-empty cluster.pools here. Under queue-based
-          # routing (the CP dropped clusterpoolassignment / cluster-pool-attributes
-          # APIs) cluster.pools is empty-by-design — run 28187147083 showed it stay
-          # [] for the full 360s even after health stabilized, so --require-pools
-          # turns this gate into a guaranteed timeout. The "[default] pool config
-          # still syncing" readiness is NOT exposed via cluster.pools; it's a
-          # transient CP-side state the image build rides out via _is_transient +
-          # _submit_with_retry (now that _is_transient walks the exception chain).
-          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360 --stable 3
-
       # The Flyte SDK running on the runner fetches the storage endpoint from the
       # control plane — it was registered as "rustfs.rustfs.svc.cluster.local:9000"
       # (cluster-internal DNS). The runner can't resolve that name, so we:
@@ -549,38 +504,6 @@ jobs:
             'echo "=== /etc/buildkit ls ==="; ls -la /etc/buildkit/; echo "=== buildkitd.toml ==="; cat /etc/buildkit/buildkitd.toml; echo "=== registry HTTP 5000 (cluster-internal) ==="; wget -qO- http://k3d-registry:5000/v2/ 2>&1 && echo OK || echo FAIL; echo "=== registry HTTP 5001 (host-mapped) ==="; wget -qO- http://k3d-registry:5001/v2/ 2>&1 && echo OK || echo FAIL' \
             2>&1 || echo "(buildkit exec failed)"
 
-      # Diagnostic: root-cause WHY the CP-reported cluster health flaps unhealthy
-      # mid-run (the flap is what makes the queue-less image build fail). This
-      # background sampler runs THROUGH the probe + smoke suite — the window where
-      # the flap bites, AFTER the wait-healthy gate passes — and time-aligns the
-      # CP health verdict with the operator pod's CPU usage + CFS-throttle% (read
-      # from the kubelet's built-in cAdvisor, no metrics-server needed). If the
-      # operator is throttled exactly when health drops → CI-runner CPU
-      # starvation; if health drops while the operator is idle → CP-side cause.
-      # Backgrounded (survives across steps, like the RustFS port-forward below);
-      # its timeline is dumped by the "Dump health+CPU sampler timeline" step.
-      - name: Start health+CPU sampler (background)
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          nohup python .github/ci-scripts/ci_dataplane.py sample-health \
-            --duration 1500 --interval 8 > /tmp/hsample.log 2>&1 &
-          echo "HSAMPLE_PID=$!" >> "$GITHUB_ENV"
-          echo "health+CPU sampler started (pid $!) → /tmp/hsample.log"
-
-      # Diagnostic: the remote image build submits a CreateRun for the
-      # control-plane system image-builder task (system/production/build-image);
-      # when that backend is down the SDK collapses the connectrpc error into a
-      # generic "Flyte system is currently unavailable". This probe exercises ONLY
-      # the build path and prints the underlying connectrpc code + message so the
-      # real cause is visible up-front. Best-effort — never gates the job.
-      - name: Probe remote image builder (diagnostic)
-        if: steps.check.outputs.configured == 'true'
-        continue-on-error: true
-        env:
-          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
-        run: |
-          python .github/ci-scripts/ci_dataplane.py probe-image-builder
-
       - name: Run smoke suite
         if: steps.check.outputs.configured == 'true'
         id: smoke
@@ -594,21 +517,6 @@ jobs:
         run: |
           kubectl get pods -n "$UNION_NS"
           kubectl get pods -n knative-serving 2>/dev/null || true
-
-      # The decisive flap diagnostic: dump the sampler's timeline (always, since
-      # the failure is in the smoke step above). Read the "*** HEALTH TRANSITION"
-      # lines: what was the operator's CPU/throttle% at the instant CP health
-      # dropped? High thr% at the edge ⇒ CI-runner CPU starvation (fix = resource
-      # the operator / bigger runner). Idle operator at the edge ⇒ CP-side cause.
-      - name: Dump health+CPU sampler timeline
-        if: always() && steps.check.outputs.configured == 'true'
-        run: |
-          echo "=== health+CPU sampler timeline (CP health vs operator CPU/CFS-throttle) ==="
-          if [ -f /tmp/hsample.log ]; then cat /tmp/hsample.log; else echo "(no sampler log produced)"; fi
-          echo "=== flap edges + throttle highlights ==="
-          grep -aE "TRANSITION|thr=[1-9][0-9]*%|checker|heartbeat|cp=unhealthy|cp=err" /tmp/hsample.log 2>/dev/null | tail -80 || true
-          [ -n "${HSAMPLE_PID:-}" ] && kill "$HSAMPLE_PID" 2>/dev/null || true
-          echo "(sampler stopped)"
 
       # ── Debug dump on failure (before teardown so cluster still exists) ────
 

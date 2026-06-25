@@ -36,7 +36,6 @@ import asyncio
 import glob
 import logging
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -70,68 +69,6 @@ def _gha_output(key: str, value: str) -> None:
         with open(path, "a") as f:
             f.write(line)
     print(f"[ci] >> {line.rstrip()}", flush=True)
-
-
-def _diag_exc(exc: BaseException, label: str) -> None:
-    """Print the FULL exception chain for a build/run submission failure.
-
-    The flyte SDK collapses the underlying transport error into a generic
-    ``RuntimeSystemError("Flyte system is currently unavailable. …")`` (see
-    flyte/_run.py: the CreateRun handler maps connectrpc ``Code.UNAVAILABLE`` to
-    that string), but chains the real error via ``raise … from e``. The remote
-    image build submits a CreateRun for the control-plane system image-builder
-    task (project=system, domain=production, name=build-image), so a failing
-    build surfaces only the wrapper text in the smoke summary.
-
-    This walks the ``__cause__`` / ``__context__`` chain and extracts the
-    connectrpc/gRPC ``code`` + ``message`` + ``details`` so the CI log shows the
-    ACTUAL control-plane status (e.g. UNAVAILABLE vs UNAUTHENTICATED vs
-    NOT_FOUND) instead of the generic wrapper. Purely diagnostic — never raises.
-    """
-    import traceback
-    print(f"\n[ci] +-- {label}: full error diagnostic -------------------------", flush=True)
-    seen: set[int] = set()
-    e: BaseException | None = exc
-    depth = 0
-    while e is not None and id(e) not in seen and depth < 12:
-        seen.add(id(e))
-        cls = f"{type(e).__module__}.{type(e).__qualname__}"
-        print(f"[ci] | [{depth}] {cls}: {e}", flush=True)
-        # connectrpc.ConnectError exposes .code/.message/.details as properties;
-        # grpc.aio.AioRpcError exposes .code()/.details() as callables — handle both.
-        code = getattr(e, "code", None)
-        if code is not None:
-            try:
-                code_val = code() if callable(code) else code
-            except Exception:  # noqa: BLE001
-                code_val = code
-            cname = getattr(code_val, "name", None) or getattr(code_val, "value", None) or code_val
-            print(f"[ci] |      code    = {cname!r}", flush=True)
-        msg = getattr(e, "message", None)
-        if msg and not callable(msg):
-            print(f"[ci] |      message = {msg!r}", flush=True)
-        details = getattr(e, "details", None)
-        if details is not None:
-            try:
-                dval = details() if callable(details) else details
-                if dval:
-                    print(f"[ci] |      details = {dval!r}", flush=True)
-            except Exception:  # noqa: BLE001
-                pass
-        des = getattr(e, "debug_error_string", None)
-        if callable(des):
-            try:
-                print(f"[ci] |      debug   = {des()!r}", flush=True)
-            except Exception:  # noqa: BLE001
-                pass
-        e = e.__cause__ or e.__context__
-        depth += 1
-    print("[ci] | traceback:", flush=True)
-    for line in "".join(
-        traceback.format_exception(type(exc), exc, exc.__traceback__)
-    ).splitlines():
-        print(f"[ci] |   {line}", flush=True)
-    print("[ci] +-----------------------------------------------------------", flush=True)
 
 
 def _uctl_extra_env() -> dict:
@@ -289,96 +226,31 @@ async def _wait_healthy_async(
     control_plane_url: str,
     api_key: str,
     timeout: int,
-    stable: int = 1,
-    require_pools: bool = False,
 ) -> str:
-    """Poll Cluster.get until the cluster is enabled+healthy.
-
-    `stable` is the number of CONSECUTIVE healthy observations required before
-    returning. Use stable=1 for the initial registration wait; use stable>1
-    after an operator restart, when CP-side health flaps (a single healthy poll
-    can be a transient blip immediately before the cluster drops back to
-    unhealthy — which is exactly what makes downstream builds/runs flake). Any
-    non-healthy observation resets the streak.
-
-    `require_pools` additionally requires the cluster to report a NON-EMPTY pool
-    list before counting an observation as healthy. `health='healthy'` alone is
-    insufficient post-restart: run 28180756189 showed `health='healthy' pools=[]`
-    while the `[default]` pool config was still syncing to the object store, so
-    the queue-less image build hit UNAVAILABLE "[default] pool config still
-    syncing". Only set this AFTER setup-routing has assigned a pool (the initial
-    registration wait legitimately sees `pools=[]`).
-    """
     from flyteplugins.union.remote import Cluster  # type: ignore
 
     await _init_client(control_plane_url, api_key, project=cluster_name)
     print(
         f"[ci] wait-healthy: polling Cluster.get(name={cluster_name}) "
-        f"(timeout={timeout}s, require {stable} consecutive healthy"
-        f"{', non-empty pools' if require_pools else ''})",
+        f"(timeout={timeout}s)",
         flush=True,
     )
     deadline = time.time() + timeout
-    streak = 0
-    last_org = ""
-    diagnosed_err = False  # dump the full Cluster.get error chain only once
     while time.time() < deadline:
         try:
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
             state  = cluster.state
             health = cluster.health
             org    = cluster.organization or ""
-            if org:
-                last_org = org
-            # Only read .pools when we actually gate on it. `.pools` is a LAZY
-            # property that fires a secondary fetch; in the not-yet-routed initial
-            # registration state (org='', no pools assigned) flyteplugins-union
-            # 0.4.3 raises "'Headers' object is not callable" from that fetch,
-            # which would sink the whole poll and time out the initial gate (this
-            # was a self-inflicted regression — the initial gate never needs pools).
-            # Read it only for --require-pools (post-restart, cluster already
-            # routed, the context where .pools is known to work), and defensively.
-            pools = "(not checked)"
-            pools_ok = True
-            if require_pools:
-                try:
-                    pools = cluster.pools
-                    pools_ok = bool(pools)
-                except Exception as pe:  # noqa: BLE001
-                    pools = f"(pools fetch error: {str(pe)[:80]})"
-                    pools_ok = False
-            if state == "enabled" and health == "healthy" and pools_ok:
-                streak += 1
-                print(f"[ci]   state={state} health={health} pools={pools} org={org} (healthy {streak}/{stable})", flush=True)
-                if streak >= stable:
-                    print(f"[ci] wait-healthy: HEALTHY (org={org}, pools={pools})", flush=True)
-                    return org
-            else:
-                reason = ""
-                if require_pools and not pools_ok and state == "enabled" and health == "healthy":
-                    reason = " — healthy but pools=[] (pool config still syncing)"
-                if streak:
-                    print(f"[ci]   state={state} health={health} pools={pools} org={org}{reason} — healthy streak reset", flush=True)
-                else:
-                    print(f"[ci]   state={state} health={health} pools={pools} org={org}{reason}", flush=True)
-                streak = 0
+            print(f"[ci]   state={state} health={health} org={org}", flush=True)
+            if state == "enabled" and health == "healthy":
+                print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
+                return org
         except Exception as e:
             print(f"[ci]   Cluster.get error: {e}", flush=True)
-            # `'Headers' object is not callable` (seen fleet-wide from ~15:50 on
-            # 2026-06-25) is a CLIENT-side TypeError raised inside Cluster.get's
-            # error path — it MASKS whatever the control plane actually returned
-            # (same swallow-the-real-error pattern as "Flyte system unavailable").
-            # Dump the full chain+traceback ONCE so we see where it's raised and
-            # the underlying response, instead of just the opaque TypeError.
-            if not diagnosed_err:
-                diagnosed_err = True
-                _diag_exc(e, "wait-healthy/Cluster.get")
-            streak = 0
         await asyncio.sleep(15)
     raise RuntimeError(
-        f"Cluster {cluster_name} did not stay enabled+healthy"
-        f"{'+pooled' if require_pools else ''} "
-        f"({stable} consecutive) within {timeout}s (last_org={last_org!r})"
+        f"Cluster {cluster_name} did not become enabled+healthy within {timeout}s"
     )
 
 
@@ -387,10 +259,7 @@ def cmd_wait_healthy(args: argparse.Namespace) -> None:
     control_plane_url = _env("CONTROL_PLANE_URL")
     api_key           = _env("UNION_API_KEY", required=False)
     org = asyncio.run(
-        _wait_healthy_async(
-            cluster_name, control_plane_url, api_key, args.timeout,
-            stable=args.stable, require_pools=args.require_pools,
-        )
+        _wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout)
     )
     _gha_output("org_name", org)
 
@@ -684,20 +553,10 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
             # cache lag); the latter means that cache returned nothing at all.
             # Both are propagation-lag classes worth the retry window — print
             # the REAL message so the two are distinguishable in CI logs.
-            #
-            # "cluster pool [default] config … is still syncing and hasn't
-            # updated its object store" is the same class one layer down: the
-            # remote image build submits its run queue-less → the [default] pool,
-            # whose config sync lags right after the cluster/operator restart.
-            # It resolves once the pool config syncs, so it's worth the same
-            # retry window (UNMASKED via _diag_exc — the SDK shows only the
-            # generic "Flyte system is currently unavailable" for it).
             if (
                 "no clusters found" in msg
                 or "no cluster" in msg
                 or ("cluster" in msg and "not found" in msg)
-                or "still syncing" in msg
-                or "hasn't updated its object store" in msg
             ):
                 if attempt < _SUBMIT_MAX_ATTEMPTS:
                     print(
@@ -751,8 +610,6 @@ async def _dump_cluster_state(cluster_name: str) -> None:
 _TRANSIENT_SIGNATURES = (
     "no clusters found",
     "no cluster",                 # routing/capabilities propagation lag
-    "still syncing",              # [default] cluster-pool config sync lag (queue-less image build)
-    "hasn't updated its object store",  # same: pool config not yet flushed to object store
     "imagepullbackoff",
     "errimagepull",
     "back-off pulling",           # registry throttling / pull backoff
@@ -774,36 +631,8 @@ _TRANSIENT_SIGNATURES = (
 )
 
 
-def _exc_chain_text(exc: BaseException) -> str:
-    """Concatenate the message of an exception AND its whole cause/context chain.
-
-    CRITICAL: the flyte SDK collapses the real transport error into a generic
-    ``RuntimeSystemError("Flyte system is currently unavailable …")`` wrapper and
-    chains the actual connectrpc error via ``raise … from e``. So the transient
-    signatures (e.g. "still syncing") live in ``exc.__cause__``, NOT in
-    ``str(exc)``. Matching only ``str(exc)`` (the old behaviour) meant the retry
-    NEVER fired for these wrapped errors — the probe failed after 1 attempt. Walk
-    the chain (same traversal as ``_diag_exc``) so the signature is found wherever
-    in the chain it sits. Also fold in connectrpc ``.message`` (the wire text is
-    on the ConnectError attribute, not always in ``str``).
-    """
-    parts: list[str] = []
-    seen: set[int] = set()
-    e: typing.Optional[BaseException] = exc
-    depth = 0
-    while e is not None and id(e) not in seen and depth < 12:
-        seen.add(id(e))
-        parts.append(str(e))
-        m = getattr(e, "message", None)
-        if m and not callable(m):
-            parts.append(str(m))
-        e = e.__cause__ or e.__context__
-        depth += 1
-    return " || ".join(parts).lower()
-
-
 def _is_transient(exc: Exception) -> bool:
-    msg = _exc_chain_text(exc)
+    msg = str(exc).lower()
     # 'cluster "<name>" not found' — CP cluster/queue cache lag right after
     # setup-routing's CreateCluster (same class as "no clusters found", but the
     # message shape doesn't contain that substring).
@@ -1101,7 +930,6 @@ async def _run_smoke_suite_async(
         if isinstance(outcome, Exception):
             results.append((name, False, str(outcome)[:300]))
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
-            _diag_exc(outcome, f"smoke-suite/{name}")
         else:
             results.append((name, True, ""))
 
@@ -1121,7 +949,6 @@ async def _run_smoke_suite_async(
         except Exception as outcome:  # noqa: BLE001
             results.append((name, False, str(outcome)[:300]))
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
-            _diag_exc(outcome, f"smoke-suite/{name}")
 
     # Summary table.
     print("\n[ci] ── smoke suite results ──────────────────────────────────", flush=True)
@@ -1230,455 +1057,6 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     print("[ci] teardown: done.", flush=True)
 
 
-# ── probe-image-builder (diagnostic) ─────────────────────────────────────────
-
-# ── operator CPU / CFS-throttle probe (resource-starvation hypothesis) ────────
-#
-# The open question on the CI dataplane flap is WHY CP-reported Cluster.get
-# health drops to `unhealthy` mid-run. Strong prior: the 4-vCPU GitHub runner is
-# CPU-saturated (k3d server + operator + buildkit + rustfs + knative + task
-# pods), so the union-operator pod gets CFS-throttled, misses heartbeats / fails
-# its own health probes → CP marks the cluster unhealthy → flap.
-#
-# To settle CPU-starvation-vs-CP-side we read the kubelet's built-in cAdvisor
-# metrics (`container_cpu_cfs_throttled_periods_total` etc.) directly via the
-# apiserver node proxy. This needs NO metrics-server and gives the gold-standard
-# throttle signal per container. All best-effort; never raises.
-
-_CADV_RE = re.compile(
-    r"^(container_cpu_(?:usage_seconds|cfs_throttled_periods|cfs_periods)_total)"
-    r"\{([^}]*)\}\s+([0-9eE.+-]+)"
-)
-
-
-def _parse_labels(s: str) -> dict:
-    return dict(re.findall(r'(\w+)="([^"]*)"', s))
-
-
-def _first_node_name() -> typing.Optional[str]:
-    out = subprocess.run(
-        ["kubectl", "get", "nodes", "-o", "jsonpath={.items[0].metadata.name}"],
-        capture_output=True, text=True, check=False,
-    )
-    n = out.stdout.strip()
-    return n or None
-
-
-def _pod_for_label(ns: str, selector: str) -> typing.Optional[str]:
-    out = subprocess.run(
-        ["kubectl", "get", "pods", "-n", ns, "-l", selector,
-         "-o", "jsonpath={.items[0].metadata.name}"],
-        capture_output=True, text=True, check=False,
-    )
-    n = out.stdout.strip()
-    return n or None
-
-
-def _cadvisor_scrape(node: str) -> str:
-    """Raw cAdvisor metrics for a node (best-effort, '' on failure)."""
-    out = subprocess.run(
-        ["kubectl", "get", "--raw", f"/api/v1/nodes/{node}/proxy/metrics/cadvisor"],
-        capture_output=True, text=True, check=False,
-    )
-    return out.stdout
-
-
-def _cadvisor_counters(scrape: str) -> dict:
-    """Parse a cAdvisor scrape into {(namespace, pod, container): {usage, throttled, periods}}.
-
-    The node-root cgroup (whole-machine CPU) is keyed as ('', '<node>', '').
-    """
-    res: dict = {}
-    for line in scrape.splitlines():
-        m = _CADV_RE.match(line)
-        if not m:
-            continue
-        metric, labels, val = m.group(1), _parse_labels(m.group(2)), m.group(3)
-        try:
-            v = float(val)
-        except ValueError:
-            continue
-        ns = labels.get("namespace", "")
-        pod = labels.get("pod", "")
-        c = labels.get("container", "")
-        if not pod and labels.get("id") == "/":
-            key = ("", "<node>", "")  # whole-node root cgroup
-        elif pod and c:
-            key = (ns, pod, c)
-        else:
-            continue
-        d = res.setdefault(key, {"usage": 0.0, "throttled": 0.0, "periods": 0.0})
-        if metric == "container_cpu_usage_seconds_total":
-            d["usage"] = v
-        elif metric == "container_cpu_cfs_throttled_periods_total":
-            d["throttled"] = v
-        elif metric == "container_cpu_cfs_periods_total":
-            d["periods"] = v
-    return res
-
-
-def _fmt_cpu_delta(prev: dict, cur: dict, ns: str, pod: str, dt: float) -> str:
-    """Format cores-used + CFS-throttle% for a POD over [prev,cur].
-
-    The container name in cAdvisor is NOT necessarily the chart app name, so we
-    aggregate by pod: sum CPU usage across the pod's containers, and report the
-    throttle% of its busiest (max-usage) container — the one that would stall the
-    operator if CPU-starved. Avoids a hardcoded container-name that silently
-    misses (the bug that produced `operator=n/a`).
-    """
-    def _pod_containers(d: dict) -> dict:
-        return {k[2]: v for k, v in d.items() if k[0] == ns and k[1] == pod and k[2] not in ("", "POD")}
-    a, b = _pod_containers(prev), _pod_containers(cur)
-    if not b:
-        return "n/a"
-    if not a or dt <= 0:
-        return "warming"
-    cores = sum(b[c]["usage"] - a[c]["usage"] for c in b if c in a) / dt
-    # busiest container drives the throttle reading
-    busy = max(b, key=lambda c: (b[c]["usage"] - a.get(c, b[c])["usage"]) if c in a else 0.0)
-    dper = b[busy]["periods"] - a.get(busy, b[busy])["periods"]
-    dthr = b[busy]["throttled"] - a.get(busy, b[busy])["throttled"]
-    thr = (dthr / dper * 100.0) if dper > 0 else 0.0
-    return f"{cores:.2f}c thr={thr:.0f}%"
-
-
-def _resolve_targets(ns: str) -> dict:
-    """Map {label: (ns, pod)} for the pods whose CPU we track.
-
-    Re-resolved each tick so a restart (new pod name) is followed. CPU is then
-    aggregated across whatever containers that pod has (see _fmt_cpu_delta).
-    """
-    targets: dict = {}
-    op = _pod_for_label(ns, "app.kubernetes.io/name=union-operator")
-    if op:
-        targets["operator"] = (ns, op)
-    px = _pod_for_label(ns, "app.kubernetes.io/name=operator-proxy")
-    if px:
-        targets["proxy"] = (ns, px)
-    return targets
-
-
-def _operator_checker_tail(ns: str, since: str = "25s", n: int = 14) -> None:
-    """Print the operator's recent per-health-checker / heartbeat verdicts.
-
-    `health=unhealthy` is a CP-side aggregate; the operator computes the
-    underlying signals (proxy/executor/propeller-health-checker, heartbeat-
-    updater, tunnel-updater). At a flap edge these lines say WHICH signal went
-    bad first. Best-effort; never raises.
-    """
-    _CHECKER_KEYS = (
-        "health-checker", "health checker", "healthcheck",
-        "heartbeat", "tunnel", "capabilit", "unhealthy", "degraded",
-        "not ready", "reconnect", "disconnect", "lease",
-    )
-    try:
-        out = subprocess.run(
-            ["kubectl", "logs", "-n", ns, "-l", "app.kubernetes.io/name=union-operator",
-             "--tail=400", "--all-containers", f"--since={since}"],
-            capture_output=True, text=True, check=False,
-        )
-        lines = (out.stdout + out.stderr).splitlines()
-        keep = [ln for ln in lines if any(k in ln.lower() for k in _CHECKER_KEYS)]
-        print(f"[ci] hsample:   operator checker/heartbeat lines (last {n} of {len(keep)} in {since}):", flush=True)
-        for ln in keep[-n:]:
-            print(f"[ci] hsample:     {ln[:240]}", flush=True)
-        if not keep:
-            print("[ci] hsample:     (none matched — see raw debug dump)", flush=True)
-    except Exception as exc:  # noqa: BLE001
-        print(f"[ci] hsample:   checker tail failed: {exc}", flush=True)
-
-
-async def _sample_health_async(
-    cluster_name: str,
-    control_plane_url: str,
-    api_key: str,
-    duration: int,
-    interval: int,
-) -> None:
-    """Continuously time-align CP cluster health with operator CPU/CFS-throttle.
-
-    Runs as a background process spanning the probe + smoke suite (the window
-    where the flap actually bites, AFTER the wait-healthy gate passes). Each tick
-    prints one line: elapsed, CP health, operator/proxy cores-used + throttle%,
-    whole-node cores. On a health TRANSITION it also dumps the operator's recent
-    per-checker/heartbeat verdicts — so the log shows, at the flap edge, whether
-    the operator was being CPU-throttled and which health signal dropped first.
-
-    This is the decisive diagnostic for resource-starvation vs CP-side cause.
-    Best-effort and always exits 0 — it must never gate or fail the job.
-    """
-    from flyteplugins.union.remote import Cluster  # type: ignore
-
-    ns = os.environ.get("UNION_NS", "union")
-    # CP-health sampling needs the flyte client; CPU/throttle sampling does NOT.
-    # If init fails, keep sampling CPU (the decisive starvation signal) anyway.
-    cp_ok = True
-    try:
-        await _init_client(control_plane_url, api_key, project=cluster_name)
-    except Exception as e:  # noqa: BLE001
-        cp_ok = False
-        print(f"[ci] hsample: flyte init failed ({str(e)[:120]}) — CPU-only sampling", flush=True)
-    node = _first_node_name()
-    print(
-        f"[ci] hsample: starting health+CPU sampler — cluster={cluster_name} "
-        f"node={node} ns={ns} duration={duration}s interval={interval}s",
-        flush=True,
-    )
-    # One-time: operator container CPU request/limit for context.
-    try:
-        op = _pod_for_label(ns, "app.kubernetes.io/name=union-operator")
-        if op:
-            j = subprocess.run(
-                ["kubectl", "get", "pod", "-n", ns, op, "-o",
-                 "jsonpath={range .spec.containers[*]}{.name}:req={.resources.requests.cpu}"
-                 "/lim={.resources.limits.cpu} {end}"],
-                capture_output=True, text=True, check=False,
-            )
-            print(f"[ci] hsample: operator pod={op} container CPU req/lim: {j.stdout.strip() or '(unset)'}", flush=True)
-    except Exception:  # noqa: BLE001
-        pass
-
-    deadline = time.time() + duration
-    prev_counters: dict = {}
-    prev_t = 0.0
-    prev_health: typing.Optional[str] = None
-    t0 = time.time()
-    while time.time() < deadline:
-        tick = time.time()
-        # CP-reported health (the signal that gates build/run routing).
-        health = "?"
-        if cp_ok:
-            try:
-                c = await Cluster.get.aio(name=cluster_name)  # type: ignore
-                health = f"{c.health}"
-            except Exception as e:  # noqa: BLE001
-                health = f"err({str(e)[:40]})"
-        else:
-            health = "no-cp-client"
-        # CPU / CFS-throttle for operator + proxy + whole node.
-        cpu_str = "cpu=n/a"
-        cur_counters: dict = {}
-        if node:
-            try:
-                cur_counters = _cadvisor_counters(_cadvisor_scrape(node))
-                dt = tick - prev_t if prev_t else 0.0
-                targets = _resolve_targets(ns)
-                parts = []
-                for label, (tns, tpod) in targets.items():
-                    parts.append(f"{label}={_fmt_cpu_delta(prev_counters, cur_counters, tns, tpod, dt)}")
-                node_key = ("", "<node>", "")
-                if node_key in cur_counters and node_key in prev_counters and dt > 0:
-                    ncores = (cur_counters[node_key]["usage"] - prev_counters[node_key]["usage"]) / dt
-                    parts.append(f"node={ncores:.2f}c")
-                cpu_str = " ".join(parts) if parts else "cpu=warming"
-            except Exception as e:  # noqa: BLE001
-                cpu_str = f"cpu=err({str(e)[:40]})"
-        elapsed = int(tick - t0)
-        flap = prev_health is not None and health != prev_health
-        marker = " *** HEALTH TRANSITION" if flap else ""
-        print(f"[ci] hsample +{elapsed:>4}s cp={health} {cpu_str}{marker}", flush=True)
-        if flap:
-            # At the flap edge, surface which operator signal went bad.
-            _operator_checker_tail(ns, since=f"{max(interval * 2, 20)}s")
-        prev_counters = cur_counters or prev_counters
-        prev_t = tick
-        prev_health = health
-        await asyncio.sleep(interval)
-    print(f"[ci] hsample: sampler finished after {int(time.time() - t0)}s", flush=True)
-
-
-def cmd_sample_health(args: argparse.Namespace) -> None:
-    try:
-        asyncio.run(
-            _sample_health_async(
-                _env("CLUSTER_NAME"),
-                _env("CONTROL_PLANE_URL"),
-                _env("UNION_API_KEY", required=False),
-                args.duration,
-                args.interval,
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 — diagnostic must never fail the job
-        print(f"[ci] hsample: sampler wrapper error (ignored): {exc}", flush=True)
-
-
-def _dump_operator_connection() -> None:
-    """Dump the operator's control-plane connection / heartbeat health.
-
-    The image build runs ON the dataplane (its build run is created in this
-    cluster's project/domain and executes on the in-cluster buildkit). The
-    control plane only routes a build run here while it considers the cluster
-    healthy, and that health is driven by the operator's heartbeat + tunnel
-    connection to the CP. On a build failure this shows whether the operator→CP
-    connection was actually alive at that moment, or whether the CP had stopped
-    seeing this dataplane as a healthy build target. Best-effort; never raises.
-    """
-    import shutil
-    ns = os.environ.get("UNION_NS", "union")
-    if not shutil.which("kubectl"):
-        print("[ci] probe: kubectl not on PATH — skipping operator connection dump", flush=True)
-        return
-    _KEYS = (
-        "heartbeat", "tunnel", "connect", "register", "health", "control plane",
-        "controlplane", "control-plane", "unavailable", "disconnect", "reconnect",
-        "capabilit", "\"level\":\"error\"", "\"level\":\"warning\"",
-    )
-    for label, selector in (
-        ("operator",       "app.kubernetes.io/name=union-operator"),
-        ("operator-proxy", "app.kubernetes.io/name=operator-proxy"),
-    ):
-        try:
-            out = subprocess.run(
-                ["kubectl", "logs", "-n", ns, "-l", selector, "--tail=600", "--all-containers"],
-                capture_output=True, text=True, check=False,
-            )
-            lines = (out.stdout + out.stderr).splitlines()
-            keep = [ln for ln in lines if any(k in ln.lower() for k in _KEYS)]
-            print(f"[ci] probe: --- {label} CP-connection/health lines (last 25 of {len(keep)}) ---", flush=True)
-            if not keep:
-                print("[ci] probe:   (no matching lines — check raw debug dump)", flush=True)
-            for ln in keep[-25:]:
-                print(f"[ci] probe:   {ln[:240]}", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ci] probe: {label} log dump failed: {exc}", flush=True)
-
-    # Per-checker verdicts + a one-shot operator CPU/CFS-throttle snapshot: was
-    # the operator CPU-starved (throttled) at failure time, and which health
-    # signal dropped? This is the resource-starvation-vs-CP-side discriminator.
-    _operator_checker_tail(ns, since="60s", n=20)
-    node = _first_node_name()
-    if node:
-        try:
-            s1 = _cadvisor_counters(_cadvisor_scrape(node))
-            time.sleep(2.0)
-            s2 = _cadvisor_counters(_cadvisor_scrape(node))
-            targets = _resolve_targets(ns)
-            parts = [f"{lbl}={_fmt_cpu_delta(s1, s2, tns, tpod, 2.0)}" for lbl, (tns, tpod) in targets.items()]
-            nk = ("", "<node>", "")
-            if nk in s1 and nk in s2:
-                parts.append(f"node={(s2[nk]['usage'] - s1[nk]['usage']) / 2.0:.2f}c")
-            print(f"[ci] probe: operator CPU/throttle @failure — {' '.join(parts)}", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print(f"[ci] probe: CPU/throttle snapshot failed: {exc}", flush=True)
-
-
-async def _probe_image_builder_async(
-    control_plane_url: str,
-    api_key: str,
-    cluster_name: str,
-    org: str,
-) -> None:
-    """Isolate the remote image-build submission and dump the REAL error.
-
-    Every failing CI run since ~2026-06-22 fails exactly the four smoke tests
-    that build a custom image (verify_image_builder/_image_cache/_reusable/_app)
-    with the generic "Flyte system is currently unavailable", while the two that
-    reuse the prebuilt base image (verify_logs/_io) pass — and it reproduces on
-    identical flyte / flyteplugins-union versions that previously passed. That
-    points at the control-plane image-builder backend, not this repo. This probe
-    exercises ONLY the build path and prints the underlying connectrpc status so
-    the cause (UNAVAILABLE vs UNAUTHENTICATED vs NOT_FOUND vs misroute) is
-    unambiguous. It is best-effort and always exits 0 — it never gates the job.
-    """
-    import flyte  # type: ignore
-
-    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-    print(
-        f"[ci] probe-image-builder: client initialised — "
-        f"endpoint={control_plane_url} project={cluster_name} org={org}",
-        flush=True,
-    )
-
-    # 1) Where does the SDK route image builds? (project/domain/task name)
-    try:
-        from flyte._internal.imagebuild import remote_builder as _rb  # type: ignore
-        print(
-            "[ci] probe: image-builder route — "
-            f"project={_rb.IMAGE_TASK_PROJECT!r} domain={_rb.IMAGE_TASK_DOMAIN!r} "
-            f"task={_rb.IMAGE_TASK_NAME!r} "
-            f"(FLYTE_IMAGEBUILDER_TASK_DOMAIN={os.environ.get('FLYTE_IMAGEBUILDER_TASK_DOMAIN', '(unset)')})",
-            flush=True,
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"[ci] probe: could not import remote_builder constants: {exc}", flush=True)
-        _rb = None  # type: ignore
-
-    # 2) Does the system build-image task resolve? Distinguishes "builder not
-    #    enabled" (RemoteTaskNotFoundError) from "builder enabled but the run
-    #    submission is rejected" (the case we actually see).
-    if _rb is not None:
-        try:
-            from flyte import remote  # type: ignore
-            # Task.get returns a LazyEntity synchronously; the real network
-            # lookup happens in .fetch() (awaitable).
-            lazy = remote.Task.get(  # type: ignore
-                name=_rb.IMAGE_TASK_NAME,
-                project=_rb.IMAGE_TASK_PROJECT,
-                domain=_rb.IMAGE_TASK_DOMAIN,
-                auto_version="latest",
-            )
-            t = await lazy.fetch.aio()  # type: ignore
-            print(f"[ci] probe: system build-image task RESOLVED — {t}", flush=True)
-        except Exception as exc:  # noqa: BLE001
-            print("[ci] probe: system build-image task lookup FAILED:", flush=True)
-            _diag_exc(exc, "probe/Task.get(build-image)")
-
-    # 3) Attempt an isolated remote image build and dump the underlying error.
-    #    A fresh minimal env forces a real build (the failing builds are never
-    #    cached). Retry on TRANSIENT failures — the build run is created in this
-    #    cluster's project/domain, so for the first ~2 min after the cluster goes
-    #    healthy the workflow-service cluster cache / capabilities haven't
-    #    propagated and CreateRun returns NOT_FOUND "no clusters found for action"
-    #    (the same lag the smoke suite's 120s wait + _submit_with_retry absorb).
-    #    Retrying those means a FAILED verdict here reflects a *real* persistent
-    #    build problem (e.g. the 06-24 UNAVAILABLE), not propagation lag.
-    img = flyte.Image.from_debian_base().with_pip_packages("requests==2.32.3")
-    probe_env = flyte.TaskEnvironment(name=f"ci-probe-{cluster_name}", image=img)
-    _MAX, _DELAY = 10, 30
-    for attempt in range(1, _MAX + 1):
-        try:
-            print(f"[ci] probe: submitting isolated remote image build (attempt {attempt}/{_MAX}) …", flush=True)
-            cache = await flyte.build_images.aio(probe_env)  # type: ignore
-            print(f"[ci] probe: image build SUCCEEDED — cache={cache}", flush=True)
-            break
-        except Exception as exc:  # noqa: BLE001
-            if attempt < _MAX and _is_transient(exc):
-                print(
-                    f"[ci] probe: build attempt {attempt}/{_MAX} transient "
-                    f"({str(exc)[:140]}) — retrying in {_DELAY}s …",
-                    flush=True,
-                )
-                await asyncio.sleep(_DELAY)
-                continue
-            # Persistent and/or non-transient (e.g. UNAVAILABLE) → the real signal.
-            print(f"[ci] probe: image build FAILED after {attempt} attempt(s):", flush=True)
-            _diag_exc(exc, "probe/build_images")
-            # The build runs on the dataplane, so a failed submission is most often
-            # the CP no longer routing build runs here. Capture BOTH sides of that
-            # decision: the CP's view of this cluster's health (Cluster.get) and the
-            # operator's CP-connection/heartbeat state — to tell "CP dropped us as a
-            # healthy build target" apart from a true CP-backend/transport error.
-            print("[ci] probe: --- CP-side cluster health at build-failure time ---", flush=True)
-            await _dump_cluster_state(cluster_name)
-            _dump_operator_connection()
-            break
-
-
-def cmd_probe_image_builder(args: argparse.Namespace) -> None:
-    try:
-        asyncio.run(
-            _probe_image_builder_async(
-                _env("CONTROL_PLANE_URL"),
-                _env("UNION_API_KEY", required=False),
-                _env("CLUSTER_NAME"),
-                _env("ORG_NAME", required=False),
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 — diagnostic step must never fail the job
-        print(f"[ci] probe-image-builder: probe wrapper error (ignored): {exc}", flush=True)
-        _diag_exc(exc, "probe-image-builder/wrapper")
-
-
 # ── main ────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1693,32 +1071,11 @@ def main() -> None:
 
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=300)
-    p_wait.add_argument(
-        "--stable", type=int, default=1,
-        help="Require N consecutive healthy observations (use >1 after an "
-             "operator restart when CP health flaps).",
-    )
-    p_wait.add_argument(
-        "--require-pools", action="store_true",
-        help="Also require a non-empty pool list (health='healthy' alone can "
-             "have pools=[] while the [default] pool config is still syncing). "
-             "Use only AFTER setup-routing has assigned a pool.",
-    )
 
     sub.add_parser("setup-routing")
     sub.add_parser("eager-api-key")
     sub.add_parser("smoke-test")
     sub.add_parser("run-smoke-suite")
-    sub.add_parser("probe-image-builder")
-    p_sample = sub.add_parser("sample-health")
-    p_sample.add_argument(
-        "--duration", type=int, default=1200,
-        help="How long to sample (s). Span the probe + smoke suite window.",
-    )
-    p_sample.add_argument(
-        "--interval", type=int, default=8,
-        help="Seconds between CP-health + CPU/throttle samples.",
-    )
     sub.add_parser("teardown")
 
     args = p.parse_args()
@@ -1729,8 +1086,6 @@ def main() -> None:
         "eager-api-key":    cmd_eager_api_key,
         "smoke-test":       cmd_smoke_test,
         "run-smoke-suite":  cmd_run_smoke_suite,
-        "probe-image-builder": cmd_probe_image_builder,
-        "sample-health":    cmd_sample_health,
         "teardown":         cmd_teardown,
     }[args.command](args)
 
