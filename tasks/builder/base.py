@@ -16,13 +16,19 @@ from tasks.builder.version.fetcher import VersionFetcher
         "key": "The key in the chart file used in determining the version",
         "next": "Return the next version",
         "metadata_key": "The buildkite metadata key used to store the version",
+        "prerelease": "When --next, return an 'alpha' or 'beta' pre-release version",
     },
 )
 def version_fetcher(
-    ctx, file: str, key: str = "version", next: bool = False, metadata_key: str = ""
+    ctx,
+    file: str,
+    key: str = "version",
+    next: bool = False,
+    metadata_key: str = "",
+    prerelease: str = None,
 ):
     fetcher = VersionFetcher()
-    version = fetcher.run(file=file, key=key, next=next)
+    version = fetcher.run(file=file, key=key, next=next, prerelease=prerelease)
     print(version)
 
     if metadata_key:
@@ -34,11 +40,13 @@ def version_fetcher(
     help={
         "file": "The chart file to use in determining the version",
         "key": "The key in the chart file used in determining the version",
+        "prerelease": "Cut an 'alpha' or 'beta' pre-release of the next version "
+        "instead of a stable bump",
     },
 )
-def version_bumper(ctx, file: str, key: str = "version"):
+def version_bumper(ctx, file: str, key: str = "version", prerelease: str = None):
     bumper = VersionBumper()
-    bumper.run(file=file, key=key, next=True)
+    bumper.run(file=file, key=key, next=True, prerelease=prerelease)
 
 
 @task(

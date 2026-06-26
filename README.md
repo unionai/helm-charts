@@ -19,6 +19,10 @@ Helm charts for deploying Union.ai onto Kubernetes:
 - [`charts/CONVENTIONS.md`](./charts/CONVENTIONS.md) — overlay file naming, what's actively tested vs. an example.
 - [`charts/MIGRATION.md`](./charts/MIGRATION.md) — recent breaking-ish chart changes and how to migrate.
 
+## Releasing
+
+- [`RELEASING.md`](./RELEASING.md) — stable releases (merge to `main`) and alpha/beta pre-releases (tag push), versioning, and how to consume each.
+
 ## Local development
 
 Sample Terraform configurations for spinning up substrate to test against live in [`providers/`](./providers).
