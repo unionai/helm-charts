@@ -328,7 +328,13 @@ config:
       insecure: false
       insecureSkipVerify: false
   authorizer:
-    type: noop
+    type: Authorizer
+    authorizerClient:
+      grpcConfig:
+        host: '{{ include "dataplane.cp.endpoint" . }}'
+        insecure: false
+        insecureSkipVerify: false
+      credentials: ServiceCredentials
   # -- Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config)
   # Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config)
   catalog:
@@ -467,6 +473,11 @@ config:
     limitNamespace: ""
     # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
     disableClusterPermissions: false
+    # -- Eager API key bootstrap. When enabled, the operator mints the eager API
+    # key on the control plane and writes it to the task-pod secret store.
+    # Requires the secret manager (proxy.secretManager.enabled).
+    apiKey:
+      enabled: false
     # -- Compute resource manager configuration.
     computeResourceManager: {}
     # -- Organization namespace template override.
@@ -1392,6 +1403,46 @@ metrics-server:
   enabled: false
 
 # -- nodeobserver contains the configuration information for the node observer service.
+fuseDevicePlugin:
+  # -- Enable the FUSE device-plugin DaemonSet. Advertises host /dev/fuse as an
+  # extended resource so unprivileged pods that request it (smarter-devices/fuse)
+  # can perform in-pod FUSE mounts with only CAP_SYS_ADMIN — no privileged pod.
+  # Opt-in: disabled by default; enable per cluster where unprivileged FUSE is wanted.
+  enabled: false
+  image:
+    repository: registry.gitlab.com/arm-research/smarter/smarter-device-manager
+    tag: v1.20.11
+    pullPolicy: IfNotPresent
+  # -- Devices the manager advertises (smarter-device-manager conf.yaml format).
+  # One entry per extended resource; nummaxdevices is the per-node claim count.
+  devices:
+    - devicematch: ^fuse$
+      nummaxdevices: 1000
+  # -- The plugin itself needs SYS_ADMIN to read host devices and register with
+  # kubelet; the workloads it serves stay unprivileged.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ "ALL" ]
+      add: [ "SYS_ADMIN" ]
+  # -- Run only where unprivileged FUSE is wanted; empty = all nodes.
+  nodeSelector: { }
+  # -- Tolerate everything so it lands on every (selected) node, incl. tainted.
+  tolerations:
+    - operator: Exists
+  affinity: { }
+  # -- Override the priorityClass (defaults to operator.priorityClassName).
+  priorityClassName: ""
+  # -- Additional pod annotations.
+  podAnnotations: { }
+  resources:
+    limits:
+      cpu: 100m
+      memory: 15Mi
+    requests:
+      cpu: 10m
+      memory: 15Mi
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
@@ -1549,6 +1600,26 @@ prometheus:
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
+
+    configMapOverrideName: "prometheus"
+    extraFlags:
+      - web.enable-lifecycle
+      - enable-feature=expand-external-labels
+    env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    # Mounted for the zero-trust remote_write oauth2 client_secret_file. The whole
+    # secret is mounted (not a subPath) and marked optional so non-zero-trust installs
+    # — where remote_write is not rendered and the admin secret may be disabled or
+    # externally managed — do not get a Pod that fails to schedule on a missing secret.
+    extraSecretMounts:
+      - name: prometheus-remote-write-secret
+        secretName: union-secret-auth
+        mountPath: /etc/prometheus/secrets
+        readOnly: true
+        optional: true
 
     service:
       servicePort: 80
@@ -2555,6 +2626,10 @@ gateway:
       kubernetes.podspec-runtimeclassname: "enabled"
       kubernetes.podspec-schedulername: "enabled"
       kubernetes.podspec-securitycontext: "enabled"
+      # Allow adding a capability subset to the user container's securityContext
+      # (e.g. CAP_SYS_ADMIN from PodTemplate.allow_fuse(), used to mount a FUSE
+      # filesystem such as a flyteplugins-union Volume).
+      kubernetes.containerspec-addcapabilities: "enabled"
       kubernetes.podspec-shareprocessnamespace: "enabled"
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
@@ -2580,7 +2655,11 @@ dataproxy:
     annotations: {}
   replicas: 1
   service:
+    # Connect/gRPC server (HTTP/2). Catch-all "/" gateway route -> dataproxy cluster.
     port: 8080
+    # HTTP/1.1 gateway server. Browser-facing reverse-proxy routes
+    # (/spark-history-server/, /dataplane/, /prometheus/cluster/) -> dataproxy-http cluster.
+    httpPort: 8089
   podAnnotations: { }
   podLabels: { }
   priorityClassName: ""
