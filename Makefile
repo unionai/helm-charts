@@ -59,13 +59,20 @@ kubeconform-test:
 requirements:
 	@pip-sync
 
+# Bump all lockstep charts to the next version. For a pre-release of the next
+# version, pass PRERELEASE=alpha or PRERELEASE=beta, e.g.
+#   make gen_version_bump                  # 2026.6.9 -> 2026.6.10
+#   make gen_version_bump PRERELEASE=beta  # 2026.6.9 -> 2026.6.10-beta.0
+PRERELEASE ?=
+_PRERELEASE_FLAG = $(if $(PRERELEASE),--prerelease $(PRERELEASE),)
+
 .PHONY: gen_version_bump
 gen_version_bump: requirements
-	invoke builder.version-bumper --file charts/controlplane/Chart.yaml
-	invoke builder.version-bumper --file charts/dataplane/Chart.yaml
-	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml
-	invoke builder.version-bumper --file charts/knative-migration/Chart.yaml
-	invoke builder.version-bumper --file charts/sandbox/Chart.yaml
+	invoke builder.version-bumper --file charts/controlplane/Chart.yaml $(_PRERELEASE_FLAG)
+	invoke builder.version-bumper --file charts/dataplane/Chart.yaml $(_PRERELEASE_FLAG)
+	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
+	invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
+	invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
