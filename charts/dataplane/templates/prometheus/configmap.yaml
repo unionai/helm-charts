@@ -1,0 +1,163 @@
+{{- /*
+Dataplane-owned prometheus.yml ConfigMap. Set as prometheus.server.configMapOverrideName
+so the upstream subchart skips its own cm.yaml and the prometheus Deployment mounts this
+instead.
+
+This faithfully mirrors the upstream prometheus chart's templates/cm.yaml so every
+values-driven section (ruleFiles, serverFiles, remote_read, storage, scrape_config_files,
+extraScrapeConfigs, alerting, configmap metadata) keeps rendering even when the override is
+active. On top of that, ONLY in zero-trust mode, it injects a remote_write entry whose oauth2
+client_id/token_url are DERIVED from globals (the subchart only tpl's remoteWrite[].url, not
+the oauth2 fields) plus an HA-dedup external label.
+
+Keep this in sync with the upstream prometheus subchart's templates/cm.yaml on subchart bumps.
+*/ -}}
+{{- if and .Values.prometheus.enabled .Values.prometheus.server.configMapOverrideName }}
+{{- $prom := .Values.prometheus }}
+{{- /* deepCopy avoids mutating .Values when we inject the HA-dedup external label.
+       default dict guards `helm lint` (and any deps-absent render), where the prometheus
+       subchart's default server.global is not merged in and would otherwise be nil. */ -}}
+{{- $global := deepCopy ($prom.server.global | default dict) }}
+{{- if .Values.zero_trust.enabled }}
+{{- $externalLabels := $global.external_labels | default dict }}
+{{- /* __replica__ dedups THIS cluster's prometheus replicas against each other. The
+       control-plane metrics-gateway derives cluster/tenant identity from the OAuth2
+       client_id (<org>-<cluster>-operator), so no stable cluster external label is
+       needed here. ${POD_NAME} is expanded at runtime via --enable-feature=expand-external-labels. */ -}}
+{{- $_ := set $externalLabels "__replica__" "${POD_NAME}" }}
+{{- $_ := set $global "external_labels" $externalLabels }}
+{{- end }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+{{- with $prom.server.configMapAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+  name: {{ .Release.Name }}-{{ $prom.server.configMapOverrideName }}
+  namespace: {{ default .Release.Namespace $prom.forceNamespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    {{- with $prom.server.extraConfigmapLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+data:
+  allow-snippet-annotations: "false"
+{{- range $key, $value := $prom.ruleFiles }}
+  {{ $key }}: {{- toYaml $value | indent 2 }}
+{{- end }}
+{{- range $key, $value := $prom.serverFiles }}
+  {{ $key }}: |
+{{- if eq $key "prometheus.yml" }}
+    global:
+{{ $global | toYaml | trimSuffix "\n" | indent 6 }}
+{{- /* Mirror upstream remoteWrite (tpl's url), then inject the derived zero-trust entry. */ -}}
+{{- $remoteWrites := list }}
+{{- range $remoteWrite := $prom.server.remoteWrite }}
+{{- /* deepCopy avoids mutating .Values when we tpl the url. */ -}}
+{{- $rw := deepCopy $remoteWrite }}
+{{- $_ := set $rw "url" (tpl $remoteWrite.url $) }}
+{{- $remoteWrites = append $remoteWrites $rw }}
+{{- end }}
+{{- if $.Values.zero_trust.enabled }}
+{{- /* The oauth2 client_secret_file is read from the optional union-secret-auth mount.
+       That Secret's app_secret key is provided by the chart only when secrets.admin is
+       enabled (and created, or supplied externally when create=false), so fail loudly
+       on disabled admin rather than letting remote_write auth fail silently at runtime. */ -}}
+{{- if not $.Values.secrets.admin.enable }}
+{{- fail "zero_trust metrics remote_write requires secrets.admin.enable=true so union-secret-auth provides the app_secret used as the prometheus oauth2 client_secret_file" }}
+{{- end }}
+{{- /* client_id mirrors the cloud operator_app_id "<org>-<cluster>-operator"; token_url
+       resolves through dataplane.cp.host so it honors global.CONTROLPLANE_HOST and the legacy global. */ -}}
+{{- $remoteWrites = append $remoteWrites (dict
+      "url" (printf "https://%s/metrics/remote_write" (include "dataplane.cp.host" $))
+      "oauth2" (dict
+        "client_id" (printf "%s-%s-operator" $.Values.global.ORG_NAME $.Values.global.CLUSTER_NAME)
+        "token_url" (printf "https://%s/auth/token" (include "dataplane.cp.host" $))
+        "client_secret_file" "/etc/prometheus/secrets/app_secret"
+        "scopes" (list "all"))) }}
+{{- end }}
+{{- if $remoteWrites }}
+    remote_write:
+{{ toYaml $remoteWrites | indent 4 }}
+{{- end }}
+{{- if $prom.server.remoteRead }}
+    remote_read:
+{{- $remoteReads := list }}
+{{- range $remoteRead := $prom.server.remoteRead }}
+{{- /* deepCopy avoids mutating .Values when we tpl the url. */ -}}
+{{- $rr := deepCopy $remoteRead }}
+{{- $_ := set $rr "url" (tpl $remoteRead.url $) }}
+{{- $remoteReads = append $remoteReads $rr }}
+{{- end }}
+{{ toYaml $remoteReads | indent 4 }}
+{{- end }}
+{{- if or $prom.server.tsdb $prom.server.exemplars }}
+    storage:
+{{- if $prom.server.tsdb }}
+      tsdb:
+{{ $prom.server.tsdb | toYaml | indent 8 }}
+{{- end }}
+{{- if $prom.server.exemplars }}
+      exemplars:
+{{ $prom.server.exemplars | toYaml | indent 8 }}
+{{- end }}
+{{- end }}
+{{- if $prom.scrapeConfigFiles }}
+    scrape_config_files:
+{{ toYaml $prom.scrapeConfigFiles | indent 4 }}
+{{- end }}
+{{- end }}
+{{- if eq $key "alerts" }}
+{{- if and (not (empty $value)) (empty $value.groups) }}
+    groups:
+{{- range $ruleKey, $ruleValue := $value }}
+    - name: {{ $ruleKey -}}.rules
+      rules:
+{{ $ruleValue | toYaml | trimSuffix "\n" | indent 6 }}
+{{- end }}
+{{- else }}
+{{ toYaml $value | indent 4 }}
+{{- end }}
+{{- else }}
+{{ toYaml $value | default "{}" | indent 4 }}
+{{- end }}
+{{- if eq $key "prometheus.yml" -}}
+{{- if $prom.extraScrapeConfigs }}
+{{ tpl $prom.extraScrapeConfigs $ | indent 4 }}
+{{- end -}}
+{{- if or ($prom.alertmanager.enabled) ($prom.server.alertmanagers) }}
+    alerting:
+{{- if $prom.alertRelabelConfigs }}
+{{ $prom.alertRelabelConfigs | toYaml | trimSuffix "\n" | indent 6 }}
+{{- end }}
+      alertmanagers:
+{{- if $prom.server.alertmanagers }}
+{{ toYaml $prom.server.alertmanagers | indent 8 }}
+{{- else }}
+      - kubernetes_sd_configs:
+          - role: pod
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        {{- if $prom.alertmanager.prefixURL }}
+        path_prefix: {{ $prom.alertmanager.prefixURL }}
+        {{- end }}
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_namespace]
+          regex: {{ $.Release.Namespace }}
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_instance]
+          regex: {{ $.Release.Name }}
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+          regex: {{ default "alertmanager" $prom.alertmanager.nameOverride | trunc 63 | trimSuffix "-" }}
+          action: keep
+        - source_labels: [__meta_kubernetes_pod_container_port_number]
+          regex: "9093"
+          action: keep
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}

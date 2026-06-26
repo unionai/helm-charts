@@ -112,6 +112,25 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
   --wait
 ```
 
+### Push prometheus metrics to the control plane
+
+In zero-trust mode (`zero_trust.enabled: true`) the in-cluster
+operator-prometheus automatically pushes its metrics to the control-plane
+metrics-gateway via Prometheus `remote_write`, authenticated with the
+dataplane's OAuth2 client credentials. With the default configuration **there is
+nothing to configure** — the endpoint, `client_id`
+(`<ORG_NAME>-<CLUSTER_NAME>-operator`) and `token_url`
+(`https://<CONTROLPLANE_HOST>/auth/token`) are derived from your existing
+`global` values, and the OAuth2 client_secret is read from the
+`union-secret-auth` Secret (key `app_secret`).
+
+This assumes the `global` values (`ORG_NAME`, `CLUSTER_NAME`,
+`CONTROLPLANE_HOST`, falling back to the legacy `host`) are populated and
+that `union-secret-auth` carries the `app_secret` key. The chart creates that
+Secret only when `secrets.admin.enable: true` **and** `secrets.admin.create: true`;
+on the `aws`/`gcp` platform defaults `create: false`, so an external provisioner
+(e.g. ExternalSecrets) must supply `union-secret-auth` with an `app_secret` key.
+
 > **Not supported for selfhosted-intracluster deployments.**
 
 ### Before you upgrade
