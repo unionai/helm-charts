@@ -15,16 +15,31 @@ global:
   ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
-  # --- Leasor: attached dataplane cluster identifier (DEPRECATED) ---
-  # Kept for single-DP backward compatibility. New installs should configure
-  # services.leasor.configMap.leasor.queueSync.queues directly — see that
-  # section below for the multi-cluster shape.
+  # --- Leasor: attached dataplane cluster identifier (DEPRECATED, static-only) ---
+  # DEPRECATED: leave empty. The default queueSync.source is now `crud` — leasor
+  # reads queues from the control-plane queue CRUD API (the cluster service),
+  # which auto-seeds a `default` + per-cluster queue on dataplane registration —
+  # so this knob is unused in the default configuration and can be dropped from
+  # env overlays. It survives only as the static escape hatch below.
   #
-  # When set AND services.leasor.configMap.leasor.queueSync.queues is empty,
-  # templates/leasor/configmap.yaml auto-generates a 2-entry queue list:
-  #   - { name: default,                clusters: [<this value>] }
-  #   - { name: <DATAPLANE_CLUSTER_NAME>, clusters: [<this value>] }
-  # No reasonable default; empty disables auto-gen.
+  # Only consulted when services.leasor.configMap.leasor.queueSync.source is
+  # explicitly set to `static`.
+  #
+  # In static mode this is the cluster identifier — same value the corresponding
+  # dataplane chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues against.
+  # It auto-generates services.leasor.configMap.leasor.queueSync.queues (one
+  # `default` queue + one per-cluster queue, both containing this name). For the
+  # rare multi-DP static case, override that queues list directly to enumerate
+  # every dataplane.
+  #
+  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
+  # flyteadmin's routing registry (name + endpoint + auth per cluster) used
+  # by RandomClusterSelector for v1 execution dispatch; populate that only
+  # when you actually need flyteadmin v1 multi-cluster routing. This knob is
+  # leasor-only and just carries a name. The leasor configmap static
+  # auto-queue-gen is a no-op when this is empty (see
+  # templates/leasor/configmap.yaml).
   DATAPLANE_CLUSTER_NAME: ""
 
   # NOTE: global.DATAPLANE_HOST + global.DATAPLANE_ENDPOINT were removed in
@@ -1412,6 +1427,14 @@ services:
         # leasor-partition-id routing header. Skip the validation that would
         # otherwise reject every request for the missing header.
         skipPartitionCheckForDevbox: true
+        # Where leasor learns its queues. `crud` (default) reads them from the
+        # cluster service's queue CRUD API — the cluster service auto-seeds a
+        # `default` + per-cluster queue on dataplane registration, and
+        # UI-created queues are picked up automatically. Set `static` for the
+        # ship-without-CRUD fallback that derives queues from
+        # global.DATAPLANE_CLUSTER_NAME (see templates/leasor/configmap.yaml).
+        queueSync:
+          source: crud
     resources:
       limits:
         cpu: 2
