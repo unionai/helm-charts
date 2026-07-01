@@ -3099,6 +3099,26 @@ data:
         target_gc_percent: 70
 
 ---
+# Source: dataplane/templates/operator/configmap-connection.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-operator-connection
+  namespace: union
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  connection_config.json: |
+    {
+      "endpoint": "dns:///dp-1.internal.union.us-west-2.union.ai:443",
+      "insecure": false,
+      "insecureSkipVerify": true
+    }
+
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -3143,6 +3163,9 @@ data:
     operator:
       enabled: true
       enableTunnelService: true
+      # Path to the chart-rendered connection_config JSON the operator
+      # self-reports on every UpdateStatus call. Empty path = disabled.
+      connectionConfigPath: /etc/union/connection-config/connection_config.json
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: true
@@ -3242,7 +3265,7 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.6.10-alpha.0
+    helm.sh/chart: dataplane-2026.6.10-alpha.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.6.10-alpha.0"
@@ -6695,7 +6718,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7df80a19e1bdea109453565aa6e74fc792f56f3f580fa44b3b88b343691d1dd"
+        configChecksum: "48360f3798dd3cc41b39c51dd5a0810566bb48849a15c47927e47a6aa775d87"
         
       labels:
         
@@ -6833,7 +6856,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7df80a19e1bdea109453565aa6e74fc792f56f3f580fa44b3b88b343691d1dd"
+        configChecksum: "48360f3798dd3cc41b39c51dd5a0810566bb48849a15c47927e47a6aa775d87"
         
       labels:
         
@@ -6852,6 +6875,9 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        - name: connection-config-volume
+          configMap:
+            name: union-operator-connection
       containers:
         - name: operator
           securityContext:
@@ -6871,9 +6897,12 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: /etc/union/connection-config
+              name: connection-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.6.10-alpha.0"
+              value: "2026.6.10-alpha.1"
             - name: HELM_APP_VERSION
               value: "2026.6.10-alpha.0"
             - name: POD_NAME
@@ -7091,7 +7120,7 @@ spec:
             name: kourier-internal
             port:
               number: 80
-    host: "*.apps."
+    host: "*.apps.dp-1.internal.union.us-west-2.union.ai"
 ---
 # Source: dataplane/templates/common/ingress.yaml
 apiVersion: networking.k8s.io/v1
@@ -7190,6 +7219,7 @@ spec:
                 name: union-operator-proxy
                 port:
                   number: 8080
+      host: dp-1.internal.union.us-west-2.union.ai
 
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
@@ -7381,7 +7411,7 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.6.10-alpha.0
+    helm.sh/chart: dataplane-2026.6.10-alpha.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.6.10-alpha.0"
@@ -7435,7 +7465,7 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.6.10-alpha.0
+      helm.sh/chart: dataplane-2026.6.10-alpha.1
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
       app.kubernetes.io/version: "2026.6.10-alpha.0"
