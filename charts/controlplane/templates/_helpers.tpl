@@ -54,6 +54,19 @@ controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
 {{- end -}}
 
+{{/*
+Cluster-local gRPC endpoint for CP↔CP routing (includes port).
+Envoy listens on 443 only, so gRPC callers need the port explicitly
+(default gRPC port is 80). Nginx uses default port 80.
+*/}}
+{{- define "controlPlaneLibrary.ingressGrpcEndpoint" -}}
+{{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
+envoy-controlplane.envoy-gateway.svc.cluster.local:443
+{{- else -}}
+controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+{{- end -}}
+
 {{- define "unionai.imagePullSecrets" -}}
 {{- if and (hasKey .config "imagePullSecrets") }}
 {{ toYaml .config.imagePullSecrets }}
