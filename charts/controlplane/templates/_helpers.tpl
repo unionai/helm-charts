@@ -55,13 +55,13 @@ controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
 
 {{/*
-Cluster-local gRPC endpoint for CP↔CP routing (includes port).
-Envoy listens on 443 only, so gRPC callers need the port explicitly
-(default gRPC port is 80). Nginx uses default port 80.
+Cluster-local gRPC host for CP↔CP routing (host only, no port).
+Callers that need an explicit port (e.g. admin.endpoint for envoy on 443)
+should append it at the call site.
 */}}
 {{- define "controlPlaneLibrary.ingressGrpcEndpoint" -}}
 {{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
-envoy-controlplane.envoy-gateway.svc.cluster.local:443
+envoy-controlplane.envoy-gateway.svc.cluster.local
 {{- else -}}
 controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
