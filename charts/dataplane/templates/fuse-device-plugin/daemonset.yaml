@@ -1,0 +1,100 @@
+{{- /*
+Advertises host character devices (by default /dev/fuse) as Kubernetes extended
+resources via the device-plugin API, so an UNPRIVILEGED pod that requests the
+resource (e.g. "smarter-devices/fuse: 1") gets the device injected into its
+devices-cgroup allowlist by kubelet. This is what lets workloads perform an
+in-pod FUSE mount with only CAP_SYS_ADMIN — no privileged container, no
+/dev/fuse hostPath (which surfaces the node but cannot grant cgroup access).
+
+Privilege is confined to this DaemonSet; the workloads it serves stay
+unprivileged. Disabled by default; opt in per cluster via fuseDevicePlugin.enabled.
+*/}}
+{{- if .Values.fuseDevicePlugin.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}-fuse-device-plugin
+  labels:
+    {{- include "fuseDevicePlugin.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "fuseDevicePlugin.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/fuse-device-plugin/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.fuseDevicePlugin.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        platform.union.ai/zone: "dataplane"
+        {{- include "fuseDevicePlugin.selectorLabels" . | nindent 8 }}
+    spec:
+      # No k8s API access needed — kubelet registration goes through the
+      # hostPath device-plugins socket dir, not the API server.
+      automountServiceAccountToken: false
+      {{- $priorityClassName := .Values.fuseDevicePlugin.priorityClassName | default .Values.operator.priorityClassName }}
+      {{- if $priorityClassName }}
+      priorityClassName: {{ $priorityClassName }}
+      {{- end }}
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.fuseDevicePlugin.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+        {{- toYaml .Values.fuseDevicePlugin.tolerations | nindent 8 }}
+      {{- with .Values.fuseDevicePlugin.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: smarter-device-manager
+          image: "{{ .Values.fuseDevicePlugin.image.repository }}:{{ .Values.fuseDevicePlugin.image.tag }}"
+          imagePullPolicy: {{ .Values.fuseDevicePlugin.image.pullPolicy }}
+          # /dev is mounted read-only below, so the default terminationMessagePath
+          # of /dev/termination-log cannot be created by runc — it races the ro
+          # remount of /dev and intermittently fails container init with
+          # "make mountpoint ...: read-only file system". Point it at the
+          # writable rootfs instead.
+          terminationMessagePath: /var/log/union-fuse-termination.log
+          terminationMessagePolicy: FallbackToLogsOnError
+          securityContext:
+            {{- toYaml .Values.fuseDevicePlugin.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml .Values.fuseDevicePlugin.resources | nindent 12 }}
+          volumeMounts:
+            # must stay read-write: the plugin creates its gRPC registration
+            # socket in this directory.
+            - name: device-plugin
+              mountPath: /var/lib/kubelet/device-plugins
+            # read-only: discovery only stats/watches device nodes, and device
+            # I/O is unaffected by a ro bind mount — this just blocks
+            # mknod/chmod/unlink of host nodes from inside the container.
+            - name: dev
+              mountPath: /dev
+              readOnly: true
+            - name: config
+              mountPath: /root/config
+              readOnly: true
+      volumes:
+        - name: device-plugin
+          hostPath:
+            path: /var/lib/kubelet/device-plugins
+            type: Directory
+        - name: dev
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: config
+          configMap:
+            name: {{ include "unionai-dataplane.fullname" . }}-fuse-device-plugin
+{{- end }}

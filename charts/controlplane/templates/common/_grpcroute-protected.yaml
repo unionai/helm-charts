@@ -18,6 +18,10 @@ spec:
     - {{ . | quote }}
     {{- end }}
     {{- end }}
+    {{- $ingressFqdn := include "controlPlaneLibrary.ingressFqdn" . }}
+    {{- if and $ingressFqdn (ne $ingressFqdn .Values.global.UNION_HOST) (ne $ingressFqdn .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST) }}
+    - {{ $ingressFqdn | quote }}
+    {{- end }}
     {{- range $extraHost := .Values.ingress.extraHosts }}
     - {{ tpl $extraHost $ | quote }}
     {{- end }}
@@ -48,11 +52,14 @@ spec:
     # cluster
     - matches:
         - method: {service: "cloudidl.cluster.ClusterService"}
+        - method: {service: "flyteidl2.cluster.ClusterService"}
         - method: {service: "cloudidl.cluster.ClusterNodepoolService"}
         - method: {service: "cloudidl.cloudaccounts.CloudAccountsService"}
         - method: {service: "cloudidl.cluster.ManagedClusterService"}
         - method: {service: "cloudidl.clusterpool.ClusterPoolService"}
         - method: {service: "cloudidl.clusterconfig.ClusterConfigService"}
+        - method: {service: "cloudidl.queue.QueueService"}
+        - method: {service: "cloudidl.queue.InternalQueueService"}
       backendRefs:
         - name: cluster
           port: 80
@@ -76,6 +83,7 @@ spec:
     # organizations
     - matches:
         - method: {service: "cloudidl.org.OrgService"}
+        - method: {service: "flyteidl2.settings.SettingsService"}
       backendRefs:
         - name: organizations
           port: 83
@@ -91,12 +99,14 @@ spec:
       backendRefs:
         - name: authorizer
           port: 83
+    {{- if .Values.flyte.datacatalog.enabled }}
     # datacatalog
     - matches:
         - method: {service: "datacatalog.DataCatalog"}
       backendRefs:
         - name: datacatalog
           port: 89
+    {{- end }}
     # cacheservice
     - matches:
         - method: {service: "flyteidl.cacheservice.CacheService"}
@@ -130,29 +140,6 @@ spec:
         - method: {service: "flyteidl2.workflow.StateService"}
       backendRefs:
         - name: queue
-          port: 80
-    # leasor (v2 — queue/lease equivalent for v2 actions/leasor stack)
-    - matches:
-        - method: {service: "cloudidl.workflow.v2.LeasorService"}
-      backendRefs:
-        - name: leasor
-          port: 80
-    # actions + pluginState (v2 — the Actions binary serves both proto services
-    # in the same process; PluginStateService is leaseworker→actions for plugin
-    # state Get/Put. InternalActionsService is leasor→actions and stays inside
-    # the controlplane namespace via internalConnectionConfig — no ingress
-    # route needed.)
-    - matches:
-        - method: {service: "flyteidl2.actions.ActionsService"}
-        - method: {service: "cloudidl.pluginstate.PluginStateService"}
-      backendRefs:
-        - name: actions
-          port: 80
-    # eventsProxy (v2 — runs in the executions binary, called by leaseworker)
-    - matches:
-        - method: {service: "flyteidl2.workflow.EventsProxyService"}
-      backendRefs:
-        - name: executions
           port: 80
     # image builder (dataproxy)
     - matches:
@@ -198,6 +185,53 @@ spec:
         - name: executions
           port: 80
     {{- end }}
+{{- end }}
+{{- define "control-plane-library.grpcroute-protected-extended" }}
+# Second GRPCRoute — split from grpcroute-protected to stay within the
+# Gateway API 16-rule-per-resource limit (gateway.networking.k8s.io CRD v1.4.1).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: {{ template "flyte.name" . }}-grpc-protected-extended
+  namespace: {{ template "flyte.namespace" . }}
+spec:
+  parentRefs:
+    - name: {{ template "flyte.name" . }}
+      namespace: {{ template "flyte.namespace" . }}
+  hostnames:
+    - {{ .Values.global.UNION_HOST | quote }}
+    {{- with .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}
+    {{- if ne . $.Values.global.UNION_HOST }}
+    - {{ . | quote }}
+    {{- end }}
+    {{- end }}
+    {{- $ingressFqdn := include "controlPlaneLibrary.ingressFqdn" . }}
+    {{- if and $ingressFqdn (ne $ingressFqdn .Values.global.UNION_HOST) (ne $ingressFqdn .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST) }}
+    - {{ $ingressFqdn | quote }}
+    {{- end }}
+    {{- range $extraHost := .Values.ingress.extraHosts }}
+    - {{ tpl $extraHost $ | quote }}
+    {{- end }}
+  rules:
+    # leasor (v2 — queue/lease equivalent for v2 actions/leasor stack)
+    - matches:
+        - method: {service: "cloudidl.workflow.v2.LeasorService"}
+      backendRefs:
+        - name: leasor
+          port: 80
+    # actions + pluginState (v2)
+    - matches:
+        - method: {service: "flyteidl2.actions.ActionsService"}
+        - method: {service: "cloudidl.pluginstate.PluginStateService"}
+      backendRefs:
+        - name: actions
+          port: 80
+    # eventsProxy (v2 — runs in the executions binary, called by leaseworker)
+    - matches:
+        - method: {service: "flyteidl2.workflow.EventsProxyService"}
+      backendRefs:
+        - name: executions
+          port: 80
     # Union v2 workflow services (executions)
     - matches:
         - method: {service: "cloudidl.workflow.RunService"}

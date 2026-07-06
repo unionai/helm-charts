@@ -15,37 +15,37 @@ global:
   ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
-  # --- DP entrypoint (CP -> DP) ---
-  DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
-  DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
-
-  # --- Leasor: attached dataplane cluster identifier ---
-  # TEMPORARY. The ship-today way to tell leasor which dataplane cluster its
-  # queues should target. A future control-plane queue/cluster CRUD service
-  # will own this state and deprecate this knob — plan to migrate when that
-  # lands.
+  # --- Leasor: attached dataplane cluster identifier (DEPRECATED, static-only) ---
+  # DEPRECATED: leave empty. The default queueSync.source is now `crud` — leasor
+  # reads queues from the control-plane queue CRUD API (the cluster service),
+  # which auto-seeds a `default` + per-cluster queue on dataplane registration —
+  # so this knob is unused in the default configuration and can be dropped from
+  # env overlays. It survives only as the static escape hatch below.
   #
-  # The cluster identifier — same value the corresponding dataplane chart
-  # install sets in its own global.CLUSTER_NAME, which is what leaseworker
-  # reports on StreamLeases and what leasor matches queues against. The
-  # common self-hosted shape is one CP fronting one DP (often intracluster on
-  # the same K8s), so a single string fits. For the rare multi-DP case,
-  # override services.leasor.configMap.leasor.queueSync.queues directly to
-  # enumerate every dataplane.
+  # Only consulted when services.leasor.configMap.leasor.queueSync.source is
+  # explicitly set to `static`.
   #
-  # Used to auto-generate services.leasor.configMap.leasor.queueSync.queues
-  # (one `default` queue + one per-cluster queue, both containing this name).
-  # No reasonable default — set explicitly.
+  # In static mode this is the cluster identifier — same value the corresponding
+  # dataplane chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues against.
+  # It auto-generates services.leasor.configMap.leasor.queueSync.queues (one
+  # `default` queue + one per-cluster queue, both containing this name). For the
+  # rare multi-DP static case, override that queues list directly to enumerate
+  # every dataplane.
   #
   # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
   # flyteadmin's routing registry (name + endpoint + auth per cluster) used
   # by RandomClusterSelector for v1 execution dispatch; populate that only
   # when you actually need flyteadmin v1 multi-cluster routing. This knob is
-  # leasor-only and just carries a name. Empty by default; per-env overlay
-  # populates from the dataplane's cluster_name. The leasor configmap
+  # leasor-only and just carries a name. The leasor configmap static
   # auto-queue-gen is a no-op when this is empty (see
   # templates/leasor/configmap.yaml).
   DATAPLANE_CLUSTER_NAME: ""
+
+  # NOTE: global.DATAPLANE_HOST + global.DATAPLANE_ENDPOINT were removed in
+  # the Phase 2 DP self-registration cleanup. CP→DP routing now reads the
+  # DP's self-reported endpoint from cluster.Spec.ConnectionConfig (the
+  # operator self-reports on every UpdateStatus). See cloud #16362.
 
   # --- Images ---
   # Customer-facing registry default; internal deployments override to private ECR/GCR.
@@ -281,12 +281,17 @@ ingress:
   # namespace (typically provisioned by cert-manager via extraObjects, or by
   # an external-secrets ExternalSecret in your environment overlay).
   #
-  # Example — one secret covering the public host and the in-cluster alias:
+  # Split TLS by trust domain — one secret can't cover both. A public ACME /
+  # Let's Encrypt issuer can't mint a cert for non-resolvable in-cluster names,
+  # and in-cluster clients still verify the hostname/SAN, so the public host and
+  # the svc FQDN each need their own cert (selected by SNI):
   # tls:
-  #   - hosts:
+  #   - hosts:                                    # public — Let's Encrypt cert
   #       - '{{ .Values.global.UNION_HOST }}'
+  #     secretName: my-controlplane-public-tls-secret
+  #   - hosts:                                    # intracluster — self-signed cert
   #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-  #     secretName: my-controlplane-tls-secret
+  #     secretName: my-controlplane-internal-tls-secret
   tls: []
 
   # Host to use for all ingress objects.
@@ -489,7 +494,7 @@ configMap:
     environment: "staging"
     region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
     # Use controlplane ingress controller for gRPC routing.
-    rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+    rootTenantURLPattern: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}'
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
@@ -861,16 +866,16 @@ services:
                   sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
               EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
@@ -1034,6 +1039,20 @@ services:
             ttl: 10m
   identity:
     fullnameOverride: "identity"
+    # apiKeyOverrides: secret-by-reference overrides for system API keys. By
+    # default the identity service mints these by registering an OAuth client on
+    # the IdP; use this when the control plane can't register clients on an
+    # operator-controlled IdP (selfhosted Okta/Entra). An out-of-band process
+    # seeds the pre-created OAuth client credentials as a K8s Secret, and the
+    # identity service reads them instead of contacting the IdP. The map key MUST
+    # be a recognized system key name (e.g. EAGER_API_KEY). Reference-only: never
+    # put a client secret inline here — this file renders into a committed overlay.
+    apiKeyOverrides: {}
+    #   EAGER_API_KEY:
+    #     existingSecret:
+    #       name: eager-client-creds       # pre-created Secret (required)
+    #       clientIdKey: client_id         # optional; data key, defaults to client_id
+    #       clientSecretKey: client_secret # optional; data key, defaults to client_secret
     service:
       type: ClusterIP
       grpcport: 80
@@ -1180,16 +1199,16 @@ services:
                   sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
               EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
@@ -1305,11 +1324,57 @@ services:
   # router is needed — leasor rides the generic services renderer like queue.
   #
   # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
-  # services renderer. templates/leasor/configmap.yaml builds it instead so
-  # that queueSync.queues can be auto-generated from
-  # global.DATAPLANE_CLUSTER_NAME (one `default` queue + one per-cluster
-  # queue, both containing that name). To bypass auto-generation entirely,
-  # set configMap.leasor.queueSync.queues below explicitly.
+  # services renderer. templates/leasor/configmap.yaml builds it instead so it
+  # can inject per-queue defaults onto each entry of queueSync.queues — see
+  # below for the supported shape and the QueueSpec field reference.
+  #
+  # queueSync.queues — list of leasor.config.QueueSpec entries
+  # (cloud/leasor/config/config.go:121). Each entry routes Actions queued
+  # under (org, project, domain) to one or more dataplane clusters.
+  #
+  # Per-entry defaults (template-injected when the field is absent):
+  #
+  #   org:               global.UNION_ORG     (single-tenant CP convention)
+  #   name:              "default"
+  #   priority:          50  (PriorityMedium — 0=Low, 50=Medium, 100=High)
+  #   fairnessAlgorithm: 1   (FairnessRoundRobin; 0=None=FIFO, 2=Shuffle)
+  #
+  # Caller-owned fields:
+  #
+  #   clusters:         REQUIRED — list of DP cluster_name strings this queue
+  #                     dispatches to. ["*"] matches every connected DP.
+  #
+  # Optional fields (omit unless you need to scope or shape the queue):
+  #
+  #   project:          scope to a single Flyte project (default: "" = all)
+  #   domain:           scope to a single Flyte domain (default: "" = all)
+  #   status:           0=Active (default), 1=Draining, 2=Drained
+  #   maxDepth:         max queued leases (0 = unlimited)
+  #   maxActionConcurrency: max concurrent in-flight actions (0 = unlimited)
+  #   maxRunConcurrency:    max concurrent runs (0 = unlimited)
+  #
+  # Single-DP example (matches what DATAPLANE_CLUSTER_NAME auto-generated):
+  #
+  #   services:
+  #     leasor:
+  #       configMap:
+  #         leasor:
+  #           queueSync:
+  #             source: static
+  #             queues:
+  #               - { clusters: [dp-1] }            # → name=default
+  #               - { name: dp-1, clusters: [dp-1] }
+  #
+  # Multi-DP example (one default that fans out + one per-cluster):
+  #
+  #   queues:
+  #     - { clusters: [dp-east, dp-west] }
+  #     - { name: dp-east, clusters: [dp-east] }
+  #     - { name: dp-west, clusters: [dp-west] }
+  #
+  # Backward compat: if queues is empty AND global.DATAPLANE_CLUSTER_NAME
+  # is set, the template auto-generates the 2-entry single-DP shape. This
+  # path is DEPRECATED — migrate to explicit `queues` above.
   leasor:
     fullnameOverride: "leasor"
     replicaCount: 1
@@ -1362,6 +1427,14 @@ services:
         # leasor-partition-id routing header. Skip the validation that would
         # otherwise reject every request for the missing header.
         skipPartitionCheckForDevbox: true
+        # Where leasor learns its queues. `crud` (default) reads them from the
+        # cluster service's queue CRUD API — the cluster service auto-seeds a
+        # `default` + per-cluster queue on dataplane registration, and
+        # UI-created queues are picked up automatically. Set `static` for the
+        # ship-without-CRUD fallback that derives queues from
+        # global.DATAPLANE_CLUSTER_NAME (see templates/leasor/configmap.yaml).
+        queueSync:
+          source: crud
     resources:
       limits:
         cpu: 2
@@ -2070,7 +2143,7 @@ flyte:
       connection:
         environment: "staging"
         region: ""  # Cloud-specific: set in overlay
-        rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        rootTenantURLPattern: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}'
       flyteadmin:
         metricsKeys:
           - phase
@@ -2183,11 +2256,9 @@ ingress-nginx:
         http: 80
         https: 443
 
-    # TLS certificate for all HTTPS connections.
-    # The nginx-ingress subchart does not support Helm templating in extraArgs,
-    # so the TLS secret reference must be set as a literal value in your
-    # environment-specific values overlay.
-    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
+    # Extra args for the ingress-nginx controller. The subchart does not support
+    # Helm templating here, so any values must be literals. Per-host TLS is
+    # configured via `ingress.tls` above.
     extraArgs: {}
 
     admissionWebhooks:

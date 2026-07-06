@@ -38,3 +38,48 @@ spelling varies across config schemas (insecure vs insecure-skip-verify
 vs insecureSkipVerify) and YAML/Go-config bool coercion through helm
 template strings is fragile, so callers write the booleans inline.
 */}}
+
+{{/*
+Self-reporting helpers for the data-plane → control-plane Heartbeat /
+UpdateStatus.connection_config field. The operator reads the rendered
+JSON file at startup and ships it on every UpdateStatus so the CP can
+dial back without anyone having to admin-set DataplaneIngressURL.
+
+Override surface (.Values.updateStatus.connectionConfig):
+  enabled             opt in to self-reporting. Off by default so the chart
+                      stays compatible with operator images that predate the
+                      connection_config support — they receive no config key,
+                      ConfigMap, or mount they can't consume.
+  host                bare DP-reachable hostname (no scheme, no port).
+                      Empty falls back to .Values.ingress.host — the
+                      dataplane's own ingress hostname — so most installs
+                      don't need to set this explicitly.
+  insecure            CP dials with plain HTTP/2 (no TLS) when true
+  insecureSkipVerify  CP skips cert validation (self-signed cert envs)
+
+dataplane.dp.endpoint formats host as `dns:///<host>:443` — the same
+scheme used for CP→DP DP→CP and CP-to-DP gRPC dials elsewhere in the
+chart. Empty host returns empty string; callers gate emission on this.
+
+dataplane.connectionConfig.emit is the single gate every consumer keys off:
+it returns the resolved host only when self-reporting is both enabled and
+resolvable, empty otherwise — so an opt-out or missing host renders no
+connection_config resource, config key, volume, or mount.
+*/}}
+
+{{- define "dataplane.dp.host" -}}
+{{- $explicit := tpl (default "" .Values.updateStatus.connectionConfig.host) . -}}
+{{- $derived := tpl (default "" .Values.ingress.host) . -}}
+{{- default $derived $explicit -}}
+{{- end -}}
+
+{{- define "dataplane.dp.endpoint" -}}
+{{- $host := include "dataplane.dp.host" . -}}
+{{- if $host -}}{{- printf "dns:///%s:443" $host -}}{{- end -}}
+{{- end -}}
+
+{{- define "dataplane.connectionConfig.emit" -}}
+{{- if .Values.updateStatus.connectionConfig.enabled -}}
+{{- include "dataplane.dp.host" . -}}
+{{- end -}}
+{{- end -}}
