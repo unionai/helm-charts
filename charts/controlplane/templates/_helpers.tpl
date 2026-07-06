@@ -48,7 +48,7 @@ Switches between envoy and nginx based on the ingress provider.
 */}}
 {{- define "controlPlaneLibrary.ingressFqdn" -}}
 {{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
-envoy-controlplane.envoy-gateway.svc.cluster.local
+{{ .Values.global.ENVOY_INGRESS_FQDN | default "envoy-controlplane.envoy-gateway.svc.cluster.local" }}
 {{- else -}}
 controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
 {{- end -}}
