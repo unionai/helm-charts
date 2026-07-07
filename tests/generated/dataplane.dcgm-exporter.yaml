@@ -3967,6 +3967,12 @@ data:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop unused node-label bloat (NFD/azure/karpenter feature labels,
+        # providerID, noisiest NVIDIA GFD labels) to keep kube_node_labels small.
+        # providerID is emitted as label_providerID; the bare-providerID alternative
+        # covers DP versions that emit it unprefixed.
+        - action: labeldrop
+          regex: "(label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_(gfd_timestamp|gpu_deploy_.+))|(label_)?providerID)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
