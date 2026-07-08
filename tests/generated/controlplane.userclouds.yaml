@@ -7341,6 +7341,175 @@ data:
               "refId": "A"
             }
           ]
+        },
+        {
+          "id": 1208,
+          "type": "row",
+          "collapsed": true,
+          "title": "Dataplane Self-Report Migration",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 62
+          },
+          "panels": [
+            {
+              "id": 1209,
+              "type": "timeseries",
+              "title": "Self-report adoption (UpdateStatus by source)",
+              "description": "Rate of dataplane UpdateStatus by endpoint report source. As dataplanes migrate to self-reporting their connection_config, self_reported rises and none (legacy admin-set) falls. Source: cluster:svc:update_status:updates_total.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 0,
+                "y": 63
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 2,
+                    "fillOpacity": 30,
+                    "stacking": {
+                      "mode": "normal"
+                    }
+                  },
+                  "unit": "short",
+                  "min": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom"
+                },
+                "tooltip": {
+                  "mode": "multi"
+                }
+              },
+              "targets": [
+                {
+                  "expr": "sum by (source) (rate(cluster:svc:update_status:updates_total{namespace=\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{source}}",
+                  "refId": "A"
+                }
+              ]
+            },
+            {
+              "id": 1210,
+              "type": "stat",
+              "title": "Dataplanes self-reporting",
+              "description": "Count of dataplanes whose latest UpdateStatus self-reports connection_config (source=self_reported) in the current window.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "gridPos": {
+                "h": 7,
+                "w": 6,
+                "x": 12,
+                "y": 63
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "yellow",
+                        "value": null
+                      },
+                      {
+                        "color": "green",
+                        "value": 1
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "value",
+                "graphMode": "none",
+                "textMode": "auto"
+              },
+              "targets": [
+                {
+                  "expr": "count(count by (cluster_name) (rate(cluster:svc:update_status:updates_total{namespace=\"$namespace\", source=\"self_reported\"}[$__rate_interval]) > 0))",
+                  "refId": "A"
+                }
+              ]
+            },
+            {
+              "id": 1211,
+              "type": "table",
+              "title": "Per-dataplane report source",
+              "description": "Each dataplane's current endpoint report source. self_reported = migrated; none = still resolving via the legacy admin-set DataplaneIngressURL.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "gridPos": {
+                "h": 7,
+                "w": 6,
+                "x": 18,
+                "y": 63
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showHeader": true
+              },
+              "targets": [
+                {
+                  "expr": "sum by (cluster_name, source) (rate(cluster:svc:update_status:updates_total{namespace=\"$namespace\"}[$__rate_interval]) > 0)",
+                  "format": "table",
+                  "instant": true,
+                  "refId": "A"
+                }
+              ],
+              "transformations": [
+                {
+                  "id": "organize",
+                  "options": {
+                    "excludeByName": {
+                      "Time": true,
+                      "Value": true,
+                      "org": true,
+                      "namespace": true,
+                      "cluster_health": true,
+                      "cluster_state": true,
+                      "cluster_type": true
+                    },
+                    "renameByName": {
+                      "cluster_name": "Dataplane",
+                      "source": "Report source"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         }
       ],
       "schemaVersion": 39,
