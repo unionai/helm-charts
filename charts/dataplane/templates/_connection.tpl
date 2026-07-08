@@ -57,9 +57,9 @@ Override surface (.Values.updateStatus.connectionConfig):
   insecure            CP dials with plain HTTP/2 (no TLS) when true
   insecureSkipVerify  CP skips cert validation (self-signed cert envs)
 
-dataplane.dp.endpoint formats host as `dns:///<host>:443` — the same
-scheme used for CP→DP DP→CP and CP-to-DP gRPC dials elsewhere in the
-chart. Empty host returns empty string; callers gate emission on this.
+The operator self-reports the bare host (dataplane.dp.host); the control
+plane builds the http(s)://host URL from it. Empty host renders no
+connection_config resource — callers gate emission on this.
 
 dataplane.connectionConfig.emit is the single gate every consumer keys off:
 it returns the resolved host only when self-reporting is both enabled and
@@ -71,11 +71,6 @@ connection_config resource, config key, volume, or mount.
 {{- $explicit := tpl (default "" .Values.updateStatus.connectionConfig.host) . -}}
 {{- $derived := tpl (default "" .Values.ingress.host) . -}}
 {{- default $derived $explicit -}}
-{{- end -}}
-
-{{- define "dataplane.dp.endpoint" -}}
-{{- $host := include "dataplane.dp.host" . -}}
-{{- if $host -}}{{- printf "dns:///%s:443" $host -}}{{- end -}}
 {{- end -}}
 
 {{- define "dataplane.connectionConfig.emit" -}}
