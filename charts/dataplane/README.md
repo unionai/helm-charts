@@ -115,8 +115,8 @@ helm upgrade --install unionai-dataplane unionai/dataplane \
 ### Push prometheus metrics to the control plane
 
 In zero-trust mode (`zero_trust.enabled: true`) the in-cluster
-operator-prometheus automatically pushes its metrics to the control-plane
-metrics-gateway via Prometheus `remote_write`, authenticated with the
+operator-prometheus automatically pushes its metrics to the control plane
+via Prometheus `remote_write`, authenticated with the
 dataplane's OAuth2 client credentials. With the default configuration **there is
 nothing to configure** — the endpoint, `client_id`
 (`<ORG_NAME>-<CLUSTER_NAME>-operator`) and `token_url`
