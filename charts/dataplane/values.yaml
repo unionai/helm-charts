@@ -544,7 +544,7 @@ config:
       enabled: true
     # -- Billing model: None, Legacy, Shadow, or ResourceUsage.
     billing:
-      model: "Shadow"
+      model: "ResourceUsage"
     # -- Heartbeat check configuration.
     dependenciesHeartbeat:
       # -- Define the propeller health check endpoint.
@@ -732,11 +732,21 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
+  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
+  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
+  namespace: "kube-system"
+
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
     # TLM uses this to map GPU metrics to task pods
     - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
       value: "uid"
+    # Required for MIG (Multi-Instance GPU) partition profiling on A100/H100.
+    # Allows DCGM to access per-partition profiling counters (DCGM_FI_PROF_*).
+    # Without this, DCGM_FI_PROF_SM_ACTIVE and related metrics return no data
+    # for MIG slices.
+    - name: NVIDIA_MIG_MONITOR_DEVICES
+      value: "all"
 
   # Based on default metrics list at
   # https://github.com/NVIDIA/dcgm-exporter/blob/3446595fbb31e22e45a8dbcd63ade14e3da49810/deployment/templates/metrics-configmap.yaml#L13
@@ -1737,6 +1747,14 @@ prometheus:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
+        - action: labeldrop
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -1832,10 +1850,29 @@ prometheus:
         - role: pod
           namespaces:
             names:
-              - kube-system
+              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_ip]
+          regex: '(.*)'
+          target_label: __address__
+          replacement: '${1}:9400'
+          action: replace
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
+          action: keep
 
   alertmanager:
     enabled: false

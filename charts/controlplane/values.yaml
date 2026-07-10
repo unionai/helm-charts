@@ -790,7 +790,8 @@ services:
         metrics:
           scope: "dataproxy:"
       dataproxy:
-        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
+        # CP→DP secure tunnel URL. Selfhosted overrides via global.DATAPLANE_HOST.
+        secureTunnelTenantURLPattern: '{{ default "http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80" .Values.global.DATAPLANE_HOST }}'
         clusterSelector:
           # Control plane: resolve the target dataplane by cluster pool and dial it
           # directly using the dataplane's self-reported connection_config (no
@@ -2121,8 +2122,9 @@ flyte:
           idpQueryParameter: "idp"
 
       admin:
-        # CP-internal: through controlplane ingress controller for gRPC routing.
-        endpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        # CP-internal: all CP services dial each other via gRPC through the ingress.
+        # Switches between envoy and nginx based on global.INGRESS_PROVIDER.
+        endpoint: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}{{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" }}:443{{- end }}'
         insecure: true
         clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
         clientSecretLocation: "/etc/secrets/client_secret"

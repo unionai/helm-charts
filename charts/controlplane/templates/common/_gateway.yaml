@@ -30,6 +30,11 @@ spec:
             name: {{ .Values.global.TLS_SECRET_NAME }}
     {{- end }}
     {{- $intraHost := .Values.global.CONTROLPLANE_INTRA_CLUSTER_HOST }}
+    {{- /* Internal listeners (DP→CP private DNS, CP→CP svc FQDN) use a
+           self-signed cert because LE cannot issue certs for cluster-local
+           names (.svc.cluster.local). Falls back to the LE cert when
+           INTERNAL_TLS_SECRET_NAME is not set (e.g. managed clusters). */}}
+    {{- $internalTlsSecret := .Values.global.INTERNAL_TLS_SECRET_NAME | default .Values.global.TLS_SECRET_NAME }}
     {{- if and $intraHost (ne $intraHost .Values.global.UNION_HOST) }}
     - name: https-intracluster
       protocol: HTTPS
@@ -40,7 +45,7 @@ spec:
         certificateRefs:
           - kind: Secret
             namespace: {{ .Values.global.TLS_SECRET_NAMESPACE }}
-            name: {{ .Values.global.TLS_SECRET_NAME }}
+            name: {{ $internalTlsSecret }}
     {{- end }}
     {{- $ingressFqdn := include "controlPlaneLibrary.ingressFqdn" . }}
     {{- if and $ingressFqdn (ne $ingressFqdn .Values.global.UNION_HOST) (ne $ingressFqdn $intraHost) }}
@@ -53,6 +58,6 @@ spec:
         certificateRefs:
           - kind: Secret
             namespace: {{ .Values.global.TLS_SECRET_NAMESPACE }}
-            name: {{ .Values.global.TLS_SECRET_NAME }}
+            name: {{ $internalTlsSecret }}
     {{- end }}
 {{- end }}
