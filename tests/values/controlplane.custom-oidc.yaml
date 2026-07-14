@@ -44,6 +44,32 @@ flyte:
       tls:
         secretName: fake-host-tls-secret
       host: fake-host.domain
+  # Read the browser-login OIDC client secret from a dedicated, single-writer
+  # Secret mounted at /etc/secrets/oauth (see examples/values.oidc-client-secret.yaml)
+  # instead of merging it into the init-container-managed flyte-admin-secrets.
+  # additionalVolumes/Mounts are list-valued (Helm replaces), so the chart's own
+  # union-secrets / private-config entries are repeated here alongside the new one.
+  flyteadmin:
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+      - name: private-config
+        configMap:
+          name: flyte-admin-private-config
+      - name: oauth-client-secret
+        secret:
+          secretName: flyteadmin-oidc-client-secret
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
+      - name: private-config
+        mountPath: /etc/flyte/private
+        readOnly: true
+      - name: oauth-client-secret
+        mountPath: /etc/secrets/oauth
+        readOnly: true
   configmap:
     admin:
       admin:
@@ -57,6 +83,9 @@ flyte:
           identityTypeClaimsForApps:
             idtyp:
             - app
+        userAuth:
+          openId:
+            clientSecretFile: /etc/secrets/oauth/client_secret
 
 # Eager-key secret-by-reference override on the identity service: CreateKey reads
 # seeded OAuth client creds from a mounted Secret instead of registering an IdP app.

@@ -1782,6 +1782,15 @@ flyte:
       - name: private-config
         configMap:
           name: flyte-admin-private-config
+      # -- OPTIONAL: give flyteadmin the browser-login OIDC client secret via its
+      # own dedicated, single-writer Secret, decoupled from flyte-admin-secrets
+      # (which the generate-secrets init container manages for signing/cookie keys).
+      # Create the Secret yourself (or via ExternalSecrets) with a `client_secret`
+      # key, mount it here, and point flyteadmin at the file with
+      # `configmap.adminServer.auth.userAuth.openId.clientSecretFile` (see below).
+      # - name: oauth-client-secret
+      #   secret:
+      #     secretName: flyteadmin-oidc-client-secret
     # Override configPath to include both config directories
     configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
@@ -1791,6 +1800,11 @@ flyte:
       - name: private-config
         mountPath: /etc/flyte/private
         readOnly: true
+      # -- OPTIONAL: mount for the dedicated OIDC client secret above. flyteadmin
+      # then reads it via userAuth.openId.clientSecretFile: /etc/secrets/oauth/client_secret
+      # - name: oauth-client-secret
+      #   mountPath: /etc/secrets/oauth
+      #   readOnly: true
   flytescheduler:
     image:
       repository: "registry.unionai.cloud/controlplane/services"
@@ -2113,6 +2127,13 @@ flyte:
             # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
             baseUrl: ""
             clientId: ""
+            # -- OPTIONAL: read the browser-login client secret from a mounted file
+            # instead of the default secret-manager lookup (`oidc_client_secret` in
+            # flyte-admin-secrets at /etc/secrets/). Use this with a dedicated
+            # `flyteadmin.additionalVolumes`/`additionalVolumeMounts` entry (see above)
+            # so the OIDC secret has its own single-writer Secret and never collides
+            # with the init-container-managed signing/cookie keys.
+            # clientSecretFile: /etc/secrets/oauth/client_secret
             # Browser login scopes.
             # Okta: ["profile", "openid", "offline_access"] (default)
             # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
