@@ -1093,8 +1093,25 @@ leaseworker:
   additionalVolumeMounts: []
   # -- Appends additional environment variables to the leaseworker container's spec.
   podEnv: []
-  # -- Sets priorityClassName for the leaseworker pod.
-  priorityClassName: "system-cluster-critical"
+  # -- PriorityClass the leaseworker pod runs under. The leaseworker is a Recreate
+  # singleton; a priority class keeps leases flowing when a replacement pod would
+  # otherwise sit Pending behind node scale-up. Defaults to the chart-managed class
+  # below. To bring your own existing class, set this to its name and
+  # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
+  # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
+  # ResourceQuota restricts those to kube-system. The pod still references this class
+  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  priorityClassName: union-leaseworker
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
+  # priorityClassName above. Skipped under low_privilege (namespace-only installs
+  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # (the PriorityClass would otherwise be created once per dataplane). value is used
+  # only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- nodeSelector for leaseworker deployment
   nodeSelector: { }
   # -- tolerations for leaseworker deployment
