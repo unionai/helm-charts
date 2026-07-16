@@ -89,7 +89,7 @@ successful connection to the control plane.
 
 ## Zero-trust mode (BYOC only)
 
-See the example [values](./charts/dataplane/examples/values.zero-trust.yaml) to enable zero-trust mode.
+See the example [values](./examples/values.zero-trust.yaml) to enable zero-trust mode.
 
 ### Push prometheus metrics to the control plane
 
