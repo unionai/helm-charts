@@ -1235,7 +1235,9 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- if .Values.ingress.serving.hostOverride }}
 {{- tpl .Values.ingress.serving.hostOverride . | quote }}
 {{- else }}
-{{- printf "*.apps.%s" (tpl .Values.ingress.host .) | quote }}
+{{- $host := tpl (default "" .Values.ingress.host) . -}}
+{{- if not $host }}{{- $host = include "dataplane.cp.host" . -}}{{- end }}
+{{- printf "*.apps.%s" $host | quote }}
 {{- end }}
 {{- end -}}
 
