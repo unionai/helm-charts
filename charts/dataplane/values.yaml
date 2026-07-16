@@ -31,8 +31,11 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- (Optional) Operator override for the control-plane host. Empty by default;
+# -- when unset the host resolves via global.CONTROLPLANE_HOST then
+# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
@@ -523,7 +526,7 @@ config:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -1638,7 +1641,7 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: ""
     # -- Ingress class name
     class: ""
