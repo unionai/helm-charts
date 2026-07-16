@@ -31,8 +31,11 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- (Optional) Operator override for the control-plane host. Empty by default;
+# -- when unset the host resolves via global.CONTROLPLANE_HOST then
+# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
@@ -385,6 +388,12 @@ config:
       # Overrides identity caching which is not available in the dataplane.
       identity:
         enabled: false
+    connection:
+      # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
+      # -- endpoint (dns:///<host>:443, honoring global.CONTROLPLANE_GRPC_ENDPOINT).
+      # -- To override, set this same key — it is authoritative (Helm deep-merge
+      # -- replaces this leaf before template rendering).
+      rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
   # -- Copilot configuration
   copilot:
     plugins:
@@ -511,9 +520,6 @@ config:
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
-    # -- DEPRECATED: use the top-level `operator.enableTunnelService`. No longer
-    # read by the chart; retained for backward compatibility.
-    enableTunnelService: true
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
@@ -523,7 +529,7 @@ config:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -1638,7 +1644,7 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: ""
     # -- Ingress class name
     class: ""
@@ -2011,9 +2017,6 @@ proxy:
   # -- nodeName constraint for the proxy pods
   nodeName: ""
   podSecurityContext: { }
-  # -- DEPRECATED: use the top-level `operator.enableTunnelService`. No longer
-  # read by the chart; retained for backward compatibility.
-  enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
   resources:
