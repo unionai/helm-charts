@@ -89,28 +89,7 @@ successful connection to the control plane.
 
 ## Zero-trust mode (BYOC only)
 
-Zero-trust mode is gated by a single values flag, `zero_trust.enabled`.
-Set it to `true` in your override file alongside disabling the
-`knative-operator` subchart (Helm evaluates that condition at parse time
-and can't derive it from `zero_trust.enabled`):
-
-```yaml
-# values.aws.byoc.yaml (or similar)
-zero_trust:
-  enabled: true
-knative-operator:
-  enabled: false
-```
-
-Install:
-
-```bash
-helm upgrade --install unionai-dataplane unionai/dataplane \
-  --namespace union \
-  --values values.aws.yaml \
-  --values values.aws.byoc.yaml \
-  --wait
-```
+See the example [values](./charts/dataplane/examples/values.zero-trust.yaml) to enable zero-trust mode.
 
 ### Push prometheus metrics to the control plane
 
