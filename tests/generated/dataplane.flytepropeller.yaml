@@ -1,4 +1,31 @@
 ---
+# Source: dataplane/templates/leaseworker/priorityclass.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+value: 1000000
+globalDefault: false
+description: "Priority for the Union leaseworker (a Recreate singleton) so it schedules ahead of task pods and leases keep flowing during node scale-up. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
+
+---
+# Source: dataplane/templates/propeller/priorityclass.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: union-flytepropeller
+  labels:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+value: 1000000
+globalDefault: false
+description: "Priority for flytepropeller so it schedules ahead of task pods. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -87,7 +114,7 @@ metadata:
   name: union-system
   namespace: union
   annotations:
-    
+    iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
 
 ---
 # Source: dataplane/templates/common/union-serviceaccount.yaml
@@ -97,7 +124,7 @@ metadata:
   name: union
   namespace: union
   annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/flyte_project_role
+    iam.gke.io/gcp-service-account: union-worker@test-gcp-project-123.iam.gserviceaccount.com
 automountServiceAccountToken: true
 ---
 # Source: dataplane/templates/flyteconnector/serviceaccount.yaml
@@ -110,6 +137,15 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: flytepropeller-system
+  namespace: union
+  annotations:
+    iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -146,8 +182,8 @@ metadata:
 type: Opaque
 data:
   # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: dGVzdC1zZWNyZXQ=
-  client_secret: dGVzdC1zZWNyZXQ=
+  app_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
+  client_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
 
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
@@ -157,7 +193,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dW5pb24tdGVzdA==
+  cluster_name: dGVzdC1lMmUtcHJvcGVsbGVy
 
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
@@ -268,8 +304,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-east-1
-        bucket test-bucket
+        region us-central1
+        bucket test-gcp-bucket
 
 ---
 # Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
@@ -285,19 +321,22 @@ metadata:
 data:
   storage.yaml: | 
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
-      enable-multicontainer: false
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
         max_size_mbs: 0
         target_gc_percent: 70
   buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: ".dkr.ecr.us-east-1.amazonaws.com/union-dataplane"
+  default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
   authentication-type: "noop"
 
 ---
@@ -359,7 +398,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-test/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/test-e2e-propeller/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -441,11 +480,11 @@ data:
   config.yaml: |
     leaseworker:
       capacity: 100000
-      cluster: 'union-test'
+      cluster: 'test-e2e-propeller'
       dispatcherCount: 512
       limit-namespace: union
       namespace-template: union
-      organization: 'union'
+      organization: 'byok'
       refreshInterval: 10s
       task_resources:
         defaults:
@@ -458,34 +497,34 @@ data:
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
-      workerName: 'union-union-test-worker1'
+      workerName: 'byok-test-e2e-propeller-worker1'
     union:
       connection:
-        host: 'dns:///union.test.union.ai:443'
+        host: 'dns:///byok.us-west-2.union.ai:443'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'byok-test-e2e-propeller-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'test-client'
+      clientId: 'byok-test-e2e-propeller-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.test.union.ai:443'
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.test.union.ai:443'
+          host: 'dns:///byok.us-west-2.union.ai:443'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///union.test.union.ai:443'
-      endpoint: 'dns:///union.test.union.ai:443'
+      cache-endpoint: 'dns:///byok.us-west-2.union.ai:443'
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -529,12 +568,15 @@ data:
         disable-inject-owner-references: true
         inject-finalizer: true
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
-      enable-multicontainer: false
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -2554,7 +2596,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-test/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/test-e2e-propeller/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2613,10 +2655,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'union-test'
+      cluster: 'test-e2e-propeller'
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: 'byok'
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -2633,31 +2675,31 @@ data:
       template: union
     union:
       connection:
-        host: 'dns:///union.test.union.ai:443'
+        host: 'dns:///byok.us-west-2.union.ai:443'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'byok-test-e2e-propeller-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'test-client'
+      clientId: 'byok-test-e2e-propeller-operator'
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.test.union.ai:443'
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.test.union.ai:443'
+          host: 'dns:///byok.us-west-2.union.ai:443'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///union.test.union.ai:443'
-      endpoint: 'dns:///union.test.union.ai:443'
+      cache-endpoint: 'dns:///byok.us-west-2.union.ai:443'
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -2704,12 +2746,15 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
-      enable-multicontainer: false
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -2738,11 +2783,11 @@ data:
   config.yaml: |
     union:
       connection:
-        host: 'dns:///union.test.union.ai:443'
+        host: 'dns:///byok.us-west-2.union.ai:443'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client'
+        clientId: 'byok-test-e2e-propeller-operator'
         clientSecretLocation: /etc/union/secret/client_secret
         tokenRefreshWindow: 5m
         type: ClientSecret
@@ -2754,7 +2799,7 @@ data:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.test.union.ai:443'
+          host: 'dns:///byok.us-west-2.union.ai:443'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
@@ -2767,37 +2812,38 @@ data:
         deploymentToRestart: union-operator-proxy
         appIngressOriginURL: "http://kourier-internal"
       limitNamespace: union
-      disableClusterPermissions: true
       apps:
         enabled: 'true'
       syncClusterConfig:
         enabled: false
       clusterId:
-        organization: 'union'
+        organization: 'byok'
       clusterData:
-        appId: 'test-client'
-        bucketName: 'test-bucket'
-        bucketRegion: 'us-east-1'
-        cloudHostName: 'union.test.union.ai'
-        cloudProvider: 'aws'
-        gcpProjectId: ''
-        metadataBucketPrefix: 's3://test-bucket'
-        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-        userRoleKey: 'eks.amazonaws.com/role-arn'
+        appId: 'byok-test-e2e-propeller-operator'
+        bucketName: 'test-gcp-bucket'
+        bucketRegion: 'us-central1'
+        cloudHostName: 'byok.us-west-2.union.ai'
+        cloudProvider: 'gcp'
+        gcpProjectId: 'test-gcp-project-123'
+        metadataBucketPrefix: 'gs://test-gcp-bucket'
+        userRole: 'union-worker@test-gcp-project-123.iam.gserviceaccount.com'
+        userRoleKey: 'iam.gke.io/gcp-service-account'
       collectUsages:
-        enabled: false
+        enabled: true
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
         executor:
           endpoint: 'http://union-operator-executor:10254'
+        prometheus:
+          endpoint: 'http://union-operator-prometheus:80/-/healthy'
+        propeller:
+          endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       secretsWatcher:
         dryRun: true
         enabled: false
-        namespaces:
-          - union
       org:
         namespaceTemplate: union
       imageBuilder:
@@ -2829,15 +2875,18 @@ data:
       identity:
         enabled: false
     connection:
-      rootTenantURLPattern: 'dns:///union.test.union.ai:443'
+      rootTenantURLPattern: 'dns:///byok.us-west-2.union.ai:443'
   storage.yaml: | 
     storage:
-      container: "test-bucket"
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
-      enable-multicontainer: false
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
+      enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
       cache:
@@ -2845,13 +2894,16 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: ""
-      type: s3
-      connection:
-        auth-type: iam
-        region: us-east-1
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: ".dkr.ecr.us-east-1.amazonaws.com/union-dataplane"
+  image-builder.default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
   image-builder.authentication-type: "noop"
 
 ---
@@ -4075,6 +4127,162 @@ data:
   rules: |
     {}
 ---
+# Source: dataplane/templates/propeller/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flyte-propeller-config
+  namespace: union
+data:
+  admin.yaml: | 
+    admin:
+      clientId: 'byok-test-e2e-propeller-operator'
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
+      insecure: false
+      insecureSkipVerify: false
+    event:
+      capacity: 1000
+      rate: 500
+      type: admin
+  catalog.yaml: | 
+    catalog-cache:
+      cache-endpoint: 'dns:///byok.us-west-2.union.ai:443'
+      endpoint: 'dns:///byok.us-west-2.union.ai:443'
+      insecure: false
+      insecure-skip-verify: false
+      type: cacheservicev2
+      use-admin-auth: true
+  copilot.yaml: | 
+    plugins:
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+  core.yaml: | 
+    propeller:
+      downstream-eval-duration: 30s
+      enable-admin-launcher: true
+      leader-election:
+        enabled: true
+        lease-duration: 15s
+        lock-config-map:
+          name: propeller-leader
+          namespace: 'union'
+        renew-deadline: 10s
+        retry-period: 2s
+      limit-namespace: union
+      literal-offloading-config:
+        enabled: true
+      max-workflow-retries: 30
+      metadata-prefix: metadata/propeller
+      metrics-prefix: flyte
+      prof-port: 10254
+      queue:
+        batch-size: -1
+        batching-interval: 2s
+        queue:
+          base-delay: 5s
+          capacity: 1000
+          max-delay: 120s
+          rate: 100
+          type: maxof
+        sub-queue:
+          capacity: 100
+          rate: 10
+          type: bucket
+        type: batch
+      rawoutput-prefix: 'gs://test-gcp-bucket'
+      workers: 4
+      workflow-reeval-duration: 30s
+    webhook:
+      certDir: /etc/webhook/certs
+      disableCreateMutatingWebhookConfig: true
+      embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: true
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+      listenPort: '9443'
+      secretManagerTypes:
+      - Embedded
+      - K8s
+      serviceName: union-pod-webhook
+      servicePort: '443'
+  enabled_plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          actor: fast-task
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+  k8s.yaml: | 
+    plugins:
+      k8s:
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+  logger.yaml: |
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+  namespace_config.yaml: |
+    namespace_mapping:
+      template: union
+  resource_manager.yaml: | 
+    propeller:
+      resourcemanager:
+        type: noop
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            templateUris:
+            - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
+        kubernetes-enabled: false
+        templates:
+        - displayName: Task Logs
+          scheme: TaskExecution
+          templateUris:
+          - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
+  storage.yaml: | 
+    storage:
+      container: "test-gcp-bucket"
+      type: stow
+      stow:
+          kind: google
+          config:
+            json: ""
+            project_id: test-gcp-project-123
+            scopes: https://www.googleapis.com/auth/cloud-platform
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+---
 # Source: dataplane/templates/serving/bootstrap-configmap.yaml
 # We need to copy the default configmap here since knative-operator does not automatically update the
 # address of the `net-kourier-controller` endpoint to use the release namespace. It assumes that the
@@ -5040,6 +5248,288 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+rules:
+# Allow RO access to PODS
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+# Allow Event recording access
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access All plugin objects
+- apiGroups:
+  - '*'
+  resources:
+  - '*'
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - delete
+  - patch
+# Allow Access to CRD
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+  - create
+  - delete
+  - update
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - '*'
+    resources:
+      - events
+      - flyteworkflows
+      - pods/log
+      - pods
+      - rayjobs
+      - resourcequotas
+    verbs:
+      - get
+      - list
+      - watch
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Allow Access to all resources under flyte.lyft.com
+  - apiGroups:
+      - flyte.lyft.com
+    resources:
+      - flyteworkflows
+      - flyteworkflows/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+      - post
+      - deletecollection
+  - apiGroups:
+      - '*'
+    resources:
+      - resourcequotas
+      - pods
+      - configmaps
+      - podtemplates
+      - secrets
+      - namespaces
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+  - nonResourceURLs:
+      - /metrics
+    verbs:
+      - get
+  - apiGroups:
+      - serving.knative.dev
+    resources:
+      - revisions
+      - configurations
+      - services
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: flytepropeller-role
+rules:
+  # Allow RO access to PODS
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  # Allow Event recording access
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - update
+      - delete
+      - patch
+  # Allow Access All plugin objects
+  - apiGroups:
+      - '*'
+    resources:
+      - '*'
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+  # Allow Access to CRD
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - delete
+      - update
+  # Allow Access to all resources under flyte.lyft.com
+  - apiGroups:
+      - flyte.lyft.com
+    resources:
+      - flyteworkflows
+      - flyteworkflows/finalizers
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - delete
+      - patch
+      - post
+      - deletecollection
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: union-webhook-role
+  namespace: union
+rules:
+  - apiGroups:
+      - "*"
+    resources:
+      - mutatingwebhookconfigurations
+      - secrets
+      - pods
+      - replicasets/finalizers
+    verbs:
+      - get
+      - create
+      - update
+      - patch
+      - list
+      - watch
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5209,6 +5699,111 @@ subjects:
     name: knative-operator
     namespace: "union"
 ---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-leaseworker
+  labels:
+    app: leaseworker
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-leaseworker
+subjects:
+- kind: ServiceAccount
+  name: union-system
+  namespace: union
+
+---
+# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-executor
+  labels:
+    app: executor
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-executor
+subjects:
+- kind: ServiceAccount
+  name: union-system
+  namespace: union
+
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: proxy-system
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: operator-system
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: flytepropeller-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flytepropeller-role
+subjects:
+  - kind: ServiceAccount
+    name: flytepropeller-system
+    namespace: union
+
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+# Create a binding from Role -> ServiceAccount
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: union-webhook-binding
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-webhook-role
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5246,112 +5841,6 @@ rules:
       - "watch"
       - "patch"
 ---
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
-rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
----
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5375,31 +5864,6 @@ rules:
       - update
       - delete
 ---
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups:
-      - '*'
-    resources:
-      - events
-      - flyteworkflows
-      - pods/log
-      - pods
-      - rayjobs
-      - resourcequotas
-    verbs:
-      - get
-      - list
-      - watch
----
 # Source: dataplane/templates/operator/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5422,198 +5886,6 @@ rules:
       - watch
       - create
       - update
-  - apiGroups:
-      - flyte.lyft.com
-    resources:
-      - flyteworkflows
-      - flyteworkflows/finalizers
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-      - patch
-      - post
-      - deletecollection
-  - apiGroups:
-      - '*'
-    resources:
-      - resourcequotas
-      - pods
-      - configmaps
-      - podtemplates
-      - secrets
-      - namespaces
-      - nodes
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-  - apiGroups:
-      - serving.knative.dev
-    resources:
-      - revisions
-      - configurations
-      - services
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
----
-# Source: dataplane/templates/prometheus/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
-  labels:
-    release: release-name
-rules:
-  # Prometheus server scrape permissions
-  - apiGroups: [""]
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-      - pods
-      - ingresses
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["discovery.k8s.io"]
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
-  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
-  - apiGroups: ["certificates.k8s.io"]
-    resources: ["certificatesigningrequests"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["daemonsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["policy"]
-    resources: ["poddisruptionbudgets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["replicasets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["replicationcontrollers"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["resourcequotas"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["volumeattachments"]
-    verbs: ["list", "watch"]
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-role
-  namespace: union
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - mutatingwebhookconfigurations
-      - secrets
-      - pods
-      - replicasets/finalizers
-    verbs:
-      - get
-      - create
-      - update
-      - patch
-      - list
-      - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -5647,40 +5919,6 @@ roleRef:
   name: knative-operator-webhook
   apiGroup: rbac.authorization.k8s.io
 ---
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-leaseworker
-subjects:
-- kind: ServiceAccount
-  name: union-system
-  namespace: union
-
----
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-executor
-subjects:
-- kind: ServiceAccount
-  name: union-system
-  namespace: union
-
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -5696,26 +5934,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-system-secret
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
-
----
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: proxy-system
 subjects:
   - kind: ServiceAccount
     name: union-system
@@ -5740,59 +5958,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
----
-# Source: dataplane/templates/prometheus/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
-  labels:
-    release: release-name
-subjects:
-  - kind: ServiceAccount
-    name: union-operator-prometheus
-    namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-prometheus-rbac
----
-# Source: dataplane/templates/prometheus/rbac.yaml
-# kube-state-metrics service account RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-prometheus-kube-state-metrics
-  namespace: union
-  labels:
-    release: release-name
-subjects:
-  - kind: ServiceAccount
-    name: release-name-prometheus-kube-state-metrics
-    namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-prometheus-rbac
-
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-# Create a binding from Role -> ServiceAccount
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-binding
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-webhook-role
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
-
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
 apiVersion: v1
@@ -6077,6 +6242,33 @@ spec:
       name: debug
   selector:
     app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+
+---
+# Source: dataplane/templates/propeller/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: debug
+      protocol: TCP
+      port: 10254
+    - name: fasttask
+      port: 15605
+      protocol: TCP
+      targetPort: 15605
+  selector:
+    app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
 
 ---
@@ -6833,13 +7025,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "aa375b7c0a6e926a1c0aeb8cffe49791c9b208aa7295143d9484e640fa1bae1"
-        prometheus.io/scrape: "true"
+        configChecksum: "c1f379d208b9e57f2dec1085e9f58e98731250fcd3d79f3b8ddc5909ff2d030"
+        
       labels:
         platform.union.ai/zone: "dataplane"
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app: leaseworker
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: leaseworker
@@ -6847,6 +7037,7 @@ spec:
       securityContext:
         fsGroup: 1337
       serviceAccountName: union-system
+      priorityClassName: union-leaseworker
       terminationGracePeriodSeconds: 75
       volumes:
         - name: config-volume
@@ -6937,13 +7128,11 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3acc7c1ecd94c960d40ff2e33bbc1127dcd98e08f09bbece3de8c1634b5098e"
-        prometheus.io/scrape: "true"
+        configChecksum: "70acd1529f1696eac7a6805c5643dcb7fb7aac6b259447e76f45cb267558e89"
+        
       labels:
         platform.union.ai/zone: "dataplane"
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app: executor
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: executor
@@ -7046,12 +7235,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "49949c651a232c06d7c54e314481a3d213f345e25e7321783ef137b60dd85cb"
-        prometheus.io/scrape: "true"
+        configChecksum: "e46f5fb9952316f9d75f12e97b8f909d2f2d0255df96ec998a16a04e5b32943"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: operator-proxy
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -7186,12 +7373,10 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "49949c651a232c06d7c54e314481a3d213f345e25e7321783ef137b60dd85cb"
-        prometheus.io/scrape: "true"
+        configChecksum: "e46f5fb9952316f9d75f12e97b8f909d2f2d0255df96ec998a16a04e5b32943"
+        
       labels:
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: union-operator
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
@@ -7285,6 +7470,105 @@ spec:
       
 
 ---
+# Source: dataplane/templates/propeller/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: union
+  name: flytepropeller
+  labels:
+    app.kubernetes.io/name: flytepropeller
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: flytepropeller
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "199707ae9999f042213042f30dd0d76b09509cc17753ace6e11673119301939"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        
+        
+        app.kubernetes.io/name: flytepropeller
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: union-flytepropeller
+      containers:
+        - command:
+            - flytepropeller
+            - --config
+            - /etc/flyte/config/*.yaml
+            - --propeller.cluster-id
+            - test-e2e-propeller
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.0"
+          imagePullPolicy: "IfNotPresent"
+          name: flytepropeller
+          ports:
+            - containerPort: 10254
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/flyte/config
+            - name: auth
+              mountPath: /etc/union/secret
+      serviceAccountName: flytepropeller-system
+      volumes:
+        - name: config-volume
+          configMap:
+            name: flyte-propeller-config
+        - name: auth
+          secret:
+            secretName: union-secret-auth
+      
+      
+---
 # Source: dataplane/templates/webhook/deployment.yaml
 # Webhook deployment
 # Create the actual deployment
@@ -7309,15 +7593,13 @@ spec:
       labels:
         platform.union.ai/zone: "dataplane"
         
-        azure.workload.identity/use: "true"
-        custom-label: custom-value
         app.kubernetes.io/name: union-pod-webhook
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "aa375b7c0a6e926a1c0aeb8cffe49791c9b208aa7295143d9484e640fa1bae1"
-        prometheus.io/scrape: "true"
+        configChecksum: "199707ae9999f042213042f30dd0d76b09509cc17753ace6e11673119301939"
+        
     spec:
       securityContext:
         fsGroup: 65534
@@ -7389,7 +7671,7 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: leaseworker
+            name: flyte-propeller-config
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
@@ -7432,7 +7714,7 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: union-pod-webhook-union
+  name: union-pod-webhook-byok
   labels:
     app.kubernetes.io/name: union-pod-webhook
     app.kubernetes.io/instance: release-name
@@ -7455,7 +7737,7 @@ webhooks:
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
-        organization: 'union'
+        organization: 'byok'
     reinvocationPolicy: Never
     rules:
       - apiGroups:
@@ -7486,10 +7768,6 @@ webhooks:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
----
-# Source: dataplane/templates/propeller/serviceaccount.yaml
----
-
 ---
 # Source: dataplane/templates/common/task-podtemplate.yaml
 apiVersion: v1
@@ -7633,7 +7911,7 @@ spec:
       queue-sidecar-memory-limit: "800Mi"
       queue-sidecar-ephemeral-storage-request: "512Mi"
       queue-sidecar-ephemeral-storage-limit: "1024Mi"
-      registries-skipping-tag-resolving: managed.cr.union.ai,ghcr.io,docker.io,.dkr.ecr.us-east-1.amazonaws.com
+      registries-skipping-tag-resolving: managed.cr.union.ai,ghcr.io,docker.io,us-central1-docker.pkg.dev
     features:
       kubernetes.podspec-affinity: "enabled"
       kubernetes.podspec-nodeselector: "enabled"
@@ -7693,11 +7971,11 @@ spec:
     - container: kourier-gateway
       envVars:
       - name: UNION_AUTHZ_TENANTAUTHURL
-        value: "https://union.test.union.ai/me"
+        value: "https://byok.us-west-2.union.ai/me"
       - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
-        value: "https://union.test.union.ai/login"
+        value: "https://byok.us-west-2.union.ai/login"
       - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
-        value: "https://union.test.union.ai"
+        value: "https://byok.us-west-2.union.ai"
     resources:
       - container: kourier-gateway
         limits:

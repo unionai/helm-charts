@@ -42,6 +42,18 @@ Notes:
 {{- end }}
 {{- end }}
 
+{{/*
+Cluster-local FQDN for CP↔CP gRPC routing (rootTenantURLPattern).
+Switches between envoy and nginx based on the ingress provider.
+*/}}
+{{- define "controlPlaneLibrary.ingressFqdn" -}}
+{{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
+{{ .Values.global.ENVOY_INGRESS_FQDN | default "envoy-controlplane.envoy-gateway.svc.cluster.local" }}
+{{- else -}}
+controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+{{- end -}}
+
 {{- define "unionai.imagePullSecrets" -}}
 {{- if and (hasKey .config "imagePullSecrets") }}
 {{ toYaml .config.imagePullSecrets }}

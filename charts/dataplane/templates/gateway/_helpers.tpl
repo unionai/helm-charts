@@ -37,7 +37,7 @@ so it is required only in that configuration. Emitting empty values for
 either silently produces broken URLs like `https://` or `<cluster>.dp.`.
 */}}
 {{- define "gateway.host" -}}
-{{- required "host is required when zero_trust.enabled is true" (tpl .Values.host .) -}}
+{{- include "dataplane.cp.host" . -}}
 {{- end }}
 
 {{- define "gateway.organization" -}}

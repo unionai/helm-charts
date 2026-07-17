@@ -31,12 +31,38 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- (Optional) Operator override for the control-plane host. Empty by default;
+# -- when unset the host resolves via global.CONTROLPLANE_HOST then
+# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
 orgName: "{{ .Values.global.ORG_NAME }}"
+
+# -- Self-reported CP-client-construction data the operator ships in every
+# UpdateStatus call (UpdateStatusRequest.connection_config). The controlplane
+# prefers this over the legacy admin-set DataplaneIngressURL when present.
+updateStatus:
+  connectionConfig:
+    # -- Opt in to self-reporting. Off by default: the connection_config
+    # ConfigMap, operator `connectionConfigPath`, volume, and mount only
+    # render when this is true, keeping the chart compatible with operator
+    # images that predate connection_config support. Enable only when the
+    # deployed operator image understands `connectionConfigPath`.
+    enabled: false
+    # -- DP-reachable hostname the CP should dial back. e.g.
+    # "dp-1.internal.<full_domain>". Bare hostname only — no scheme, no port.
+    # Chart helper derives the gRPC endpoint as `dns:///<host>:443`.
+    # Empty falls back to `Values.ingress.host` (the dataplane's own ingress
+    # hostname), so most installs don't need to set this explicitly —
+    # the chart already knows where the DP is reachable.
+    host: ""
+    # -- CP dials this DP with plain HTTP/2 (no TLS) when true. Default false.
+    insecure: false
+    # -- CP skips cert validation on the TLS handshake (self-signed CP cert envs).
+    insecureSkipVerify: false
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -362,6 +388,12 @@ config:
       # Overrides identity caching which is not available in the dataplane.
       identity:
         enabled: false
+    connection:
+      # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
+      # -- endpoint (dns:///<host>:443, honoring global.CONTROLPLANE_GRPC_ENDPOINT).
+      # -- To override, set this same key — it is authoritative (Helm deep-merge
+      # -- replaces this leaf before template rendering).
+      rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
   # -- Copilot configuration
   copilot:
     plugins:
@@ -488,8 +520,6 @@ config:
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
-    # -- Enable the cloudflare tunnel service for secure communication with the control plane.
-    enableTunnelService: true
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
@@ -499,7 +529,7 @@ config:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -521,7 +551,7 @@ config:
       enabled: true
     # -- Billing model: None, Legacy, Shadow, or ResourceUsage.
     billing:
-      model: "Shadow"
+      model: "ResourceUsage"
     # -- Heartbeat check configuration.
     dependenciesHeartbeat:
       # -- Define the propeller health check endpoint.
@@ -709,11 +739,21 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
+  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
+  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
+  namespace: "kube-system"
+
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
     # TLM uses this to map GPU metrics to task pods
     - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
       value: "uid"
+    # Required for MIG (Multi-Instance GPU) partition profiling on A100/H100.
+    # Allows DCGM to access per-partition profiling counters (DCGM_FI_PROF_*).
+    # Without this, DCGM_FI_PROF_SM_ACTIVE and related metrics return no data
+    # for MIG slices.
+    - name: NVIDIA_MIG_MONITOR_DEVICES
+      value: "all"
 
   # Based on default metrics list at
   # https://github.com/NVIDIA/dcgm-exporter/blob/3446595fbb31e22e45a8dbcd63ade14e3da49810/deployment/templates/metrics-configmap.yaml#L13
@@ -1060,6 +1100,25 @@ leaseworker:
   additionalVolumeMounts: []
   # -- Appends additional environment variables to the leaseworker container's spec.
   podEnv: []
+  # -- PriorityClass the leaseworker pod runs under. The leaseworker is a Recreate
+  # singleton; a priority class keeps leases flowing when a replacement pod would
+  # otherwise sit Pending behind node scale-up. Defaults to the chart-managed class
+  # below. To bring your own existing class, set this to its name and
+  # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
+  # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
+  # ResourceQuota restricts those to kube-system. The pod still references this class
+  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  priorityClassName: union-leaseworker
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
+  # priorityClassName above. Skipped under low_privilege (namespace-only installs
+  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # (the PriorityClass would otherwise be created once per dataplane). value is used
+  # only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- nodeSelector for leaseworker deployment
   nodeSelector: { }
   # -- tolerations for leaseworker deployment
@@ -1074,7 +1133,20 @@ leaseworker:
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
-  priorityClassName: "system-cluster-critical"
+  # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
+  # class below. Set to your own existing class to bring your own, or "" for none. Do
+  # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
+  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
+  # references this class under low_privilege when it is externally managed
+  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  priorityClassName: "union-flytepropeller"
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
+  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
+  # installs can't create cluster resources). Set create: false to bring your own class,
+  # or in multi-dataplane-per-cluster setups. value is used only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
   # -- Default resources requests and limits for Flytepropeller deployment
@@ -1532,6 +1604,11 @@ operator:
   # -- nodeName constraints for the operator pods
   nodeName: ""
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure data-plane ↔ control-plane
+  # communication. Canonical toggle — read by both the operator config
+  # (config.yaml) and the operator-proxy tunnel container. Enabled by default
+  # (used by everyone except self-hosted / intra-cluster deployments, which set
+  # this to false).
   enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
@@ -1567,7 +1644,7 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: ""
     # -- Ingress class name
     class: ""
@@ -1654,13 +1731,6 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
-    # Mount the recording rules ConfigMap generated by this chart
-    extraConfigmapMounts:
-      - name: recording-rules
-        mountPath: /etc/config/recording
-        configMap: union-recording-rules
-        readonly: true
-
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
   extraScrapeConfigs: |
@@ -1714,6 +1784,14 @@ prometheus:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
+        - action: labeldrop
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -1809,10 +1887,29 @@ prometheus:
         - role: pod
           namespaces:
             names:
-              - kube-system
+              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_ip]
+          regex: '(.*)'
+          target_label: __address__
+          replacement: '${1}:9400'
+          action: replace
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
+          action: keep
 
   alertmanager:
     enabled: false
@@ -1920,7 +2017,6 @@ proxy:
   # -- nodeName constraint for the proxy pods
   nodeName: ""
   podSecurityContext: { }
-  enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
   resources:
