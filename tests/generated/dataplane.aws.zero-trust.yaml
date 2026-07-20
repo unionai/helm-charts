@@ -11275,6 +11275,17 @@ template:
       - name: default
         image: docker.io/rwgrim/docker-noop
 ---
+# Source: dataplane/templates/serving/pre-upgrade-serving-cleanup.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-pre-upgrade-serving
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -11285,6 +11296,38 @@ metadata:
     helm.sh/hook: pre-upgrade
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
     helm.sh/hook-weight: "-5"
+---
+# Source: dataplane/templates/serving/pre-upgrade-serving-cleanup.yaml
+# The operator-created ClusterRoles/ClusterRoleBindings and webhook
+# configurations are cluster-scoped, so the cleanup Job needs a ClusterRole;
+# a namespaced Role cannot delete them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: release-name-pre-upgrade-serving
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+rules:
+- apiGroups: ["operator.knative.dev"]
+  resources: ["knativeservings"]
+  verbs: ["get", "list", "patch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "delete"]
+- apiGroups: [""]
+  resources: ["services", "configmaps", "serviceaccounts"]
+  verbs: ["get", "list", "delete"]
+- apiGroups: ["policy"]
+  resources: ["poddisruptionbudgets"]
+  verbs: ["get", "list", "delete"]
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["clusterroles", "clusterrolebindings"]
+  verbs: ["get", "list", "delete"]
+- apiGroups: ["admissionregistration.k8s.io"]
+  resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+  verbs: ["get", "list", "delete"]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -11305,6 +11348,24 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/serving/pre-upgrade-serving-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: release-name-pre-upgrade-serving
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: release-name-pre-upgrade-serving
+subjects:
+- kind: ServiceAccount
+  name: release-name-pre-upgrade-serving
+  namespace: union
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -11345,6 +11406,94 @@ spec:
       command: ["sh"]
       args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
   restartPolicy: Never
+
+---
+# Source: dataplane/templates/serving/pre-upgrade-serving-cleanup.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-name-pre-upgrade-serving
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+spec:
+  ttlSecondsAfterFinished: 120
+  backoffLimit: 1
+  template:
+    spec:
+      serviceAccountName: release-name-pre-upgrade-serving
+      restartPolicy: Never
+      containers:
+      - name: cleanup
+        image: bitnami/kubectl:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -u
+          NS=union
+          CR=union-operator-serving
+          # Operator-owned resources carry app.kubernetes.io/name=knative-serving
+          # but NOT managed-by=Helm. The bundled (Helm) resources carry both, so
+          # this selector targets only operator leftovers.
+          SEL='app.kubernetes.io/name=knative-serving,app.kubernetes.io/managed-by!=Helm'
+
+          if ! kubectl get crd knativeservings.operator.knative.dev >/dev/null 2>&1; then
+            echo "Knative operator CRD not present; nothing to migrate."
+            exit 0
+          fi
+
+          CR_PRESENT=false
+          if kubectl get knativeserving "$CR" -n "$NS" >/dev/null 2>&1; then
+            CR_PRESENT=true
+          fi
+
+          LEFTOVERS="$(kubectl get clusterrole,clusterrolebinding -l "$SEL" -o name 2>/dev/null)"
+
+          if [ "$CR_PRESENT" = "false" ] && [ -z "$LEFTOVERS" ]; then
+            echo "No operator-managed Knative Serving found; migration already complete."
+            exit 0
+          fi
+
+          if [ "$CR_PRESENT" = "true" ]; then
+            echo "Deleting operator-managed KnativeServing/$CR; waiting for the operator finalizer to garbage-collect..."
+            # Preferred path: keep the finalizer so the still-running operator
+            # removes exactly the resources it created (cluster-scoped included).
+            if kubectl delete knativeserving "$CR" -n "$NS" --timeout=180s; then
+              echo "Operator finalized and garbage-collected its resources."
+            else
+              echo "Operator did not finalize in time (operator likely already removed); forcing."
+              kubectl patch knativeserving "$CR" -n "$NS" \
+                --type=merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+              kubectl delete knativeserving "$CR" -n "$NS" --ignore-not-found=true --wait=false || true
+            fi
+          fi
+
+          # Fallback sweep for anything the operator did not (or could not) GC.
+          #
+          # Cluster-scoped: safe to sweep by label. Flyte Apps (Knative Service/
+          # Revision CRs) own no cluster-scoped objects, and managed-by!=Helm
+          # excludes the bundled resources, so only operator leftovers match.
+          echo "Sweeping operator-owned cluster-scoped leftovers (managed-by!=Helm)..."
+          kubectl delete clusterrole,clusterrolebinding -l "$SEL" --ignore-not-found || true
+          kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l "$SEL" --ignore-not-found || true
+
+          # Namespaced: delete the serving-install components by their fixed
+          # upstream names ONLY. Never sweep namespaced workloads by label here:
+          # a running Flyte App's revision Deployment can share knative labels,
+          # and a label-based delete would take down the customer's app.
+          echo "Removing serving-install workloads by name (Flyte App revisions are left untouched)..."
+          for c in activator autoscaler autoscaler-hpa controller webhook net-kourier-controller 3scale-kourier-gateway; do
+            kubectl delete deployment "$c" -n "$NS" --ignore-not-found || true
+            kubectl delete service "$c" -n "$NS" --ignore-not-found || true
+          done
+          kubectl delete service knative-local-gateway -n "$NS" --ignore-not-found || true
+          kubectl delete poddisruptionbudget activator-pdb webhook-pdb 3scale-kourier-gateway-pdb \
+            -n "$NS" --ignore-not-found || true
+
+          echo "Pre-upgrade Knative Serving migration complete."
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
