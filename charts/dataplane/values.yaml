@@ -510,6 +510,14 @@ config:
     # Requires the secret manager (proxy.secretManager.enabled).
     apiKey:
       enabled: false
+      # Names the control-plane OAuth app the operator mints (CreateKey key).
+      # Defaults to the canonical EAGER_API_KEY; deployments that run multiple
+      # data planes in one org override this per-DP (e.g. via the union_extension
+      # terraform module -> EAGER_API_KEY_<cluster>) so they mint distinct apps
+      # instead of rotating a shared one. This names ONLY the CP app — task pods
+      # resolve the key under the fixed EAGER_API_KEY (flyteadmin
+      # common.EagerSecretName), so unionAuth.secretName stays EAGER_API_KEY.
+      secretName: EAGER_API_KEY
     # -- Compute resource manager configuration.
     computeResourceManager: {}
     # -- Organization namespace template override.
@@ -923,6 +931,8 @@ executor:
     workerName: worker1
     unionAuth:
       injectSecret: true
+      # Fixed task-pod lookup name (flyteadmin common.EagerSecretName). Per-DP
+      # naming applies to the CP OAuth app only (config.operator.apiKey.secretName).
       secretName: EAGER_API_KEY
     maxActions: 2000
     evaluatorCount: 64
@@ -1047,6 +1057,8 @@ leaseworker:
     # leaseworker today.
     unionAuth:
       injectSecret: true
+      # Fixed task-pod lookup name (flyteadmin common.EagerSecretName). Per-DP
+      # naming applies to the CP OAuth app only (config.operator.apiKey.secretName).
       secretName: EAGER_API_KEY
   capacity: 100000
   dispatcherCount: 512
