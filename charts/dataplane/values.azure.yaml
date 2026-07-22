@@ -206,10 +206,19 @@ additionalPodLabels:
 # ----------------------------------------------------------------------------
 # Configuration for Azure services including Key Vault, Log Analytics, and scheduling.
 
-# Namespace configuration
-namespace_config:
-  namespace_mapping:
-    template: '{{`{{ domain }}`}}'
+# Task namespace mapping (multi-namespace / low_privilege=false only).
+# Azure Workload Identity federated credentials have no wildcard subject support
+# (unlike AWS IRSA's `*:ksa`), so worker FICs must enumerate explicit
+# `namespace:ksa` subjects. Pin the task namespace to `{{ domain }}` (a bounded
+# set: development / staging / production) rather than Flyte's unbounded default
+# `{{ project }}-{{ domain }}`, so the FICs in
+# modules/selfmanaged/azure/dataplane/user_assigned_identities.tf can enumerate
+# them. Must be the top-level `namespace_mapping` key the propeller configmap
+# reads (the previous top-level `namespace_config` key was ignored, which is why
+# azure fell through to the project-domain default). Ignored under
+# low_privilege=true (singleNamespace).
+namespace_mapping:
+  template: "{{ `{{ domain }}` }}"
 config:
 #--------------------------------------------------------------
   ## Optional integration with Azure Key Vault secrets manager
