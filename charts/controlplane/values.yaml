@@ -668,10 +668,30 @@ services:
           # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
 
-          # Dataplane clusters to bootstrap as authz cluster resources under the org
+          # Dataplane clusters to bootstrap as authz cluster resources under the org.
+          # Each entry is either a bare cluster name (legacy — registers the cluster
+          # resource only) or an object that also grants per-cluster roles to the
+          # OAuth apps that need them. Org Admin does NOT inherit onto cluster
+          # resources, so these grants must be explicit:
+          #   operators — client IDs granted the cluster-manager role. Required for
+          #               the union-operator's Heartbeat/UpdateStatus, which need
+          #               ACTION_MANAGE_CLUSTER (otherwise the cluster reads
+          #               UNHEALTHY and its heartbeat freezes).
+          #   viewers   — client IDs granted the viewer role. Required for the
+          #               internal service-to-service identity to resolve a
+          #               dataplane by name via GetCluster, which enforces
+          #               ACTION_VIEW_FLYTE_EXECUTIONS on the cluster resource
+          #               (e.g. execution logs / agent / data endpoints).
+          # clientId semantics match serviceAccounts below (the IdP `sub` claim).
           dataplaneClusters: []
-          # Example:
-          # - dp-1
+          # Example (legacy name-only form — resource registered, no role grants):
+          #   - dp-1
+          # Example (object form with role grants):
+          #   - name: "dp-1"
+          #     operators:
+          #       - "<union-operator App sub claim>"
+          #     viewers:
+          #       - "<service-to-service App sub claim>"
 
           # Authorization domains to create. Each domain is an isolation boundary
           # for workflow executions (e.g. dev vs prod).
