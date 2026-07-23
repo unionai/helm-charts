@@ -206,10 +206,19 @@ additionalPodLabels:
 # ----------------------------------------------------------------------------
 # Configuration for Azure services including Key Vault, Log Analytics, and scheduling.
 
-# Namespace configuration
-namespace_config:
-  namespace_mapping:
-    template: '{{`{{ domain }}`}}'
+# Task namespace mapping (multi-namespace / low_privilege=false only).
+# Azure Workload Identity federated credentials have no wildcard subject support
+# (unlike AWS IRSA's `*:ksa`), so worker FICs must enumerate explicit
+# `namespace:ksa` subjects. Pin the task namespace to `{{ domain }}` (a bounded
+# set: development / staging / production) rather than Flyte's unbounded default
+# `{{ project }}-{{ domain }}`, so the FICs in
+# modules/selfmanaged/azure/dataplane/user_assigned_identities.tf can enumerate
+# them. Must be the top-level `namespace_mapping` key the propeller configmap
+# reads (the previous top-level `namespace_config` key was ignored, which is why
+# azure fell through to the project-domain default). Ignored under
+# low_privilege=true (singleNamespace).
+namespace_mapping:
+  template: "{{ `{{ domain }}` }}"
 config:
 #--------------------------------------------------------------
   ## Optional integration with Azure Key Vault secrets manager
@@ -238,9 +247,13 @@ config:
       sourceType: AzureLogAnalytics
       azureLogAnalytics:
         logAnalyticsWorkspaceResourceIdTemplate: "/subscriptions/{{.Values.global.AZURE_SUBSCRIPTION_ID}}/resourceGroups/{{.Values.global.AZURE_RESOURCE_GROUP}}/providers/Microsoft.OperationalInsights/workspaces/union-{{.Values.global.ORG_NAME}}"
+    # Operator secret manager. Inherit the base `type: K8s` (embedded k8s) like
+    # values.aws.yaml / values.gcp.yaml — the flyte-pod-webhook that reads the
+    # eager API key uses the embedded k8s manager, so the operator must write
+    # there too. Setting `type: Azure` here routed operator secrets to Key Vault
+    # while the webhook still read embedded k8s, so task pods were denied the
+    # EAGER_API_KEY secret. azureConfig is retained (inert unless type=Azure).
     smConfig:
-      enabled: true
-      type: Azure
       azureConfig:
         vaultURI: '{{ .Values.global.AZURE_KEY_VAULT_URI }}'
 
