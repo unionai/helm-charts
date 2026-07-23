@@ -440,15 +440,17 @@ IfNotPresent
 {{- if and (eq .key "identity") .config.apiKeyOverrides }}
   {{- $identity := index $merged "identity" | default dict }}
   {{- $app := index $identity "app" | default dict }}
-  {{- /* List with the key as a value, not a map: config loading lowercases map
-         keys, which would mangle the case-sensitive system key name. Each entry
-         is scoped to this deployment's org so the override only serves that
-         tenant's key. */}}
+  {{- /* Backend config (identity.config.ApiKeyOverride) is a flat list of
+         {org, key, clusterName, clientIdLocation, clientSecretLocation}. Render it
+         from the seeded-secret references on services.identity (mounted by
+         deployment.yaml). Each entry is scoped to this deployment's org; an empty
+         clusterName is the default that serves any cluster without its own entry. */}}
   {{- $org := .Values.global.UNION_ORG | default "" }}
   {{- $overrides := list }}
-  {{- range $keyName, $entry := .config.apiKeyOverrides }}
-    {{- $dir := include "controlplane.apiKeyOverride.mountDir" $keyName }}
-    {{- $overrides = append $overrides (dict "org" $org "key" $keyName "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
+  {{- range $entry := .config.apiKeyOverrides }}
+    {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+    {{- $dir := include "controlplane.apiKeyOverride.mountDir" $ident }}
+    {{- $overrides = append $overrides (dict "org" $org "key" $entry.key "clusterName" ($entry.clusterName | default "") "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
   {{- end }}
   {{- $_ := set $app "apiKeyOverrides" $overrides }}
   {{- $_ := set $identity "app" $app }}
@@ -478,17 +480,27 @@ IfNotPresent
 
 {{/*
 apiKeyOverrides helpers — secret-by-reference overrides for system API keys.
-Each entry references a pre-created K8s Secret holding the OAuth client_id +
-client_secret; the chart mounts it and renders identity.app.apiKeyOverrides with
-the resulting file paths. Mount dir and config locations both derive from
-controlplane.apiKeyOverride.mountDir so they cannot drift.
+apiKeyOverrides is a LIST; each entry references a pre-created K8s Secret holding
+the OAuth client_id + client_secret and is identified by (key, optional
+clusterName). The chart mounts each one and renders identity.app.apiKeyOverrides
+with the resulting file paths. Mount dir and config locations both derive from
+controlplane.apiKeyOverride.slug so they cannot drift.
+
+slug: stable per-entry identifier. Cluster-nameless entries slug to just the key;
+cluster-scoped entries append the cluster so distinct dataplanes get distinct
+seeded clients (and distinct mount paths) under the same system key. Input dict:
+{ key, clusterName }.
 */}}
+{{- define "controlplane.apiKeyOverride.slug" -}}
+{{- .key }}{{- if .clusterName }}-{{ .clusterName }}{{- end -}}
+{{- end -}}
+
 {{- define "controlplane.apiKeyOverride.mountDir" -}}
-/etc/secrets/apikey/{{ . }}
+/etc/secrets/apikey/{{ include "controlplane.apiKeyOverride.slug" . }}
 {{- end -}}
 
 {{- define "controlplane.apiKeyOverride.volumeName" -}}
-apikey-{{ . | lower | replace "_" "-" }}
+apikey-{{ include "controlplane.apiKeyOverride.slug" . | lower | replace "_" "-" }}
 {{- end -}}
 
 {{- define "controlplane.apiKeyOverride.clientIdKey" -}}
@@ -499,13 +511,23 @@ apikey-{{ . | lower | replace "_" "-" }}
 {{- default "client_secret" .existingSecret.clientSecretKey -}}
 {{- end -}}
 
-{{/* Fail fast if any apiKeyOverrides entry omits existingSecret.name (reference is mandatory). */}}
+{{/* Fail fast on a malformed apiKeyOverrides list: each entry needs a key and an
+     existingSecret.name, and (key, clusterName) must be unique per service. */}}
 {{- define "controlplane.apiKeyOverrides.validate" -}}
 {{- range $svcKey, $svc := .Values.services -}}
-{{- range $keyName, $entry := ($svc.apiKeyOverrides | default dict) -}}
-{{- if not (($entry.existingSecret).name) -}}
-{{- fail (printf "services.%s.apiKeyOverrides.%s: existingSecret.name is required (reference-only, no inline secret)" $svcKey $keyName) -}}
+{{- $seen := dict -}}
+{{- range $entry := ($svc.apiKeyOverrides | default list) -}}
+{{- if not $entry.key -}}
+{{- fail (printf "services.%s.apiKeyOverrides: each entry requires 'key'" $svcKey) -}}
 {{- end -}}
+{{- if not (($entry.existingSecret).name) -}}
+{{- fail (printf "services.%s.apiKeyOverrides[key=%s]: existingSecret.name is required (reference-only, no inline secret)" $svcKey $entry.key) -}}
+{{- end -}}
+{{- $dedup := printf "%s\x00%s" $entry.key ($entry.clusterName | default "") -}}
+{{- if hasKey $seen $dedup -}}
+{{- fail (printf "services.%s.apiKeyOverrides: duplicate entry for key %q clusterName %q" $svcKey $entry.key ($entry.clusterName | default "")) -}}
+{{- end -}}
+{{- $_ := set $seen $dedup true -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
