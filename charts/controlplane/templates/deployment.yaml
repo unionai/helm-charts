@@ -64,8 +64,9 @@ spec:
       - name: config
         configMap:
           name: {{ include "unionai.fullname" $service }}
-      {{- range $keyName, $entry := ($service.config.apiKeyOverrides | default dict) }}
-      - name: {{ include "controlplane.apiKeyOverride.volumeName" $keyName }}
+      {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
+      {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+      - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
         secret:
           secretName: {{ $entry.existingSecret.name }}
           items:
@@ -137,9 +138,10 @@ spec:
               mountPath: /etc/secrets/union
             - name: config
               mountPath: /etc/config/
-            {{- range $keyName, $entry := ($service.config.apiKeyOverrides | default dict) }}
-            - name: {{ include "controlplane.apiKeyOverride.volumeName" $keyName }}
-              mountPath: {{ include "controlplane.apiKeyOverride.mountDir" $keyName }}
+            {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
+            {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+            - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
+              mountPath: {{ include "controlplane.apiKeyOverride.mountDir" $ident }}
               readOnly: true
             {{- end }}
           {{- $env := include "unionai.env" $service }}

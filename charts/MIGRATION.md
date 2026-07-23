@@ -4,6 +4,71 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## controlplane — `services.identity.apiKeyOverrides` map → list (per-cluster seeded API keys)
+
+### What changed
+
+`services.identity.apiKeyOverrides` changes from a **map keyed by system-key name** to a
+**list** of entries, each identified by `key` + optional `clusterName`. This lets one control
+plane seed a *different* OAuth client per dataplane for the same system key — the map shape
+allowed only one entry per key.
+
+Before (map):
+
+```yaml
+services:
+  identity:
+    apiKeyOverrides:
+      EAGER_API_KEY:
+        existingSecret:
+          name: eager-client-creds
+```
+
+After (list):
+
+```yaml
+services:
+  identity:
+    apiKeyOverrides:
+      - key: EAGER_API_KEY            # cluster-nameless default (serves any dataplane)
+        existingSecret:
+          name: eager-client-creds
+      - key: EAGER_API_KEY            # optional per-cluster override
+        clusterName: dp-1
+        existingSecret:
+          name: eager-dp1-creds
+```
+
+`clusterName` is optional. An entry without it is the **cluster-nameless default** that serves
+any dataplane lacking its own entry (identical to the old single-entry behavior). A
+cluster-scoped entry takes precedence for that dataplane. This mirrors the backend
+`identity.config.ApiKeyOverride`, which keys on `(org, key, clusterName)` and, on `CreateKey`,
+prefers a cluster-scoped override then falls back to the nameless one — required because the
+operator sends `cluster_name` on every mint (FAB-241), so a nameless entry must still serve
+cluster-named requests.
+
+Mount paths are now per-entry: `/etc/secrets/apikey/<KEY>` for a nameless entry and
+`/etc/secrets/apikey/<KEY>-<clusterName>` for a cluster-scoped one.
+
+### Migration
+
+| Audience | Action |
+|---|---|
+| Not using `apiKeyOverrides` (default `[]`) | None. |
+| Selfhosted with a single seeded key | Convert the one map entry to a one-element list (prefix `- key: <NAME>`; the `existingSecret` block is unchanged). Behavior is identical. Cloud-managed overlays regenerate this automatically from `union_extension/{aws,gcp}` — re-apply terraform after bumping to this chart. |
+| Selfhosted wanting per-cluster keys | Add one list entry per cluster with a distinct `clusterName` + `existingSecret`; optionally keep one nameless entry as the fallback. Seed one Secret per cluster out-of-band. |
+
+**Breaking:** an env whose control-plane `values.yaml` still carries the map shape renders an
+empty/invalid override list against this chart. Regenerate the env overlay (terraform re-apply
+for selfmanaged) in lockstep with the chart bump.
+
+### References
+
+- helm-charts PR: <link tbd>
+- cloud `union_extension` (terraform emits the list) + `identity` (`ClusterName` override parameter) PR: <link tbd>
+
+---
+
 ## controlplane — `actionsLeasor.enabled` toggle (queue/executor deprecation)
 
 ### What changed
