@@ -574,13 +574,15 @@ storage:
 {{- if eq .Values.flyte.storage.type "s3" }}
   type: s3
   container: {{ .Values.flyte.storage.bucketName | quote }}
-  connection:
-    auth-type: {{ .Values.flyte.storage.s3.authType }}
-    region: {{ .Values.flyte.storage.s3.region }}
-    {{- if eq .Values.flyte.storage.s3.authType "accesskey" }}
-    access-key: {{ .Values.flyte.storage.s3.accessKey }}
-    secret-key: {{ .Values.flyte.storage.s3.secretKey }}
-    {{- end }}
+  stow:
+    kind: s3
+    config:
+      auth_type: {{ .Values.flyte.storage.s3.authType }}
+      region: {{ .Values.flyte.storage.s3.region }}
+      {{- if eq .Values.flyte.storage.s3.authType "accesskey" }}
+      access_key_id: {{ .Values.flyte.storage.s3.accessKey }}
+      secret_key: {{ .Values.flyte.storage.s3.secretKey }}
+      {{- end }}
 {{- else if eq .Values.flyte.storage.type "gcs" }}
   type: stow
   stow:
