@@ -25,8 +25,10 @@ Rules:
 - Keep entries terse and factual; link PRs as `(#NNNNN)`. A pure lockstep bump with no
   functional change is a valid one-line entry.
 
-This per-chart, section-per-version layout is what lets an on-merge step read just the
-newly-added section to assemble aggregate release notes.
+On merge to `main`, the `release` workflow's `scripts/generate-release-notes.sh` reads the
+`## <version>` section for each newly-tagged chart and publishes it as that chart's GitHub
+Release body (falling back to the raw commit log only for charts without a `RELEASE.md`).
+So the section you write here is exactly what ships as the published release notes.
 
 ## Overlay file naming
 
