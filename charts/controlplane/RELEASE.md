@@ -14,22 +14,17 @@ against the last stable release, `2026.7.1`, whose `appVersion` was still `2026.
 
 ### Platform (control-plane images — `appVersion 2026.7.2`)
 
-High-level summary of the behavior in the images this chart now points at:
+The `appVersion` bump carries the control-plane images the chart changes above depend on:
 
-- **Runs & executions.** `CreateRun` fails fast with `InvalidArgument` on pod-plugin task specs with an empty container image (previously admitted, then burned ~30 retries in "Queued" before failing). Run-store hydration, group filtering, and nested-action aggregation under groups fixed. Redis `BUSYGROUP` responses no longer misclassified as errors. Groundwork for run recovery: a new terminal, success-equivalent `RECOVERED` action phase is understood across the actions/workflow/queue/leasor path (nothing emits it yet).
-- **Queues & clusters.** Queue lifecycle management — drain, re-`Activate` a draining/drained queue, and settings validation before draining; `ListQueues` has a stable default order. `DeleteCluster` is blocked while explicit queues still point at the cluster. New cluster-health/management surface (`UpdateCluster`, `WatchClusters`, cluster-status write path, `WatchQueueMetrics`) with corrected authz on the read-only Cluster API.
-- **Apps.** Org-scoped `app.disallow_anonymous` is enforced on app create/update (fails closed if the settings lookup errors) and re-asserted by the operator on resync. App terminal-FAILED classification now keys off deployment identity rather than the revision counter. Scaled-to-zero apps fall back to persisted logs instead of showing empty.
-- **Authorization.** Authorizer syncs desired edge attributes at startup and tolerates stale edge types, so edge-type updates take effect. Roles gain an editable description. The leasor's internal queue-manager service is now behind the authz middleware.
-- **Settings & notifications.** Fixed `run_base_dir` being dropped from settings; added settings mutation/apply logging; dataproxy adopts the shared settings cache. Paused-action notifications use a dedicated template.
-- **Billing/usage.** Cluster-less child actions are now reported; invalid cluster lookups during billable-usage reporting fixed; terminal-action billing index updated; monthly contracts respect their start time.
-- **Console (UI).** Run lineage (rerun/recover/clone) surfaced as a badge on run details and run-list rows; large-fanout expand/collapse and sidebar stability fixes. New cluster details page; live queue metrics in the queues UI; role-modification UI. Launch-form refactor with a nested-input handling fix and dynamic execution-settings domains.
+- **Per-data-plane OAuth clients.** The identity service honors per-cluster `apiKeyOverrides` entries (with a nameless-default fallback), which is what makes the new list-shaped `apiKeyOverrides` ([#491](https://github.com/unionai/helm-charts/pull/491)) take effect.
+- **`dataplaneClusters` object form.** The authorizer bootstrap accepts the `{name, operators, viewers}` object the chart now documents ([#489](https://github.com/unionai/helm-charts/pull/489)).
+
+Otherwise the `2026.7.2` tag is a routine control-plane image roll (bug fixes and improvements); nothing else in this chart release depends on it.
 
 ### Migration / action required
 
-- **`apiKeyOverrides` map → list** ([#491](https://github.com/unionai/helm-charts/pull/491)). Env overlays still carrying the map shape must regenerate (Terraform re-apply for self-managed) in lockstep with bumping to this chart version. See [`charts/MIGRATION.md`](../MIGRATION.md).
+- **`apiKeyOverrides` map → list** ([#491](https://github.com/unionai/helm-charts/pull/491)). Env overlays still carrying the map shape must regenerate in lockstep with bumping to this chart version. See [`charts/MIGRATION.md`](../MIGRATION.md).
 - **Image-builder bootstrap default flip** ([#492](https://github.com/unionai/helm-charts/pull/492)). If you relied on automatic build-image registration, set `imageBuilder.bootstrap.enabled: true` and ensure `system`/`production` routes to a cluster with the required bucket permissions; otherwise no action.
-- **Optional SDK ≥ 2.0.4 gate.** The platform can reject `CreateRun` from SDKs older than `2.0.4` (`FailedPrecondition`). This is **off by default**; enable only after confirming no orgs are still on sub-`2.0.4` SDKs.
-- **DB migrations** are additive/reversible and require no operator action.
 
 ## 2026.7.1
 

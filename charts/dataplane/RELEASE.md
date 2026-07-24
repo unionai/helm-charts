@@ -17,13 +17,12 @@ whose `appVersion` was still `2026.7.0`).
 
 ### Platform (data-plane images — `appVersion 2026.7.2`)
 
-High-level summary of the behavior in the images this chart now points at:
+The `appVersion` bump carries the data-plane images the chart changes above depend on:
 
-- **Operator / apps.** App pod startup failures are classified into a terminal FAILED state instead of hanging. Custom `pod_template` annotations are no longer dropped — they're merged into the pod. The reconcile loop re-asserts org-scoped `app.disallow_anonymous` via a durable KService annotation, remediating apps deployed before the policy was enabled.
-- **App logs.** Persistent/long-lived app-log support in the operator's log service, with the dataproxy path falling back to persisted backends (CloudWatch / Stackdriver) for scaled-to-zero apps.
-- **Observability.** The operator emits connector app-replica metrics, reports the Helm chart version per cluster, and supports `write_relabel_configs` on Prometheus `remote_write`.
-- **fasttask.** fasttask login config is now wired correctly on the leaseworker/operator.
-- **Connectors.** flyte2 bump: connector `ListConnectors` polling reuses persistent keepalive gRPC connections instead of re-dialing each poll.
+- **Stow storage backend.** The executor routes all object storage through the stow backend ([flyteorg/flyte#7555](https://github.com/flyteorg/flyte/pull/7555)); a `type: s3` config with no `stow.kind` panics `unsupported stow.kind []` at startup, which is why the AWS overlay now emits `type: stow` + `stow.kind: s3` ([#493](https://github.com/unionai/helm-charts/pull/493)). Bump chart + image together.
+- **Per-cluster eager API key.** The operator mints the eager API key using the data plane's cluster name ([#486](https://github.com/unionai/helm-charts/pull/486)), matching the control-plane per-cluster `apiKeyOverrides` entries.
+
+Otherwise the `2026.7.2` tag is a routine data-plane image roll (bug fixes and improvements); nothing else in this chart release depends on it.
 
 ### Migration / action required
 
