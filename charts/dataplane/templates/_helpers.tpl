@@ -1541,6 +1541,30 @@ namespace_mapping) so users only need to set namespaces.enabled: false.
 {{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
 {{- end -}}
 
+{{/*
+Resolves the namespace template shared by every component that maps a run to a
+K8s namespace: the executor (namespace_mapping.template), the leaseworker
+(namespace-template), and the operator (org.namespaceTemplate). Callers wrap the
+returned string in their own config key.
+
+Single-namespace mode pins to the release namespace so namespace-scoped RBAC is
+never exceeded. Otherwise it returns namespace_mapping.template (the single
+canonical input, per the selfmanaged namespace-mapping docs), or "" (callers omit
+the key and the component falls back to its own {{ project }}-{{ domain }}
+default).
+
+Returns the raw value WITHOUT tpl so the single caller that re-templates its
+config blob (leaseworker) renders the Terraform-escaped form exactly once;
+callers that emit directly (executor, operator) apply tpl themselves.
+*/}}
+{{- define "dataplane.namespaceTemplate" -}}
+{{- if include "singleNamespace" . -}}
+{{- .Release.Namespace -}}
+{{- else -}}
+{{- with .Values.namespace_mapping -}}{{- with .template -}}{{- . -}}{{- end -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "operator.dependenciesHeartbeat" -}}
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}

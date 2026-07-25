@@ -26,17 +26,16 @@ data:
     {{ toYaml . | nindent 6 }}
     {{- end }}
     {{- $rawConfig := deepCopy (.Values.executor.raw_config | default dict) }}
-    {{- if and (include "singleNamespace" $) (not (index $rawConfig "namespace_mapping")) }}
-    {{- $_ := set $rawConfig "namespace_mapping" (dict "template" $.Release.Namespace) }}
+    {{- $nsTmpl := include "dataplane.namespaceTemplate" . }}
+    {{- if include "singleNamespace" . }}
+    {{- $_ := set $rawConfig "namespace_mapping" (dict "template" $nsTmpl) }}
     {{- end }}
     {{- with $rawConfig }}
     {{- tpl (toYaml .) $ | nindent 4 }}
     {{- end }}
-    {{- if not (dig "namespace_mapping" false .Values.executor.raw_config) }}
-    {{- with .Values.namespace_mapping }}
+    {{- if and (not (index $rawConfig "namespace_mapping")) $nsTmpl }}
     namespace_mapping:
-      {{- tpl (toYaml .) $ | nindent 6 }}
-    {{- end }}
+      template: {{ tpl $nsTmpl . | quote }}
     {{- end }}
     union:
       {{- with .Values.config.union.connection }}
@@ -62,12 +61,6 @@ data:
     {{- with .Values.logging }}
     logger:
       {{- tpl (omit . "pythonLevel" | toYaml) $ | nindent 6 }}
-    {{- end }}
-    {{- if .Values.config.namespace_config -}}
-    {{- tpl (toYaml .Values.config.namespace_config) $ | nindent 4 }}
-    {{- else if and (include "singleNamespace" $) (not (index $rawConfig "namespace_mapping")) }}
-    namespace_mapping:
-      template: {{ .Release.Namespace }}
     {{- end }}
     {{- with .Values.executor.sharedService }}
     sharedService:

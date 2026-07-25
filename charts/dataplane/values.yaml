@@ -121,7 +121,12 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service
+  # -- Enable or disable the syncresources service. Required in multi-namespace
+  # mode (namespaces.enabled=true and low_privilege=false) to provision the
+  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
+  # is driven by the top-level namespace_mapping. Its configmap is gated off under
+  # singleNamespace, where task pods run in the release namespace and no per-domain
+  # namespaces are needed.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -376,10 +381,6 @@ config:
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
-  # -- Optional namespace configuration, rendered as namespace_config.yaml.
-  namespace_config: {}
-  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
-  namespace_mapping: {}
   # -- Optional Qubole plugin configuration.
   qubole: {}
   # -- Override any configuration settings.
@@ -723,10 +724,11 @@ databricks:
   plugin_config: { }
 
 # -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
-# This is the canonical source of truth. All dataplane services (propeller,
-# clusterresourcesync, operator, executor) will inherit this value unless
-# explicitly overridden in their service-specific config sections
-# (config.namespace_config, config.operator.org, executor.raw_config).
+# This is the canonical source of truth (see the selfmanaged namespace-mapping
+# docs). All dataplane services (propeller, clusterresourcesync, operator,
+# executor) inherit this value via the "dataplane.namespaceTemplate" helper,
+# which pins to the release namespace under singleNamespace. The executor alone
+# may still override it via executor.raw_config.namespace_mapping.
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 

@@ -94,9 +94,16 @@ data:
       dependenciesHeartbeat:
         {{- include "operator.dependenciesHeartbeat" $ }}
     {{- end }}
-    {{- with .Values.config.operator.org }}
+    {{- $orgRest := omit (.Values.config.operator.org | default dict) "namespaceTemplate" }}
+    {{- $orgNsTmpl := include "dataplane.namespaceTemplate" . }}
+    {{- if or $orgRest $orgNsTmpl }}
       org:
+        {{- with $orgRest }}
         {{- tpl (toYaml .) $ | nindent 8 }}
+        {{- end }}
+        {{- if $orgNsTmpl }}
+        namespaceTemplate: {{ tpl $orgNsTmpl . | quote }}
+        {{- end }}
     {{- end }}
     {{- with .Values.config.operator.secretsWatcher }}
       secretsWatcher:
@@ -108,13 +115,6 @@ data:
           - {{ $.Values.controlplaneNamespace }}
           {{- end }}
         {{- end }}
-    {{- end }}
-    {{- if and (not .Values.config.operator.org) .Values.namespace_mapping }}
-      org:
-        namespaceTemplate: {{ tpl (.Values.namespace_mapping.template | quote) $ }}
-    {{- else if include "singleNamespace" . }}
-      org:
-        namespaceTemplate: {{ .Release.Namespace }}
     {{- end }}
     {{- if .Values.imageBuilder.enabled }}
       imageBuilder:
