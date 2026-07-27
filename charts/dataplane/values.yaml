@@ -2095,7 +2095,9 @@ storage:
   endpoint: ""
   # -- Use path style instead of domain style urls to access the object storage service.
   s3ForcePathStyle: true
-  enableMultiContainer: false
+  # -- Allow the metadata and fast-registration buckets to differ (all cloud
+  # -- overlays run multi-container).
+  enableMultiContainer: true
   # -- Internal service limits for object storage access.
   limits:
     maxDownloadMBs: 1024
@@ -2375,6 +2377,9 @@ namespaces:
   enabled: false
 
 monitoring:
+  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
+  # is commonly managed outside this chart. Enable as needed.
+  # TODO: consider defaulting to true.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2451,16 +2456,29 @@ monitoring:
     enabled: true
   defaultRules:
     create: true
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
   kubeApiServer:
     enabled: true
+  # Assumes a managed Kubernetes control plane (EKS/GKE/AKS) or the Union managed
+  # CP, which owns the k8s control-plane components (controller-manager,
+  # scheduler, etcd, kube-proxy) and leaves a dataplane limited/no access to
+  # their metrics endpoints. Disable the kube-prometheus-stack ServiceMonitors +
+  # alerting rules (defaultRules.rules above) by default so a sidecar Prometheus
+  # doesn't trip false-positive TargetDown alerts. Re-enable per component if
+  # needed and confirmed the metrics endpoints are reachable.
   kubeControllerManager:
-    enabled: true
+    enabled: false
   kubeEtcd:
-    enabled: true
+    enabled: false
   kubeProxy:
-    enabled: true
+    enabled: false
   kubeScheduler:
-    enabled: true
+    enabled: false
   nodeExporter:
     enabled: true
   kubelet:
