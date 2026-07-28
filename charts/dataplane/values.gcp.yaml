@@ -67,17 +67,6 @@ storage:
     # Workload Identity provides authentication automatically
 
 # ----------------------------------------------------------------------------
-# SECTION 4: Image Configuration
-# ----------------------------------------------------------------------------
-# Image configuration for Union dataplane components
-# Images are pulled from Union's public ECR registry
-
-image:
-  union:
-    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
-    # tag will be set from Chart.AppVersion or can be overridden
-
-# ----------------------------------------------------------------------------
 # Image Builder Authentication (OPTIONAL)
 # ----------------------------------------------------------------------------
 # By default, the image builder uses authenticationType: "noop". Uncomment and
@@ -114,10 +103,6 @@ clusterresourcesync:
       # values.yaml via the dataplane.cp.endpoint helper.
       auth:
         enable: true
-        type: "ClientSecret"
-        clientSecretLocation: "/etc/union/secret/client_secret"
-        authorizationMetadataKey: "flyte-authorization"
-        tokenRefreshWindow: "5m"
         scopes:
         - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
 
@@ -136,11 +121,6 @@ config:
   core:
     propeller:
       rawoutput-prefix: "gs://{{ .Values.global.METADATA_BUCKET }}"
-  # Selfmanaged auth shape: client_credentials grant; clientId from a global
-  # so the env layer can inject the AUTH_CLIENT_ID without forking the chart.
-  admin:
-    admin:
-      clientSecretLocation: "/etc/union/secret/client_secret"
 
   catalog:
     catalog-cache:
@@ -160,10 +140,6 @@ config:
   union:
     auth:
       enable: true
-      type: "ClientSecret"
-      clientSecretLocation: "/etc/union/secret/client_secret"
-      authorizationMetadataKey: "flyte-authorization"
-      tokenRefreshWindow: "5m"
 
   # Identify the GCP Secret Manager backend so the operator can report a canonical
   # secret store identity to the control plane (used for cluster-pool drift detection).
@@ -221,14 +197,6 @@ namespace_mapping:
 # Configure how workflow tasks are executed.
 
 executor:
-  config:
-    unionAuth:
-      # --- API key injection ---
-      # Injects the EAGER_API_KEY secret into task pods
-      # for authenticated eager-mode execution.
-      injectSecret: true
-      secretName: "EAGER_API_KEY"
-
   # --- Task log links (GCP Cloud Logging) ---
   # GKE ships container logs to Google Cloud Logging via the cluster's
   # built-in logging agent (enabled by default in the
@@ -275,9 +243,6 @@ executor:
 # Ingress Configuration
 # ----------------------------------------------------------------------------
 # Configure ingress for external access to dataplane services.
-
-# Extra Kubernetes objects to be deployed alongside Union
-extraObjects: []
 
 # Ingress configuration for Union dataplane and serving
 ingress:
@@ -349,7 +314,6 @@ secrets:
     # --- OAuth secret configuration ---
     # Mounts union-secret-auth K8s Secret with the client_secret into dataplane pods.
     # Set create: false when using ExternalSecrets to provision the secret.
-    enable: true
     create: false
     clientSecret: "placeholder"
 
