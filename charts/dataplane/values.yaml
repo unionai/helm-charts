@@ -31,8 +31,11 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- (Optional) Operator override for the control-plane host. Empty by default;
+# -- when unset the host resolves via global.CONTROLPLANE_HOST then
+# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
@@ -118,7 +121,12 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service
+  # -- Enable or disable the syncresources service. Required in multi-namespace
+  # mode (namespaces.enabled=true and low_privilege=false) to provision the
+  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
+  # is driven by the top-level namespace_mapping. Its configmap is gated off under
+  # singleNamespace, where task pods run in the release namespace and no per-domain
+  # namespaces are needed.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -373,10 +381,6 @@ config:
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
-  # -- Optional namespace configuration, rendered as namespace_config.yaml.
-  namespace_config: {}
-  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
-  namespace_mapping: {}
   # -- Optional Qubole plugin configuration.
   qubole: {}
   # -- Override any configuration settings.
@@ -385,6 +389,12 @@ config:
       # Overrides identity caching which is not available in the dataplane.
       identity:
         enabled: false
+    connection:
+      # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
+      # -- endpoint (dns:///<host>:443, honoring global.CONTROLPLANE_GRPC_ENDPOINT).
+      # -- To override, set this same key — it is authoritative (Helm deep-merge
+      # -- replaces this leaf before template rendering).
+      rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
   # -- Copilot configuration
   copilot:
     plugins:
@@ -442,6 +452,10 @@ config:
       - K8s
       embeddedSecretManagerConfig:
         type: "{{ .Values.proxy.secretManager.type }}"
+        # -- Cluster identifier used to qualify per-cluster secret storage names
+        # -- (e.g. the eager API key) so dataplanes that share a secret backend do
+        # -- not overwrite each other's credential (FAB-241).
+        clusterName: '{{ include "getClusterName" . }}'
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
         imagePullSecrets:
@@ -511,18 +525,20 @@ config:
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
-    # -- Enable the cloudflare tunnel service for secure communication with the control plane.
-    enableTunnelService: true
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
       organization: "{{ tpl .Values.orgName . }}"
+      # -- The cluster name. Cluster-scopes the eager API key (its OAuth client and
+      # -- secret storage name) so dataplanes in a multi-dataplane org do not share
+      # -- and rotate/overwrite one credential (FAB-241 / ENG26-933).
+      name: '{{ include "getClusterName" . }}'
     # -- Dataplane cluster configuration.
     clusterData:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -544,7 +560,7 @@ config:
       enabled: true
     # -- Billing model: None, Legacy, Shadow, or ResourceUsage.
     billing:
-      model: "Shadow"
+      model: "ResourceUsage"
     # -- Heartbeat check configuration.
     dependenciesHeartbeat:
       # -- Define the propeller health check endpoint.
@@ -708,10 +724,11 @@ databricks:
   plugin_config: { }
 
 # -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
-# This is the canonical source of truth. All dataplane services (propeller,
-# clusterresourcesync, operator, executor) will inherit this value unless
-# explicitly overridden in their service-specific config sections
-# (config.namespace_config, config.operator.org, executor.raw_config).
+# This is the canonical source of truth (see the selfmanaged namespace-mapping
+# docs). All dataplane services (propeller, clusterresourcesync, operator,
+# executor) inherit this value via the "dataplane.namespaceTemplate" helper,
+# which pins to the release namespace under singleNamespace. The executor alone
+# may still override it via executor.raw_config.namespace_mapping.
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
@@ -1093,6 +1110,25 @@ leaseworker:
   additionalVolumeMounts: []
   # -- Appends additional environment variables to the leaseworker container's spec.
   podEnv: []
+  # -- PriorityClass the leaseworker pod runs under. The leaseworker is a Recreate
+  # singleton; a priority class keeps leases flowing when a replacement pod would
+  # otherwise sit Pending behind node scale-up. Defaults to the chart-managed class
+  # below. To bring your own existing class, set this to its name and
+  # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
+  # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
+  # ResourceQuota restricts those to kube-system. The pod still references this class
+  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  priorityClassName: union-leaseworker
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
+  # priorityClassName above. Skipped under low_privilege (namespace-only installs
+  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # (the PriorityClass would otherwise be created once per dataplane). value is used
+  # only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- nodeSelector for leaseworker deployment
   nodeSelector: { }
   # -- tolerations for leaseworker deployment
@@ -1107,7 +1143,20 @@ leaseworker:
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
-  priorityClassName: "system-cluster-critical"
+  # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
+  # class below. Set to your own existing class to bring your own, or "" for none. Do
+  # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
+  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
+  # references this class under low_privilege when it is externally managed
+  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  priorityClassName: "union-flytepropeller"
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
+  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
+  # installs can't create cluster resources). Set create: false to bring your own class,
+  # or in multi-dataplane-per-cluster setups. value is used only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
   # -- Default resources requests and limits for Flytepropeller deployment
@@ -1565,6 +1614,11 @@ operator:
   # -- nodeName constraints for the operator pods
   nodeName: ""
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure data-plane ↔ control-plane
+  # communication. Canonical toggle — read by both the operator config
+  # (config.yaml) and the operator-proxy tunnel container. Enabled by default
+  # (used by everyone except self-hosted / intra-cluster deployments, which set
+  # this to false).
   enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
@@ -1600,7 +1654,7 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: ""
     # -- Ingress class name
     class: ""
@@ -1687,13 +1741,6 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
-    # Mount the recording rules ConfigMap generated by this chart
-    extraConfigmapMounts:
-      - name: recording-rules
-        mountPath: /etc/config/recording
-        configMap: union-recording-rules
-        readonly: true
-
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
   extraScrapeConfigs: |
@@ -1747,6 +1794,14 @@ prometheus:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
+        - action: labeldrop
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -1972,7 +2027,6 @@ proxy:
   # -- nodeName constraint for the proxy pods
   nodeName: ""
   podSecurityContext: { }
-  enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
   resources:

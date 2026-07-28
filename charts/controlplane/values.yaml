@@ -141,10 +141,17 @@ secrets: {}
 # without operators running `flyte deploy` manually after every helm upgrade.
 imageBuilder:
   bootstrap:
-    # When false, the bootstrap Job + ConfigMap are not rendered (use this
-    # if the operator prefers to manage build-image registration themselves
-    # or has an existing registration that must not be overwritten).
-    enabled: true
+    # Disabled by default. When enabled, the bootstrap Job registers the
+    # build-image task in the system/production project, which resolves to a
+    # data plane through queue -> cluster-pool -> cluster routing and uploads
+    # the code bundle to that cluster's fast-registration bucket. This requires
+    # the system project to map to a functional cluster through queue ->
+    # cluster-pool -> cluster configuration, and that cluster's write role to
+    # hold the bucket's KMS/S3 permissions; otherwise the Job fails. Operators
+    # should opt in once that routing and those bucket permissions are in
+    # place, or manage build-image registration themselves. Set true to render
+    # the bootstrap Job + ConfigMap.
+    enabled: false
 
     # Container image the bootstrap Job runs in. Must provide `flyte` (Python
     # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
@@ -668,10 +675,18 @@ services:
           # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
 
-          # Dataplane clusters to bootstrap as authz cluster resources under the org
+          # Dataplane clusters to bootstrap as authz cluster resources. Each entry is
+          # a bare cluster name (legacy) or an object granting per-cluster roles to
+          # OAuth apps by client ID (the IdP `sub`); org Admin does not inherit onto
+          # cluster resources, so grants are explicit:
+          #   operators — cluster-manager role (union-operator Heartbeat/UpdateStatus, ACTION_MANAGE_CLUSTER).
+          #   viewers   — viewer role (internal service-to-service GetCluster-by-name, ACTION_VIEW_FLYTE_EXECUTIONS).
           dataplaneClusters: []
           # Example:
-          # - dp-1
+          #   - dp-1                                   # legacy: resource only
+          #   - name: "dp-1"                           # object: with role grants
+          #     operators: ["<union-operator sub>"]
+          #     viewers: ["<service-to-service sub>"]
 
           # Authorization domains to create. Each domain is an isolation boundary
           # for workflow executions (e.g. dev vs prod).
@@ -793,6 +808,13 @@ services:
         # CP→DP secure tunnel URL. Selfhosted overrides via global.DATAPLANE_HOST.
         secureTunnelTenantURLPattern: '{{ default "http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80" .Values.global.DATAPLANE_HOST }}'
         clusterSelector:
+          # `local` (default) is the data-plane-only self-resolver — backwards
+          # compatible. Set `direct` to route across dataplanes by cluster pool and
+          # dial each dataplane's self-reported connection_config directly (no
+          # Cloudflare tunnel), for multi-dataplane support. `direct` requires the
+          # dataplanes to self-report: pair it with the dataplane chart's
+          # `updateStatus.connectionConfig.enabled: true`. A future release will
+          # make `direct` the default.
           type: local
         # Task metrics query templates for GetActionAttemptMetrics / GetAppMetrics RPCs.
         # Migrated from usage service to dataproxy in cloud #15357.
@@ -1045,13 +1067,17 @@ services:
     # the IdP; use this when the control plane can't register clients on an
     # operator-controlled IdP (selfhosted Okta/Entra). An out-of-band process
     # seeds the pre-created OAuth client credentials as a K8s Secret, and the
-    # identity service reads them instead of contacting the IdP. The map key MUST
-    # be a recognized system key name (e.g. EAGER_API_KEY). Reference-only: never
-    # put a client secret inline here — this file renders into a committed overlay.
-    apiKeyOverrides: {}
-    #   EAGER_API_KEY:
+    # identity service reads them instead of contacting the IdP. Scope an entry to
+    # a single dataplane cluster to give different dataplanes different seeded
+    # clients; omit clusterName for one client shared across all clusters.
+    # Reference-only: never put a client secret inline here — this file renders
+    # into a committed overlay.
+    apiKeyOverrides: []
+    #   - key: EAGER_API_KEY               # system key name (required)
+    #     clusterName: dp-1                # optional; scope to one dataplane cluster.
+    #                                      # Omit for the client shared across all clusters.
     #     existingSecret:
-    #       name: eager-client-creds       # pre-created Secret (required)
+    #       name: eager-dp1-creds          # pre-created Secret (required)
     #       clientIdKey: client_id         # optional; data key, defaults to client_id
     #       clientSecretKey: client_secret # optional; data key, defaults to client_secret
     service:
@@ -1459,23 +1485,25 @@ services:
 #   - Sub-2.0.4 SDK CreateRun requests are hard-rejected
 #     (rejectLegacySDKVersions = true), exercising the queue/executor
 #     decommissioning path.
-# Chart default is off so chart upgrades don't break existing legacy-SDK users
-# in managed multi-tenant deployments. Fresh single-tenant selfhosted envs flip
-# this true in their per-env values-overrides.yaml — no need to duplicate the
-# executions.configMap block. The injection happens in templates/_helpers.tpl
+# Chart default is on as of the 2026-07-31 switch-over (see timeline below): every
+# deployment routes its own UNION_ORG through the v2 actions service and rejects
+# sub-2.0.4 SDK CreateRun. Envs that must stay on the legacy queue path (e.g. still
+# on SDK <2.0.4) set `enabled: false` explicitly in their per-env
+# values-overrides.yaml. The injection happens in templates/_helpers.tpl
 # (unionai.configMap), see actionsLeasor block there.
 #
 # DEPRECATION TIMELINE
 #   2026-06-30 — queue + executor services formally deprecated. SDK <2.0.4 still
 #                works through the legacy path but customers should migrate.
-#   2026-07-31 — complete switch-over: chart default flips to `enabled: true`,
-#                queue + executor templates are removed, and this knob becomes
-#                a no-op (kept briefly for compatibility, then removed). Any env
-#                still on SDK <2.0.4 after this date will hard-fail CreateRun.
+#   2026-07-31 — complete switch-over. Chart default flips to `enabled: true`
+#                (this change). Still pending: queue + executor templates are
+#                removed and this knob becomes a no-op (kept briefly for
+#                compatibility, then removed). Any env still on SDK <2.0.4 will
+#                hard-fail CreateRun once the default is on.
 # After 2026-07-31, env overlays that set `actionsLeasor.enabled: true`
 # explicitly can drop the override entirely.
 actionsLeasor:
-  enabled: false
+  enabled: true
 
 # Self-hosted runs 10 fixed shards (the same count Union's managed control
 # planes run). Each shard is its own single-replica Deployment owning a
@@ -1775,6 +1803,15 @@ flyte:
       - name: private-config
         configMap:
           name: flyte-admin-private-config
+      # -- OPTIONAL: give flyteadmin the browser-login OIDC client secret via its
+      # own dedicated, single-writer Secret, decoupled from flyte-admin-secrets
+      # (which the generate-secrets init container manages for signing/cookie keys).
+      # Create the Secret yourself (or via ExternalSecrets) with a `client_secret`
+      # key, mount it here, and point flyteadmin at the file with
+      # `configmap.adminServer.auth.userAuth.openId.clientSecretFile` (see below).
+      # - name: oauth-client-secret
+      #   secret:
+      #     secretName: flyteadmin-oidc-client-secret
     # Override configPath to include both config directories
     configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
@@ -1784,6 +1821,11 @@ flyte:
       - name: private-config
         mountPath: /etc/flyte/private
         readOnly: true
+      # -- OPTIONAL: mount for the dedicated OIDC client secret above. flyteadmin
+      # then reads it via userAuth.openId.clientSecretFile: /etc/secrets/oauth/client_secret
+      # - name: oauth-client-secret
+      #   mountPath: /etc/secrets/oauth
+      #   readOnly: true
   flytescheduler:
     image:
       repository: "registry.unionai.cloud/controlplane/services"
@@ -2106,6 +2148,13 @@ flyte:
             # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
             baseUrl: ""
             clientId: ""
+            # -- OPTIONAL: read the browser-login client secret from a mounted file
+            # instead of the default secret-manager lookup (`oidc_client_secret` in
+            # flyte-admin-secrets at /etc/secrets/). Use this with a dedicated
+            # `flyteadmin.additionalVolumes`/`additionalVolumeMounts` entry (see above)
+            # so the OIDC secret has its own single-writer Secret and never collides
+            # with the init-container-managed signing/cookie keys.
+            # clientSecretFile: /etc/secrets/oauth/client_secret
             # Browser login scopes.
             # Okta: ["profile", "openid", "offline_access"] (default)
             # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
