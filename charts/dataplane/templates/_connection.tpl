@@ -7,32 +7,29 @@ posture. Consumers (`config.admin.admin`, `config.catalog.catalog-cache`,
 `clusterresourcesync.config.union.connection`, etc.) reference these
 helpers so the host, port, and TLS settings stay in sync across the chart.
 
-Override surface (globals declared at the top of values.yaml):
-  CONTROLPLANE_HOST           bare CP hostname (no scheme, no port). Host precedence:
-                              CONTROLPLANE_HOST > .Values.host > UNION_CONTROL_PLANE_HOST.
-                              At least one must be set or rendering fails.
-  CONTROLPLANE_GRPC_ENDPOINT  override the default `dns:///<host>:443`
-  QUEUE_GRPC_ENDPOINT         override the task-pod queue endpoint
-                              (cascades from CONTROLPLANE_GRPC_ENDPOINT)
+Single control-plane host interface:
+  CONTROLPLANE_HOST           bare CP hostname (no scheme, no port). The one host
+                              global; everything derives from it.
+  DEPRECATED fallbacks (still honored for backward compatibility; migrate to
+  CONTROLPLANE_HOST): top-level .Values.host and global.UNION_CONTROL_PLANE_HOST.
+  One of the three must be set or render fails.
+
+The gRPC endpoint is always `dns:///<host>` — the port is omitted, so grpc
+(dns resolver) and Connect (https) both default to 443. There is no separate
+endpoint or queue-endpoint global. Authless / direct-service routing is
+configured explicitly via `config.union.connection` + the auth toggles (see
+examples/values.authless.yaml), not via a host override.
 */}}
 
 {{- define "dataplane.cp.host" -}}
-{{- $cp     := tpl (default "" .Values.global.CONTROLPLANE_HOST) . -}}
-{{- $host   := tpl (default "" .Values.host) . -}}
-{{- $legacy := tpl (default "" .Values.global.UNION_CONTROL_PLANE_HOST) . -}}
-{{- required "A control plane host is required: set global.CONTROLPLANE_HOST (preferred), host, or global.UNION_CONTROL_PLANE_HOST" (coalesce $cp $host $legacy) -}}
+{{- $cp      := tpl (default "" .Values.global.CONTROLPLANE_HOST) . -}}
+{{- $host    := tpl (default "" .Values.host) . -}}
+{{- $legacy  := tpl (default "" .Values.global.UNION_CONTROL_PLANE_HOST) . -}}
+{{- required "A control plane host is required: set global.CONTROLPLANE_HOST (the deprecated .Values.host and global.UNION_CONTROL_PLANE_HOST are still honored)" (coalesce $cp $host $legacy) -}}
 {{- end -}}
 
 {{- define "dataplane.cp.endpoint" -}}
-{{- $override := tpl (default "" .Values.global.CONTROLPLANE_GRPC_ENDPOINT) . -}}
-{{- if $override -}}{{- $override -}}
-{{- else -}}{{- printf "dns:///%s:443" (include "dataplane.cp.host" .) -}}{{- end -}}
-{{- end -}}
-
-{{- define "dataplane.cp.queueEndpoint" -}}
-{{- $override := tpl (default "" .Values.global.QUEUE_GRPC_ENDPOINT) . -}}
-{{- if $override -}}{{- $override -}}
-{{- else -}}{{- include "dataplane.cp.endpoint" . -}}{{- end -}}
+{{- printf "dns:///%s" (include "dataplane.cp.host" .) -}}
 {{- end -}}
 
 {{/*

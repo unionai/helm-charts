@@ -111,9 +111,8 @@ A new `charts/dataplane/templates/_connection.tpl` exposes three helpers that al
 
 | Helper | Returns |
 |---|---|
-| `dataplane.cp.host` | Bare hostname. Coalesces `global.CONTROLPLANE_HOST` (selfmanaged convention) with `Values.host` (legacy / BYOK convention). |
-| `dataplane.cp.endpoint` | gRPC dial endpoint. Defaults to `dns:///<host>:443`; respects `global.CONTROLPLANE_GRPC_ENDPOINT` override. |
-| `dataplane.cp.queueEndpoint` | Task-pod queue endpoint. Cascades `global.QUEUE_GRPC_ENDPOINT` → `global.CONTROLPLANE_GRPC_ENDPOINT` → default. |
+| `dataplane.cp.host` | Bare hostname. `global.CONTROLPLANE_HOST` (preferred); deprecated fallbacks `Values.host` and `global.UNION_CONTROL_PLANE_HOST`. |
+| `dataplane.cp.endpoint` | gRPC dial endpoint `dns:///<host>` (port omitted; grpc/https default to 443). The `CONTROLPLANE_GRPC_ENDPOINT` / `QUEUE_GRPC_ENDPOINT` globals and the `dataplane.cp.queueEndpoint` helper were removed — the endpoint derives solely from the host. |
 
 Existing deployments don't need any values change — the helpers coalesce both old and new globals, so `host:` (legacy) and `global.CONTROLPLANE_HOST` (new) both work without modification.
 

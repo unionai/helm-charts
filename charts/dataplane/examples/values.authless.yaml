@@ -1,0 +1,60 @@
+# ============================================================================
+# Authless dataplane example
+# ============================================================================
+# Shared-cluster deployment that SKIPS auth and routes DP -> CP traffic directly
+# to in-cluster Kubernetes Services, bypassing the control-plane nginx ingress
+# and OAuth entirely. This is the historical "shared cluster, skip auth, route
+# to k8s services" topology.
+#
+# Only safe when the control plane and data plane share a cluster and the CP
+# Services are not reachable from outside it — the control plane trusts these
+# in-cluster requests via identity claims instead of an OAuth token.
+#
+# How it works:
+#   - The single host global CONTROLPLANE_HOST still names the CP for the
+#     serving / app-callback URLs and cloudHostName.
+#   - The DP -> CP gRPC connection is overridden to the in-cluster Service on
+#     :80 with insecure transport. The `…svc.cluster.local:80` + insecure
+#     combination is exactly what selects the control plane's trusted-identity
+#     (no-OAuth) code path — so no token is required.
+#   - Auth is turned off explicitly via config.union.auth.enable (and the
+#     sibling toggles), NOT derived from the host. These are the individual
+#     auth toggles the interface exposes.
+#
+# Replace `union-cp` with the actual CP release namespace, and the Service names
+# with the CP's exposed gRPC Services, if they differ in your deployment.
+#
+# Apply on top of values.yaml + a cloud overlay:
+#   helm template charts/dataplane \
+#     -f charts/dataplane/values.yaml \
+#     -f charts/dataplane/values.gcp.yaml \
+#     -f charts/dataplane/examples/values.authless.yaml ...
+# ============================================================================
+
+global:
+  # CP host for serving / app-callback URLs + cloudHostName. In a shared
+  # cluster this is the CP nginx Service FQDN.
+  CONTROLPLANE_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+
+config:
+  union:
+    # No OAuth token on DP -> CP calls.
+    auth:
+      enable: false
+    # Dial the control plane directly in-cluster, plaintext. The
+    # svc.cluster.local:80 authority + insecure activates the CP's
+    # trusted-in-cluster-identity path (no OAuth, no nginx).
+    connection:
+      host: "dns:///union.union-cp.svc.cluster.local:80"
+      insecure: true
+
+# Run FULLY authless by mirroring the same connection + disabling auth on every
+# other DP -> CP client:
+#   clusterresourcesync.config.union.auth.enable: false
+#   clusterresourcesync.config.union.connection: { host: dns:///…svc…:80, insecure: true }
+#   config.admin.admin:            { endpoint: dns:///…svc…:80, insecure: true }
+#   config.catalog.catalog-cache:  { use-admin-auth: false, insecure: true, endpoint/cache-endpoint: dns:///…svc…:80 }
+#   config.authorizer.authorizerClient.grpcConfig: { host: dns:///…svc…:80, insecure: true }
+# Also disable serving.auth.enabled / gateway.auth.enable if apps must not
+# require auth. Leave the whole block out to keep the default authenticated
+# (nginx :443 + OAuth) deployment.
