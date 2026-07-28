@@ -2,22 +2,27 @@
 
 ## Unreleased
 
-### Configuration changes (helm-charts)
+### Configuration changes
 
-- **Cloud overlays are now cloud-only** ([#497](https://github.com/unionai/helm-charts/pull/497)). The per-cloud dataplane overlays (`values.{aws,gcp,azure}.yaml`) previously carried deployment-topology and Union-platform config, duplicated across clouds and — in places — silently lost to the Terraform config-subtree shallow-merge (e.g. catalog-cache `use-admin-auth` ran `false` on GCP but `true` on AWS/Azure for the same managed-CP env). They now hold **only** cloud-specific config: provider, object storage, IAM / Workload-Identity annotations, region + task-log wiring, and the cloud globals a user fills in. Everything else is a base `values.yaml` chart default, set per-topology by the `union_extension` Terraform. Each overlay now opens with a PURPOSE header documenting the cloud-only contract. Specifics:
-  - **`ingress` / `ingress-nginx`** — config moved to base (`enabled: false`); Terraform enables both only for a co-located control plane (selfhosted). **Managed-CP data planes no longer deploy the idle nginx controller** or its dataproxy/serving Ingress resources.
-  - **Operator / CRS / catalog auth** (`config.union.auth.enable`, `clusterresourcesync…auth`, catalog-cache `use-admin-auth`) default **enabled** in base; Terraform disables them only for a selfhosted control plane with no IdP configured.
-  - **`secrets.admin.create`** — base stays `true`; Terraform sets `false` (selfmanaged/selfhosted provision `union-secret-auth` via an ExternalSecret).
-  - **`controlplaneNamespace`** — base `""`; Terraform sets `union-cp` only for selfhosted-intracluster (cross-namespace secretsWatcher RBAC).
-  - **`serving.auth.enabled`, `dcgm-exporter.enabled`** — base defaults; per-cloud overrides dropped (dcgm keeps only its cloud-specific node affinity).
-  - **fluentbit ServiceAccount** name now follows base `union-system` (the AWS IRSA role trust follows the same Terraform variable).
-  - **Billing** — the inert `config.operator.billableUsageCollector.enabled` key is removed; billing collection is controlled by `config.operator.billing.model`, which Terraform sets to `None` for selfhosted control planes.
-  - Removed dead/redundant keys: base restatements, `prometheus.prometheusOperator` (targets a key the community prometheus chart doesn't have), empty `flytepropeller` stubs, and the redundant task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker + executor already inject these from `config.union.connection`).
+- **Data plane overlay cleanup — remove conflicting and redundant defaults** ([#497](https://github.com/unionai/helm-charts/pull/497)). The per-cloud overlays (`values.{aws,gcp,azure}.yaml`) had accumulated settings that either restated a base default, conflicted between clouds (e.g. catalog-cache `use-admin-auth` defaulted `false` in the GCP overlay but `true` in the AWS/Azure overlays for the same kind of data plane), or belonged in the base chart because they are not cloud-specific. Those settings now live as **base `values.yaml` defaults**, and each overlay is reduced to cloud-specific config only (provider, object storage, IAM / Workload-Identity annotations, region + task-log wiring, and the cloud globals a user fills in) with a PURPOSE header documenting that contract.
+
+  **Base `values.yaml` defaults changed:**
+  - `secrets.admin.clientId` now derives from `global.AUTH_CLIENT_ID` (was a standalone `dataplane-operator` placeholder), so the single admin client id resolves from one global at every `config.*` site.
+  - `storage.enableMultiContainer` now defaults `true` (metadata and fast-registration buckets differ).
+  - Monitoring: `kube{ControllerManager,Scheduler,Etcd,Proxy}.enabled` and `defaultRules.rules.*` now default `false` — a data plane cannot scrape the cluster's control-plane components, so these ServiceMonitors / alerting rules would otherwise trip false-positive `TargetDown` alerts.
+  - `config.union.auth.enable`, `clusterresourcesync.…auth.enable` (+ `scopes`), and catalog-cache `use-admin-auth` now default **enabled** in base (a data plane authenticates to its control plane out of the box).
+  - `ingress` and `ingress-nginx` defaults now live in base (both `enabled: false`, with the class / Service / host defaults ready to switch on).
+  - `secrets.admin.create` stays `true`; `controlplaneNamespace` stays `""`; `serving.auth.enabled` and `dcgm-exporter.enabled` keep their base values — the overlays no longer restate them.
+  - The fluentbit `ServiceAccount` name defaults to `union-system`.
+  - Billing is controlled by `config.operator.billing.model` (base default `ResourceUsage`); the inert `config.operator.billableUsageCollector.enabled` key is removed.
+  - Removed dead base keys: `prometheus.prometheusOperator` (targets a key the community prometheus chart doesn't have) and empty `flytepropeller` stubs.
+
+  **Overlay (`values.{aws,gcp,azure}.yaml`) defaults removed:** the admin `clientId` restatements; the monitoring + `enableMultiContainer` defaults; `config.union.auth.enable`, `clusterresourcesync.…auth`, and catalog-cache `use-admin-auth` (the cross-cloud conflict above); `secrets.admin`; `serving.auth.enabled`; `dcgm-exporter.enabled` (the overlays keep only their cloud-specific node affinity); `controlplaneNamespace`; `ingress` / `ingress-nginx` enablement; the task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker and executor already inject these from `config.union.connection`); and the dead `billableUsageCollector` / `singleTenantOrgID` keys.
 
 ### Migration / action required
 
-- **Managed-CP data planes drop the (idle) nginx ingress + its Ingress resources.** They fronted CP→DP traffic only for a co-located control plane; managed-CP data planes reach the control plane outbound, so the controller was deployed but received no traffic. No action. Selfhosted (co-located CP) deployments keep nginx via Terraform.
-- **fluentbit ServiceAccount renamed** to `union-system` (from `fluentbit-system`) on AWS; the IRSA role trust is updated in lockstep. No action unless you bound external policy to the old SA name.
+- **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
+- **fluentbit `ServiceAccount` renamed** to `union-system` (from `fluentbit-system`). No action unless you bound external policy (e.g. a cloud IAM trust) to the old ServiceAccount name.
 
 ## 2026.7.2
 
