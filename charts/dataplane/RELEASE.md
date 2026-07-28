@@ -1,5 +1,24 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Configuration changes (helm-charts)
+
+- **Cloud overlays are now cloud-only** ([#497](https://github.com/unionai/helm-charts/pull/497)). The per-cloud dataplane overlays (`values.{aws,gcp,azure}.yaml`) previously carried deployment-topology and Union-platform config, duplicated across clouds and — in places — silently lost to the Terraform config-subtree shallow-merge (e.g. catalog-cache `use-admin-auth` ran `false` on GCP but `true` on AWS/Azure for the same managed-CP env). They now hold **only** cloud-specific config: provider, object storage, IAM / Workload-Identity annotations, region + task-log wiring, and the cloud globals a user fills in. Everything else is a base `values.yaml` chart default, set per-topology by the `union_extension` Terraform. Each overlay now opens with a PURPOSE header documenting the cloud-only contract. Specifics:
+  - **`ingress` / `ingress-nginx`** — config moved to base (`enabled: false`); Terraform enables both only for a co-located control plane (selfhosted). **Managed-CP data planes no longer deploy the idle nginx controller** or its dataproxy/serving Ingress resources.
+  - **Operator / CRS / catalog auth** (`config.union.auth.enable`, `clusterresourcesync…auth`, catalog-cache `use-admin-auth`) default **enabled** in base; Terraform disables them only for a selfhosted control plane with no IdP configured.
+  - **`secrets.admin.create`** — base stays `true`; Terraform sets `false` (selfmanaged/selfhosted provision `union-secret-auth` via an ExternalSecret).
+  - **`controlplaneNamespace`** — base `""`; Terraform sets `union-cp` only for selfhosted-intracluster (cross-namespace secretsWatcher RBAC).
+  - **`serving.auth.enabled`, `dcgm-exporter.enabled`** — base defaults; per-cloud overrides dropped (dcgm keeps only its cloud-specific node affinity).
+  - **fluentbit ServiceAccount** name now follows base `union-system` (the AWS IRSA role trust follows the same Terraform variable).
+  - **Billing** — the inert `config.operator.billableUsageCollector.enabled` key is removed; billing collection is controlled by `config.operator.billing.model`, which Terraform sets to `None` for selfhosted control planes.
+  - Removed dead/redundant keys: base restatements, `prometheus.prometheusOperator` (targets a key the community prometheus chart doesn't have), empty `flytepropeller` stubs, and the redundant task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker + executor already inject these from `config.union.connection`).
+
+### Migration / action required
+
+- **Managed-CP data planes drop the (idle) nginx ingress + its Ingress resources.** They fronted CP→DP traffic only for a co-located control plane; managed-CP data planes reach the control plane outbound, so the controller was deployed but received no traffic. No action. Selfhosted (co-located CP) deployments keep nginx via Terraform.
+- **fluentbit ServiceAccount renamed** to `union-system` (from `fluentbit-system`) on AWS; the IRSA role trust is updated in lockstep. No action unless you bound external policy to the old SA name.
+
 ## 2026.7.2
 
 Bumps `version` + `appVersion` to `2026.7.2`. `appVersion` moves from `2026.7.0` to
