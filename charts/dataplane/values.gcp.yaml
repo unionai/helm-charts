@@ -1,6 +1,16 @@
-# Union Dataplane — GCP overlay.
-# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
-# annotations, not by this overlay.
+# Union Dataplane — GCP cloud overlay.
+#
+# PURPOSE (for humans and agents): this file holds ONLY cloud-specific
+# configuration for GCP — the provider, GCS object storage, Workload Identity
+# service-account annotations, region/project wiring, GCP task-log links, and
+# the GCP-unique globals a user fills in. It layers on top of the chart's base
+# values.yaml.
+#
+# It MUST NOT carry deployment-topology or Union-platform config — auth
+# enablement, ingress/ingress-nginx, secret creation, namespace/RBAC, billing,
+# etc. Those are chart defaults in base values.yaml and are set per-topology
+# (managed-CP vs selfhosted, intracluster vs split) by the terraform
+# union_extension module. Keep this overlay cloud-only.
 
 global:
   # --- Identity ---
@@ -195,60 +205,10 @@ executor:
               templateUris:
                 - "https://console.cloud.google.com/logs/query;query=resource.labels.namespace_name%3D%22{{`{{.namespace}}`}}%22%0Aresource.labels.pod_name%3D%22{{`{{.podName}}`}}%22%0Aresource.labels.container_name%3D%22{{`{{.containerName}}`}}%22;startTime={{`{{.taskStartTime}}`}};endTime={{`{{.taskEndTime}}`}}?project={{ .Values.global.GOOGLE_PROJECT_ID }}&angularJsUrl=%2Flogs%2Fviewer%3Fproject%3D{{ .Values.global.GOOGLE_PROJECT_ID }}"
 
-# ----------------------------------------------------------------------------
-# Ingress Configuration
-# ----------------------------------------------------------------------------
-# Configure ingress for external access to dataplane services.
-
-# Ingress configuration for Union dataplane and serving
-ingress:
-  dataproxy:
-    class: "dataplane"
-  enabled: true
-
-  # Ingress architecture for serving will change in the future.
-  # This is a temporary configuration for intra-cluster deployments.
-  serving:
-    # Knative wildcard hostname matching for *.apps.<CONTROLPLANE_HOST>.
-    # CONTROLPLANE_HOST is contractually a bare hostname (no port).
-    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
-    # Assume the same ingress class as the dataproxy
-    class: "dataplane"
-
-# NGINX Ingress controller for dataplane
-ingress-nginx:
-  enabled: true
-
-  # Service name for the ingress controller
-  # This creates a service: "dataplane-nginx-controller"
-  # External traffic enters through this service
-  fullnameOverride: "dataplane-nginx"
-
-  controller:
-    service:
-      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
-      # Change to LoadBalancer or NodePort for external access
-      type: "ClusterIP"
-      ports:
-        http: 80
-        https: 443
-
-    ingressClassResource:
-      # Ingress class name used in Ingress resources
-      name: "dataplane"
-
-# ----------------------------------------------------------------------------
-# Secrets Configuration
-# ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
 # App Serving Configuration (Work in Progress)
 # ----------------------------------------------------------------------------
-
-serving:
-  auth:
-    # Disable authentication for serving (work in progress)
-    enabled: false
 
 # ----------------------------------------------------------------------------
 # SECTION 6: Logging Configuration
@@ -265,21 +225,6 @@ serving:
 
 fluentbit:
   enabled: false
-  serviceAccount:
-    name: fluentbit-system
-    # GKE Workload Identity annotation to grant FluentBit write access to GCS.
-    # The GCP service account must have roles/storage.objectAdmin on the bucket
-    # and the KSA must be bound via roles/iam.workloadIdentityUser.
-    annotations: {}
-    # annotations:
-    #   iam.gke.io/gcp-service-account: "<GSA_NAME>@<PROJECT_ID>.iam.gserviceaccount.com"
-
-# ----------------------------------------------------------------------------
-# SECTION 7: Enable Opencost used for getting instance level cost data.
-# ----------------------------------------------------------------------------
-opencost:
-  # Currently we are disabling this as V2 console is not yet integrated with this cost data.
-  enabled: false
 
 # ----------------------------------------------------------------------------
 # SECTION 8: Override priority class due to GKE restriction where it doesn't
@@ -289,5 +234,3 @@ opencost:
 flytepropeller:
   priorityClassName: ""
 
-# -- Control plane namespace for cross-namespace RBAC (secretsWatcher).
-controlplaneNamespace: "union-cp"

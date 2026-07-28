@@ -1,6 +1,15 @@
-# Union Dataplane — AWS overlay.
-# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
-# annotations, not by this overlay.
+# Union Dataplane — AWS cloud overlay.
+#
+# PURPOSE (for humans and agents): this file holds ONLY cloud-specific
+# configuration for AWS — the provider, S3 object storage, IAM/IRSA service-
+# account annotations, region wiring, and the AWS-unique globals a user fills
+# in. It layers on top of the chart's base values.yaml.
+#
+# It MUST NOT carry deployment-topology or Union-platform config — auth
+# enablement, ingress/ingress-nginx, secret creation, namespace/RBAC, billing,
+# etc. Those are chart defaults in base values.yaml and are set per-topology
+# (managed-CP vs selfhosted, intracluster vs split) by the terraform
+# union_extension module. Keep this overlay cloud-only.
 
 global:
   # --- Identity ---
@@ -90,48 +99,6 @@ config:
         region: '{{ .Values.global.AWS_REGION }}'
 
 # ----------------------------------------------------------------------------
-# Ingress Configuration
-# ----------------------------------------------------------------------------
-# Configure ingress for external access to dataplane services.
-
-# Ingress configuration for Union dataplane and serving
-ingress:
-  dataproxy:
-    class: "dataplane"
-  enabled: true
-
-  # Ingress architecture for serving will change in the future.
-  # This is a temporary configuration for intra-cluster deployments.
-  serving:
-    # Knative wildcard hostname matching for *.apps.<CONTROLPLANE_HOST>.
-    # CONTROLPLANE_HOST is contractually a bare hostname (no port).
-    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
-    # Assume the same ingress class as the dataproxy
-    class: "dataplane"
-
-# NGINX Ingress controller for dataplane
-ingress-nginx:
-  enabled: true
-
-  # Service name for the ingress controller
-  # This creates a service: "dataplane-nginx-controller"
-  # External traffic enters through this service
-  fullnameOverride: "dataplane-nginx"
-
-  controller:
-    service:
-      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
-      # Change to LoadBalancer or NodePort for external access
-      type: "ClusterIP"
-      ports:
-        http: 80
-        https: 443
-
-    ingressClassResource:
-      # Ingress class name used in Ingress resources
-      name: "dataplane"
-
-# ----------------------------------------------------------------------------
 # Secrets Configuration
 # ----------------------------------------------------------------------------
 
@@ -139,24 +106,11 @@ ingress-nginx:
 # App Serving Configuration (Work in Progress)
 # ----------------------------------------------------------------------------
 
-serving:
-  auth:
-    # Disable authentication for serving (work in progress)
-    enabled: false
-
 # ----------------------------------------------------------------------------
 # SECTION 6: Logging Configuration (REQUIRED)
 # ----------------------------------------------------------------------------
 # FluentBit collects and forwards logs to the control plane.
 
-fluentbit:
-  serviceAccount:
-    name: fluentbit-system
-    # IRSA annotation to grant FluentBit write access to the S3 metadata bucket.
-    # The IAM role must allow s3:PutObject, s3:GetObject, s3:ListBucket on the bucket.
-    annotations: {}
-    # annotations:
-    #   eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<FLUENTBIT_ROLE_NAME>"
 
 # ----------------------------------------------------------------------------
 # SECTION 7: Task Level Monitoring
@@ -164,9 +118,6 @@ fluentbit:
 
 # DCGM Exporter
 dcgm-exporter:
-
-  # dcgm-exporter
-  enabled: true
 
   # Configure AWS specific affinity
   # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
@@ -325,5 +276,3 @@ imageBuilder:
   buildkit:
     rootless: false
 
-# -- Control plane namespace for cross-namespace RBAC (secretsWatcher).
-controlplaneNamespace: "union-cp"
