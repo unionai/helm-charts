@@ -51,21 +51,15 @@ global:
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Core Identity Configuration (REQUIRED)
+# Cloud provider
 # ----------------------------------------------------------------------------
-# These values reference the globals defined above.
-
-# ----------------------------------------------------------------------------
-# SECTION 2: Core Identity Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# Cloud provider identifier
+# Cloud provider identifier (do not change for GCP).
 provider: gcp
 
 # ----------------------------------------------------------------------------
-# SECTION 3: Object Storage Configuration (REQUIRED)
+# Object storage — GCS
 # ----------------------------------------------------------------------------
-# Configure GCS buckets for workflow metadata and fast registration.
-# These buckets must be created before deployment.
+# GCS buckets for workflow metadata and fast registration; create before deploy.
 
 storage:
   provider: gcs  # GCS provider (not custom)
@@ -86,10 +80,9 @@ storage:
 #   authenticationType: google
 
 # ----------------------------------------------------------------------------
-# SECTION 5: Workload Identity (REQUIRED for GCP)
+# Workload Identity
 # ----------------------------------------------------------------------------
-# Configure Workload Identity for secure GCP access.
-# These GCP service accounts must be created with appropriate IAM bindings.
+# GCP service accounts for secure access; create with the appropriate IAM bindings.
 
 # GCP service account for Union backend services (operator, propeller, etc.)
 additionalServiceAccountAnnotations:
@@ -100,10 +93,10 @@ userRoleAnnotationKey: iam.gke.io/gcp-service-account
 userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 7: Core Service Configuration
+# GCS storage paths + Secret Manager / Cloud Logging backend identity
 # ----------------------------------------------------------------------------
-# Configure dataplane services to communicate with control plane services
-# using Kubernetes internal networking (ClusterIP services).
+# GCP-specific storage path prefixes, the GCP Secret Manager backend identity,
+# and the operator-proxy persisted-logs source (Cloud Logging).
 
 config:
   # Override storage paths to use gs:// instead of s3://
@@ -207,11 +200,7 @@ executor:
 
 
 # ----------------------------------------------------------------------------
-# App Serving Configuration (Work in Progress)
-# ----------------------------------------------------------------------------
-
-# ----------------------------------------------------------------------------
-# SECTION 6: Logging Configuration
+# Logging — disable the fluentbit subchart on GKE
 # ----------------------------------------------------------------------------
 # GKE clusters with managed Cloud Logging enabled (loggingConfig.componentConfig
 # includes WORKLOADS) already ship workload container stdout/stderr to Cloud
@@ -227,10 +216,10 @@ fluentbit:
   enabled: false
 
 # ----------------------------------------------------------------------------
-# SECTION 8: Override priority class due to GKE restriction where it doesn't
-#            allow running pods with system-cluster-critical other core kube
-#            components.
+# flytepropeller priority class — GKE override
 # ----------------------------------------------------------------------------
+# GKE forbids scheduling pods with the system-cluster-critical priority class
+# alongside core kube components, so clear the base default on GCP.
 flytepropeller:
   priorityClassName: ""
 
