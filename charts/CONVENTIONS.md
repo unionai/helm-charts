@@ -1,5 +1,35 @@
 # Chart Conventions
 
+## Release notes (`RELEASE.md`)
+
+Every published chart carries a `charts/<chart>/RELEASE.md` — human-authored release
+notes with one **newest-first** section per version, headed `## <version>`:
+
+```markdown
+# <chart> — Release Notes
+
+## 2026.7.2
+<what changed in this version>
+
+## 2026.7.1
+...
+```
+
+Rules:
+- **A `version:` bump in `Chart.yaml` must add a matching `## <version>` section** to the
+  same chart's `RELEASE.md`, in the same PR. CI enforces this
+  (`.github/ci-scripts/check_release_notes.sh`, run by the `release-notes` job).
+- Write the section for a chart consumer: config/default/template changes for that chart,
+  and — when `appVersion` moves — a short summary of the control-plane / data-plane image
+  behavior the new tag brings.
+- Keep entries terse and factual; link PRs as `(#NNNNN)`. A pure lockstep bump with no
+  functional change is a valid one-line entry.
+
+On merge to `main`, the `release` workflow's `scripts/generate-release-notes.sh` reads the
+`## <version>` section for each newly-tagged chart and publishes it as that chart's GitHub
+Release body (falling back to the raw commit log only for charts without a `RELEASE.md`).
+So the section you write here is exactly what ships as the published release notes.
+
 ## Overlay file naming
 
 Each chart in `charts/` follows this exact layout:

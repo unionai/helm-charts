@@ -34,20 +34,45 @@ for chart_dir in charts/*/; do
     fi
   fi
 
-  # Find previous release tag for this chart (exact name match to avoid e.g. dataplane matching dataplane-crds)
-  prev_tag=$(git tag -l "${chart_name}-*" --sort=-v:refname | grep -E "^${chart_name}-[0-9]" | grep -v "^${tag}$" | head -1)
+  # Prefer the curated, per-chart RELEASE.md section for this exact version — the
+  # release-notes CI gate guarantees it exists whenever the chart version bumped.
+  # Extract everything under `## <version>` up to the next `## ` heading.
+  release_md="${chart_dir}/RELEASE.md"
+  section=""
+  if [ -f "$release_md" ]; then
+    section=$(awk -v ver="$chart_version" '
+      $0 ~ "^##[[:space:]]+" ver "([[:space:]]|$)" { grab=1; next }
+      grab && /^##[[:space:]]/ { grab=0 }
+      grab { buf[++n]=$0 }
+      END {
+        s=1; while (s<=n && buf[s] ~ /^[[:space:]]*$/) s++
+        e=n; while (e>=s && buf[e] ~ /^[[:space:]]*$/) e--
+        for (i=s; i<=e; i++) print buf[i]
+      }
+    ' "$release_md")
+  fi
 
-  if [ -n "$prev_tag" ]; then
-    notes=$(git log "${prev_tag}..HEAD" --pretty=format:"- %s (%h)" -- "$chart_dir")
+  if [ -n "$section" ]; then
+    formatted="$section"
   else
-    notes=$(git log --pretty=format:"- %s (%h)" -- "$chart_dir" | head -50)
-  fi
+    # Fallback: raw commit log for charts without a RELEASE.md section
+    # (e.g. independently-versioned charts that don't carry release notes).
+    # Find previous release tag for this chart (exact name match to avoid e.g.
+    # dataplane matching dataplane-crds).
+    prev_tag=$(git tag -l "${chart_name}-*" --sort=-v:refname | grep -E "^${chart_name}-[0-9]" | grep -v "^${tag}$" | head -1)
 
-  if [ -z "$notes" ]; then
-    continue
-  fi
+    if [ -n "$prev_tag" ]; then
+      notes=$(git log "${prev_tag}..HEAD" --pretty=format:"- %s (%h)" -- "$chart_dir")
+    else
+      notes=$(git log --pretty=format:"- %s (%h)" -- "$chart_dir" | head -50)
+    fi
 
-  formatted=$(printf "## Changes\n\n%s\n" "$notes")
+    if [ -z "$notes" ]; then
+      continue
+    fi
+
+    formatted=$(printf "## Changes\n\n%s\n" "$notes")
+  fi
 
   if [[ "$publish" == true ]]; then
     echo "Updating release notes for ${tag}"
