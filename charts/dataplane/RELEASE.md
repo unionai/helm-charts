@@ -1,5 +1,18 @@
 # dataplane — Release Notes
 
+## 2026.7.3 WIP
+
+### Removed: executor
+
+The legacy executor Deployment has bee removed, completing the deprecation announced 2026-06-30.
+Leaseworker is the only execution path; the control-plane chart drops the matching queue service in its
+own `2026.7.xxx`.
+
+- `templates/nodeexecutor/` deleted (Deployment/ConfigMap/Service/ServiceAccount)
+  along with the `executor.*` helpers and the operator's executor heartbeat entry.
+  Stale `config.operator.dependenciesHeartbeat.executor` overlay entries are
+  dropped at render time so the operator doesn't heartbeat a nonexistent service.
+
 ## 2026.7.2
 
 Bumps `version` + `appVersion` to `2026.7.2`. `appVersion` moves from `2026.7.0` to
