@@ -1,0 +1,353 @@
+# Release-PR integration testing: on a dedicated release PR (chart version/
+# appVersion bump, or a "Release ..." title), install the candidate charts onto
+# standing canary clusters and gate on binary health. Backed by the ci_deployer
+# terraform in cloud (infra/terraform/envs/canary/helm-charts-ci): keyless GitHub
+# OIDC -> per-cloud identities, a config-contract S3 bucket, and the
+# "helm-charts-ci" GitHub Environment + Actions variables (vars.*), all managed
+# there. No required reviewers by design (fork PRs get no OIDC token; see
+# ci_github.tf for the security posture). func-v2 + ledger steps are still stubs.
+name: Release Integration Test
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'charts/**'
+      - 'crds/**'
+      - '.github/workflows/release-integration.yaml'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: "Run integration even if not classified as a release PR"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Classify: only dedicated release PRs pay for real-cluster integration ──
+  classify:
+    name: Classify PR (release vs non-release)
+    runs-on: ubuntu-latest
+    outputs:
+      is_release: ${{ steps.detect.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect release PR + discipline guardrails
+        id: detect
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE: ${{ github.event.inputs.force_release }}
+        run: |
+          set -euo pipefail
+          chart_bump=false
+          if git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' \
+               | grep -qE '^\+(version|appVersion):'; then chart_bump=true; fi
+          title_release=false
+          [[ "$PR_TITLE" =~ ^Release\ [0-9] ]] && title_release=true
+          is_release=false
+          if [[ "$chart_bump" == true || "$title_release" == true || "$FORCE" == "true" ]]; then
+            is_release=true
+          fi
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
+          echo "chart_bump=$chart_bump title_release=$title_release force=${FORCE:-} -> is_release=$is_release"
+
+          # Soft guardrails (annotations) — promote the "dedicated release PR" discipline.
+          if [[ "$is_release" == true ]]; then
+            if git diff --name-only "$BASE_SHA".."$HEAD_SHA" -- 'charts/**' \
+                 | grep -vE '/(Chart\.yaml|RELEASE\.md)$' | grep -q .; then
+              echo "::warning::Release PR also changes chart templates/values — releases should be clean version bumps; move feature changes to a prior non-release PR."
+            fi
+          fi
+          if [[ "$is_release" == false ]] \
+             && git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' | grep -qE '^\+appVersion:'; then
+            echo "::warning::appVersion changed on a non-release PR — appVersion bumps belong in a dedicated release PR."
+          fi
+
+  # ── Integration: one run per environment (dedicated cluster), gated + serial ──
+  integration:
+    name: ${{ matrix.topology }}/${{ matrix.cloud }}
+    needs: classify
+    if: needs.classify.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: helm-charts-ci   # pins the OIDC subject; no required reviewers (see ci_github.tf)
+    concurrency:
+      group: release-integration-${{ matrix.topology }}-${{ matrix.cloud }}
+      cancel-in-progress: false   # queue; never cancel mid-deploy on a shared cluster
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each chart installs into its CANONICAL namespace (= chart name:
+          # dataplane -> dataplane, controlplane -> controlplane). GCP Workload
+          # Identity / Azure federated creds are namespace-pinned there (aws IRSA
+          # uses a wildcard); concurrency serializes one run per cluster, so the
+          # shared namespace is safe. crd_dirs = crds/ subdirs to kubectl-apply
+          # (helm doesn't install a subchart's crds/, and only DP clusters get
+          # monitoring CRDs from ArgoCD). kctx = the tf kubectl context an engineer
+          # can use to inspect the cluster.
+          - { topology: selfmanaged-dp, cloud: aws,   charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-aws-dp-1 }
+          - { topology: selfmanaged-dp, cloud: gcp,   charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-gcp-dp-1 }
+          - { topology: selfmanaged-dp, cloud: azure, charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-azure-dp-1 }
+          - { topology: selfhosted,     cloud: aws,   charts: "controlplane dataplane", crd_dirs: "dataplane kube-prometheus-stack scylla-operator envoy-gateway", kctx: self-cp-helm-charts-ci-cp-aws }
+          - { topology: selfhosted,     cloud: gcp,   charts: "controlplane dataplane", crd_dirs: "dataplane kube-prometheus-stack scylla-operator envoy-gateway", kctx: self-cp-helm-charts-ci-cp-gcp }
+    env:
+      HELM_VERSION: "3.17.3"
+      CONTRACT_BUCKET: ${{ vars.HELM_CHARTS_CI_CONTRACT_BUCKET }}
+      # Each chart -> its own namespace (= chart name).
+    steps:
+      - uses: actions/checkout@v4              # candidate charts @ PR HEAD
+      - uses: azure/setup-helm@v4.3.1
+        with:
+          version: "${{ env.HELM_VERSION }}"
+      - uses: azure/setup-kubectl@v4
+
+      # Resolve this leg's cluster from the JSON var terraform publishes.
+      - name: Resolve target cluster
+        id: cluster
+        env:
+          CLUSTERS: ${{ vars.HELM_CHARTS_CI_CLUSTERS }}
+        run: |
+          set -euo pipefail
+          key="${{ matrix.topology }}/${{ matrix.cloud }}"
+          for f in kind name region location resource_group; do
+            echo "$f=$(jq -r --arg k "$key" --arg f "$f" '.[$k][$f] // empty' <<<"$CLUSTERS")" >> "$GITHUB_OUTPUT"
+          done
+
+      # Surface the kubectl context so a Union engineer can inspect this leg's
+      # cluster directly (one namespace per chart).
+      - name: Inspect this cluster
+        run: |
+          { echo "### Inspect \`${{ matrix.topology }}/${{ matrix.cloud }}\`"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          for chart in ${{ matrix.charts }}; do
+            cmd="kubectl --context ${{ matrix.kctx }} -n $chart get pods"
+            echo "::notice title=Inspect ${{ matrix.topology }}/${{ matrix.cloud }} ($chart)::$cmd"
+            echo "$cmd" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Config contract: pulled FIRST with a narrow read-only credential ──
+      - name: Auth contract bucket (read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_CONTRACT_READ_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Pull contracts + provenance (no raw values in public logs)
+        run: |
+          set -euo pipefail
+          for chart in ${{ matrix.charts }}; do
+            key="helm-charts-ci/${{ matrix.topology }}/${{ matrix.cloud }}/$chart/values.yaml"
+            aws s3api head-object --bucket "$CONTRACT_BUCKET" --key "$key" --query 'Metadata' || true
+            aws s3 cp "s3://$CONTRACT_BUCKET/$key" "$chart-contract.yaml"
+            echo "$chart contract sha256: $(sha256sum "$chart-contract.yaml" | cut -d' ' -f1)"
+          done
+          # Do NOT cat the contract — it carries ARNs/domains/secret names.
+
+      # ── Cluster auth (keyless GitHub OIDC -> per-cloud deployer identity) ──
+      - name: Auth + kubeconfig (AWS/EKS)
+        if: matrix.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: ${{ steps.cluster.outputs.region }}
+      - name: Kubeconfig (EKS)
+        if: matrix.cloud == 'aws'
+        run: aws eks update-kubeconfig --name "${{ steps.cluster.outputs.name }}" --region "${{ steps.cluster.outputs.region }}"
+
+      - name: Auth (GCP)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.HELM_CHARTS_CI_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.HELM_CHARTS_CI_GCP_SA }}
+      - name: Kubeconfig (GKE)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ steps.cluster.outputs.name }}
+          location: ${{ steps.cluster.outputs.location }}
+
+      - name: Auth (Azure)
+        if: matrix.cloud == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.HELM_CHARTS_CI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.HELM_CHARTS_CI_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.HELM_CHARTS_CI_AZURE_SUB_ID }}
+      - name: Kubeconfig (AKS)
+        if: matrix.cloud == 'azure'
+        run: az aks get-credentials --admin --overwrite-existing -g "${{ steps.cluster.outputs.resource_group }}" -n "${{ steps.cluster.outputs.name }}"
+
+      # ── Pre-clean: ensure each chart's namespace exists; UPGRADE IN PLACE.
+      #    We deliberately do NOT delete+recreate namespaces. Both charts carry
+      #    resources whose finalizers hang namespace deletion — controlplane: Scylla
+      #    (StatefulSet + PVCs + operator finalizers) and an ingress LoadBalancer;
+      #    dataplane: knative's kourier LoadBalancer plus the union-pod-webhook
+      #    (failurePolicy=Fail, cluster-wide) whose backend churns on every fresh
+      #    install and then blocks pod admission (union-operator's pod never gets
+      #    created) — so tearing down and cold-installing is both slow and flaky.
+      #    Real releases deploy as an in-place `helm upgrade` over persistent state
+      #    anyway, so persist the namespaces and upgrade in place. Concurrency
+      #    serializes one run per cluster. ──
+      - name: Pre-clean (ensure namespaces)
+        run: |
+          set -euo pipefail
+          for ns in ${{ matrix.charts }}; do
+            kubectl get ns "$ns" >/dev/null 2>&1 || kubectl create ns "$ns"
+            echo ">> $ns: persisting namespace — helm upgrade in place"
+          done
+          # Cluster-scoped leftovers survive across runs. These admission webhooks
+          # (failurePolicy=Fail) can be created by an early install attempt; because a
+          # retry then fails calling them, helm never completes a successful upgrade
+          # and so never prunes them — a permanent deadlock. Clear them so the
+          # (disabled) install starts clean:
+          #   monitoring-admission         — kube-prometheus-stack (both charts)
+          #   controlplane-nginx-admission — ingress-nginx (controlplane)
+          kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \
+            monitoring-admission controlplane-nginx-admission --ignore-not-found
+
+      # ── CRDs: helm only INSTALLS crds/, never upgrades — apply explicitly ──
+      - name: Apply CRDs (kubectl apply --force)
+        run: |
+          set -euo pipefail
+          for d in ${{ matrix.crd_dirs }}; do
+            kubectl apply --server-side --force-conflicts -f "crds/$d/"
+          done
+
+      # ── Fetch subchart dependencies (mirrors the k3d test's repo set) ──
+      - name: Fetch chart dependencies
+        run: |
+          set -euo pipefail
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add fluent              https://fluent.github.io/helm-charts
+          helm repo add metrics-server      https://kubernetes-sigs.github.io/metrics-server/
+          helm repo add opencost            https://opencost.github.io/opencost-helm-chart
+          helm repo add nvidia              https://nvidia.github.io/dcgm-exporter/helm-charts
+          helm repo add ingress-nginx       https://kubernetes.github.io/ingress-nginx
+          helm repo add unionai             https://unionai.github.io/helm-charts
+          helm repo update
+          for chart in ${{ matrix.charts }}; do
+            helm dependency update "charts/$chart"
+          done
+
+      # ── Install each candidate chart into its own namespace with the contract.
+      #    Union-cp service images come from the bumped appVersion; the flyte-core
+      #    services default to tag "" and only get one from the (absent) gitops
+      #    layer — so --set them to appVersion (they're published as
+      #    union-cp/<svc>:<appVersion>). --take-ownership adopts pre-existing CRDs.
+      #    TODO(FAB-425): TEMPORARY — bake the flyte-core image.tag into the
+      #    generated values.yaml (contract) so this --set can be removed. ──
+      - name: Helm upgrade --install
+        run: |
+          set -euo pipefail
+          for chart in ${{ matrix.charts }}; do
+            # executor.enabled=false and monitoring.enabled=false are now baked into
+            # the generated contract by the cloud union_extension module (executor is
+            # retired module-wide; monitoring runtime is off via monitoring_enabled in
+            # the helm-charts-ci env) — no --set needed here.
+            extra=()
+            if [ "$chart" = "controlplane" ]; then
+              appver="$(awk '/^appVersion:/{print $2}' "charts/$chart/Chart.yaml" | tr -d '"')"
+              for svc in flyteadmin cacheservice datacatalog flyteconsole flytescheduler; do
+                extra+=(--set-string "flyte.$svc.image.tag=$appver")
+              done
+              echo ">> controlplane: pinning flyte-core image tags to $appver"
+              # ingress-nginx admission webhook: stays a --set (not a contract concern).
+              # The contract enables it with certManager + sync-wave ordering; a flat
+              # helm install ignores sync-waves, so the cert (controlplane-nginx-admission)
+              # is never issued, the controller hangs ContainerCreating on the missing
+              # webhook-cert, and Ingress admission fails — aborting before the
+              # ScyllaCluster. This is an inherent flat-helm-install limitation that
+              # ArgoCD (which honors sync-waves) doesn't have, so it's a CI-only override.
+              extra+=(--set "ingress-nginx.controller.admissionWebhooks.enabled=false")
+            fi
+            # (The intracluster DP->CP endpoint is fixed in the contract:
+            # CONTROLPLANE_GRPC_ENDPOINT dials the in-cluster ingress FQDN. See
+            # cloud #17277.)
+            # Retry: the bundled kube-prometheus-stack operator's admission webhook
+            # isn't ready when the chart first creates PrometheusRule CRs.
+            n=0
+            until helm upgrade --install "$chart" "charts/$chart" \
+                    -n "$chart" -f "$chart-contract.yaml" "${extra[@]}" \
+                    --take-ownership --wait --timeout 12m; do
+              n=$((n+1)); [ "$n" -ge 3 ] && { echo "::error::helm install $chart failed after $n attempts"; exit 1; }
+              echo ">> helm install $chart attempt $n failed — retrying in 30s (likely operator webhook not ready)"
+              sleep 30
+            done
+          done
+
+      # ── Health gate: binaries Ready, no config-parse crashloop (core signal).
+      #    Mirrors the k3d test's wait/rollout validation. ──
+      - name: Health gate
+        run: |
+          set -euo pipefail
+          for ns in ${{ matrix.charts }}; do
+            echo "== health: namespace $ns =="
+            kubectl -n "$ns" rollout status deploy --timeout=10m
+            kubectl -n "$ns" wait --for=condition=Available --all deploy --timeout=5m
+            # Fail on any not-Ready / crashlooping pod — the backward-incompatible-config signal.
+            # READY is "ready/total"; split on "/" (awk has no regex backreferences).
+            # Ignore Terminating pods (old replicas from an in-place rollout that helm
+            # --wait doesn't block on). POLL for convergence: some components are
+            # reconciled ASYNCHRONOUSLY after helm returns — e.g. the knative-operator
+            # creates 3scale-kourier-gateway only once KnativeServing reconciles, so a
+            # single snapshot races it (Pending/0-1). A real config crashloop stays bad
+            # for the whole window and still fails; transient/async states converge.
+            deadline=$((SECONDS + 300)); bad=""
+            while :; do
+              bad=$(kubectl -n "$ns" get pods --no-headers 2>/dev/null \
+                | awk '{split($2,a,"/"); if ($3 != "Terminating" && ($3 ~ /CrashLoopBackOff|Error|ImagePullBackOff/ || ($3 != "Completed" && a[1] != a[2]))) print}')
+              [ -z "$bad" ] && break
+              [ "$SECONDS" -ge "$deadline" ] && { echo "::error::unhealthy pods in $ns after install (still bad after grace period):"; echo "$bad"; exit 1; }
+              echo ">> $ns not yet converged; re-checking in 15s"; sleep 15
+            done
+          done
+
+      - name: func v2 tests
+        run: |
+          echo "TODO: run the func-v2 integration suite"
+
+      # Mirrors the k3d test's "Collect debug dump". NOTE: public repo -> public
+      # logs; pod logs/configmaps may echo config values from the contract
+      # (acceptable for debugging; secrets stay in external-secrets, not printed).
+      - name: Debug dump (on failure)
+        if: failure()
+        run: |
+          for ns in ${{ matrix.charts }}; do
+            echo "===== namespace $ns ====="
+            kubectl -n "$ns" get pods -o wide || true
+            kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true
+            for p in $(kubectl -n "$ns" get pods --no-headers 2>/dev/null | awk '{split($2,a,"/"); if ($3 ~ /CrashLoop|Error|Init|ImagePull/ || a[1] != a[2]) print $1}'); do
+              echo "--- describe $ns/$p ---"; kubectl -n "$ns" describe pod "$p" | tail -25 || true
+              echo "--- logs $ns/$p ---"; kubectl -n "$ns" logs "$p" --all-containers --tail=60 2>&1 | tail -60 || true
+            done
+          done
+
+      - name: Record compatibility ledger
+        if: always()
+        run: |
+          echo "TODO: append {chart_version, app_version, contract_sha, topology, cloud, result} to the ledger"
+
+      # ── Post-clean (always): uninstall + delete the namespace to release cloud
+      #    resources promptly (LBs, PVCs). The next run's Pre-clean is the safety
+      #    net if this leaves anything Terminating. CRDs are cluster-scoped: kept. ──
+      # No post-clean: leave the release in place so a failed run can be inspected.
+      # The NEXT run's Pre-clean deletes + recreates the namespaces (serialized one
+      # run per cluster, so this is safe). Cost: cloud resources (LBs, PVCs, Scylla)
+      # persist between runs until the next Pre-clean.
+      - name: Post-run (resources kept for debugging)
+        if: always()
+        run: |
+          echo "Resources left in place for inspection; the next run's Pre-clean resets them."
+          for chart in ${{ matrix.charts }}; do
+            echo "  kubectl --context ${{ matrix.kctx }} -n $chart get pods"
+          done
