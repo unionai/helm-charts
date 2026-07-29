@@ -2536,193 +2536,6 @@ data:
     }
 
 ---
-# Source: dataplane/templates/nodeexecutor/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-data:
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            linkType: ide
-            templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
-        - wandb-execution-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .podName }}'
-        - wandb-custom-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .taskConfig.id }}'
-        - comet-ml-execution-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
-              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
-        - comet-ml-custom-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
-        - neptune-scale-run:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .podName }}
-        - neptune-scale-custom-id:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .taskConfig.id }}
-        kubernetes-enabled: false
-  enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-  config.yaml: |
-    executor:
-      cluster: ''
-      evaluatorCount: 64
-      maxActions: 2000
-      organization: ''
-      unionAuth:
-        injectSecret: true
-        secretName: EAGER_API_KEY
-      workerName: worker1
-      task_resources:
-        defaults:
-          cpu: 100m
-          memory: 500Mi
-        limits:
-          cpu: 4096
-          gpu: 256
-          memory: 2Ti
-    namespace_mapping:
-      template: union
-    union:
-      connection:
-        host: 'dns:///test-controlplane-host:443'
-        insecureSkipVerify: false
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
-        clientSecretLocation: /etc/union/secret/client_secret
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-    admin:
-      clientId: 'dataplane-operator'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///test-controlplane-host:443'
-      insecure: false
-      insecureSkipVerify: false
-    authorizer:
-      authorizerClient:
-        credentials: ServiceCredentials
-        grpcConfig:
-          host: 'dns:///test-controlplane-host:443'
-          insecure: false
-          insecureSkipVerify: false
-      type: Authorizer
-    catalog-cache:
-      cache-endpoint: 'dns:///test-controlplane-host:443'
-      endpoint: 'dns:///test-controlplane-host:443'
-      insecure: false
-      insecure-skip-verify: false
-      type: cacheservicev2
-      use-admin-auth: true
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-    sharedService:
-      metrics:
-        scope: 'executor:'
-      security:
-        allowCors: true
-        allowLocalhostAccess: true
-        allowedHeaders:
-        - Content-Type
-        allowedOrigins:
-        - '*'
-        secure: false
-        useAuth: false
-    propeller:
-      limit-namespace: union
-      node-config:
-        disable-input-file-writes: true
-    plugins:
-      fasttask:
-        additional-worker-args:
-        - --last-ack-grace-period-seconds
-        - "120"
-        callback-uri: http://union-operator-executor.union.svc.cluster.local:15605
-        grace-period-status-not-found: 2m
-      ioutils:
-        remoteFileOutputPaths:
-          deckFilename: report.html
-      k8s:
-        disable-inject-owner-references: true
-        default-cpus: 100m
-        default-env-vars: []
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
-          name: flyte-copilot-
-          start-timeout: 30s
-    storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-
----
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -2796,8 +2609,6 @@ data:
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
-        executor:
-          endpoint: 'http://union-operator-executor:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
@@ -5318,59 +5129,6 @@ rules:
   - delete
   - update
 ---
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5677,23 +5435,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-leaseworker
-subjects:
-- kind: ServiceAccount
-  name: union-system
-  namespace: union
-
----
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-executor
 subjects:
 - kind: ServiceAccount
   name: union-system
@@ -6022,30 +5763,6 @@ spec:
       name: debug
   selector:
     app: leaseworker
-
-
----
-# Source: dataplane/templates/nodeexecutor/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-executor
-  labels:
-    platform.union.ai/prometheus-group: "union-services"
-    app: executor
-spec:
-  type: ClusterIP
-  ports:
-    - port: 15605
-      targetPort: 15605
-      protocol: TCP
-      name: fasttask
-    - port: 10254
-      targetPort: debug
-      protocol: TCP
-      name: debug
-  selector:
-    app: executor
 
 
 ---
@@ -6938,109 +6655,6 @@ spec:
       
 
 ---
-# Source: dataplane/templates/nodeexecutor/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: executor
-  template:
-    metadata:
-      annotations:
-        configChecksum: "37eb2c7b8343e3da8e08c05dacbfa0d4b8eacd9fe37cf280a5b5b0dc9a0c960"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        app: executor
-        app.kubernetes.io/instance: 'release-name'
-        app.kubernetes.io/name: executor
-    spec:
-      securityContext:
-        fsGroup: 1337
-      serviceAccountName: union-system
-      volumes:
-        - name: config-volume
-          configMap:
-            name: executor
-        - name: secret-volume
-          secret:
-            secretName: union-secret-auth
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      containers:
-        - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
-          imagePullPolicy: IfNotPresent
-          command:
-            - executorv2
-            - serve
-            - --config
-            - /etc/config/*.yaml
-          ports:
-            - name: http
-              containerPort: 8089
-              protocol: TCP
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.cpu
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: operator-cluster-name
-                  key: cluster_name
-            - name: DEPLOYMENT_NAME
-              value: operator
-            - name: PROXY_SERVICE_URL
-              value: http://union-operator-proxy:8080
-            - name: PROMETHEUS_SERVICE_URL
-              value: http://union-operator-prometheus:80
-            - name: KNATIVE_PROXY_SERVICE_URL
-              value: http://kourier-internal
-          resources:
-            limits:
-              cpu:    "4"
-              memory: "8Gi"
-            requests:
-              cpu:    "1"
-              memory: "1Gi"
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/config
-            - name: secret-volume
-              mountPath: /etc/union/secret
-            - name: auth
-              mountPath: /etc/secrets/
-      
-
----
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -7061,7 +6675,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "bb7bffa2b1655da6422387b1685f5cdeb1c3bf2ed8b6e34cc3dcfcaf7adabf2"
+        configChecksum: "88710e355fe0bd376af7b51694689c60077f9ff567af983070739f62438f4dd"
         
       labels:
         
@@ -7199,7 +6813,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "bb7bffa2b1655da6422387b1685f5cdeb1c3bf2ed8b6e34cc3dcfcaf7adabf2"
+        configChecksum: "88710e355fe0bd376af7b51694689c60077f9ff567af983070739f62438f4dd"
         
       labels:
         
