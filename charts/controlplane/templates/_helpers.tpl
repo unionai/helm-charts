@@ -418,14 +418,15 @@ IfNotPresent
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
 
-{{- /* actionsLeasor.enabled: opt this deployment's own UNION_ORG into v2-actions
-       CreateRun routing and hard-reject sub-2.0.4 SDKs. Chart default is off so
-       chart upgrades don't break existing legacy-SDK users; single-tenant
-       selfhosted envs flip the toggle in values-overrides.yaml. The run service
-       reads useActionsServiceForOrgs + rejectLegacySDKVersions out of the
-       executions configmap (services.executions.configMap.executions.task
-       in values.yaml), so we patch that path before rendering. */}}
-{{- if and (eq .key "executions") (hasKey .Values "actionsLeasor") .Values.actionsLeasor.enabled }}
+{{- /* v2-actions CreateRun routing is unconditional: this deployment's own
+       UNION_ORG goes through the v2 actions service and sub-2.0.4 SDK
+       CreateRun is hard-rejected. The legacy queue service is gone from this
+       chart, so there is no fallback path and no toggle (.Values.actionsLeasor
+       is a deprecated no-op). The run service reads useActionsServiceForOrgs +
+       rejectLegacySDKVersions out of the executions configmap
+       (services.executions.configMap.executions.task in values.yaml), so we
+       patch that path before rendering. */}}
+{{- if eq .key "executions" }}
   {{- $executions := index $merged "executions" | default dict }}
   {{- $task := index $executions "task" | default dict }}
   {{- $_ := set $task "useActionsServiceForOrgs" (list .Values.global.UNION_ORG) }}
@@ -763,31 +764,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ toYaml .Values.strategy }}
 {{- end }}
 {{- end }}
-
-{{/*
-Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
-NOTE: This is ONLY for the queue service. All other services use Postgres (globals.DB_HOST).
-ScyllaDB is required for the queue service, Postgres is required for all other services.
-*/}}
-{{- define "controlplane.dbHost" -}}
-{{- if .Values.scylla.enabled -}}
-{{ printf "%s.%s.svc.cluster.local" (default "scylla" .Values.scylla.fullnameOverride) .Release.Namespace }}
-{{- else -}}
-{{ .Values.global.DB_HOST }}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Queue service database port helper - returns ScyllaDB CQL port if scylla.enabled, otherwise uses 5432 (postgres default)
-NOTE: This is ONLY for the queue service. All other services use Postgres on port 5432.
-*/}}
-{{- define "controlplane.dbPort" -}}
-{{- if .Values.scylla.enabled -}}
-9042
-{{- else -}}
-5432
-{{- end -}}
-{{- end -}}
 
 {{/*
 Start of union.authz helpers.

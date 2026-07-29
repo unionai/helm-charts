@@ -1,5 +1,39 @@
 # controlplane — Release Notes
 
+## 2026.7.3 WIP
+
+### Removed: legacy queue service
+
+The legacy queue service and corresponding executor has been removed from the chart,
+completing the deprecation announced 2026-06-30. The actions + leasor stack is
+the only execution path.
+
+- `services.queue` deleted — the queue Deployment/Service/ConfigMap (and its
+  ScyllaDB `migrate` initContainer) are no longer rendered.
+- Legacy routes removed — ingress + GRPCRoute rules for
+  `cloudidl.workflow.{QueueService,StateService,LeaseService}` and
+  `flyteidl2.workflow.{QueueService,StateService}`. The queue **CRUD** API
+  (`cloudidl.queue.*`, served by the cluster binary) and leasor's
+  `InternalQueueManagerService` are a different feature and are unchanged.
+- `actionsLeasor` is now a deprecated no-op — v2-actions CreateRun routing is
+  injected unconditionally (`useActionsServiceForOrgs=[global.UNION_ORG]`,
+  `rejectLegacySDKVersions=true`). The key is ignored and will be removed in a
+  future release; drop it from overlays.
+- ScyllaDB is still required — it backs the leasor + actions services
+  (keyspaces `leasor` / `actions`); docs previously describing it as
+  queue-service-only are updated. An existing `queue` keyspace from earlier
+  releases is inert; drop it manually if you want the space back.
+- Removed the dead `controlplane.dbHost` / `controlplane.dbPort` helpers
+  (no consumers).
+
+### Migration / action required
+
+- **Breaking: SDK < 2.0.4 CreateRun is hard-rejected.** There is no legacy
+  fallback in this chart. Deployments that still need the legacy queue path must
+  stay on chart `2026.7.2` until clients are on SDK >= 2.0.4.
+- Overlays setting `actionsLeasor.enabled` or `services.queue.*` should drop
+  those keys; both are ignored (harmless, but misleading).
+
 ## 2026.7.2
 
 Bumps `version` + `appVersion` to `2026.7.2`. `appVersion` moves from `2026.7.0` to
