@@ -12,6 +12,13 @@ own `2026.7.xxx`.
   along with the `executor.*` helpers and the operator's executor heartbeat entry.
   Stale `config.operator.dependenciesHeartbeat.executor` overlay entries are
   dropped at render time so the operator doesn't heartbeat a nonexistent service.
+- The `executor.*` values block is deleted; task log links move to
+  `leaseworker.task_logs` (same defaults, same rendered `task_logs.yaml`).
+  The deprecated `executor.task_logs` key still wins when an overlay sets it, so
+  existing overlays keep their custom log links — migrate them to
+  `leaseworker.task_logs`. All other `executor.*` overlay keys (resources,
+  scheduling, `idl2Executor`, `raw_config`, …) are now ignored. The aws/gcp
+  overlay `executor` blocks and the example files are updated accordingly.
 
 ## 2026.7.2
 
