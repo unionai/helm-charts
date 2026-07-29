@@ -34,6 +34,7 @@ controlplane:
     - cluster:svc:update_status:propeller_restarts
     - cluster:svc:update_status:success_ms
     - cluster:svc:update_status:updates_total
+    - connect:server_request_duration_seconds_bucket
     - connect:server_requests_handled_total
     - container_cpu_usage_seconds_total
     - container_memory_working_set_bytes
@@ -50,10 +51,6 @@ controlplane:
     - executions:database:postgres:errors:gorm_error
     - executions:database:postgres:errors:not_found
     - executions:database:postgres:errors:postgres_error
-    - executions:executions:handle_ack_op_bucket
-    - executions:executions:handle_ack_op_count
-    - executions:executions:handle_create_op_bucket
-    - executions:executions:handle_create_op_count
     - executions:executions:list_clusters:hits
     - executions:executions:list_clusters:miss
     - executions:executions:list_nodepools:hits
@@ -65,11 +62,6 @@ controlplane:
     - executions:run:runs_sent
     - executions:run_notifier:notifications_sent
     - executions:run_notifier:subscribers
-    - executions:workqueue:announce_cluster_assignment_bucket
-    - executions:workqueue:claim_operation_failures
-    - executions:workqueue:claim_operations
-    - executions:workqueue:send_operation_count
-    - executions:workqueue:send_operation_failures
     - flyte:admin:create_execution:duration_ms
     - flyte:admin:create_execution_event:duration_ms
     - flyte:admin:execution_manager:active_executions
@@ -125,6 +117,7 @@ controlplane:
     - queue:state:put_duration_bucket
     - queue:state:terminal_states
     - queue:state_client:free_threads
+    - self_reported
     - union:cp:slo:error_budget_remaining
     - union:cp:slo:ingress_latency_p99
     - union:cp:slo:ingress_success_rate
@@ -164,65 +157,29 @@ dataplane:
   dashboard_metrics:
     - container_cpu_usage_seconds_total
     - container_memory_working_set_bytes
-    - executor:actions_terminated
-    - executor:active_actions_count
-    - executor:available_capacity
-    - executor:discovery_miss_count
-    - executor:discovery_put_success_count
-    - executor:evaluator:evaluate_duration
-    - executor:evaluator:evaluate_errors
-    - executor:handler_panic
-    - executor:invalid_leases
-    - executor:system_failures
-    - executor:system_failures_exhausted
-    - flyte:propeller:all:discovery_get_failure_count
-    - flyte:propeller:all:discovery_hit_count
-    - flyte:propeller:all:discovery_miss_count
-    - flyte:propeller:all:discovery_skip_count
     - flyte:propeller:all:execstats:active_node_executions
     - flyte:propeller:all:execstats:active_task_executions
     - flyte:propeller:all:execstats:active_workflow_executions
-    - flyte:propeller:all:free_workers_count
-    - flyte:propeller:all:main_adds
     - flyte:propeller:all:main_depth
-    - flyte:propeller:all:main_retries
-    - flyte:propeller:all:metastore:cache_hit
-    - flyte:propeller:all:metastore:cache_miss
-    - flyte:propeller:all:node:event_recording:failure_duration_ms_count
-    - flyte:propeller:all:node:event_recording:success_duration_ms_count
-    - flyte:propeller:all:node:node_exec_latency_unlabeled_us
-    - flyte:propeller:all:node:queueing_latency_unlabeled_ms
     - flyte:propeller:all:round:error_count
-    - flyte:propeller:all:round:panic_unlabeled
     - flyte:propeller:all:round:round_time_unlabeled_ms
     - flyte:propeller:all:round:success_count
-    - flyte:propeller:all:sub_adds
-    - flyte:propeller:all:sub_depth
-    - flyte:propeller:all:task:event_recording:failure_duration_ms_count
-    - flyte:propeller:all:task:event_recording:success_duration_ms_count
-    - flyte:propeller:all:wf_too_large
-    - flyte:propeller:all:wf_update_conflict
-    - flyte:propeller:all:wf_update_failed
-    - flyte:propeller:all:wf_update_latency_ms
-    - flyte:propeller:all:wf_updated
     - grpc_client_handled_total
     - grpc_client_handling_seconds_bucket
-    - k8s_client_rate_limiter_latency_unlabeled_bucket
-    - k8s_client_request_latency_unlabeled_bucket
-    - k8s_client_request_total_unlabeled
     - kube_deployment_spec_replicas
     - kube_deployment_status_replicas_available
     - kube_pod_container_status_restarts_total
+    - leaseworker:active_run_leases
+    - self_reported
     - union:dp:slo:error_budget_remaining
     - union:dp:slo:execution_success_rate
-    - union:dp:slo:executor_success_rate
-    - union:dp:slo:propeller_round_latency_p99
     - union:dp:slo:propeller_success_rate
     - union_operator:billable_usage_collector:run_errors
     - union_operator:billable_usage_collector:runs
     - union_operator:config_syncer:propeller_configmap_updated
     - union_operator:config_syncer:run_errors
     - union_operator:config_syncer:runs
+    - union_operator:connection_config_self_reported
     - union_operator:heartbeat:compute_capabilities_ms
     - union_operator:heartbeat:compute_usages_ms
     - union_operator:heartbeat:list_workflows_ms
@@ -235,7 +192,7 @@ dataplane:
     - union_operator:work_queue:operations_processed
     - union_operator:work_queue:paused
   recording_rules:
-    - union:dp:executor:active_actions
+    - union:dp:leaseworker:active_actions
     - union:dp:operator:work_queue_failed_rate
     - union:dp:propeller:active_workflows
     - union:dp:propeller:queue_depth
@@ -244,12 +201,10 @@ dataplane:
     - union:dp:slo:availability:ratio
     - union:dp:slo:error_budget_remaining
     - union:dp:slo:execution_success_rate
-    - union:dp:slo:executor_success_rate
     - union:dp:slo:propeller_round_latency_p99
     - union:dp:slo:propeller_success_rate
   alerts:
     - UnionDPErrorBudgetExhausted
-    - UnionDPHandlerPanic
     - UnionDPHighErrorBudgetBurn
     - UnionDPHighRestartRate
     - UnionDPPropellerLatencySLOBreach

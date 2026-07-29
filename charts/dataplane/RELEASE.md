@@ -19,6 +19,9 @@ own `2026.7.xxx`.
   `leaseworker.task_logs`. All other `executor.*` overlay keys (resources,
   scheduling, `idl2Executor`, `raw_config`, …) are now ignored. The aws/gcp
   overlay `executor` blocks and the example files are updated accordingly.
+- Monitoring: `union:dp:executor:active_actions` is replaced by
+  `union:dp:leaseworker:active_actions`, backed by `leaseworker:active_run_leases`.
+  The metrics glossary in `unionai-docs` needs a matching update.
 
 ## 2026.7.2
 
