@@ -292,6 +292,15 @@ jobs:
               echo ">> helm install $chart attempt $n failed — retrying in 30s (likely operator webhook not ready)"
               sleep 30
             done
+            # We update in place, and helm does NOT restart pods when only a configmap
+            # changes (the charts carry no checksum/config pod annotation). So a candidate
+            # config-contract change — CP endpoints, auth, the rootTenantURLPattern the
+            # identity service bakes into eager keys, the operator's synced secrets — would
+            # silently NOT take effect, and the run would test stale config. Force a rollout
+            # so the candidate config is actually exercised, then wait for it to converge.
+            echo ">> $chart: rollout restart to apply in-place config-contract changes"
+            kubectl -n "$chart" rollout restart deployment
+            kubectl -n "$chart" rollout status deployment --timeout=10m
           done
 
       # ── Health gate: binaries Ready, no config-parse crashloop (core signal).
