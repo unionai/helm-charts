@@ -150,6 +150,14 @@ jobs:
             aws s3 cp "s3://$CONTRACT_BUCKET/$key" "$chart-contract.yaml"
             echo "$chart contract sha256: $(sha256sum "$chart-contract.yaml" | cut -d' ' -f1)"
           done
+          # Also pull the DP's cluster-pool.yaml for the func-v2 step's
+          # configure_queues run. Pulled HERE, under the contract-read AWS role —
+          # the gcp/azure legs can't read this AWS bucket under their own deployer
+          # identity later. Placed where configure_queues globs it:
+          # <ws>/<cluster>/dataplane/cluster-pool.yaml.
+          mkdir -p funcv2-ws/dp/dataplane
+          aws s3 cp "s3://$CONTRACT_BUCKET/helm-charts-ci/${{ matrix.topology }}/${{ matrix.cloud }}/cluster-pool.yaml" \
+            funcv2-ws/dp/dataplane/cluster-pool.yaml
           # Do NOT cat the contract — it carries ARNs/domains/secret names.
 
       # ── Cluster auth (keyless GitHub OIDC -> per-cloud deployer identity) ──
@@ -312,9 +320,71 @@ jobs:
             done
           done
 
+      # ── func v2: keyless Flyte v2 auth (mirrors functional_tests_v2.sh's two
+      #    modes) -> configure queues -> run the mirrored v2 suite. The per-cloud
+      #    deployer identity (active from the kubeconfig step) reads the secret
+      #    from its cloud's secret manager; no long-lived GitHub secret. ──
       - name: func v2 tests
+        env:
+          FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
         run: |
-          echo "TODO: run the func-v2 integration suite"
+          set -euo pipefail
+          leg="${{ matrix.topology }}/${{ matrix.cloud }}"
+          cfg=$(jq -c --arg k "$leg" '.[$k]' <<<"$FUNCTEST")
+          if [ "$cfg" = "null" ] || [ -z "$cfg" ]; then
+            echo "::error::no HELM_CHARTS_CI_FUNCTEST entry for $leg"; exit 1
+          fi
+          get() { jq -r --arg f "$1" '.[$f] // ""' <<<"$cfg"; }
+          auth_mode=$(get auth_mode); secret_cloud=$(get secret_cloud); secret_ref=$(get secret_ref)
+          project=$(get project); domain=$(get domain)
+
+          # Fetch the client credential via the active per-cloud deployer identity.
+          case "$secret_cloud" in
+            aws)   secret=$(aws secretsmanager get-secret-value --region us-east-2 \
+                     --secret-id "$secret_ref" --query SecretString --output text) ;;
+            gcp)   secret=$(gcloud secrets versions access latest \
+                     --project "$(get gcp_project)" --secret "$secret_ref") ;;
+            azure) secret=$(az keyvault secret show \
+                     --vault-name "$(get azure_vault_name)" --name "$secret_ref" --query value -o tsv) ;;
+            *) echo "::error::unknown secret_cloud $secret_cloud"; exit 1 ;;
+          esac
+
+          # Two auth modes, exactly as tests/flytev2 dispatches on FLYTE_API_KEY.
+          qflags=(); pyflags=(--project "$project" --domain "$domain")
+          if [ "$auth_mode" = "api_key" ]; then
+            export FLYTE_API_KEY="$secret"          # selfhosted: SDK decodes endpoint+client
+          else
+            printf '%s' "$secret" > "$PWD/funcv2-client-secret"
+            # Mirror cloud/deploy/devops/cli/config.py FLYTE_CONFIG (v2 SDK
+            # init_from_config). echo lines, not a heredoc, to avoid indentation
+            # corrupting the YAML inside this run block.
+            {
+              echo "admin:"
+              echo "  endpoint: $(get endpoint)"
+              echo "  insecure: false"
+              echo "  authType: ClientSecret"
+              echo "  clientId: $(get client_id)"
+              echo "  clientSecretLocation: $PWD/funcv2-client-secret"
+              echo "image:"
+              echo "  builder: local"
+              echo "logger:"
+              echo "  show-source: true"
+              echo "  level: 4"
+              echo "task: {}"
+            } > config.yaml
+            qflags=(--config config.yaml)
+            pyflags+=(--config_file "$PWD/config.yaml")
+          fi
+
+          echo "--- Installing flyte v2 CLI"
+          python3 -m pip install -q -U uv
+          uv pip install --system --no-cache --prerelease=allow --upgrade flyte flyteplugins-union "flyteidl<2.0.0"
+
+          echo "--- configure_queues (re-run each time)"
+          python3 tests/functional/configure_queues.py "$PWD/funcv2-ws" "${qflags[@]}"
+
+          echo "--- Running the mirrored v2 functional suite"
+          ( cd tests/functional/flytev2 && pytest . -v "${pyflags[@]}" )
 
       # Mirrors the k3d test's "Collect debug dump". NOTE: public repo -> public
       # logs; pod logs/configmaps may echo config values from the contract
