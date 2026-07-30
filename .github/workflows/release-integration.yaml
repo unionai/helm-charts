@@ -5,7 +5,8 @@
 # OIDC -> per-cloud identities, a config-contract S3 bucket, and the
 # "helm-charts-ci" GitHub Environment + Actions variables (vars.*), all managed
 # there. No required reviewers by design (fork PRs get no OIDC token; see
-# ci_github.tf for the security posture). func-v2 + ledger steps are still stubs.
+# ci_github.tf for the security posture). The func-v2 suite is gated behind
+# vars.HELM_CHARTS_CI_RUN_FUNCTIONAL (off by default) — see that step.
 name: Release Integration Test
 
 on:
@@ -252,8 +253,8 @@ jobs:
       #    services default to tag "" and only get one from the (absent) gitops
       #    layer — so --set them to appVersion (they're published as
       #    union-cp/<svc>:<appVersion>). --take-ownership adopts pre-existing CRDs.
-      #    TODO(FAB-425): TEMPORARY — bake the flyte-core image.tag into the
-      #    generated values.yaml (contract) so this --set can be removed. ──
+      #    The tag is the PR's release version under test, so it stays a per-run
+      #    --set (it can't be static in the terraform-generated contract). ──
       - name: Helm upgrade --install
         run: |
           set -euo pipefail
@@ -416,14 +417,6 @@ jobs:
             done
           done
 
-      - name: Record compatibility ledger
-        if: always()
-        run: |
-          echo "TODO: append {chart_version, app_version, contract_sha, topology, cloud, result} to the ledger"
-
-      # ── Post-clean (always): uninstall + delete the namespace to release cloud
-      #    resources promptly (LBs, PVCs). The next run's Pre-clean is the safety
-      #    net if this leaves anything Terminating. CRDs are cluster-scoped: kept. ──
       # No post-clean: leave the release in place so a failed run can be inspected.
       # The NEXT run's Pre-clean deletes + recreates the namespaces (serialized one
       # run per cluster, so this is safe). Cost: cloud resources (LBs, PVCs, Scylla)
