@@ -388,12 +388,15 @@ jobs:
             pyflags+=(--config_file "$PWD/config.yaml")
           fi
 
-          echo "--- Installing flyte v2 CLI"
-          python3 -m pip install -q -U uv
-          uv pip install --system --no-cache --prerelease=allow --upgrade flyte flyteplugins-union "flyteidl<2.0.0"
+          echo "--- Installing flyte v2 CLI (uv venv; runner python is PEP-668 externally-managed)"
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          uv venv .venv
+          . .venv/bin/activate
+          uv pip install --no-cache --prerelease=allow --upgrade flyte flyteplugins-union "flyteidl<2.0.0"
 
           echo "--- configure_queues (re-run each time)"
-          python3 tests/functional/configure_queues.py "$PWD/funcv2-ws" "${qflags[@]}"
+          python tests/functional/configure_queues.py "$PWD/funcv2-ws" "${qflags[@]}"
 
           echo "--- Running the mirrored v2 functional suite"
           ( cd tests/functional/flytev2 && pytest . -v "${pyflags[@]}" )
