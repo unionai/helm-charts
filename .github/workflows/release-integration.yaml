@@ -320,22 +320,27 @@ jobs:
             done
           done
 
-      # ── Validate Flyte v2 API auth (keyless, both modes), then optionally run
-      #    the mirrored functional suite. Auth validation (`flyte whoami`) always
-      #    runs — it's the first-PR gate: a minimal authenticated round-trip
-      #    (token + endpoint + TLS), no workflow execution. The heavier functional
-      #    suite (configure_queues + pytest) is gated behind
-      #    vars.HELM_CHARTS_CI_RUN_FUNCTIONAL so the workflow can ship auth
-      #    validation first and turn on functional tests later. The per-cloud
-      #    deployer identity (active from the kubeconfig step) reads the credential
-      #    from its cloud's secret manager; no long-lived GitHub secret. ──
-      - name: Validate Flyte API auth (func-v2 suite gated)
+      # ── func v2 tests (gated). Off by default so the first PR ships the workflow
+      #    without depending on live Flyte workflow execution; flip
+      #    vars.HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable. When enabled it does
+      #    the keyless two-mode auth (mirroring functional_tests_v2.sh), re-runs
+      #    configure_queues, and runs the mirrored v2 suite. Still skipped on
+      #    selfmanaged (FAB-429: managed-CP cluster-cache staleness). The per-cloud
+      #    deployer identity (from the kubeconfig step) reads the credential from
+      #    its cloud's secret manager; no long-lived GitHub secret. ──
+      - name: func v2 tests (gated)
         env:
           FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
           RUN_FUNCTIONAL: ${{ vars.HELM_CHARTS_CI_RUN_FUNCTIONAL }}
         run: |
           set -euo pipefail
           leg="${{ matrix.topology }}/${{ matrix.cloud }}"
+          if [ "${RUN_FUNCTIONAL:-}" != "true" ]; then
+            echo "::notice::$leg: func-v2 gated off (set var HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable)"; exit 0
+          fi
+          if [ "${{ matrix.topology }}" = "selfmanaged-dp" ]; then
+            echo "::notice::$leg: func-v2 skipped for selfmanaged — managed CP cluster-cache staleness, see FAB-429"; exit 0
+          fi
           cfg=$(jq -c --arg k "$leg" '.[$k]' <<<"$FUNCTEST")
           if [ "$cfg" = "null" ] || [ -z "$cfg" ]; then
             echo "::error::no HELM_CHARTS_CI_FUNCTEST entry for $leg"; exit 1
@@ -388,26 +393,6 @@ jobs:
           uv venv .venv
           . .venv/bin/activate
           uv pip install --no-cache --prerelease=allow --upgrade flyte flyteplugins-union "flyteidl<2.0.0"
-
-          # ── Auth validation (ALL legs): whoami is a minimal authenticated
-          #    round-trip (token + endpoint + TLS), no workflow execution. This is
-          #    the gate the first PR relies on. Selfmanaged auth works here (managed
-          #    CP, valid cert) — FAB-429 only blocks *running* work, not auth.
-          echo "--- Validating Flyte API auth (whoami)"
-          flyte "${qflags[@]}" whoami
-
-          # ── Functional suite: gated off by default (HELM_CHARTS_CI_RUN_FUNCTIONAL
-          #    != true) so auth can be validated without depending on workflow
-          #    execution. Also skipped on selfmanaged even when enabled, until
-          #    FAB-429 (managed-CP cluster-cache staleness vs ephemeral DPs). ──
-          if [ "${RUN_FUNCTIONAL:-}" != "true" ]; then
-            echo "::notice::$leg: Flyte API auth validated; functional suite gated off (set var HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable)"
-            exit 0
-          fi
-          if [ "${{ matrix.topology }}" = "selfmanaged-dp" ]; then
-            echo "::notice::$leg: auth validated; functional suite skipped for selfmanaged — managed CP cluster-cache staleness, see FAB-429"
-            exit 0
-          fi
 
           echo "--- configure_queues (re-run each time)"
           python tests/functional/configure_queues.py "$PWD/funcv2-ws" "${qflags[@]}"
