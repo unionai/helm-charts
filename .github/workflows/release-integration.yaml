@@ -330,15 +330,28 @@ jobs:
             done
           done
 
-      # ── func v2 tests (gated). Off by default so the first PR ships the workflow
-      #    without depending on live Flyte workflow execution; flip
-      #    vars.HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable. When enabled it does
-      #    the keyless two-mode auth (mirroring functional_tests_v2.sh), re-runs
-      #    configure_queues, and runs the mirrored v2 suite. Still skipped on
-      #    selfmanaged (FAB-429: managed-CP cluster-cache staleness). The per-cloud
-      #    deployer identity (from the kubeconfig step) reads the credential from
-      #    its cloud's secret manager; no long-lived GitHub secret. ──
-      - name: func v2 tests (gated)
+      # All CI secrets (union-test-app + both selfhosted cicd keys) live in AWS.
+      # Non-aws legs authed their kubeconfig on their own cloud, so federate to the
+      # AWS ci_deployer here to read the CI secret (the aws legs already hold
+      # ci_deployer creds from their kubeconfig step). AWS creds coexist with
+      # gcloud/az — kubectl keeps using the cloud kubeconfig.
+      - name: Auth (AWS ci_deployer, for the CI secret)
+        if: matrix.cloud != 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      # ── func v2 suite (gated). Off by default; flip
+      #    vars.HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable. Converged onto
+      #    ci_dataplane.py — the SAME setup-routing + run-smoke-suite the k3d leg runs,
+      #    against the standing cluster. CI ops authenticate as a CI IDENTITY, never
+      #    the DP operator: selfhosted uses the pre-built cicd FLYTE_API_KEY;
+      #    selfmanaged builds one from union-test-app. Per-topology omission: selfhosted
+      #    skips verify_app (no app serving); all func-v2 legs run verify_logs (real log
+      #    backend). The per-cloud deployer identity reads the CI secret from its cloud's
+      #    store; no long-lived GitHub secret. ──
+      - name: func v2 suite (gated)
         env:
           FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
           RUN_FUNCTIONAL: ${{ vars.HELM_CHARTS_CI_RUN_FUNCTIONAL }}
@@ -348,18 +361,16 @@ jobs:
           if [ "${RUN_FUNCTIONAL:-}" != "true" ]; then
             echo "::notice::$leg: func-v2 gated off (set var HELM_CHARTS_CI_RUN_FUNCTIONAL=true to enable)"; exit 0
           fi
-          if [ "${{ matrix.topology }}" = "selfmanaged-dp" ]; then
-            echo "::notice::$leg: func-v2 skipped for selfmanaged — managed CP cluster-cache staleness, see FAB-429"; exit 0
-          fi
           cfg=$(jq -c --arg k "$leg" '.[$k]' <<<"$FUNCTEST")
           if [ "$cfg" = "null" ] || [ -z "$cfg" ]; then
             echo "::error::no HELM_CHARTS_CI_FUNCTEST entry for $leg"; exit 1
           fi
           get() { jq -r --arg f "$1" '.[$f] // ""' <<<"$cfg"; }
-          auth_mode=$(get auth_mode); secret_cloud=$(get secret_cloud); secret_ref=$(get secret_ref)
-          project=$(get project); domain=$(get domain)
+          host=$(get endpoint); org=$(get org); cluster=$(get cluster_name)
+          secret_cloud=$(get secret_cloud); secret_ref=$(get secret_ref)
+          client_id=$(get client_id); skip_app=$(get skip_app)
 
-          # Fetch the client credential via the active per-cloud deployer identity.
+          # Fetch the CI-identity secret via the active per-cloud deployer identity.
           case "$secret_cloud" in
             aws)   secret=$(aws secretsmanager get-secret-value --region us-east-2 \
                      --secret-id "$secret_ref" --query SecretString --output text) ;;
@@ -369,46 +380,31 @@ jobs:
                      --vault-name "$(get azure_vault_name)" --name "$secret_ref" --query value -o tsv) ;;
             *) echo "::error::unknown secret_cloud $secret_cloud"; exit 1 ;;
           esac
+          echo "::add-mask::$secret"
 
-          # Two auth modes, exactly as tests/flytev2 dispatches on FLYTE_API_KEY.
-          qflags=(); pyflags=(--project "$project" --domain "$domain")
-          if [ "$auth_mode" = "api_key" ]; then
-            export FLYTE_API_KEY="$secret"          # selfhosted: SDK decodes endpoint+client
+          # FLYTE_API_KEY: selfmanaged legs carry client_id (union-test-app) -> build
+          # base64("<host>:<clientId>:<secret>:<org>"); selfhosted's secret is already
+          # the pre-built cicd FLYTE_API_KEY.
+          if [ -n "$client_id" ]; then
+            api_key=$(printf '%s:%s:%s:%s' "$host" "$client_id" "$secret" "$org" | base64 -w0)
           else
-            printf '%s' "$secret" > "$PWD/funcv2-client-secret"
-            # Mirror cloud/deploy/devops/cli/config.py FLYTE_CONFIG (v2 SDK
-            # init_from_config). echo lines, not a heredoc, to avoid indentation
-            # corrupting the YAML inside this run block.
-            {
-              echo "admin:"
-              echo "  endpoint: $(get endpoint)"
-              echo "  insecure: false"
-              echo "  authType: ClientSecret"
-              echo "  clientId: $(get client_id)"
-              echo "  clientSecretLocation: $PWD/funcv2-client-secret"
-              echo "image:"
-              echo "  builder: local"
-              echo "logger:"
-              echo "  show-source: true"
-              echo "  level: 4"
-              echo "task: {}"
-            } > config.yaml
-            qflags=(--config config.yaml)
-            pyflags+=(--config_file "$PWD/config.yaml")
+            api_key="$secret"
           fi
+          echo "::add-mask::$api_key"
+          export CONTROL_PLANE_URL="https://$host" ORG_NAME="$org" CLUSTER_NAME="$cluster"
+          export UNION_API_KEY="$api_key" FLYTE_API_KEY="$api_key"
 
-          echo "--- Installing flyte v2 CLI (uv venv; runner python is PEP-668 externally-managed)"
+          echo "--- Installing flyte 2.x SDK (uv venv; runner python is PEP-668 externally-managed)"
           curl -LsSf https://astral.sh/uv/install.sh | sh
           export PATH="$HOME/.local/bin:$PATH"
-          uv venv .venv
-          . .venv/bin/activate
-          uv pip install --no-cache --prerelease=allow --upgrade flyte flyteplugins-union "flyteidl<2.0.0" pytest pytest-timeout
+          uv venv .venv && . .venv/bin/activate
+          uv pip install --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx
 
-          echo "--- configure_queues (re-run each time)"
-          python tests/functional/configure_queues.py "$PWD/funcv2-ws" "${qflags[@]}"
-
-          echo "--- Running the mirrored v2 functional suite"
-          ( cd tests/functional/flytev2 && pytest . -v "${pyflags[@]}" )
+          echo "--- setup-routing ($cluster) + smoke suite (CI identity: ${client_id:-cicd})"
+          python .github/ci-scripts/ci_dataplane.py setup-routing
+          suite_args=""
+          [ "$skip_app" = "true" ] && suite_args="--skip-app"
+          python .github/ci-scripts/ci_dataplane.py run-smoke-suite $suite_args
 
       # Mirrors the k3d test's "Collect debug dump". NOTE: public repo -> public
       # logs; pod logs/configmaps may echo config values from the contract
