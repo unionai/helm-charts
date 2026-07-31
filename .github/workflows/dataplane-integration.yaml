@@ -529,16 +529,14 @@ jobs:
       - name: Run smoke suite
         if: steps.check.outputs.configured == 'true'
         id: smoke
-        # TEMPORARY soft-fail: the smoke suite is currently failing repo-wide
-        # due to a known CI/dependency issue (connectrpc >= 0.11 incompatibility
-        # with the flyte SDK), unrelated to chart changes. The deploy/setup
-        # steps above still hard-fail. Remove continue-on-error once the suite
-        # is green again.
-        continue-on-error: true
+        # Hard fail: the suite is green (6/6 with --skip-logs), so a failing
+        # scenario now fails the run — that's the release-integration signal.
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
-          python .github/ci-scripts/ci_dataplane.py run-smoke-suite
+          # --skip-logs: k3d disables fluentbit (no log backend), so verify_logs'
+          # persistence check can't work here (validated on the real-cluster legs).
+          python .github/ci-scripts/ci_dataplane.py run-smoke-suite --skip-logs
 
       - name: Show pod status
         if: steps.check.outputs.configured == 'true'

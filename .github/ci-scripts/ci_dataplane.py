@@ -734,11 +734,15 @@ async def _run_smoke_suite_async(
     cluster_name: str,
     org: str,
     skip_app: bool = False,
+    skip_logs: bool = False,
 ) -> list[tuple[str, bool, str]]:
     """Run hello first, then all verify tests in parallel. Returns (name, passed, error).
 
-    skip_app omits verify_app — app serving is not supported on selfhosted, so
-    that leg gates it off (`run-smoke-suite --skip-app`).
+    skip_app omits verify_app — app serving is not supported on selfhosted.
+    skip_logs omits verify_logs — it checks log persistence, which needs a log
+    backend (fluentbit → CloudWatch/Loki); k3d has none, so that leg gates it off.
+    Each leg passes the flag for the one scenario its topology can't support
+    (`run-smoke-suite --skip-app` / `--skip-logs`).
     """
     _ensure_workspace_in_path()
     # Import both task modules so all TaskEnvironments register before client init.
@@ -783,8 +787,12 @@ async def _run_smoke_suite_async(
     # Step 2: the light/fast verify tests run in parallel — they reuse the hello
     # run or spin up short-lived build pods, so they don't contend for long.
     # Each is a factory (zero-arg) so _run_scenario_with_retry can re-invoke it.
-    parallel_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
-        ("verify_logs",          lambda: _verify_logs_async(run_name, cluster_name)),
+    parallel_tests: list[tuple[str, "typing.Callable"]] = []  # type: ignore
+    if skip_logs:
+        print("[ci] smoke-suite: verify_logs SKIPPED (no log backend on this topology)", flush=True)
+    else:
+        parallel_tests.append(("verify_logs", lambda: _verify_logs_async(run_name, cluster_name)))
+    parallel_tests += [
         ("verify_io",            lambda: _verify_io_async(run_name)),
         ("verify_image_builder", lambda: _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
         ("verify_image_cache",   lambda: _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
@@ -843,6 +851,7 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
             _env("CLUSTER_NAME"),
             _env("ORG_NAME"),
             skip_app=args.skip_app,
+            skip_logs=args.skip_logs,
         )
     )
     failed = [(n, e) for n, p, e in results if not p]
@@ -913,6 +922,10 @@ def main() -> None:
     p_suite.add_argument(
         "--skip-app", action="store_true",
         help="Omit verify_app (app serving is unsupported on selfhosted).",
+    )
+    p_suite.add_argument(
+        "--skip-logs", action="store_true",
+        help="Omit verify_logs (needs a log backend; k3d has no fluentbit sink).",
     )
     sub.add_parser("teardown")
 
