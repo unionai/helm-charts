@@ -16,6 +16,11 @@ import flyte.remote  # type: ignore  # App.get — verify assigned_cluster routi
 
 _cluster = os.environ.get("CLUSTER_NAME", "ci-dev")
 
+# See ci_smoke_task._CACHE_BUST: jitter the built-image tag per run so
+# build_image_task gets a fresh cache key on the ephemeral k3d store (ENG26-979).
+# Empty on persistent-store legs, which keep normal cross-run image caching.
+_CACHE_BUST = os.environ.get("SMOKE_IMAGE_CACHE_BUST", "")
+
 
 def _make_fastapi_app():
     import fastapi  # type: ignore
@@ -35,9 +40,9 @@ def _make_fastapi_app():
 _app_env = flyte.app.extras.FastAPIAppEnvironment(
     name=f"ci-app-{_cluster}",
     app=_make_fastapi_app(),
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "fastapi", "uvicorn", "httpx", "flyteplugins-union"
-    ),
+    image=flyte.Image.from_debian_base()
+    .with_pip_packages("fastapi", "uvicorn", "httpx", "flyteplugins-union")
+    .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     # Kept small so the app revision + tester pod fit on the 4-vCPU CI runner
     # alongside the dataplane and (trimmed) Knative serving stack.
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
@@ -57,9 +62,9 @@ _app_env = flyte.app.extras.FastAPIAppEnvironment(
 
 _app_task_env = flyte.TaskEnvironment(
     name=f"ci-app-tester-{_cluster}",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "fastapi", "uvicorn", "httpx", "flyteplugins-union"
-    ),
+    image=flyte.Image.from_debian_base()
+    .with_pip_packages("fastapi", "uvicorn", "httpx", "flyteplugins-union")
+    .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     depends_on=[_app_env],
     cache="disable",
