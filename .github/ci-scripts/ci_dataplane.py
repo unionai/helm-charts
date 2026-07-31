@@ -156,15 +156,19 @@ async def _setup_routing_async(
         cluster, bound to that pool and pinned to exactly this cluster;
       * runs route via that queue (flyte.with_runcontext(queue=...) in
         _submit_with_retry); apps route via spec.cluster_pool (ci_app_task.py);
-      * the DATAPROXY resolves the code-bundle object store from the cluster
-        POOL's object_store config (set at CreateClusterPool below) — so the old
-        per-project cluster-pool-attributes writes are no longer needed. Setting
-        the pool's object store (what `flyte create cluster-pool` does)
-        supersedes `uctl update cluster-pool-attributes`.
-    Each PR still gets its own pool (== cluster == queue == project name), so
-    parallel PRs can't land on each other's dataplane.
+      * BOTH run scheduling and the DATAPROXY's cluster/pool selection
+        (CreateUploadLocation) route via run.default_queue on the project (set
+        below via the Settings SDK) → queue → pool → cluster. Without it the
+        project resolves to the org "default" pool and fast-registration uploads
+        fail ("could not select a cluster ... pool 'default' unhealthy"). This is
+        the queue-based replacement for the old `uctl update
+        cluster-pool-attributes` — the same routing configure_queues.py applies
+        via `flyte edit settings`. The pool's object_store (set at
+        CreateClusterPool) then tells the dataproxy WHICH bucket.
+    The pool == cluster == queue == project name, so parallel legs (and, with a
+    stable name, serialized runs) never cross-land.
     """
-    from flyte.remote import Project  # type: ignore
+    from flyte.remote import Project, Settings  # type: ignore
     from flyteplugins.union.remote import Cluster, ClusterPool, Queue  # type: ignore
 
     pool_name  = cluster_name
@@ -220,7 +224,9 @@ async def _setup_routing_async(
             cluster_pool=pool_name,
         )
 
-    # 4. Create project (idempotent)
+    # 4. Create project (idempotent) and ensure it is ACTIVE — with a stable
+    # cluster name a prior run's teardown may have archived it, and an archived
+    # project can't schedule runs.
     print(f"[ci] setup-routing: creating project {project_id}", flush=True)
     try:
         await Project.create.aio(  # type: ignore
@@ -231,14 +237,25 @@ async def _setup_routing_async(
         print(f"[ci] setup-routing: project '{project_id}' created", flush=True)
     except Exception as e:
         print(f"[ci] setup-routing: project create (likely exists): {e}", flush=True)
+    try:
+        await Project.update.aio(id=project_id, state="active")  # type: ignore
+    except Exception as e:
+        print(f"[ci] setup-routing: project reactivate (likely already active): {e}", flush=True)
 
-    # (No cluster-pool-attributes: the dataproxy reads the code-bundle object
-    # store from the pool's object_store config set at step 1 — that supersedes
-    # the old per-project `uctl update cluster-pool-attributes` writes.)
+    # 5. Route project → this run's queue for all domains via run.default_queue.
+    # Drives BOTH run scheduling and the dataproxy's CreateUploadLocation pool/
+    # cluster selection. The queue (== cluster_name) was created by CreateCluster
+    # above, so it resolves here. SDK-native equivalent of configure_queues.py's
+    # `flyte edit settings run.default_queue`.
+    for domain in ("development", "staging", "production"):
+        s = await Settings.get_settings_for_edit.aio(project=project_id, domain=domain)  # type: ignore
+        await s.update_settings.aio(overrides={"run.default_queue": cluster_name})  # type: ignore
+        print(f"[ci] setup-routing: routed {project_id}/{domain} → queue {cluster_name}", flush=True)
+
     print(
         f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}' "
         f"(object store {os.environ.get('RUSTFS_BUCKET', 'union-data')!r}), "
-        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}'",
+        f"queue '{cluster_name}' — run.default_queue set for dev/staging/prod",
         flush=True,
     )
     return project_id
@@ -861,31 +878,18 @@ def cmd_teardown(args: argparse.Namespace) -> None:
         print("[ci] teardown: CONTROL_PLANE_URL unset — nothing to clean up.", flush=True)
         return
 
-    # All cleanup via the flyte 2.x SDK — no uctl.
+    # Deregister the ephemeral cluster only. The dataplane name is STABLE and its
+    # pool / queue / project / run.default_queue are REUSED across runs (create-only
+    # / additive model — same convention as configure_queues.py). Draining the queue
+    # or archiving the project would break the next run (a drained queue rejects
+    # submissions; an archived project can't schedule), so teardown leaves them in
+    # place; setup-routing re-registers the cluster (operator heartbeat) and re-pins
+    # routing next run. Only the k8s cluster is torn down (a separate workflow step).
     async def _teardown_async() -> None:
-        from flyte.remote import Project  # type: ignore
-        from flyteplugins.union.remote import Cluster, ClusterPool, Queue  # type: ignore
+        from flyteplugins.union.remote import Cluster  # type: ignore
         await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-
-        print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
+        print(f"[ci] teardown: deregistering cluster {cluster_name} (pool/queue/project reused)", flush=True)
         await _teardown_step("cluster delete", Cluster.delete.aio(name=cluster_name))  # type: ignore
-
-        if not org:
-            print("[ci] teardown: ORG_NAME unset — setup-routing never ran; done.", flush=True)
-            return
-
-        # setup-routing created pool == queue == project == cluster_name. Best-effort:
-        #   * drain the queue — queues have NO delete RPC, so draining (stops new
-        #     submissions) is the most we can do.
-        #   * delete the pool — FailedPrecondition while a drained queue still
-        #     references it; attempted anyway so it works once the CP allows it.
-        #   * archive the project (Flyte has no project delete; archive via
-        #     Project.update(state="archived")).
-        await _teardown_step("queue drain", Queue.drain.aio(cluster_name))  # type: ignore
-        await _teardown_step("pool delete", ClusterPool.delete.aio(cluster_name))  # type: ignore
-        await _teardown_step(
-            "project archive", Project.update.aio(id=cluster_name, state="archived")  # type: ignore
-        )
 
     try:
         asyncio.run(_teardown_async())
