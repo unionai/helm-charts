@@ -141,10 +141,18 @@ dcgm-exporter:
 ingress-nginx:
   enabled: false
 
-# Disable components not needed for basic CI (and that have huge CPU requests).
-# leaseworker default: 4 CPU / 8 Gi — would consume the entire runner.
+# leaseworker (nworker) is the flyte-v2 action dispatcher: it leases QUEUED
+# actions off the cluster queue and hands them to propeller. REQUIRED for tasks
+# to run — without it every action sits in ACTION_PHASE_QUEUED forever. It is the
+# replacement for the retired executor (disabled below). The chart default
+# requests 4 CPU / 8 Gi (too big for the 4-vCPU runner), so shrink the request; it
+# still bursts to its limit when busy.
 leaseworker:
-  enabled: false
+  enabled: true
+  resources:
+    requests:
+      cpu: "300m"
+      memory: "512Mi"
 
 # flyteconnector default: 1 CPU × HPA-min-2 = 2 CPUs; not needed for smoke test.
 flyteconnector:
@@ -161,11 +169,10 @@ operator:
       cpu: "300m"
       memory: "512Mi"
 
+# executor is retired — leaseworker (above) is its v2 replacement. Disabling it
+# frees ~200m for the leaseworker and avoids running two dispatchers.
 executor:
-  resources:
-    requests:
-      cpu: "200m"
-      memory: "512Mi"
+  enabled: false
 
 proxy:
   resources:
