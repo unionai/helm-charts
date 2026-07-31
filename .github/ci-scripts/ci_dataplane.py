@@ -362,14 +362,17 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     last_err = ""
     for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
-            # disable_run_cache ONLY when the DP object store is EPHEMERAL (k3d
+            # overwrite_cache ONLY when the DP object store is EPHEMERAL (k3d
             # RustFS, destroyed each teardown): a GLOBAL cache lookup would otherwise
-            # hit a prior run's entry whose outputs.pb no longer exists ("cache
-            # lookup: not found"). Standing DPs (aws/gcp/azure/selfhosted) have
-            # persistent object stores, so cross-run cache is valid there — leave it
-            # on. The k3d leg sets it via `run-smoke-suite --disable-cache`.
-            disable_cache = os.environ.get("SMOKE_DISABLE_RUN_CACHE") == "1"
-            run = await flyte.with_runcontext(queue=queue, disable_run_cache=disable_cache).run.aio(task_fn, **kwargs)  # type: ignore
+            # HIT a prior run's entry whose outputs.pb no longer exists ("cache
+            # lookup: not found"). overwrite_cache forces re-execution ignoring the
+            # stale hit and overwrites it with fresh output — unlike disable_run_cache,
+            # which only skips the CODE-BUNDLE upload cache and does nothing for task
+            # output caching. Standing DPs (aws/gcp/azure/selfhosted) have persistent
+            # object stores, so cross-run cache is valid there — leave it on. The k3d
+            # leg sets it via `run-smoke-suite --overwrite-cache`.
+            overwrite_cache = os.environ.get("SMOKE_OVERWRITE_CACHE") == "1"
+            run = await flyte.with_runcontext(queue=queue, overwrite_cache=overwrite_cache).run.aio(task_fn, **kwargs)  # type: ignore
             break
         except Exception as exc:
             last_err = str(exc)
@@ -851,9 +854,9 @@ async def _run_smoke_suite_async(
 
 
 def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
-    if args.disable_cache:
-        # Read by _submit_with_retry (see disable_run_cache) — the ephemeral-store legs.
-        os.environ["SMOKE_DISABLE_RUN_CACHE"] = "1"
+    if args.overwrite_cache:
+        # Read by _submit_with_retry (see overwrite_cache) — the ephemeral-store legs.
+        os.environ["SMOKE_OVERWRITE_CACHE"] = "1"
     results = asyncio.run(
         _run_smoke_suite_async(
             _env("CONTROL_PLANE_URL"),
@@ -938,9 +941,9 @@ def main() -> None:
         help="Omit verify_logs (needs a log backend; k3d has no fluentbit sink).",
     )
     p_suite.add_argument(
-        "--disable-cache", action="store_true",
-        help="Disable the run cache (for ephemeral object stores like k3d RustFS, "
-             "where cross-run cache entries point at a destroyed store).",
+        "--overwrite-cache", action="store_true",
+        help="Force cache overwrite / re-execution (for ephemeral object stores like "
+             "k3d RustFS, where a global cache HIT points at a destroyed store).",
     )
     sub.add_parser("teardown")
 
