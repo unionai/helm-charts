@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import flyte  # type: ignore
 
@@ -120,3 +120,17 @@ async def reuse_square(x: int) -> int:
 async def reuse_driver(n: int) -> list[int]:
     """Fan out square() calls over the reusable environment (replicas=1, concurrency=2)."""
     return list(await asyncio.gather(*(reuse_square(i) for i in range(n))))
+
+
+# ── Trigger (scheduled automation) ───────────────────────────────────────────
+# Cluster-scoped like the other envs so each leg registers its own trigger on the
+# shared control plane. verify_trigger deploys this, then checks the schedule
+# automation spec and toggles active — no execution needed (the schedule itself
+# is the signal), so it's cheap and topology-agnostic.
+
+_trigger_env = flyte.TaskEnvironment(name=f"ci-trigger-{_cluster}")
+
+
+@_trigger_env.task(triggers=flyte.Trigger.daily(trigger_time_input_key="trigger_time"))
+async def triggered_task(trigger_time: datetime, x: int = 1) -> str:
+    return f"triggered at {trigger_time.isoformat()} x={x}"

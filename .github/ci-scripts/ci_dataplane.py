@@ -1,44 +1,41 @@
 #!/usr/bin/env python3
 """
-Dataplane CI helper — SDK-based operations that shell scripts can't do cleanly.
-
-Mirrors the patterns from selfmanaged_common.py / smoke_tests.py in
-unionai-docs/scripts. Runs inside GitHub Actions; every command writes its
-key output to $GITHUB_OUTPUT so subsequent steps can consume it.
+Dataplane CI helper for every integration leg — pure flyte 2.x SDK
+(flyte / flyteplugins.union.remote), no uctl. Operator credentials are seeded /
+provisioned out-of-band (terraform), so there is no runtime provisioning here.
+Runs inside GitHub Actions; every command writes its key output to $GITHUB_OUTPUT
+so subsequent steps can consume it.
 
 Commands
 --------
-provision       Run `uctl selfserve provision-dataplane-resources`, write the
-                generated values file to disk, emit ORG_NAME.
 wait-healthy    Poll Cluster.get until enabled+healthy. Emit ORG_NAME.
-setup-routing   Create cluster pool + project, assign this run's cluster (and
-                its implicit queue) to them, route all domains → ensures this
-                PR's test run only hits our cluster.
-eager-api-key   Create EAGER_API_KEY (idempotent).
+setup-routing   Create cluster pool (object store) + project, assign this run's
+                cluster (and its implicit queue) to them → the run's tasks only
+                land on this dataplane. The pool's object_store config drives
+                dataproxy routing (supersedes the old cluster-pool-attributes).
 smoke-test      Submit and wait for the hello workflow on our project.
-teardown        Deregister the cluster from the control plane.
+run-smoke-suite hello + the verify_* scenarios (logs/io/image builder/cache/
+                reusable/app) with transient-retry.
+teardown        Deregister the cluster + drain queue + delete pool + archive
+                project (SDK, best-effort).
 
 Environment
 -----------
-CLUSTER_NAME            required — unique per run (e.g. ci-<github_run_id>)
-CONTROL_PLANE_URL       required — https://byok.us-west-2.union.ai
-UNION_API_KEY           required — base64-encoded Union API key
+CLUSTER_NAME            required — the dataplane's cluster name (pool==project==name)
+CONTROL_PLANE_URL       required — https://<control-plane-host>
+UNION_API_KEY           required — base64("<host>:<clientId>:<clientSecret>:<org>")
 ORG_NAME                optional — resolved automatically by wait-healthy
 GITHUB_OUTPUT           set by Actions runner; commands write key=value here
-PROVISION_WORK_DIR      set by provision; read by other commands for the
-                        generated values file path
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import glob
 import logging
 import os
 import subprocess
 import sys
-import tempfile
 import time
 import typing
 
@@ -71,49 +68,6 @@ def _gha_output(key: str, value: str) -> None:
     print(f"[ci] >> {line.rstrip()}", flush=True)
 
 
-def _uctl_extra_env() -> dict:
-    """Return BYOK_CLIENT_SECRET decoded from UNION_API_KEY for uctl subprocesses.
-
-    The uctl config uses clientSecretEnvVar: BYOK_CLIENT_SECRET, so uctl looks
-    for that env var at call time.  We decode UNION_API_KEY (base64 of
-    host:clientId:clientSecret:None) to extract the secret rather than
-    requiring a separate env var in the workflow.
-    """
-    import base64
-    api_key = os.environ.get("UNION_API_KEY", "")
-    if not api_key:
-        return {}
-    try:
-        decoded = base64.b64decode(api_key + "==").decode()
-        parts = decoded.split(":")
-        # format: host : clientId : clientSecret : None
-        # clientSecret may itself contain ':', so join everything between [2] and [-1]
-        if len(parts) >= 4:
-            client_secret = ":".join(parts[2:-1])
-            return {"BYOK_CLIENT_SECRET": client_secret}
-    except Exception as exc:
-        logger.warning(f"Could not decode UNION_API_KEY for uctl env: {exc}")
-    return {}
-
-
-def _run_uctl(*cmd: str) -> tuple[int, str]:
-    """Run a uctl command, capture output, print it, and return (returncode, output).
-
-    All uctl calls should go through here so their stdout/stderr is always
-    visible in CI logs.  The caller decides whether a non-zero exit is fatal.
-    """
-    result = subprocess.run(
-        list(cmd),
-        capture_output=True,
-        text=True,
-        env={**os.environ, **_uctl_extra_env()},
-    )
-    output = (result.stdout + result.stderr).strip()
-    if output:
-        print(output, flush=True)
-    return result.returncode, output
-
-
 async def _init_client(
     control_plane_url: str,
     api_key: str,
@@ -136,87 +90,6 @@ async def _init_client(
     if api_key:
         kwargs["api_key"] = api_key
     await flyte.init.aio(**kwargs)  # type: ignore[attr-defined]
-
-
-# ── provision ───────────────────────────────────────────────────────────────
-
-def cmd_provision(args: argparse.Namespace) -> None:
-    """Shell out to uctl provision, parse output, write values file to disk."""
-    cluster_name     = _env("CLUSTER_NAME")
-    control_plane_url = _env("CONTROL_PLANE_URL").removeprefix("https://").removeprefix("http://")
-
-    import time as _time
-    work_dir = tempfile.mkdtemp(prefix="union-ci-provision-")
-    print(f"[ci] provision: working in {work_dir}", flush=True)
-
-    # provision-dataplane-resources writes a values file to cwd; retry on transient errors.
-    output = ""
-    for attempt in range(1, 4):
-        result = subprocess.run(
-            ["uctl", "selfserve", "provision-dataplane-resources",
-             "--clusterName", cluster_name, "--provider", "metal",
-             # Default per-retry timeout is 15s with 4 retries = 60s cap.
-             # The provision RPC can take longer on a loaded control plane,
-             # so raise per-retry to 90s and keep 3 retries → up to ~5 min.
-             "--admin.perRetryTimeout", "90s", "--admin.maxRetries", "3"],
-            cwd=work_dir, capture_output=True, text=True,
-            env={**os.environ, **_uctl_extra_env()},
-        )
-        output = result.stdout + result.stderr
-        print(output, flush=True)
-        if result.returncode == 0:
-            break
-        low = output.lower()
-        if attempt < 3 and ("503" in output or "unavailable" in low or "internal" in low or "name cannot be empty" in low or "deadline exceeded" in low or "deadlineexceeded" in low):
-            print(f"[ci] provision: attempt {attempt} failed (transient), retrying in 20s…", flush=True)
-            _time.sleep(20)
-            continue
-        sys.exit(f"[ci] ERROR: uctl provision-dataplane-resources failed (exit {result.returncode})")
-
-    # Locate the generated values file.  uctl prints a line like:
-    #   Generated values file: values-metal.yaml   (or similar)
-    values_file = ""
-    for line in output.splitlines():
-        if "Generated" in line and ".yaml" in line:
-            for word in line.split():
-                if word.endswith(".yaml"):
-                    candidate = os.path.join(work_dir, word)
-                    if os.path.exists(candidate):
-                        values_file = candidate
-                        break
-            if values_file:
-                break
-    if not values_file:
-        candidates = glob.glob(os.path.join(work_dir, "*-values.yaml"))
-        if candidates:
-            values_file = candidates[0]
-    if not values_file or not os.path.exists(values_file):
-        sys.exit(
-            f"[ci] ERROR: could not find generated values file in {work_dir}.\n"
-            f"uctl output:\n{output}"
-        )
-
-    # Copy to a stable path the workflow can reference.
-    dest = args.values_out
-    with open(values_file) as f:
-        content = f.read()
-    with open(dest, "w") as f:
-        f.write(content)
-    print(f"[ci] provision: values written to {dest}", flush=True)
-
-    # Parse org name from the uctl table output:
-    #  | <cluster> | <org> | STATE_... | ...
-    org_name = ""
-    for line in output.splitlines():
-        if cluster_name in line and "|" in line:
-            fields = [f.strip() for f in line.split("|")]
-            if len(fields) >= 3 and fields[1]:
-                org_name = fields[1]
-                break
-
-    _gha_output("values_file", dest)
-    _gha_output("org_name", org_name)
-    print(f"[ci] provision: org={org_name or '(not parsed yet)'}", flush=True)
 
 
 # ── wait-healthy ─────────────────────────────────────────────────────────────
@@ -283,12 +156,11 @@ async def _setup_routing_async(
         cluster, bound to that pool and pinned to exactly this cluster;
       * runs route via that queue (flyte.with_runcontext(queue=...) in
         _submit_with_retry); apps route via spec.cluster_pool (ci_app_task.py);
-      * the project/domain → pool CLUSTER_ASSIGNMENT attributes are still
-        load-bearing for the DATAPROXY: CreateUploadLocation resolves the
-        project's pool to pick which cluster's object store receives the
-        fast-registration code bundle (dataproxy/service/cluster_selector.go).
-        Without them our project resolves to the org default pool and bundles
-        land in some other cluster's bucket → task pods 404 on download.
+      * the DATAPROXY resolves the code-bundle object store from the cluster
+        POOL's object_store config (set at CreateClusterPool below) — so the old
+        per-project cluster-pool-attributes writes are no longer needed. Setting
+        the pool's object store (what `flyte create cluster-pool` does)
+        supersedes `uctl update cluster-pool-attributes`.
     Each PR still gets its own pool (== cluster == queue == project name), so
     parallel PRs can't land on each other's dataplane.
     """
@@ -360,43 +232,13 @@ async def _setup_routing_async(
     except Exception as e:
         print(f"[ci] setup-routing: project create (likely exists): {e}", flush=True)
 
-    # 5. Route all three domains → pool (CLUSTER_ASSIGNMENT attributes). Run
-    # scheduling no longer reads these, but the dataproxy and app pool
-    # resolution still do (see docstring) — without them fast-registration
-    # uploads go to the default pool's object store and every task 404s
-    # downloading its code bundle. Fatal on failure: better a clear error here
-    # than a cryptic FileNotFoundError 20 minutes into the smoke suite.
-    for domain in ("development", "staging", "production"):
-        attr_tmp = tempfile.NamedTemporaryFile(
-            mode="w", suffix=f"-{domain}.yaml", delete=False
-        )
-        attr_tmp.write(
-            f"domain: {domain}\n"
-            f"project: {project_id}\n"
-            f"clusterPoolName: {pool_name}\n"
-        )
-        attr_tmp.close()
-        print(
-            f"[ci] setup-routing: routing {project_id}/{domain} → {pool_name}",
-            flush=True,
-        )
-        try:
-            rc, out = _run_uctl(
-                "uctl", "update", "cluster-pool-attributes", "--force",
-                "--attrFile", attr_tmp.name, "--org", org,
-            )
-            if rc != 0:
-                raise RuntimeError(
-                    f"uctl update cluster-pool-attributes exited {rc} "
-                    f"({project_id}/{domain} → {pool_name})\n{out[:400]}"
-                )
-        finally:
-            os.unlink(attr_tmp.name)
-
+    # (No cluster-pool-attributes: the dataproxy reads the code-bundle object
+    # store from the pool's object_store config set at step 1 — that supersedes
+    # the old per-project `uctl update cluster-pool-attributes` writes.)
     print(
-        f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}', "
-        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}' "
-        f"(dev/staging/prod attributes set)",
+        f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}' "
+        f"(object store {os.environ.get('RUSTFS_BUCKET', 'union-data')!r}), "
+        f"queue '{cluster_name}' all pinned to cluster '{cluster_name}'",
         flush=True,
     )
     return project_id
@@ -411,45 +253,6 @@ def cmd_setup_routing(args: argparse.Namespace) -> None:
         _setup_routing_async(cluster_name, org, control_plane_url, api_key)
     )
     _gha_output("project_id", project)
-
-
-# ── eager-api-key ──────────────────────────────────────────────────────────
-
-def cmd_eager_api_key(args: argparse.Namespace) -> None:
-    """Create EAGER_API_KEY via uctl (idempotent).
-
-    The provision instructions say to use `uctl create apikey` — this
-    propagates the key to the cluster's operator so the webhook can inject it
-    as a K8s secret into task pods.  The Python SDK ApiKey.create.aio() only
-    creates the key on the control plane without triggering the cluster sync.
-    """
-    import time
-    org_name = _env("ORG_NAME", required=False) or ""
-    # --org is a global uctl flag (matches provision step 6 instructions)
-    org_flag = ["--org", org_name] if org_name else []
-
-    for attempt in range(1, 6):
-        result = subprocess.run(
-            ["uctl"] + org_flag + ["create", "apikey", "--keyName", "EAGER_API_KEY"],
-            capture_output=True, text=True,
-            env={**os.environ, **_uctl_extra_env()},
-        )
-        output = result.stdout + result.stderr
-        print(output, flush=True)
-        if result.returncode == 0:
-            print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
-            return
-        low = output.lower()
-        if "already exists" in low or "alreadyexists" in low:
-            print("[ci] eager-api-key: key already exists (re-propagated).", flush=True)
-            return
-        if attempt < 5 and ("503" in output or "unavailable" in low or "internal" in low):
-            print(f"[ci] eager-api-key: attempt {attempt} failed (transient), retrying in 15s…", flush=True)
-            time.sleep(15)
-            continue
-        sys.exit(f"[ci] ERROR: uctl create apikey failed (exit {result.returncode})")
-    else:
-        print("[ci] eager-api-key: EAGER_API_KEY created.", flush=True)
 
 
 # ── smoke-test helpers ───────────────────────────────────────────────────────
@@ -865,13 +668,61 @@ async def _verify_app_async(
     )
 
 
+async def _verify_trigger_async(
+    control_plane_url: str, api_key: str, cluster_name: str, org: str
+) -> None:
+    """Deploy a scheduled trigger, verify its automation spec, and toggle active.
+
+    No execution needed — the registered schedule is the signal, so this is cheap
+    and topology-agnostic (triggers are supported on selfhosted and selfmanaged).
+    """
+    import flyte  # type: ignore
+    import flyte.remote  # type: ignore
+    from flyteidl2.task.common_pb2 import TriggerAutomationSpecType  # type: ignore
+
+    _ensure_workspace_in_path()
+    from ci_smoke_task import _trigger_env  # type: ignore  # noqa: E402
+
+    await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
+    print("[ci] verify_trigger: deploying trigger env", flush=True)
+    await flyte.deploy.aio(_trigger_env)  # type: ignore
+
+    trigger_name = flyte.Trigger.daily().name  # "daily"
+    task_name = f"ci-trigger-{cluster_name}.triggered_task"
+
+    td = await flyte.remote.Trigger.get.aio(name=trigger_name, task_name=task_name)  # type: ignore
+    if td.automation_spec.type != TriggerAutomationSpecType.TYPE_SCHEDULE:
+        raise RuntimeError(
+            f"verify_trigger: expected TYPE_SCHEDULE, got {td.automation_spec.type}"
+        )
+    if not td.is_active:
+        raise RuntimeError("verify_trigger: trigger is not active after deploy")
+
+    # Toggle inactive → re-read → confirm the update round-trips.
+    await flyte.remote.Trigger.update.aio(  # type: ignore
+        name=trigger_name, task_name=task_name, active=False
+    )
+    td = await flyte.remote.Trigger.get.aio(name=trigger_name, task_name=task_name)  # type: ignore
+    if td.is_active:
+        raise RuntimeError("verify_trigger: trigger still active after deactivate")
+    print(
+        f"[ci] verify_trigger: PASSED (trigger {trigger_name!r} deployed, "
+        f"schedule verified, deactivated)", flush=True
+    )
+
+
 async def _run_smoke_suite_async(
     control_plane_url: str,
     api_key: str,
     cluster_name: str,
     org: str,
+    skip_app: bool = False,
 ) -> list[tuple[str, bool, str]]:
-    """Run hello first, then all verify tests in parallel. Returns (name, passed, error)."""
+    """Run hello first, then all verify tests in parallel. Returns (name, passed, error).
+
+    skip_app omits verify_app — app serving is not supported on selfhosted, so
+    that leg gates it off (`run-smoke-suite --skip-app`).
+    """
     _ensure_workspace_in_path()
     # Import both task modules so all TaskEnvironments register before client init.
     import ci_smoke_task  # type: ignore  # noqa: F401
@@ -920,6 +771,7 @@ async def _run_smoke_suite_async(
         ("verify_io",            lambda: _verify_io_async(run_name)),
         ("verify_image_builder", lambda: _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
         ("verify_image_cache",   lambda: _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_trigger",       lambda: _verify_trigger_async(control_plane_url, api_key, cluster_name, org)),
     ]
     p_names = [n for n, _ in parallel_tests]
     outcomes = await asyncio.gather(
@@ -940,8 +792,13 @@ async def _run_smoke_suite_async(
     # parking in WAITING_FOR_RESOURCES.
     sequential_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
         ("verify_reusable",      lambda: _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_app",           lambda: _verify_app_async(control_plane_url, api_key, cluster_name, org)),
     ]
+    if skip_app:
+        print("[ci] smoke-suite: verify_app SKIPPED (app serving unsupported on this topology)", flush=True)
+    else:
+        sequential_tests.append(
+            ("verify_app", lambda: _verify_app_async(control_plane_url, api_key, cluster_name, org))
+        )
     for name, factory in sequential_tests:
         try:
             await _run_scenario_with_retry(name, factory)
@@ -968,6 +825,7 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
             _env("UNION_API_KEY", required=False),
             _env("CLUSTER_NAME"),
             _env("ORG_NAME"),
+            skip_app=args.skip_app,
         )
     )
     failed = [(n, e) for n, p, e in results if not p]
@@ -980,110 +838,84 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
 
 # ── teardown ────────────────────────────────────────────────────────────────
 
+async def _teardown_step(label: str, coro) -> None:  # type: ignore[no-untyped-def]
+    """Await a teardown coroutine, logging and swallowing any error — a failed
+    cleanup must never fail the always() teardown step."""
+    try:
+        await coro
+        print(f"[ci] teardown: {label} OK", flush=True)
+    except Exception as e:  # noqa: BLE001
+        print(f"[ci] teardown: {label} failed (ignored): {str(e)[:200]}", flush=True)
+
+
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
     # ORG_NAME is produced by the wait-healthy step; absent if the run failed
-    # before then (in which case setup-routing never ran, so there are no pool/
-    # queue/project to clean up — only the cluster delete below).
+    # before then (setup-routing never ran, so there is no pool/queue/project to
+    # clean up — only the cluster delete).
     org = os.environ.get("ORG_NAME", "").strip()
+    control_plane_url = _env("CONTROL_PLANE_URL", required=False)
+    api_key = _env("UNION_API_KEY", required=False)
 
-    print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
-    _run_uctl("uctl", "delete", "cluster", cluster_name)
-
-    if not org:
-        print("[ci] teardown: ORG_NAME unset — skipping pool/routing cleanup.", flush=True)
-        print("[ci] teardown: done.", flush=True)
+    if not control_plane_url:
+        print("[ci] teardown: CONTROL_PLANE_URL unset — nothing to clean up.", flush=True)
         return
 
-    # setup-routing creates a pool, an implicit queue, a project and per-domain
-    # routing attributes, all keyed by this run's id (pool == queue == project
-    # == cluster_name). Clean up best-effort (a failed delete must never fail
-    # the always() teardown step):
-    #   * delete the per-domain CLUSTER_ASSIGNMENT attributes (still used by
-    #     dataproxy/app routing).
-    #   * drain the queue — queues have NO delete RPC, so draining (stops new
-    #     submissions) is the most we can do; the cluster delete above already
-    #     removed the cluster from the queue's spec.
-    #   * delete the pool — today this returns FailedPrecondition because the
-    #     drained queue still references it; attempted anyway so cleanup starts
-    #     working the moment the CP allows deleting pools with drained queues.
-    #     Until then each run leaks one empty pool + one drained queue on the
-    #     shared staging CP.
-    #   * archive the project (Flyte has no project delete).
-    async def _drain_and_delete_async() -> None:
-        from flyteplugins.union.remote import ClusterPool, Queue  # type: ignore
-        control_plane_url = _env("CONTROL_PLANE_URL", required=False)
-        api_key = _env("UNION_API_KEY", required=False)
-        if not control_plane_url:
-            print("[ci] teardown: CONTROL_PLANE_URL unset — skipping queue/pool cleanup.", flush=True)
-            return
+    # All cleanup via the flyte 2.x SDK — no uctl.
+    async def _teardown_async() -> None:
+        from flyte.remote import Project  # type: ignore
+        from flyteplugins.union.remote import Cluster, ClusterPool, Queue  # type: ignore
         await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
-        try:
-            await Queue.drain.aio(cluster_name)  # type: ignore
-            print(f"[ci] teardown: queue '{cluster_name}' drained", flush=True)
-        except Exception as e:
-            print(f"[ci] teardown: queue drain failed (ignored): {str(e)[:200]}", flush=True)
-        try:
-            await ClusterPool.delete.aio(cluster_name)  # type: ignore
-            print(f"[ci] teardown: pool '{cluster_name}' deleted", flush=True)
-        except Exception as e:
-            print(
-                f"[ci] teardown: pool delete failed (ignored — pools with queues "
-                f"are not deletable yet): {str(e)[:200]}",
-                flush=True,
-            )
+
+        print(f"[ci] teardown: deregistering cluster {cluster_name}", flush=True)
+        await _teardown_step("cluster delete", Cluster.delete.aio(name=cluster_name))  # type: ignore
+
+        if not org:
+            print("[ci] teardown: ORG_NAME unset — setup-routing never ran; done.", flush=True)
+            return
+
+        # setup-routing created pool == queue == project == cluster_name. Best-effort:
+        #   * drain the queue — queues have NO delete RPC, so draining (stops new
+        #     submissions) is the most we can do.
+        #   * delete the pool — FailedPrecondition while a drained queue still
+        #     references it; attempted anyway so it works once the CP allows it.
+        #   * archive the project (Flyte has no project delete; archive via
+        #     Project.update(state="archived")).
+        await _teardown_step("queue drain", Queue.drain.aio(cluster_name))  # type: ignore
+        await _teardown_step("pool delete", ClusterPool.delete.aio(cluster_name))  # type: ignore
+        await _teardown_step(
+            "project archive", Project.update.aio(id=cluster_name, state="archived")  # type: ignore
+        )
 
     try:
-        asyncio.run(_drain_and_delete_async())
+        asyncio.run(_teardown_async())
     except Exception as e:  # noqa: BLE001 — teardown must never fail the job
-        print(f"[ci] teardown: queue/pool cleanup failed (ignored): {str(e)[:200]}", flush=True)
-
-    def _best_effort(label: str, *cmd: str) -> None:
-        rc, _ = _run_uctl(*cmd)
-        if rc != 0:
-            print(f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True)
-
-    for domain in ("development", "staging", "production"):
-        _best_effort(
-            f"routing/{domain}",
-            "uctl", "delete", "cluster-pool-attributes",
-            "-p", cluster_name, "-d", domain, "--org", org,
-        )
-    # Projects can't be deleted, only archived — leaves no schedulable routing.
-    _best_effort(
-        "project",
-        "uctl", "update", "project", "-p", cluster_name, "--archive", "--org", org,
-    )
+        print(f"[ci] teardown: cleanup failed (ignored): {str(e)[:200]}", flush=True)
     print("[ci] teardown: done.", flush=True)
 
 
 # ── main ────────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    p = argparse.ArgumentParser(description="Dataplane CI helper")
+    p = argparse.ArgumentParser(description="Dataplane CI helper (flyte 2.x SDK; no uctl)")
     sub = p.add_subparsers(dest="command", required=True)
-
-    p_prov = sub.add_parser("provision")
-    p_prov.add_argument(
-        "--values-out", default="values-provision.yaml",
-        help="Destination for the generated values file",
-    )
 
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=300)
 
     sub.add_parser("setup-routing")
-    sub.add_parser("eager-api-key")
     sub.add_parser("smoke-test")
-    sub.add_parser("run-smoke-suite")
+    p_suite = sub.add_parser("run-smoke-suite")
+    p_suite.add_argument(
+        "--skip-app", action="store_true",
+        help="Omit verify_app (app serving is unsupported on selfhosted).",
+    )
     sub.add_parser("teardown")
 
     args = p.parse_args()
     {
-        "provision":        cmd_provision,
         "wait-healthy":     cmd_wait_healthy,
         "setup-routing":    cmd_setup_routing,
-        "eager-api-key":    cmd_eager_api_key,
         "smoke-test":       cmd_smoke_test,
         "run-smoke-suite":  cmd_run_smoke_suite,
         "teardown":         cmd_teardown,

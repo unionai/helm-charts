@@ -11,72 +11,99 @@ on:
       - '.github/ci-manifests/**'
       - '.github/ci-scripts/**'
 
-# One live cluster per PR at a time; new push cancels the in-progress run.
+# The k3d DP registers as a STABLE cluster (sm-k3d-dp-1) against the shared
+# managed helm-charts-ci tenant, so only one run may hold that slot at a time:
+# serialize across ALL PRs (fixed group, no ref) and never cancel mid-provision.
 concurrency:
-  group: dataplane-integration-${{ github.ref }}
-  cancel-in-progress: true
+  group: dataplane-integration-k3d
+  cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   integration-test:
     name: Deploy dataplane on k3d
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    # Keyless: the helm-charts-ci environment federates GitHub OIDC to the
+    # ci_deployer AWS role, which reads the seeded operator credential. Same gate
+    # (all-eng App) and OIDC subject as release-integration.
+    environment: helm-charts-ci
+    permissions:
+      id-token: write
+      contents: read
 
     env:
-      # Configured via repo Settings → Variables / Secrets:
-      #   BYOK_URL            variable  — e.g. https://byok.us-west-2.union.ai
-      #   BYOK_CLIENT_ID      variable  — OAuth2 client ID
-      #   BYOK_CLIENT_SECRET  secret    — OAuth2 client secret
-      CONTROL_PLANE_URL: ${{ vars.BYOK_URL }}
-
-      # Unique per run attempt → no collision between parallel PRs, and a
-      # workflow re-run gets a brand-new cluster (fully independent run).
-      # run_attempt is stable across all steps of one attempt (so step retries
-      # reuse the cluster) but increments on every "Re-run" of the workflow —
-      # avoiding "cluster pool already exists" collisions with the prior attempt's
-      # leftover control-plane state.
-      CLUSTER_NAME: ci-${{ github.run_id }}-${{ github.run_attempt }}
       UNION_NS: union
       RUSTFS_NS: rustfs
       RUSTFS_ACCESS_KEY: rustfsadmin
       RUSTFS_SECRET_KEY: rustfsadmin
       RUSTFS_BUCKET: union-data
-      # Pinned to match selfmanaged_common.py; update both together.
-      UCTL_VERSION: "0.1.20"
       HELM_VERSION: "3.17.3"
+      # CLUSTER_NAME / CONTROL_PLANE_URL / UNION_API_KEY are resolved at runtime
+      # from vars.HELM_CHARTS_CI_K3D + the seeded operator credential (below).
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Gate the rest of the job on credentials being present.
-      - name: Check credentials are configured
+      # Gate the rest of the job on the terraform-published coordinates being
+      # present (helm-charts-ci env applied + the operator creds seeded). Absent
+      # until cloud/infra/terraform/envs/canary/helm-charts-ci is applied.
+      - name: Check k3d dataplane is configured
         id: check
         env:
-          SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
+          K3D: ${{ vars.HELM_CHARTS_CI_K3D }}
         run: |
-          if [ -n "$SECRET" ] && [ -n "${{ vars.BYOK_URL }}" ]; then
+          if [ -n "$K3D" ]; then
             echo "configured=true" >> "$GITHUB_OUTPUT"
           else
             echo "configured=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::BYOK_URL or BYOK_CLIENT_SECRET not configured — skipping integration test"
+            echo "::notice::vars.HELM_CHARTS_CI_K3D not set — apply canary/helm-charts-ci (after the operator seed) to enable. Skipping."
           fi
 
-      # Build UNION_API_KEY from the three inputs.
-      # The Union SDK and uctl both accept it as base64(host:clientId:clientSecret:None).
-      - name: Construct UNION_API_KEY
+      # Read the CP credential via the keyless ci_deployer identity, exactly like
+      # the release-integration func-v2 step fetches selfhosted secrets.
+      - name: Auth (AWS ci_deployer, to read the operator credential)
+        if: steps.check.outputs.configured == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+
+      # Resolve endpoint/cluster/org from the var, fetch the seeded operator creds
+      # ({client_id, client_secret} JSON), and derive the API key the flyte 2.x SDK
+      # accepts: base64("<host>:<clientId>:<clientSecret>:<org>"). The operator
+      # identity registers cluster sm-k3d-dp-1 and drives setup-routing (SDK only).
+      - name: Resolve managed tenant + operator credential
         if: steps.check.outputs.configured == 'true'
         env:
-          BYOK_CLIENT_SECRET: ${{ secrets.BYOK_CLIENT_SECRET }}
+          K3D: ${{ vars.HELM_CHARTS_CI_K3D }}
         run: |
-          # Strip the scheme so the key contains only the bare hostname.
-          HOST=$(echo "$CONTROL_PLANE_URL" | sed 's|^https\?://||' | sed 's|/$||')
-          API_KEY=$(printf '%s:%s:%s:None' \
-            "$HOST" \
-            "${{ vars.BYOK_CLIENT_ID }}" \
-            "$BYOK_CLIENT_SECRET" \
-            | base64 -w0)
-          echo "UNION_API_KEY=$API_KEY" >> "$GITHUB_ENV"
+          set -euo pipefail
+          host=$(jq -r '.endpoint' <<<"$K3D")
+          org=$(jq -r '.org' <<<"$K3D")
+          cluster=$(jq -r '.cluster_name' <<<"$K3D")
+          secret_ref=$(jq -r '.secret_ref' <<<"$K3D")
+          creds=$(aws secretsmanager get-secret-value --region us-east-2 \
+            --secret-id "$secret_ref" --query SecretString --output text)
+          client_id=$(jq -r '.client_id' <<<"$creds")
+          client_secret=$(jq -r '.client_secret' <<<"$creds")
+          echo "::add-mask::$client_secret"
+          api_key=$(printf '%s:%s:%s:%s' "$host" "$client_id" "$client_secret" "$org" | base64 -w0)
+          echo "::add-mask::$api_key"
+          {
+            echo "CONTROL_PLANE_URL=https://$host"
+            echo "CP_HOST=$host"
+            echo "ORG_NAME_INPUT=$org"
+            echo "CLUSTER_NAME=$cluster"
+            echo "OPERATOR_CLIENT_ID=$client_id"
+            echo "OPERATOR_CLIENT_SECRET=$client_secret"
+            echo "UNION_API_KEY=$api_key"
+            echo "FLYTE_API_KEY=$api_key"
+          } >> "$GITHUB_ENV"
+          echo "k3d dataplane $cluster registers against managed tenant $host (org $org)"
 
       # ── Tool setup ────────────────────────────────────────────────────────
 
@@ -153,33 +180,6 @@ jobs:
         uses: azure/setup-helm@v4.3.1
         with:
           version: v${{ env.HELM_VERSION }}
-
-      - name: Install uctl v${{ env.UCTL_VERSION }}
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # uctl tarball comes from GitHub releases, which 504s intermittently
-          # on shared runners — retry so a transient blip doesn't kill the run.
-          n=0
-          until [ "$n" -ge 6 ]; do
-            curl -fsSL "https://github.com/unionai/uctl/releases/download/v${UCTL_VERSION}/uctl_Linux_x86_64.tar.gz" | sudo tar xz -C /usr/local/bin uctl && break
-            n=$((n+1)); echo "uctl install failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-          done
-          [ "$n" -ge 6 ] && { echo "uctl install failed after $n attempts"; exit 1; }
-          uctl version
-
-      - name: Configure uctl client credentials
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # uctl reads ~/.union/config.yaml by default.
-          # clientSecretEnvVar: the secret is decoded from UNION_API_KEY by
-          # _uctl_extra_env() in ci_dataplane.py and injected at call time.
-          mkdir -p ~/.union
-          HOST=$(echo "$CONTROL_PLANE_URL" | sed 's|^https\?://||' | sed 's|/$||')
-          printf 'admin:\n  endpoint: "dns:///%s"\n  insecure: false\n  authType: ClientSecret\n  clientId: "%s"\n  clientSecretEnvVar: BYOK_CLIENT_SECRET\n' \
-            "$HOST" "${{ vars.BYOK_CLIENT_ID }}" \
-            > ~/.union/config.yaml
-          echo "uctl configured for $HOST (ClientSecret / clientSecretEnvVar)"
-          cat ~/.union/config.yaml
 
       - name: Install Python deps
         if: steps.check.outputs.configured == 'true'
@@ -328,16 +328,41 @@ jobs:
           mc mb store/"$RUSTFS_BUCKET" --ignore-existing
           echo "bucket-ok"
 
-      # ── Provision dataplane OAuth2 credentials ────────────────────────────
-      # uctl selfserve provision-dataplane-resources picks up UNION_API_KEY
-      # (set above) for non-interactive auth against the control plane.
-
-      - name: Provision dataplane resources
+      # ── Dataplane connection contract (from the pre-seeded operator creds) ─
+      # No runtime `uctl provision`: this DP's operator identity is pre-provisioned
+      # (terraform selfmanaged pattern — see cloud .../helm-charts-ci/k3d_dataplane.tf).
+      # Construct the connection contract that `provision-dataplane-resources`
+      # would have produced — the operator OAuth client + managed CP host + org +
+      # cluster — as helm values. The chart renders union-secret-auth from
+      # secrets.admin.clientSecret and mounts it at /etc/union/secret/client_secret
+      # for the operator. Storage / buildkit / serving come from the
+      # ci-values/dataplane.yaml overlay.
+      - name: Build dataplane values from seeded operator creds
         if: steps.check.outputs.configured == 'true'
-        id: provision
         run: |
-          python .github/ci-scripts/ci_dataplane.py provision \
-            --values-out "$GITHUB_WORKSPACE/values-provision.yaml"
+          set -euo pipefail
+          cat > "$GITHUB_WORKSPACE/values-provision.yaml" <<EOF
+          global:
+            AUTH_CLIENT_ID: "${OPERATOR_CLIENT_ID}"
+            CONTROLPLANE_HOST: "${CP_HOST}"
+            UNION_CONTROL_PLANE_HOST: "${CP_HOST}"
+            ORG_NAME: "${ORG_NAME_INPUT}"
+            CLUSTER_NAME: "${CLUSTER_NAME}"
+          secrets:
+            admin:
+              enable: true
+              create: true
+              clientId: "${OPERATOR_CLIENT_ID}"
+              clientSecret: "${OPERATOR_CLIENT_SECRET}"
+          config:
+            operator:
+              # Self-bootstrap the eager (task-pod) API key from the operator
+              # identity — the selfmanaged pattern (FAB-241), replacing the old
+              # runtime `uctl create apikey` step.
+              apiKey:
+                enabled: true
+          EOF
+          echo "built values-provision.yaml (cluster=${CLUSTER_NAME} host=${CP_HOST})"
 
       # ── Helm chart install ─────────────────────────────────────────────────
 
@@ -421,15 +446,12 @@ jobs:
         run: |
           python .github/ci-scripts/ci_dataplane.py setup-routing
 
-      - name: Create EAGER_API_KEY
-        if: steps.check.outputs.configured == 'true'
-        env:
-          ORG_NAME: ${{ steps.healthy.outputs.org_name }}
-        run: |
-          python .github/ci-scripts/ci_dataplane.py eager-api-key
+      # (No separate `uctl create apikey`: the operator self-bootstraps the eager
+      # task-pod key from its own identity via config.operator.apiKey.enabled — the
+      # selfmanaged pattern set in values-provision.yaml above.)
 
-      # Restart the operator ONCE, after BOTH routing and the EAGER_API_KEY have
-      # been configured on the control plane, AND after the control plane's
+      # Restart the operator ONCE, after routing has been configured on the
+      # control plane, AND after the control plane's
       # ClusterPoolStatus cache has had time to reflect the pool assignment.
       # The operator is responsible for three CP→cluster syncs we depend on:
       #   1. Publishing capabilities (supported task types) for the project's
@@ -574,8 +596,18 @@ jobs:
             | while read ns name; do [ -n "$name" ] && echo "--- $ns/$name ---" && kubectl describe pod -n "$ns" "$name" 2>&1 | tail -30; done || true
           helm status union -n "$UNION_NS"                          || true
           kubectl get events -n "$UNION_NS" --sort-by='.lastTimestamp' 2>/dev/null | tail -50 || true
-          # Routing diagnostics — verify cluster pool assignment and attributes.
-          echo "=== uctl cluster status ===" && uctl get cluster "$CLUSTER_NAME" --org "$ORG_NAME" 2>&1 || true
+          # Routing diagnostics — cluster state/health/pools via the SDK (no uctl).
+          echo "=== cluster status (SDK) ===" && python - <<'PY' 2>&1 || true
+          import asyncio, os, flyte
+          async def main():
+              from flyteplugins.union.remote import Cluster
+              await flyte.init.aio(endpoint=os.environ["CONTROL_PLANE_URL"], org=os.environ.get("ORG_NAME",""),
+                                   project=os.environ["CLUSTER_NAME"], domain="development",
+                                   api_key=os.environ.get("UNION_API_KEY",""))
+              c = await Cluster.get.aio(name=os.environ["CLUSTER_NAME"])
+              print(f"state={c.state} health={c.health} org={c.organization} pools={c.pools}")
+          asyncio.run(main())
+          PY
           # Buildkit diagnostics (post-failure view — registry setup also printed by
           # the "Verify buildkit and registry setup" step above).
           echo "=== buildkitd logs (post-failure) ===" && kubectl logs -n "$UNION_NS" deployment/union-operator-buildkit --tail=80 2>&1 || true
