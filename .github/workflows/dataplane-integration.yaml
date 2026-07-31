@@ -426,13 +426,31 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         run: |
           # --take-ownership lets re-runs adopt pre-existing CRDs / namespaces.
+          # On a --wait timeout ("context deadline exceeded") helm gives no pod
+          # detail, so capture which workload never went Ready before failing:
+          # its status, scheduling/mount events, and operator+leaseworker logs
+          # (eager-key self-bootstrap / auth failures surface here).
           helm upgrade --install union ./charts/dataplane \
             -f "$GITHUB_WORKSPACE/values-provision.yaml" \
             -f .github/ci-values/dataplane.yaml \
             --namespace "$UNION_NS" \
             --create-namespace \
             --take-ownership \
-            --wait --timeout 8m
+            --wait --timeout 8m && exit 0
+          rc=$?
+          echo "::group::install --wait failed (rc=$rc) — pod diagnostics"
+          kubectl get pods -n "$UNION_NS" -o wide || true
+          echo "--- not-ready pods: describe (Events) ---"
+          for p in $(kubectl get pods -n "$UNION_NS" --no-headers 2>/dev/null \
+              | awk '{split($2,a,"/"); if (a[1]!=a[2] || $3!="Running") print $1}'); do
+            echo "===== $p ====="
+            kubectl describe pod -n "$UNION_NS" "$p" 2>&1 | grep -A30 -iE "^Events:|State:|Reason:|Message:" | head -40 || true
+            kubectl logs -n "$UNION_NS" "$p" --all-containers --tail=60 2>&1 | tail -60 || true
+          done
+          echo "--- eager key secret present yet? ---"
+          kubectl get secret EAGER_API_KEY union-secret-auth -n "$UNION_NS" 2>&1 || true
+          echo "::endgroup::"
+          exit "$rc"
 
       # ── Validate ──────────────────────────────────────────────────────────
 
@@ -576,7 +594,7 @@ jobs:
           # Confirm the tag-resolution skip list actually reached the running
           # config-deployment configmap (verify_app revision fails digest
           # resolution against the HTTP-only k3d registry without it).
-          echo "=== knative config-deployment skip list ===" && kubectl get cm config-deployment -n "$UNION_NS" -o jsonpath='{.data.registries-skipping-tag-resolving}' 2>&1; echo || true
+          echo "=== knative config-deployment skip list ===" && { kubectl get cm config-deployment -n "$UNION_NS" -o jsonpath='{.data.registries-skipping-tag-resolving}' 2>&1 || true; }; echo
           # App + task pod logs: serve() blocks until the app is "activated", so
           # if verify_app hangs the tester pod's own log shows what it's waiting
           # on (or any deploy error). Task pods are named <runid>-aN-N; app pods
