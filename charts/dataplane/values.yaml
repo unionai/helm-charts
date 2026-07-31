@@ -2,8 +2,16 @@
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 
 global:
+  # --- Control plane (configure first) ---
+  # The single control-plane host. Everything derives from it: the DP->CP gRPC
+  # endpoint (dns:///<host>) and the app-callback URL (https://<host>). To
+  # enable/disable auth or route authless (direct in-cluster service, no nginx),
+  # use the config.union.auth / config.union.connection toggles — not a host
+  # override (see examples/values.authless.yaml).
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  UNION_CONTROL_PLANE_HOST: ""  # DEPRECATED legacy alias for CONTROLPLANE_HOST (still honored)
+
   # --- Identity ---
-  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks (e.g. "mycompany.union.ai")
   CLUSTER_NAME: ""              # Unique cluster identifier within your org
   ORG_NAME: ""                  # Organization name (must match controlplane)
 
@@ -17,11 +25,6 @@ global:
   # Identity SA); values.azure.yaml uses AZURE_BACKEND_CLIENT_ID /
   # AZURE_WORKER_CLIENT_ID (managed-identity client IDs).
 
-  # --- DP -> CP routing ---
-  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
-  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
-  QUEUE_GRPC_ENDPOINT: ""       # Override for task-pod queue path (see values.{cloud}.yaml)
-
   # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
@@ -30,9 +33,9 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- (Optional) Operator override for the control-plane host. Empty by default;
-# -- when unset the host resolves via global.CONTROLPLANE_HOST then
-# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- DEPRECATED: top-level control-plane host. This is the pre-globals way to
+# -- set the CP host and is still honored as a fallback, but migrate to
+# -- global.CONTROLPLANE_HOST. Precedence in dataplane.cp.host:
 # -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
 host: ""
 # -- Cluster identifier (shared with Union).
@@ -53,7 +56,7 @@ updateStatus:
     enabled: false
     # -- DP-reachable hostname the CP should dial back. e.g.
     # "dp-1.internal.<full_domain>". Bare hostname only — no scheme, no port.
-    # Chart helper derives the gRPC endpoint as `dns:///<host>:443`.
+    # Chart helper derives the gRPC endpoint as `dns:///<host>`.
     # Empty falls back to `Values.ingress.host` (the dataplane's own ingress
     # hostname), so most installs don't need to set this explicitly —
     # the chart already knows where the DP is reachable.
@@ -393,7 +396,7 @@ config:
         enabled: false
     connection:
       # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
-      # -- endpoint (dns:///<host>:443, honoring global.CONTROLPLANE_GRPC_ENDPOINT).
+      # -- endpoint (dns:///<host>; grpc/https default the port to 443).
       # -- To override, set this same key — it is authoritative (Helm deep-merge
       # -- replaces this leaf before template rendering).
       rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
