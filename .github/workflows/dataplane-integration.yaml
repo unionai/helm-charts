@@ -561,12 +561,17 @@ jobs:
         # scenario now fails the run — that's the release-integration signal.
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
+          # Jitter the built-image tag per run so build_image_task gets a fresh cache
+          # key each run — the in-cluster RustFS is destroyed each teardown, so a
+          # cross-run cacheservice HIT would point at a dead output and hard-fail
+          # (intentional leaseworker behavior — ENG26-979). run_attempt bumps on
+          # re-runs so those get a fresh key too. Only k3d sets this; persistent-store
+          # legs leave it unset and keep normal cross-run image caching.
+          SMOKE_IMAGE_CACHE_BUST: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           # --skip-logs: k3d disables fluentbit (no log backend), so verify_logs'
           # persistence check can't work here (validated on the real-cluster legs).
-          # --overwrite-cache: RustFS is ephemeral per run, so a cross-run cache HIT
-          # points at a destroyed store; force re-exec (persistent-store legs keep it on).
-          python .github/ci-scripts/ci_dataplane.py run-smoke-suite --skip-logs --overwrite-cache
+          python .github/ci-scripts/ci_dataplane.py run-smoke-suite --skip-logs
 
       - name: Show pod status
         if: steps.check.outputs.configured == 'true'

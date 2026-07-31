@@ -23,6 +23,15 @@ import flyte  # type: ignore
 
 _cluster = os.environ.get("CLUSTER_NAME", "ci-dev")
 
+# Cache-bust for the built images. On an ephemeral object store (k3d in-cluster
+# RustFS, destroyed each run) the cacheservice entry for build_image_task outlives
+# its output, so a later run gets a CACHE_HIT pointing at a dead URI and the action
+# fails (intentional leaseworker behavior — see ENG26-979). Jittering the image env
+# vars per run changes the image tag → a fresh build_image_task cache key → CACHE
+# MISS → clean build, never reading the destroyed output. Empty on persistent-store
+# legs (aws/gcp/azure/selfhosted), so their cross-run image caching is unaffected.
+_CACHE_BUST = os.environ.get("SMOKE_IMAGE_CACHE_BUST", "")
+
 
 # ── Hello (basic smoke) ──────────────────────────────────────────────────────
 
@@ -43,9 +52,9 @@ async def hello(nonce: str) -> str:
 
 _imgbuild_env = flyte.TaskEnvironment(
     name=f"ci-imgbuild-{_cluster}",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "requests==2.32.3", "flyteplugins-union"
-    ),
+    image=flyte.Image.from_debian_base()
+    .with_pip_packages("requests==2.32.3", "flyteplugins-union")
+    .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     cache="disable",
 )
 
@@ -65,7 +74,7 @@ _imgcache_env = flyte.TaskEnvironment(
     image=(
         flyte.Image.from_debian_base()
         .with_pip_packages("requests==2.32.3", "flyteplugins-union")
-        .with_env_vars({"CI_CACHE_TEST": "v1"})
+        .with_env_vars({"CI_CACHE_TEST": "v1", "CI_CACHE_BUST": _CACHE_BUST})
     ),
     cache="disable",
 )
@@ -83,9 +92,9 @@ async def imgcache_task(nonce: str) -> str:
 
 _reuse_env = flyte.TaskEnvironment(
     name=f"ci-reuse-{_cluster}",
-    image=flyte.Image.from_debian_base().with_pip_packages(
-        "unionai-reuse>=0.1.10", "flyteplugins-union"
-    ),
+    image=flyte.Image.from_debian_base()
+    .with_pip_packages("unionai-reuse>=0.1.10", "flyteplugins-union")
+    .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     # cpu/replicas kept small: the 4-vCPU CI runner is already near-full with the
     # dataplane + Knative serving stack, so a 2×500m reusable env can't schedule
     # (WAITING_FOR_RESOURCES). One replica fits, but reuse_driver itself runs on
