@@ -362,7 +362,11 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     last_err = ""
     for attempt in range(1, _SUBMIT_MAX_ATTEMPTS + 1):
         try:
-            run = await flyte.with_runcontext(queue=queue).run.aio(task_fn, **kwargs)  # type: ignore
+            # disable_run_cache: the DP object store is ephemeral per run (k3d RustFS
+            # is destroyed each teardown), so a GLOBAL cache lookup can hit a prior
+            # run's entry whose outputs.pb no longer exists ("cache lookup: not
+            # found"). The suite tests EXECUTION, not output caching, so disable it.
+            run = await flyte.with_runcontext(queue=queue, disable_run_cache=True).run.aio(task_fn, **kwargs)  # type: ignore
             break
         except Exception as exc:
             last_err = str(exc)
