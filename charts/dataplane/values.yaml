@@ -526,7 +526,7 @@ config:
     org: {}
     # -- Enable app serving
     apps:
-      enabled: "{{ .Values.serving.enabled }}"
+      enabled: '{{ if include "apps.enabled" . }}true{{ else }}false{{ end }}'
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
@@ -2152,6 +2152,22 @@ tunnelService:
   apps:
     enableGlobalIngress: true
     originURL: ""
+
+# -- Union app serving (Knative Serving). Supersedes the deprecated
+# `serving.enabled`; when both are set this one wins. Left unset (null) so the
+# deprecated flag can still take effect — the effective default when neither is
+# set is `true`.
+#
+# Under `zero_trust.enabled`, this also gates the vendored Knative Serving
+# components (activator, autoscaler, autoscaler-hpa, controller, webhook,
+# net-kourier-controller, their RBAC and config). The Envoy gateway is NOT
+# gated by it: Envoy serves the static dataplane routes zero trust depends on
+# and always renders when `zero_trust.enabled` is true.
+#
+# Outside zero trust, this gates the KnativeServing CR, the serving Ingress,
+# the operator's Knative RBAC, and the operator's app-serving config.
+apps:
+  enabled: null
 
 # -- Configure app serving and knative.
 serving:
