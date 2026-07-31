@@ -1183,7 +1183,7 @@ deploy time.
 {{- if not (kindIs "invalid" $serving.enabled) -}}
 # DEPRECATION: `serving.enabled` is deprecated and will be removed in a future
 # release. Use `apps.enabled` instead; when both are set, `apps.enabled` wins.
-# Resolved: apps.enabled={{ $apps.enabled | toString | default "<unset>" }}, serving.enabled={{ $serving.enabled }} -> app serving {{ if include "apps.enabled" . }}enabled{{ else }}disabled{{ end }}.
+# Resolved: apps.enabled={{ if kindIs "invalid" $apps.enabled }}<unset>{{ else }}{{ $apps.enabled }}{{ end }}, serving.enabled={{ $serving.enabled }} -> app serving {{ if include "apps.enabled" . }}enabled{{ else }}disabled{{ end }}.
 {{- end -}}
 {{- end -}}
 
