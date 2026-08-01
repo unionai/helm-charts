@@ -68,10 +68,20 @@ _app_task_env = flyte.TaskEnvironment(
     resources=flyte.Resources(cpu="250m", memory="256Mi"),
     depends_on=[_app_env],
     cache="disable",
-    # The tester pod calls flyte.serve(_app_env), which re-resolves _app_env.name
-    # from CLUSTER_NAME at runtime. Without this it computes "ci-app-ci-dev"
-    # (the default) and serve() hangs deploying/looking up an unregistered name.
-    env_vars={"CLUSTER_NAME": _cluster},
+    # The tester pod calls flyte.serve(_app_env), which re-resolves _app_env at
+    # runtime from the pod's own env — so both inputs to that resolution must be
+    # injected here, not just set on the CI runner:
+    #   * CLUSTER_NAME       — _app_env.name; without it the pod computes the
+    #                          "ci-app-ci-dev" default and serve() hangs on an
+    #                          unregistered name.
+    #   * SMOKE_IMAGE_CACHE_BUST — _app_env.image tag jitter. serve() BUILDS the
+    #                          app image inside this pod, so an empty value here
+    #                          yields the stable tag every run → the build_image
+    #                          task hits a purged-output cache entry and fails
+    #                          the leaseworker read (ENG26-979). Propagate the
+    #                          run-unique value so the in-pod build gets a fresh
+    #                          build cache key, matching the driver-built images.
+    env_vars={"CLUSTER_NAME": _cluster, "SMOKE_IMAGE_CACHE_BUST": _CACHE_BUST},
 )
 
 
