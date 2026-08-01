@@ -21,6 +21,17 @@ _cluster = os.environ.get("CLUSTER_NAME", "ci-dev")
 # Empty on persistent-store legs, which keep normal cross-run image caching.
 _CACHE_BUST = os.environ.get("SMOKE_IMAGE_CACHE_BUST", "")
 
+# Route verify_app's poll at the app's PER-CLUSTER internal ksvc URL instead of
+# the shared tenant-wide *.apps public URL. The public URL rides a single
+# Cloudflare record (*.apps.<tenant>) that every dataplane's operator overwrites
+# to its own tunnel on each reconcile — last-writer-wins, so concurrent DPs on a
+# shared tenant fight over it. The internal ksvc host is per-project/per-cluster
+# (<project>-<domain>-<app>.union.svc.cluster.local, project == CLUSTER_NAME) and
+# contention-free. INTERNAL_APP_ENDPOINT_PATTERN makes _app_env.endpoint resolve
+# to it; {app_fqdn} is filled by the SDK with the app name. Per-DP PUBLIC ingress
+# is the durable fix (ENG26-982); this makes CI independent of the shared wildcard.
+_INTERNAL_APP_ENDPOINT = f"http://{_cluster}-development-{{app_fqdn}}.union.svc.cluster.local"
+
 
 def _make_fastapi_app():
     import fastapi  # type: ignore
@@ -81,7 +92,14 @@ _app_task_env = flyte.TaskEnvironment(
     #                          the leaseworker read (ENG26-979). Propagate the
     #                          run-unique value so the in-pod build gets a fresh
     #                          build cache key, matching the driver-built images.
-    env_vars={"CLUSTER_NAME": _cluster, "SMOKE_IMAGE_CACHE_BUST": _CACHE_BUST},
+    #   * INTERNAL_APP_ENDPOINT_PATTERN — _app_env.endpoint. Without it the poll
+    #                          targets the shared *.apps public URL (ENG26-982);
+    #                          with it, the per-cluster internal ksvc URL.
+    env_vars={
+        "CLUSTER_NAME": _cluster,
+        "SMOKE_IMAGE_CACHE_BUST": _CACHE_BUST,
+        "INTERNAL_APP_ENDPOINT_PATTERN": _INTERNAL_APP_ENDPOINT,
+    },
 )
 
 
