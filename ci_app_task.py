@@ -81,6 +81,33 @@ class AppDeployResult(typing.NamedTuple):
     assigned_cluster: str
 
 
+# Upper bound on the teardown deactivate. deactivate(wait=True) blocks until the
+# app reaches the deactivated state; on a cold-starting/churning app under CPU
+# pressure that wait can outlast the run budget. Bounding it keeps a genuine
+# assertion failure from being masked as a generic run timeout (a hung deactivate
+# in a finally swallows the real error and burns the whole deadline at RUNNING).
+_TEARDOWN_TIMEOUT = 60  # seconds
+
+
+async def _teardown_app(deployed, log) -> None:  # type: ignore[no-untyped-def]
+    """Best-effort, bounded deactivate. Never raises, never hangs.
+
+    Run as a separate teardown step (not in an assertion `finally`) so the app
+    stays up for the checks and a failed check surfaces its real reason instead
+    of a masked deactivate hang.
+    """
+    import asyncio
+    try:
+        await asyncio.wait_for(deployed.deactivate.aio(wait=True), timeout=_TEARDOWN_TIMEOUT)
+    except asyncio.TimeoutError:
+        log.warning(
+            f"app teardown: deactivate did not confirm stopped within "
+            f"{_TEARDOWN_TIMEOUT}s; leaving best-effort (stop already requested)"
+        )
+    except Exception as exc:  # noqa: BLE001 — teardown must not mask the real result
+        log.warning(f"app teardown: deactivate failed (best-effort): {exc}")
+
+
 @_app_task_env.task
 async def app_deploy_test() -> AppDeployResult:
     import asyncio
@@ -96,23 +123,26 @@ async def app_deploy_test() -> AppDeployResult:
     public_url = deployed.endpoint
     log.info(f"app: internal={internal_url} public={public_url}")
 
-    # Verify the CP bound the app to THIS run's cluster (the explicit
-    # cluster_pool pin resolved to the run's dataplane). status.assigned_cluster
-    # is the cluster the control plane dispatched the app to; it must equal the
-    # run's cluster (CLUSTER_NAME == _cluster, the only dataplane in this CI).
-    # Re-fetch the app if the watch object's status hasn't populated it yet.
-    assigned_cluster = deployed.pb2.status.assigned_cluster
-    if not assigned_cluster:
-        refreshed = await flyte.remote.App.get.aio(name=_app_env.name)
-        assigned_cluster = refreshed.pb2.status.assigned_cluster
-    log.info(f"app: assigned_cluster={assigned_cluster!r} expected={_cluster!r}")
-    if assigned_cluster != _cluster:
-        raise RuntimeError(
-            f"app routed to wrong cluster: assigned_cluster={assigned_cluster!r} "
-            f"but expected {_cluster!r}"
-        )
-
+    # Keep the app UP through every assertion; deactivate only afterwards as a
+    # separate bounded teardown step (see _teardown_app). On failure we still run
+    # a best-effort teardown, then re-raise the ORIGINAL error untouched.
     try:
+        # Verify the CP bound the app to THIS run's cluster (the explicit
+        # cluster_pool pin resolved to the run's dataplane). status.assigned_cluster
+        # is the cluster the control plane dispatched the app to; it must equal the
+        # run's cluster (CLUSTER_NAME == _cluster, the only dataplane in this CI).
+        # Re-fetch the app if the watch object's status hasn't populated it yet.
+        assigned_cluster = deployed.pb2.status.assigned_cluster
+        if not assigned_cluster:
+            refreshed = await flyte.remote.App.get.aio(name=_app_env.name)
+            assigned_cluster = refreshed.pb2.status.assigned_cluster
+        log.info(f"app: assigned_cluster={assigned_cluster!r} expected={_cluster!r}")
+        if assigned_cluster != _cluster:
+            raise RuntimeError(
+                f"app routed to wrong cluster: assigned_cluster={assigned_cluster!r} "
+                f"but expected {_cluster!r}"
+            )
+
         # Knative may still be pulling the image / cold-starting the revision
         # when serve() returns, so poll "/" until it answers 200 instead of
         # firing a single un-timed request that hangs forever on a not-yet-ready
@@ -136,8 +166,11 @@ async def app_deploy_test() -> AppDeployResult:
             resp = await client.get(f"{internal_url}/health")
             assert resp.status_code == 200, f"/health returned {resp.status_code}"
             assert resp.json().get("status") == "healthy"
-    finally:
-        await deployed.deactivate.aio(wait=True)
+    except Exception:
+        await _teardown_app(deployed, log)
+        raise
+
+    await _teardown_app(deployed, log)
     return AppDeployResult(
         internal_url=internal_url,
         public_url=public_url,
