@@ -204,37 +204,10 @@ jobs:
       - name: Create k3d cluster with embedded registry
         if: steps.check.outputs.configured == 'true'
         env:
+          # up.sh cluster uses K3S_IMAGE (pinned, pre-loaded) if set to skip a
+          # Docker Hub pull; the registry-config + retry live in up.sh's cluster phase.
           K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
-        run: |
-          # k3d's --registry-create maps host:5001 → container:5000 (no
-          # REGISTRY_HTTP_ADDR). The registry listens on port 5000 INSIDE the
-          # Docker network; port 5001 is only the host-side mapping. buildkit
-          # doesn't use containerd's mirror config so it can't reach :5001.
-          # Fix: point buildkit (and defaultRepository) at port 5000, and give
-          # k3s a --registry-config so containerd pulls via HTTP on :5000 too.
-          cat > /tmp/k3d-registries.yaml << 'EOF'
-          mirrors:
-            "k3d-registry:5000":
-              endpoint:
-                - "http://k3d-registry:5000"
-          EOF
-          # --image pins the pre-loaded k3s image (no Docker Hub pull). Retry the
-          # whole create: a transient Docker/network blip during node bring-up
-          # otherwise fails the entire run, and the registry:2 + k3s images are
-          # already local so a retry is cheap.
-          n=0
-          until k3d cluster create ci-dataplane \
-              --image "$K3S_IMAGE" \
-              --registry-create k3d-registry:0.0.0.0:5001 \
-              --registry-config /tmp/k3d-registries.yaml \
-              --wait --timeout 120s; do
-            n=$((n+1))
-            [ "$n" -ge 3 ] && { echo "k3d cluster create failed after $n attempts"; exit 1; }
-            echo "cluster create failed (attempt $n) — cleaning up and retrying"
-            k3d cluster delete ci-dataplane || true
-            sleep 10
-          done
-          kubectl wait --for=condition=Ready nodes --all --timeout=120s
+        run: hack/k3d/up.sh cluster
 
       # ── Pre-warm the build base image (registry-throttle mitigation) ───────
       # buildkit builds task images FROM the default base
@@ -301,42 +274,11 @@ jobs:
 
       # ── RustFS object store ───────────────────────────────────────────────
 
-      - name: Deploy RustFS
+      - name: Deploy RustFS + create bucket
         if: steps.check.outputs.configured == 'true'
-        run: |
-          kubectl create namespace "$RUSTFS_NS"
-          kubectl apply -n "$RUSTFS_NS" -f hack/k3d/rustfs.yaml
-          kubectl wait --for=condition=Available deploy/rustfs \
-            -n "$RUSTFS_NS" --timeout=120s
-
-      - name: Create storage buckets via mc
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # Port-forward RustFS so we can reach it from the runner — avoids
-          # spawning a pod (no image pull delay, no Succeeded condition race).
-          kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 &
-          PF_PID=$!
-          trap "kill $PF_PID 2>/dev/null || true" EXIT
-
-          # Wait for the port-forward to be ready.
-          for i in $(seq 1 20); do
-            curl -sf http://localhost:9000/minio/health/live && break
-            sleep 2
-          done
-
-          # Install mc binary (single static binary, <25 MB). dl.min.io 504s
-          # intermittently on shared runners — retry.
-          n=0
-          until [ "$n" -ge 6 ]; do
-            curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc && chmod +x /usr/local/bin/mc && break
-            n=$((n+1)); echo "mc download failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-          done
-          [ "$n" -ge 6 ] && { echo "mc download failed after $n attempts"; exit 1; }
-
-          mc alias set store http://localhost:9000 \
-            "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY"
-          mc mb store/"$RUSTFS_BUCKET" --ignore-existing
-          echo "bucket-ok"
+        # up.sh storage: deploy the RustFS manifest, wait Available, port-forward,
+        # install mc (retried), create the object-store bucket.
+        run: hack/k3d/up.sh storage
 
       # ── Dataplane connection contract (from the pre-seeded operator creds) ─
       # No runtime `uctl provision`: this DP's operator identity is pre-provisioned
@@ -349,30 +291,9 @@ jobs:
       # charts/dataplane/values.k3d.yaml overlay.
       - name: Build dataplane values from seeded operator creds
         if: steps.check.outputs.configured == 'true'
-        run: |
-          set -euo pipefail
-          cat > "$GITHUB_WORKSPACE/values-provision.yaml" <<EOF
-          global:
-            AUTH_CLIENT_ID: "${OPERATOR_CLIENT_ID}"
-            CONTROLPLANE_HOST: "${CP_HOST}"
-            UNION_CONTROL_PLANE_HOST: "${CP_HOST}"
-            ORG_NAME: "${ORG_NAME_INPUT}"
-            CLUSTER_NAME: "${CLUSTER_NAME}"
-          secrets:
-            admin:
-              enable: true
-              create: true
-              clientId: "${OPERATOR_CLIENT_ID}"
-              clientSecret: "${OPERATOR_CLIENT_SECRET}"
-          config:
-            operator:
-              # Self-bootstrap the eager (task-pod) API key from the operator
-              # identity — the selfmanaged pattern (FAB-241), replacing the old
-              # runtime `uctl create apikey` step.
-              apiKey:
-                enabled: true
-          EOF
-          echo "built values-provision.yaml (cluster=${CLUSTER_NAME} host=${CP_HOST})"
+        # Reads OPERATOR_CLIENT_ID/SECRET, CP_HOST, ORG_NAME_INPUT, CLUSTER_NAME
+        # from $GITHUB_ENV (set by "Resolve managed tenant + credentials").
+        run: hack/k3d/up.sh provision
 
       # ── Helm chart install ─────────────────────────────────────────────────
 
@@ -390,75 +311,23 @@ jobs:
             charts/dataplane/Chart.lock
           key: helm-deps-v1-${{ hashFiles('charts/dataplane/Chart.yaml') }}
 
-      - name: Add Helm repos and fetch chart dependencies
+      - name: Install dataplane chart (CRDs + deps + helm install)
         if: steps.check.outputs.configured == 'true'
-        run: |
-          # On a cache hit the subchart .tgz are already present, so build offline
-          # (no GitHub releases). On a miss, download with a patient retry to ride
-          # out transient 504s; the cache save then primes every later run.
-          retry() {
-            local n=0
-            until [ "$n" -ge 6 ]; do "$@" && return 0; n=$((n+1)); echo ">> '$*' failed (attempt $n) — retrying in $((n*15))s"; sleep $((n*15)); done
-            echo ">> '$*' failed after $n attempts"; return 1
-          }
-          # Add EVERY repo the dataplane Chart.yaml depends on. `helm dependency
-          # build` (the cache-hit path) needs a repo *definition* for each
-          # dependency URL in Chart.lock, or it fails with "no repository
-          # definition for <url>" — unionai is required and was previously
-          # missing (the cache-miss path masked it: `helm dependency update`
-          # resolves dependency URLs directly without pre-added repos).
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo add fluent              https://fluent.github.io/helm-charts
-          helm repo add metrics-server      https://kubernetes-sigs.github.io/metrics-server/
-          helm repo add opencost            https://opencost.github.io/opencost-helm-chart
-          helm repo add nvidia              https://nvidia.github.io/dcgm-exporter/helm-charts
-          helm repo add ingress-nginx       https://kubernetes.github.io/ingress-nginx
-          helm repo add unionai             https://unionai.github.io/helm-charts
-          if [ -n "$(ls -A charts/dataplane/charts 2>/dev/null)" ]; then
-            echo ">> subchart tarballs restored from cache — building offline"
-            retry helm dependency build charts/dataplane
-          else
-            retry helm repo update
-            retry helm dependency update charts/dataplane
-          fi
-
-      - name: Install dataplane chart (local PR copy)
-        if: steps.check.outputs.configured == 'true'
-        run: |
-          # --take-ownership lets re-runs adopt pre-existing CRDs / namespaces.
-          # On a --wait timeout ("context deadline exceeded") helm gives no pod
-          # detail, so capture which workload never went Ready before failing:
-          # its status, scheduling/mount events, and operator+leaseworker logs
-          # (eager-key self-bootstrap / auth failures surface here).
-          helm upgrade --install union ./charts/dataplane \
-            -f "$GITHUB_WORKSPACE/values-provision.yaml" \
-            -f charts/dataplane/values.k3d.yaml \
-            --namespace "$UNION_NS" \
-            --create-namespace \
-            --take-ownership \
-            --wait --timeout 8m && exit 0
-          rc=$?
-          echo "::group::install --wait failed (rc=$rc) — pod diagnostics"
-          kubectl get pods -n "$UNION_NS" -o wide || true
-          echo "--- not-ready pods: describe (Events) ---"
-          for p in $(kubectl get pods -n "$UNION_NS" --no-headers 2>/dev/null \
-              | awk '{split($2,a,"/"); if (a[1]!=a[2] || $3!="Running") print $1}'); do
-            echo "===== $p ====="
-            kubectl describe pod -n "$UNION_NS" "$p" 2>&1 | grep -A30 -iE "^Events:|State:|Reason:|Message:" | head -40 || true
-            kubectl logs -n "$UNION_NS" "$p" --all-containers --tail=60 2>&1 | tail -60 || true
-          done
-          echo "--- eager key secret present yet? ---"
-          kubectl get secret EAGER_API_KEY union-secret-auth -n "$UNION_NS" 2>&1 || true
-          echo "::endgroup::"
-          exit "$rc"
+        # up.sh install: apply CRDs out-of-band, build chart deps offline from the
+        # restored cache (step above), then helm upgrade --install with the shared
+        # values.k3d.yaml overlay + the ephemeral values-provision.yaml; on a
+        # --wait timeout it dumps not-ready pod status/events/logs before failing.
+        run: hack/k3d/up.sh install
 
       # ── Validate ──────────────────────────────────────────────────────────
 
       - name: Wait for cluster to register as healthy
         if: steps.check.outputs.configured == 'true'
         id: healthy
-        run: |
-          python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360
+        # up.sh wait wraps the same ci_dataplane.py wait-healthy, which writes the
+        # org_name output to $GITHUB_OUTPUT (inherited), so steps.healthy.outputs
+        # is preserved for the routing/smoke steps.
+        run: hack/k3d/up.sh wait
 
       # ── Project + cluster pool routing (PR isolation) ─────────────────────
       # Creates a cluster pool named == CLUSTER_NAME, assigns this run's
