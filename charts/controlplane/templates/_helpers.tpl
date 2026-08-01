@@ -43,14 +43,41 @@ Notes:
 {{- end }}
 
 {{/*
-Cluster-local FQDN for CP↔CP gRPC routing (rootTenantURLPattern).
-Switches between envoy and nginx based on the ingress provider.
+Cluster-local FQDN default for connection.rootTenantURLPattern. Originally just
+CP↔CP gRPC routing; scope has since expanded — EAGER_API_KEY bootstrapping mints
+this endpoint into the api-key, and dataplane task pods dial it. Switches between
+envoy and nginx based on the ingress provider.
 */}}
 {{- define "controlPlaneLibrary.ingressFqdn" -}}
 {{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
 {{ .Values.global.ENVOY_INGRESS_FQDN | default "envoy-controlplane.envoy-gateway.svc.cluster.local" }}
 {{- else -}}
 controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate a connection endpoint (rootTenantURLPattern). It is minted into eager
+api-keys and dialed by both control-plane services and dataplane task pods.
+Control-plane services strip the dns:/// prefix and dial the bare host, and the
+key codec shifts its decoded fields when the endpoint carries a trailing :port —
+so require a dns:/// gRPC target with no port. The {{`{{ organization }}`}}
+placeholder is substituted by the services at runtime (not a helm template), so
+neutralize it before rendering the rest of the value.
+Args: dict "ep" <raw endpoint, may be a tpl string> "ctx" <root context>
+"name" <field name for the error message>.
+*/}}
+{{- define "controlPlaneLibrary.validateGrpcEndpoint" -}}
+{{- $raw := .ep | toString | replace "{{ organization }}" "organization" -}}
+{{- $resolved := trim (tpl $raw .ctx) -}}
+{{- if $resolved -}}
+{{- if not (hasPrefix "dns:///" $resolved) -}}
+{{- fail (printf "controlplane: %s = %q must be a dns:/// gRPC target — control-plane services strip the dns:/// prefix and dial the bare host" .name $resolved) -}}
+{{- end -}}
+{{- $host := trimPrefix "dns:///" $resolved -}}
+{{- if regexMatch ":[0-9]+$" $host -}}
+{{- fail (printf "controlplane: %s = %q must not carry a trailing :port (a port shifts the eager-api-key codec's decoded fields)" .name $resolved) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
@@ -456,6 +483,14 @@ IfNotPresent
   {{- $_ := set $app "apiKeyOverrides" $overrides }}
   {{- $_ := set $identity "app" $app }}
   {{- $_ := set $merged "identity" $identity }}
+{{- end }}
+
+{{- /* Guard the eager-api-key / CP↔CP endpoint against misconfiguration: a
+       supported scheme and no trailing :port. Runs for every service's merged
+       connection. */}}
+{{- $mergedRootPattern := index (index $merged "connection" | default dict) "rootTenantURLPattern" }}
+{{- if $mergedRootPattern }}
+  {{- include "controlPlaneLibrary.validateGrpcEndpoint" (dict "ep" $mergedRootPattern "ctx" . "name" (printf "services.%s connection.rootTenantURLPattern" (.key | default "*"))) }}
 {{- end }}
 
 {{- /* dataproxy: default union.connection.host to the in-cluster control-plane
