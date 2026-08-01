@@ -81,6 +81,35 @@ Args: dict "ep" <raw endpoint, may be a tpl string> "ctx" <root context>
 {{- end -}}
 {{- end -}}
 
+{{/*
+Enforce that rootTenantURLPattern is identical across every connection in the
+chart. The endpoint is minted into the operator EAGER_API_KEY and dialed by
+dataplane task pods: the control-plane services read the top-level
+configMap.connection, while flyteadmin-private reads
+flyte.configmap.adminServer.connection — a separate values path the flyte
+subchart owns, which cannot share the value through a helm `include`. If the two
+diverge, flyteadmin dials a different control-plane host than every other service
+and the minted key points somewhere the task pods can't reach. Resolve each (tpl)
+and fail on any mismatch. Both default to dns:///<global.UNION_HOST>; override
+them together (e.g. for intracluster svc-FQDN or internal-VPC routing).
+Args: root context (.)
+*/}}
+{{- define "controlPlaneLibrary.validateRootTenantConsistency" -}}
+{{- $tl := index (index (.Values.configMap | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $fa := index (index (index (index (.Values.flyte | default dict) "configmap" | default dict) "adminServer" | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $sources := dict "configMap.connection.rootTenantURLPattern" $tl "flyte.configmap.adminServer.connection.rootTenantURLPattern" $fa -}}
+{{- $byValue := dict -}}
+{{- range $field, $raw := $sources -}}
+{{- if $raw -}}
+{{- $resolved := trim (tpl ($raw | toString | replace "{{ organization }}" "organization") $) -}}
+{{- $_ := set $byValue $resolved (append (index $byValue $resolved | default list) $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len (keys $byValue)) 1 -}}
+{{- fail (printf "controlplane: rootTenantURLPattern must be identical across all connections (it is minted into the operator EAGER_API_KEY and dialed by dataplane task pods), but got divergent values %v — set configMap.connection and flyte.configmap.adminServer.connection consistently (both default to dns:///<global.UNION_HOST>)" $byValue) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "unionai.imagePullSecrets" -}}
 {{- if and (hasKey .config "imagePullSecrets") }}
 {{ toYaml .config.imagePullSecrets }}
