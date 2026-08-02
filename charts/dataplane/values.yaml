@@ -2155,29 +2155,12 @@ tunnelService:
 
 # -- Union app serving (Knative Serving). Supersedes the deprecated
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
-# deprecated flag can still take effect — the effective default when neither is
-# set is `true`.
+# deprecated flag can still take effect — the effective default is `true`.
 #
-# Under `zero_trust.enabled`, this also gates the vendored Knative Serving
-# components (activator, autoscaler, autoscaler-hpa, controller, webhook,
-# net-kourier-controller, their RBAC and config). The Envoy gateway is NOT
-# gated by it: Envoy serves the static dataplane routes zero trust depends on
-# and always renders when `zero_trust.enabled` is true.
-#
-# Outside zero trust, this gates the KnativeServing CR, the serving Ingress,
-# the operator's Knative RBAC, and the operator's app-serving config.
-#
-# Disabling app serving here does NOT disable the `knative-operator` subchart
-# -- that has its own `knative-operator.enabled` condition, evaluated by Helm
-# at parse time. If you're turning off app serving on the non-zero-trust path,
-# you probably want to set that too, or you're left running an operator with
-# nothing to reconcile. The operator's CRDs ship under the subchart's `crds/`
-# and are not gated by either flag.
-#
-# Under zero trust with apps off, the gateway Service still publishes its
-# `http-apps` port (80 -> 8081), but nothing binds 8081, so callers get
-# connection-refused rather than a clean failure. This is deliberate --
-# `enableDirectToAppIngress: false` stops anything from routing there.
+# Does NOT gate the Envoy gateway, which serves the static dataplane routes
+# zero trust depends on, nor the `knative-operator` subchart, which has its own
+# `knative-operator.enabled` condition evaluated by Helm at parse time — turn
+# that off too on the non-zero-trust path.
 apps:
   enabled: null
 
@@ -2185,9 +2168,8 @@ apps:
 serving:
   # -- DEPRECATED: use `apps.enabled`. Honoured only when `apps.enabled` is
   # unset. Left unset (null) so an explicit value is distinguishable from the
-  # default; setting it emits a deprecation notice in the rendered output and
-  # in NOTES.txt. Installs Knative Serving — knative-operator must be running
-  # in the cluster for the non-zero-trust path to work.
+  # default. Installs Knative Serving — knative-operator must be running in the
+  # cluster for the non-zero-trust path to work.
   enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2

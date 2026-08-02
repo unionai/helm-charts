@@ -1137,23 +1137,10 @@ Create a full name prefix for serving resources
 {{- end }}
 
 {{/*
-App serving (Knative Serving) toggle.
-
-`apps.enabled` is the canonical flag; `serving.enabled` is its deprecated
-predecessor. Both default to null in values.yaml so an explicit setting is
-distinguishable from the default, which is what lets the deprecated flag keep
-working without overriding the new one. Precedence:
-
-    apps.enabled  >  serving.enabled  >  true
-
-Emits "true" when app serving is on and "" when off, so callers write
-`{{- if include "apps.enabled" . }}` — a helper emitting the literal string
-"false" would be truthy inside an `if`. Matches the `singleNamespace` idiom.
-
-Under zero_trust this also gates the vendored Knative Serving components in
-templates/gateway/. It deliberately does NOT gate envoy.yaml or
-bootstrap-configmap.yaml: the Envoy gateway serves the static dataplane routes
-that zero trust depends on and must render whenever zero_trust.enabled is true.
+App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > true.
+Both default to null so an explicit setting is distinguishable from the default.
+Emits "true"/"" rather than "true"/"false" so callers can write
+`if include "apps.enabled" .` — the literal string "false" is truthy.
 */}}
 {{- define "apps.enabled" -}}
 {{- $apps := .Values.apps | default dict -}}
@@ -1164,26 +1151,6 @@ that zero trust depends on and must render whenever zero_trust.enabled is true.
 {{- if $serving.enabled -}}true{{- end -}}
 {{- else -}}
 true
-{{- end -}}
-{{- end -}}
-
-{{/*
-Deprecation notice for `serving.enabled`.
-
-Emits a YAML comment block when the deprecated flag is explicitly set, and
-nothing otherwise. Helm has no warning channel, so this is rendered into
-`helm template` output (top of the operator Deployment, where it shows up in
-snapshot diffs and PR review) and into NOTES.txt for `helm install/upgrade`.
-ArgoCD parses YAML into objects and drops comments, so this costs nothing at
-deploy time.
-*/}}
-{{- define "serving.deprecationWarning" -}}
-{{- $apps := .Values.apps | default dict -}}
-{{- $serving := .Values.serving | default dict -}}
-{{- if not (kindIs "invalid" $serving.enabled) -}}
-# DEPRECATION: `serving.enabled` is deprecated and will be removed in a future
-# release. Use `apps.enabled` instead; when both are set, `apps.enabled` wins.
-# Resolved: apps.enabled={{ if kindIs "invalid" $apps.enabled }}<unset>{{ else }}{{ $apps.enabled }}{{ end }}, serving.enabled={{ $serving.enabled }} -> app serving {{ if include "apps.enabled" . }}enabled{{ else }}disabled{{ end }}.
 {{- end -}}
 {{- end -}}
 
