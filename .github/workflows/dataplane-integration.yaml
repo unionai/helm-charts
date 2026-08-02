@@ -133,76 +133,6 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "k3d dataplane $cluster -> managed tenant $host (org $org); CI ops as $ci_id, operator=$op_id"
 
-      # ── Tool setup ────────────────────────────────────────────────────────
-
-      - name: Install k3d
-        if: steps.check.outputs.run == 'true'
-        run: |
-          # install.sh pulls the k3d binary from GitHub releases, which 504s /
-          # times out intermittently on shared runners and otherwise kills the
-          # whole ~30-min run before any test executes. Retry the install.
-          n=0
-          until [ "$n" -ge 6 ]; do
-            curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash && break
-            n=$((n+1)); echo "k3d install failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-          done
-          [ "$n" -ge 6 ] && { echo "k3d install failed after $n attempts"; exit 1; }
-          k3d version
-
-      # ── Cache the Docker Hub infra images k3d pulls at cluster-create time ──
-      # `registry:2` (the embedded registry) and `rancher/k3s` come from Docker
-      # Hub, which rate-limits/times out on shared GitHub runners and aborts the
-      # whole run before any tests execute. Cache them as a docker-save tarball
-      # keyed on the exact k3d+k3s versions, so a cache hit skips Docker Hub
-      # entirely. The key changes automatically when k3d (and thus its default
-      # k3s image) is upgraded.
-      - name: Resolve k3d infra image versions
-        if: steps.check.outputs.run == 'true'
-        id: k3dimg
-        run: |
-          K3D_VER=$(k3d version | awk '/k3d version/{print $3}')
-          K3S_TAG=$(k3d version | awk '/k3s version/{print $3}')
-          # Fail fast on a parse miss rather than emitting a malformed
-          # "--image docker.io/rancher/k3s:" that breaks cluster create cryptically.
-          if [ -z "$K3S_TAG" ] || [ -z "$K3D_VER" ]; then
-            echo "ERROR: could not parse k3d/k3s versions:"; k3d version; exit 1
-          fi
-          echo "k3s_image=docker.io/rancher/k3s:${K3S_TAG}" >> "$GITHUB_OUTPUT"
-          echo "cache_key=k3d-infra-${K3D_VER}-${K3S_TAG}"   >> "$GITHUB_OUTPUT"
-          echo "Resolved k3d=$K3D_VER k3s=$K3S_TAG"
-
-      - name: Restore k3d infra image cache
-        if: steps.check.outputs.run == 'true'
-        uses: actions/cache@v4
-        with:
-          path: /tmp/k3d-infra-images
-          key: ${{ steps.k3dimg.outputs.cache_key }}
-
-      - name: Load or pull k3d infra images
-        if: steps.check.outputs.run == 'true'
-        env:
-          K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
-        run: |
-          DIR=/tmp/k3d-infra-images
-          TAR="$DIR/infra-images.tar"
-          REG="docker.io/library/registry:2"
-          if [ -f "$TAR" ]; then
-            echo "infra-image cache HIT ($(du -h "$TAR" | cut -f1)) — loading"
-            docker load -i "$TAR"
-          else
-            echo "infra-image cache MISS — pulling from Docker Hub (with retries)"
-            mkdir -p "$DIR"
-            for img in "$REG" "$K3S_IMAGE"; do
-              n=0
-              until docker pull "$img"; do
-                n=$((n+1))
-                [ "$n" -ge 5 ] && { echo "giving up pulling $img"; exit 1; }
-                echo "pull $img failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-              done
-            done
-            docker save "$REG" "$K3S_IMAGE" -o "$TAR"
-          fi
-
       - name: Set up Helm ${{ env.HELM_VERSION }}
         if: steps.check.outputs.run == 'true'
         uses: azure/setup-helm@v4.3.1
@@ -217,101 +147,15 @@ jobs:
           # queue-based routing, which older clients don't speak.
           pip install --quiet flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx
 
-      # ── k3d cluster + registry ────────────────────────────────────────────
-
-      - name: Create k3d cluster with embedded registry
+      # ── k3d SETUP (one shot) ──────────────────────────────────────────────
+      # install k3d + cluster + embedded registry + RustFS object store + operator
+      # creds -> a Union-dataplane-ready cluster. The Docker Hub image caching /
+      # base pre-warm that used to bracket this is dropped: up.sh's cluster phase
+      # retries the pull and this Tier-2 leg is gated (infrequent), so rate-limit
+      # exposure is low. Re-add a pinned-K3S_IMAGE cache step here if it flakes.
+      - name: Bootstrap k3d
         if: steps.check.outputs.run == 'true'
-        env:
-          # up.sh cluster uses K3S_IMAGE (pinned, pre-loaded) if set to skip a
-          # Docker Hub pull; the registry-config + retry live in up.sh's cluster phase.
-          K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
-        run: tools/dataplane/k3d/up.sh cluster
-
-      # ── Pre-warm the build base image (registry-throttle mitigation) ───────
-      # buildkit builds task images FROM the default base
-      #   ghcr.io/flyteorg/flyte:py<runner-python>-v<installed-flyte-version>
-      # pulling it from ghcr.io once per run. On shared runners that pull can be
-      # throttled (429/5xx). Mirror the base into the in-cluster k3d registry so
-      # buildkit (configured with a ghcr.io→k3d-registry mirror in ci-values)
-      # serves it locally. Entirely best-effort: every failure path exits 0 and
-      # buildkit just falls back to ghcr.io as before.
-      - name: Resolve build base image ref
-        if: steps.check.outputs.run == 'true'
-        id: baseref
-        run: |
-          PYMM=$(python -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-          VER=$(python -c 'from flyte._version import __version__ as v; print(v)' 2>/dev/null || echo "")
-          # A dev/local version (contains "+", "dev") doesn't map to a published
-          # ghcr base (from_debian_base builds from python:slim instead), so the
-          # mirror would be unused — emit an empty tag to skip the pre-warm.
-          if [ -z "$VER" ] || printf '%s' "$VER" | grep -qiE 'dev|\+'; then
-            echo "tag=" >> "$GITHUB_OUTPUT"
-            echo "cache_key=build-base-none" >> "$GITHUB_OUTPUT"
-            echo "skipping pre-warm: flyte version='${VER}' is not a published base"
-          else
-            echo "tag=py${PYMM}-v${VER}" >> "$GITHUB_OUTPUT"
-            echo "cache_key=build-base-py${PYMM}-v${VER}" >> "$GITHUB_OUTPUT"
-            echo "base tag: py${PYMM}-v${VER}"
-          fi
-
-      - name: Restore build base image cache
-        if: steps.check.outputs.run == 'true' && steps.baseref.outputs.tag != ''
-        uses: actions/cache@v4
-        with:
-          path: /tmp/build-base
-          key: ${{ steps.baseref.outputs.cache_key }}
-
-      - name: Pre-warm build base image into k3d registry
-        if: steps.check.outputs.run == 'true' && steps.baseref.outputs.tag != ''
-        env:
-          TAG: ${{ steps.baseref.outputs.tag }}
-        run: |
-          set -uo pipefail
-          REF="ghcr.io/flyteorg/flyte:${TAG}"
-          DEST="localhost:5001/flyteorg/flyte:${TAG}"   # host map → k3d-registry:5000/flyteorg/flyte
-          echo "pre-warm: $REF -> $DEST"
-          DIR=/tmp/build-base; TAR="$DIR/base.tar"; mkdir -p "$DIR"
-          [ -f "$TAR" ] && { echo "base cache HIT — loading"; docker load -i "$TAR" || true; }
-          if ! docker image inspect "$REF" >/dev/null 2>&1; then
-            n=0
-            until docker pull "$REF"; do
-              n=$((n+1))
-              [ "$n" -ge 6 ] && { echo "base pull failed after $n — skipping (buildkit will use ghcr.io)"; exit 0; }
-              echo "base pull failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-            done
-            docker save "$REF" -o "$TAR" || true
-          fi
-          docker tag "$REF" "$DEST" || { echo "tag failed — skipping"; exit 0; }
-          n=0
-          until docker push "$DEST"; do
-            n=$((n+1))
-            [ "$n" -ge 6 ] && { echo "push to k3d registry failed after $n — skipping (buildkit will use ghcr.io)"; exit 0; }
-            echo "push failed (attempt $n) — retrying in $((n*10))s"; sleep $((n*10))
-          done
-          echo "pre-warm OK — base served from k3d registry at $DEST"
-
-      # ── RustFS object store ───────────────────────────────────────────────
-
-      - name: Deploy RustFS + create bucket
-        if: steps.check.outputs.run == 'true'
-        # up.sh storage: deploy the RustFS manifest, wait Available, port-forward,
-        # install mc (retried), create the object-store bucket.
-        run: tools/dataplane/k3d/up.sh storage
-
-      # ── Dataplane connection contract (from the pre-seeded operator creds) ─
-      # No runtime `uctl provision`: this DP's operator identity is pre-provisioned
-      # (terraform selfmanaged pattern — see cloud .../helm-charts-ci/k3d_dataplane.tf).
-      # Construct the connection contract that `provision-dataplane-resources`
-      # would have produced — the operator OAuth client + managed CP host + org +
-      # cluster — as helm values. The chart renders union-secret-auth from
-      # secrets.admin.clientSecret and mounts it at /etc/union/secret/client_secret
-      # for the operator. Storage / buildkit / serving come from the
-      # charts/dataplane/values.k3d.yaml overlay.
-      - name: Build dataplane values from seeded operator creds
-        if: steps.check.outputs.run == 'true'
-        # Reads OPERATOR_CLIENT_ID/SECRET, CP_HOST, ORG_NAME_INPUT, CLUSTER_NAME
-        # from $GITHUB_ENV (set by "Resolve managed tenant + credentials").
-        run: tools/dataplane/k3d/up.sh provision
+        run: tools/dataplane/k3d/up.sh bootstrap
 
       # ── Helm chart install ─────────────────────────────────────────────────
 
@@ -534,15 +378,8 @@ jobs:
           echo "=== buildkitd workers ===" && kubectl exec -n "$UNION_NS" deployment/union-operator-buildkit -- buildctl debug workers 2>&1 || true
 
       # ── Teardown (always) ─────────────────────────────────────────────────
-
-      - name: Deregister cluster from control plane
+      - name: Teardown k3d
         if: always() && steps.check.outputs.run == 'true'
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
-        run: |
-          python .github/ci-scripts/ci_dataplane.py teardown || true
-
-      - name: Delete k3d cluster
-        if: always() && steps.check.outputs.run == 'true'
-        run: |
-          k3d cluster delete ci-dataplane || true
+        run: tools/dataplane/k3d/up.sh teardown
