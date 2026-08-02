@@ -1172,7 +1172,7 @@ Deprecation notice for `serving.enabled`.
 
 Emits a YAML comment block when the deprecated flag is explicitly set, and
 nothing otherwise. Helm has no warning channel, so this is rendered into
-`helm template` output (top of the operator ConfigMap, where it shows up in
+`helm template` output (top of the operator Deployment, where it shows up in
 snapshot diffs and PR review) and into NOTES.txt for `helm install/upgrade`.
 ArgoCD parses YAML into objects and drops comments, so this costs nothing at
 deploy time.
