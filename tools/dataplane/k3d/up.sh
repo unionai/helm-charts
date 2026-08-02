@@ -9,12 +9,17 @@
 # base-image pre-warm between phases; that's why the phases are separately callable.
 #
 # Phases (idempotent):
-#   cluster    create the k3d cluster + embedded HTTP registry
-#   storage    deploy RustFS + create the object-store bucket
-#   provision  write the ephemeral values-provision.yaml from operator creds
+#   bootstrap  ONE-SHOT k3d SETUP: install k3d (if missing) + cluster + registry +
+#              RustFS object store + operator-cred values. Everything needed to get
+#              a Union-dataplane-ready k3d cluster; the CRD/deps/helm/health deploy
+#              is cluster-agnostic and stays separate (install.sh / workflow steps).
+#   cluster    create the k3d cluster + embedded HTTP registry     (bootstrap sub-step)
+#   storage    deploy RustFS + create the object-store bucket      (bootstrap sub-step)
+#   provision  write the ephemeral values-provision.yaml           (bootstrap sub-step)
 #   install    apply CRDs, build chart deps, helm upgrade --install the dataplane
 #   wait       wait for the cluster to register healthy on the control plane
-#   all        (default) run every phase in order, then optional --smoke
+#   teardown   deregister the cluster from the CP + delete the k3d cluster
+#   all        (default) bootstrap + install + wait, then optional --smoke
 #
 # Usage (local, all phases):
 #   tools/dataplane/k3d/up.sh --client-id <id> --client-secret <secret> [--smoke]
@@ -53,7 +58,7 @@ RUN_SMOKE=0
 
 PHASE=all
 case "${1:-}" in
-  cluster|storage|provision|install|wait|all) PHASE="$1"; shift ;;
+  bootstrap|cluster|storage|provision|install|wait|teardown|all) PHASE="$1"; shift ;;
 esac
 
 while [ $# -gt 0 ]; do
@@ -191,14 +196,43 @@ phase_wait() {
     python .github/ci-scripts/ci_dataplane.py wait-healthy --timeout 360
 }
 
+_install_k3d() {
+  command -v k3d >/dev/null && return 0
+  _need curl
+  echo ">> [bootstrap] installing k3d"
+  # The k3d release install script 504s / times out intermittently on shared
+  # runners; retry rather than let a transient blip kill the whole run.
+  local n=0
+  until [ "$n" -ge 6 ]; do
+    curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash && break
+    n=$((n+1)); echo "k3d install failed (attempt $n) — retrying in $((n*10))s" >&2; sleep $((n*10))
+  done
+  command -v k3d >/dev/null || { echo "k3d install failed after $n attempts" >&2; exit 1; }
+  k3d version
+}
+
+# One-shot k3d SETUP: everything needed for a Union-dataplane-ready cluster. The
+# CRD/deps/helm/health DEPLOY is cluster-agnostic and stays separate (install.sh
+# locally; the workflow's shared named steps in CI).
+phase_bootstrap() { _install_k3d; phase_cluster; phase_storage; phase_provision; }
+
+phase_teardown() {
+  echo ">> [teardown] deregister cluster from CP + delete k3d"
+  CONTROL_PLANE_URL="https://$CP_HOST" CLUSTER_NAME="$CLUSTER" ORG_NAME="$ORG" \
+    python .github/ci-scripts/ci_dataplane.py teardown || true
+  command -v k3d >/dev/null && k3d cluster delete "$K3D_CLUSTER" || true
+}
+
 case "$PHASE" in
+  bootstrap) phase_bootstrap ;;
+  teardown)  phase_teardown ;;
   cluster)   phase_cluster ;;
   storage)   phase_storage ;;
   provision) phase_provision ;;
   install)   phase_install ;;
   wait)      phase_wait ;;
   all)
-    phase_cluster; phase_storage; phase_provision; phase_install; phase_wait
+    phase_bootstrap; phase_install; phase_wait
     if [ "$RUN_SMOKE" = 1 ]; then
       echo ">> [smoke] setup-routing + run-smoke-suite --skip-logs"
       CONTROL_PLANE_URL="https://$CP_HOST" CLUSTER_NAME="$CLUSTER" ORG_NAME="$ORG" \
