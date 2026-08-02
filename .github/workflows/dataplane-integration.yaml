@@ -10,6 +10,7 @@ on:
       - '.github/ci-values/**'
       - '.github/ci-manifests/**'
       - '.github/ci-scripts/**'
+      - 'tools/dataplane/**'
       - 'ci_app_task.py'
       - 'ci_smoke_task.py'
 
@@ -209,7 +210,7 @@ jobs:
           # up.sh cluster uses K3S_IMAGE (pinned, pre-loaded) if set to skip a
           # Docker Hub pull; the registry-config + retry live in up.sh's cluster phase.
           K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
-        run: hack/k3d/up.sh cluster
+        run: tools/dataplane/k3d/up.sh cluster
 
       # ── Pre-warm the build base image (registry-throttle mitigation) ───────
       # buildkit builds task images FROM the default base
@@ -280,7 +281,7 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         # up.sh storage: deploy the RustFS manifest, wait Available, port-forward,
         # install mc (retried), create the object-store bucket.
-        run: hack/k3d/up.sh storage
+        run: tools/dataplane/k3d/up.sh storage
 
       # ── Dataplane connection contract (from the pre-seeded operator creds) ─
       # No runtime `uctl provision`: this DP's operator identity is pre-provisioned
@@ -295,7 +296,7 @@ jobs:
         if: steps.check.outputs.configured == 'true'
         # Reads OPERATOR_CLIENT_ID/SECRET, CP_HOST, ORG_NAME_INPUT, CLUSTER_NAME
         # from $GITHUB_ENV (set by "Resolve managed tenant + credentials").
-        run: hack/k3d/up.sh provision
+        run: tools/dataplane/k3d/up.sh provision
 
       # ── Helm chart install ─────────────────────────────────────────────────
 
@@ -319,7 +320,7 @@ jobs:
         # restored cache (step above), then helm upgrade --install with the shared
         # values.k3d.yaml overlay + the ephemeral values-provision.yaml; on a
         # --wait timeout it dumps not-ready pod status/events/logs before failing.
-        run: hack/k3d/up.sh install
+        run: tools/dataplane/k3d/up.sh install
 
       # ── Validate ──────────────────────────────────────────────────────────
 
@@ -329,7 +330,7 @@ jobs:
         # up.sh wait wraps the same ci_dataplane.py wait-healthy, which writes the
         # org_name output to $GITHUB_OUTPUT (inherited), so steps.healthy.outputs
         # is preserved for the routing/smoke steps.
-        run: hack/k3d/up.sh wait
+        run: tools/dataplane/k3d/up.sh wait
 
       # ── Project + cluster pool routing (PR isolation) ─────────────────────
       # Creates a cluster pool named == CLUSTER_NAME, assigns this run's

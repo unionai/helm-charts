@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Tear down the local k3d dataplane created by hack/k3d/up.sh.
+# Tear down the local k3d dataplane created by tools/dataplane/k3d/up.sh.
 set -euo pipefail
 K3D_CLUSTER="${1:-ci-dataplane}"
 if k3d cluster list 2>/dev/null | grep -q "^$K3D_CLUSTER "; then

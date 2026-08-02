@@ -7,7 +7,7 @@ installed with the [`charts/dataplane/values.k3d.yaml`](../../charts/dataplane/v
 overlay. Use it to reproduce and debug the CI environment locally.
 
 CI and this script share the **same** overlay (`charts/dataplane/values.k3d.yaml`)
-and RustFS manifest (`hack/k3d/rustfs.yaml`), so they can't drift.
+and RustFS manifest (`tools/dataplane/k3d/rustfs.yaml`), so they can't drift.
 
 ## Prerequisites
 
@@ -34,19 +34,19 @@ Manager, e.g. `selfmanaged/canary/helm-charts-ci/sm-k3d-dp-1/operator` (JSON
 
 ```bash
 # creds as flags
-hack/k3d/up.sh --client-id <id> --client-secret <secret>
+tools/dataplane/k3d/up.sh --client-id <id> --client-secret <secret>
 
 # creds from env
-OPERATOR_CLIENT_ID=<id> OPERATOR_CLIENT_SECRET=<secret> hack/k3d/up.sh
+OPERATOR_CLIENT_ID=<id> OPERATOR_CLIENT_SECRET=<secret> tools/dataplane/k3d/up.sh
 
 # creds fetched from AWS (needs awscli + jq)
-hack/k3d/up.sh --from-aws-secret selfmanaged/canary/helm-charts-ci/sm-k3d-dp-1/operator
+tools/dataplane/k3d/up.sh --from-aws-secret selfmanaged/canary/helm-charts-ci/sm-k3d-dp-1/operator
 
 # also run the smoke suite after install
-hack/k3d/up.sh --from-aws-secret <name> --smoke
+tools/dataplane/k3d/up.sh --from-aws-secret <name> --smoke
 
 # teardown
-hack/k3d/down.sh
+tools/dataplane/k3d/down.sh
 ```
 
 Overridable defaults (match CI): `--cp-host helm-charts-ci.canary.unionai.cloud`,

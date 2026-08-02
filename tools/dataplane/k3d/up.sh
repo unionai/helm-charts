@@ -17,10 +17,10 @@
 #   all        (default) run every phase in order, then optional --smoke
 #
 # Usage (local, all phases):
-#   hack/k3d/up.sh --client-id <id> --client-secret <secret> [--smoke]
-#   hack/k3d/up.sh --from-aws-secret selfmanaged/canary/helm-charts-ci/sm-k3d-dp-1/operator
+#   tools/dataplane/k3d/up.sh --client-id <id> --client-secret <secret> [--smoke]
+#   tools/dataplane/k3d/up.sh --from-aws-secret selfmanaged/canary/helm-charts-ci/sm-k3d-dp-1/operator
 # Usage (a single phase, e.g. from CI or to iterate locally):
-#   hack/k3d/up.sh install
+#   tools/dataplane/k3d/up.sh install
 #
 # Config comes from env (the names CI already exports) with flag overrides:
 #   OPERATOR_CLIENT_ID/SECRET, CP_HOST, ORG_NAME_INPUT, CLUSTER_NAME, UNION_NS,
@@ -30,7 +30,7 @@
 # , . = break --set, and --set would put the secret on the command line).
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "$REPO_ROOT"
 
 # ── Config (env defaults match the CI job; flags override) ───────────────────
@@ -116,7 +116,7 @@ phase_storage() {
   _need kubectl
   echo ">> [storage] deploying RustFS + bucket '$RUSTFS_BUCKET'"
   kubectl create namespace "$RUSTFS_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-  kubectl apply -n "$RUSTFS_NS" -f hack/k3d/rustfs.yaml >/dev/null
+  kubectl apply -n "$RUSTFS_NS" -f tools/dataplane/k3d/rustfs.yaml >/dev/null
   kubectl wait --for=condition=Available deploy/rustfs -n "$RUSTFS_NS" --timeout=180s
   kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 >/dev/null 2>&1 &
   local pf=$!; trap 'kill '"$pf"' 2>/dev/null || true' RETURN
@@ -168,16 +168,10 @@ phase_install() {
   [ -f "$PROVISION_FILE" ] || { echo "ERROR: $PROVISION_FILE missing — run the 'provision' phase first." >&2; exit 4; }
   case "$(helm version --short 2>/dev/null)" in v3.*) : ;; *) echo "WARN: CI uses helm 3.17.x; other majors may hit helm's 1MB release-secret limit on this chart." >&2 ;; esac
   echo ">> [install] CRDs + deps + helm upgrade --install"
-  kubectl apply --server-side --force-conflicts -f charts/dataplane/crds/ >/dev/null
-  for r in "prometheus-community https://prometheus-community.github.io/helm-charts" \
-           "fluent https://fluent.github.io/helm-charts" \
-           "metrics-server https://kubernetes-sigs.github.io/metrics-server/" \
-           "opencost https://opencost.github.io/opencost-helm-chart" \
-           "nvidia https://nvidia.github.io/dcgm-exporter/helm-charts" \
-           "ingress-nginx https://kubernetes.github.io/ingress-nginx" \
-           "unionai https://unionai.github.io/helm-charts"; do helm repo add $r >/dev/null 2>&1 || true; done
-  if [ -n "$(ls -A charts/dataplane/charts 2>/dev/null)" ]; then helm dependency build charts/dataplane >/dev/null
-  else helm repo update >/dev/null 2>&1; helm dependency update charts/dataplane >/dev/null; fi
+  # CRD apply + subchart deps are the shared, drift-prone pieces — delegate to the
+  # single source of truth both this repro and the cloud CI legs call.
+  "$REPO_ROOT/tools/dataplane/install.sh" crds charts/dataplane/crds
+  "$REPO_ROOT/tools/dataplane/install.sh" deps charts/dataplane
   CLUSTER_NAME="$CLUSTER" helm upgrade --install union ./charts/dataplane \
     -f "$PROVISION_FILE" -f charts/dataplane/values.k3d.yaml \
     --namespace "$UNION_NS" --create-namespace --take-ownership --wait --timeout 8m && return 0
@@ -213,6 +207,6 @@ case "$PHASE" in
         python .github/ci-scripts/ci_dataplane.py run-smoke-suite --skip-logs
     fi
     rm -f "$PROVISION_FILE"
-    echo ">> done. kubeconfig context: k3d-$K3D_CLUSTER   (teardown: hack/k3d/down.sh)"
+    echo ">> done. kubeconfig context: k3d-$K3D_CLUSTER   (teardown: tools/dataplane/k3d/down.sh)"
     ;;
 esac
