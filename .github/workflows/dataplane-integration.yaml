@@ -54,22 +54,37 @@ jobs:
       # Gate the rest of the job on the terraform-published coordinates being
       # present (helm-charts-ci env applied + the operator creds seeded). Absent
       # until cloud/infra/terraform/envs/canary/helm-charts-ci is applied.
-      - name: Check k3d dataplane is configured
+      - name: Check k3d dataplane is configured + Tier-2 gated
         id: check
         env:
           K3D: ${{ vars.HELM_CHARTS_CI_K3D }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          EVENT: ${{ github.event_name }}
         run: |
-          if [ -n "$K3D" ]; then
-            echo "configured=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "configured=false" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          # This job registers a k3d DP against the MANAGED helm-charts-ci tenant, so
+          # it materializes the long-lived operator/CI secret on the runner (Tier 2).
+          # Restrict it to release PRs / explicit maintainer opt-in so routine
+          # non-release PRs rely on the no-secret Tier-1 checks (checks.yaml: lint +
+          # helm-test render + kubeconform). See helm-charts-ci-design.md §8.
+          configured=false; [ -n "$K3D" ] && configured=true
+          gated=false
+          [ "$EVENT" = workflow_dispatch ] && gated=true
+          case "$PR_TITLE" in "Release "[0-9]*) gated=true ;; esac
+          echo "$LABELS" | grep -q '"ci:run-integration"' && gated=true || true
+          run=false; [ "$configured" = true ] && [ "$gated" = true ] && run=true
+          { echo "configured=$configured"; echo "gated=$gated"; echo "run=$run"; } >> "$GITHUB_OUTPUT"
+          if [ "$configured" != true ]; then
             echo "::notice::vars.HELM_CHARTS_CI_K3D not set — apply canary/helm-charts-ci (after the operator seed) to enable. Skipping."
+          elif [ "$gated" != true ]; then
+            echo "::notice::Tier-2 k3d integration gated — runs on release PRs ('Release <x>') or with the 'ci:run-integration' label. Non-release PRs rely on Tier-1 checks (checks.yaml). Skipping."
           fi
 
       # Read the CP credential via the keyless ci_deployer identity, exactly like
       # the release-integration func-v2 step fetches selfhosted secrets.
       - name: Auth (AWS ci_deployer, to read the operator credential)
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
@@ -82,7 +97,7 @@ jobs:
       #     it (as FLYTE_API_KEY) for setup-routing + submitting the smoke runs. The
       #     operator credential is NOT used for CI ops.
       - name: Resolve managed tenant + credentials
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         env:
           K3D: ${{ vars.HELM_CHARTS_CI_K3D }}
         run: |
@@ -121,7 +136,7 @@ jobs:
       # ── Tool setup ────────────────────────────────────────────────────────
 
       - name: Install k3d
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           # install.sh pulls the k3d binary from GitHub releases, which 504s /
           # times out intermittently on shared runners and otherwise kills the
@@ -142,7 +157,7 @@ jobs:
       # entirely. The key changes automatically when k3d (and thus its default
       # k3s image) is upgraded.
       - name: Resolve k3d infra image versions
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         id: k3dimg
         run: |
           K3D_VER=$(k3d version | awk '/k3d version/{print $3}')
@@ -157,14 +172,14 @@ jobs:
           echo "Resolved k3d=$K3D_VER k3s=$K3S_TAG"
 
       - name: Restore k3d infra image cache
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: /tmp/k3d-infra-images
           key: ${{ steps.k3dimg.outputs.cache_key }}
 
       - name: Load or pull k3d infra images
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         env:
           K3S_IMAGE: ${{ steps.k3dimg.outputs.k3s_image }}
         run: |
@@ -189,13 +204,13 @@ jobs:
           fi
 
       - name: Set up Helm ${{ env.HELM_VERSION }}
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         uses: azure/setup-helm@v4.3.1
         with:
           version: v${{ env.HELM_VERSION }}
 
       - name: Install Python deps
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           # flyteplugins-union >= 0.4.1 is required: the control plane dropped
           # the clusterpoolassignment / cluster-pool-attributes APIs in favor of
@@ -205,7 +220,7 @@ jobs:
       # ── k3d cluster + registry ────────────────────────────────────────────
 
       - name: Create k3d cluster with embedded registry
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         env:
           # up.sh cluster uses K3S_IMAGE (pinned, pre-loaded) if set to skip a
           # Docker Hub pull; the registry-config + retry live in up.sh's cluster phase.
@@ -221,7 +236,7 @@ jobs:
       # serves it locally. Entirely best-effort: every failure path exits 0 and
       # buildkit just falls back to ghcr.io as before.
       - name: Resolve build base image ref
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         id: baseref
         run: |
           PYMM=$(python -c 'import sys;print(f"{sys.version_info.major}.{sys.version_info.minor}")')
@@ -240,14 +255,14 @@ jobs:
           fi
 
       - name: Restore build base image cache
-        if: steps.check.outputs.configured == 'true' && steps.baseref.outputs.tag != ''
+        if: steps.check.outputs.run == 'true' && steps.baseref.outputs.tag != ''
         uses: actions/cache@v4
         with:
           path: /tmp/build-base
           key: ${{ steps.baseref.outputs.cache_key }}
 
       - name: Pre-warm build base image into k3d registry
-        if: steps.check.outputs.configured == 'true' && steps.baseref.outputs.tag != ''
+        if: steps.check.outputs.run == 'true' && steps.baseref.outputs.tag != ''
         env:
           TAG: ${{ steps.baseref.outputs.tag }}
         run: |
@@ -278,7 +293,7 @@ jobs:
       # ── RustFS object store ───────────────────────────────────────────────
 
       - name: Deploy RustFS + create bucket
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         # up.sh storage: deploy the RustFS manifest, wait Available, port-forward,
         # install mc (retried), create the object-store bucket.
         run: tools/dataplane/k3d/up.sh storage
@@ -293,7 +308,7 @@ jobs:
       # for the operator. Storage / buildkit / serving come from the
       # charts/dataplane/values.k3d.yaml overlay.
       - name: Build dataplane values from seeded operator creds
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         # Reads OPERATOR_CLIENT_ID/SECRET, CP_HOST, ORG_NAME_INPUT, CLUSTER_NAME
         # from $GITHUB_ENV (set by "Resolve managed tenant + credentials").
         run: tools/dataplane/k3d/up.sh provision
@@ -306,7 +321,7 @@ jobs:
       # any test executes. Keyed on Chart.yaml (dependency versions live there);
       # a hit restores charts/ + Chart.lock and the fetch step builds offline.
       - name: Cache Helm chart dependencies
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -315,7 +330,7 @@ jobs:
           key: helm-deps-v1-${{ hashFiles('charts/dataplane/Chart.yaml') }}
 
       - name: Install dataplane chart (CRDs + deps + helm install)
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         # up.sh install: apply CRDs out-of-band, build chart deps offline from the
         # restored cache (step above), then helm upgrade --install with the shared
         # values.k3d.yaml overlay + the ephemeral values-provision.yaml; on a
@@ -325,7 +340,7 @@ jobs:
       # ── Validate ──────────────────────────────────────────────────────────
 
       - name: Wait for cluster to register as healthy
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         id: healthy
         # up.sh wait wraps the same ci_dataplane.py wait-healthy, which writes the
         # org_name output to $GITHUB_OUTPUT (inherited), so steps.healthy.outputs
@@ -339,7 +354,7 @@ jobs:
       # never land on another PR's cluster, even when PRs run in parallel.
 
       - name: Set up project routing
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         id: routing
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
@@ -370,7 +385,7 @@ jobs:
       # so the operator reconnects against the refreshed pool membership and
       # subscribes its Lease stream to this run's pool.
       - name: Restart operator to sync capabilities + secrets
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           # Let the control plane's ClusterPoolStatus cache reflect the cluster→
           # pool assignment from setup-routing before the operator reconnects;
@@ -395,7 +410,7 @@ jobs:
       #   1. Start a background port-forward from localhost:9000 → RustFS in cluster.
       #   2. Add an /etc/hosts alias so the SDK can resolve the hostname to 127.0.0.1.
       - name: Port-forward RustFS for smoke test storage access
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 &
           echo "RUSTFS_PF_PID=$!" >> "$GITHUB_ENV"
@@ -407,7 +422,7 @@ jobs:
           done
 
       - name: Verify buildkit and registry setup
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           # Registry reachable from host (via k3d port mapping).
           echo "=== Registry from host ===" && curl -sf http://localhost:5001/v2/ && echo "OK" || echo "FAILED"
@@ -427,7 +442,7 @@ jobs:
             2>&1 || echo "(buildkit exec failed)"
 
       - name: Run smoke suite
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         id: smoke
         # Hard fail: the suite is green (6/6 with --skip-logs), so a failing
         # scenario now fails the run — that's the release-integration signal.
@@ -446,7 +461,7 @@ jobs:
           python .github/ci-scripts/ci_dataplane.py run-smoke-suite --skip-logs
 
       - name: Show pod status
-        if: steps.check.outputs.configured == 'true'
+        if: steps.check.outputs.run == 'true'
         run: |
           kubectl get pods -n "$UNION_NS"
           kubectl get pods -n knative-serving 2>/dev/null || true
@@ -454,7 +469,7 @@ jobs:
       # ── Debug dump on failure (before teardown so cluster still exists) ────
 
       - name: Collect debug dump
-        if: failure() && steps.check.outputs.configured == 'true'
+        if: failure() && steps.check.outputs.run == 'true'
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
@@ -521,13 +536,13 @@ jobs:
       # ── Teardown (always) ─────────────────────────────────────────────────
 
       - name: Deregister cluster from control plane
-        if: always() && steps.check.outputs.configured == 'true'
+        if: always() && steps.check.outputs.run == 'true'
         env:
           ORG_NAME: ${{ steps.healthy.outputs.org_name }}
         run: |
           python .github/ci-scripts/ci_dataplane.py teardown || true
 
       - name: Delete k3d cluster
-        if: always() && steps.check.outputs.configured == 'true'
+        if: always() && steps.check.outputs.run == 'true'
         run: |
           k3d cluster delete ci-dataplane || true
