@@ -5,7 +5,7 @@
 # Called by BOTH the local k3d repro (tools/dataplane/k3d/up.sh) and CI
 # (.github/workflows/*-integration.yaml), so the CRD-apply, subchart-dependency,
 # and health-gate logic has ONE source of truth — no more "mirrors the k3d repo
-# set" hand-sync between up.sh and release-integration.yaml.
+# set" hand-sync between up.sh and release-pr-integration-checks.yaml.
 #
 # Run from the repo root; paths are repo-relative.
 #
@@ -16,7 +16,7 @@
 set -euo pipefail
 
 # Helm repositories the dataplane/controlplane subcharts pull from.
-# SINGLE SOURCE OF TRUTH (was duplicated in up.sh and release-integration.yaml).
+# SINGLE SOURCE OF TRUTH (was duplicated in up.sh and release-pr-integration-checks.yaml).
 _REPOS=(
   "prometheus-community https://prometheus-community.github.io/helm-charts"
   "fluent https://fluent.github.io/helm-charts"

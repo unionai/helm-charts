@@ -29,7 +29,7 @@ tools/dataplane/install.sh deps   charts/dataplane               # or: charts/co
 tools/dataplane/install.sh health union                          # rollout + crashloop poll per namespace
 ```
 
-`crds` / `deps` are byte-for-byte what `up.sh` and `release-integration.yaml` did
+`crds` / `deps` are byte-for-byte what `up.sh` and `release-pr-integration-checks.yaml` did
 inline — extracting them kills the drift between two copies of the helm-repo list.
 `health` is the cloud legs' crashloop poll, now available to k3d too.
 
@@ -46,7 +46,7 @@ See `k3d/README.md` for credential options.
 
 - [x] `crds` + `deps` extracted into `install.sh`; `up.sh` calls them.
 - [x] k3d tooling moved out of `hack/` into `tools/dataplane/k3d/`.
-- [ ] `release-integration.yaml` cloud legs call `install.sh crds|deps|health`.
+- [ ] `release-pr-integration-checks.yaml` cloud legs call `install.sh crds|deps|health`.
 - [ ] `up.sh` adopts `install.sh health`.
 - [ ] `helm upgrade --install` wrapper (`install` subcommand) — values/args stay caller-specific.
 - [ ] `ci_dataplane.py` → `tools/dataplane/ops.py`.
