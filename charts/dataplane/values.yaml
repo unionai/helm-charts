@@ -2,8 +2,16 @@
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 
 global:
+  # --- Control plane (configure first) ---
+  # The single control-plane host. Everything derives from it: the DP->CP gRPC
+  # endpoint (dns:///<host>) and the app-callback URL (https://<host>). To
+  # enable/disable auth or route authless (direct in-cluster service, no nginx),
+  # use the config.union.auth / config.union.connection toggles — not a host
+  # override (see examples/values.authless.yaml).
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  UNION_CONTROL_PLANE_HOST: ""  # DEPRECATED legacy alias for CONTROLPLANE_HOST (still honored)
+
   # --- Identity ---
-  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks (e.g. "mycompany.union.ai")
   CLUSTER_NAME: ""              # Unique cluster identifier within your org
   ORG_NAME: ""                  # Organization name (must match controlplane)
 
@@ -11,19 +19,13 @@ global:
   METADATA_BUCKET: ""           # Bucket for workflow metadata
   FAST_REGISTRATION_BUCKET: ""  # Bucket for code uploads (can be same as METADATA_BUCKET)
 
-  # --- IAM ---
-  # IAM identity for backend services. Cloud-specific format:
-  #   AWS:  arn:aws:iam::<account>:role/<role-name>
-  #   GCP:  <sa-name>@<project>.iam.gserviceaccount.com
-  BACKEND_IAM_ROLE_ARN: ""
-  WORKER_IAM_ROLE_ARN: ""
+  # Backend/worker cloud identity globals are cloud-specific and live in the
+  # per-cloud overlays: values.aws.yaml + values.gcp.yaml use
+  # BACKEND_IAM_ROLE_ARN / WORKER_IAM_ROLE_ARN (IRSA role ARN / Workload
+  # Identity SA); values.azure.yaml uses AZURE_BACKEND_CLIENT_ID /
+  # AZURE_WORKER_CLIENT_ID (managed-identity client IDs).
 
-  # --- DP -> CP routing ---
-  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
-  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
-  QUEUE_GRPC_ENDPOINT: ""       # Override for task-pod queue path (see values.{cloud}.yaml)
-
-  # --- Service-to-Service OAuth2 ---
+  # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
@@ -31,8 +33,11 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- DEPRECATED: top-level control-plane host. This is the pre-globals way to
+# -- set the CP host and is still honored as a fallback, but migrate to
+# -- global.CONTROLPLANE_HOST. Precedence in dataplane.cp.host:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
@@ -51,7 +56,7 @@ updateStatus:
     enabled: false
     # -- DP-reachable hostname the CP should dial back. e.g.
     # "dp-1.internal.<full_domain>". Bare hostname only — no scheme, no port.
-    # Chart helper derives the gRPC endpoint as `dns:///<host>:443`.
+    # Chart helper derives the gRPC endpoint as `dns:///<host>`.
     # Empty falls back to `Values.ingress.host` (the dataplane's own ingress
     # hostname), so most installs don't need to set this explicitly —
     # the chart already knows where the DP is reachable.
@@ -118,7 +123,12 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service
+  # -- Enable or disable the syncresources service. Required in multi-namespace
+  # mode (namespaces.enabled=true and low_privilege=false) to provision the
+  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
+  # is driven by the top-level namespace_mapping. Its configmap is gated off under
+  # singleNamespace, where task pods run in the release namespace and no per-domain
+  # namespaces are needed.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -263,11 +273,14 @@ clusterresourcesync:
         # -- Maximum size of a message in bytes of a gRPC message
         # maxRecvMsgSize: 67108864  # 64MB
       auth:
+        enable: true
         type: ClientSecret
         clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
         clientSecretLocation: /etc/union/secret/client_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
   # -- The templates that are used to create and/or update kubernetes resources for Union projects.
   templates:
     # -- Template for namespaces resources
@@ -373,10 +386,6 @@ config:
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
-  # -- Optional namespace configuration, rendered as namespace_config.yaml.
-  namespace_config: {}
-  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
-  namespace_mapping: {}
   # -- Optional Qubole plugin configuration.
   qubole: {}
   # -- Override any configuration settings.
@@ -385,6 +394,12 @@ config:
       # Overrides identity caching which is not available in the dataplane.
       identity:
         enabled: false
+    connection:
+      # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
+      # -- endpoint (dns:///<host>; grpc/https default the port to 443).
+      # -- To override, set this same key — it is authoritative (Helm deep-merge
+      # -- replaces this leaf before template rendering).
+      rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
   # -- Copilot configuration
   copilot:
     plugins:
@@ -442,6 +457,10 @@ config:
       - K8s
       embeddedSecretManagerConfig:
         type: "{{ .Values.proxy.secretManager.type }}"
+        # -- Cluster identifier used to qualify per-cluster secret storage names
+        # -- (e.g. the eager API key) so dataplanes that share a secret backend do
+        # -- not overwrite each other's credential (FAB-241).
+        clusterName: '{{ include "getClusterName" . }}'
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
         imagePullSecrets:
@@ -511,18 +530,20 @@ config:
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
-    # -- Enable the cloudflare tunnel service for secure communication with the control plane.
-    enableTunnelService: true
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
       organization: "{{ tpl .Values.orgName . }}"
+      # -- The cluster name. Cluster-scopes the eager API key (its OAuth client and
+      # -- secret storage name) so dataplanes in a multi-dataplane org do not share
+      # -- and rotate/overwrite one credential (FAB-241 / ENG26-933).
+      name: '{{ include "getClusterName" . }}'
     # -- Dataplane cluster configuration.
     clusterData:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -686,6 +707,7 @@ config:
       # -- Maximum size of a message in bytes of a gRPC message
       # maxRecvMsgSize: 67108864  # 64MB
     auth:
+      enable: true
       type: ClientSecret
       clientId: "{{ tpl .Values.secrets.admin.clientId . }}"
       clientSecretLocation: /etc/union/secret/client_secret
@@ -708,10 +730,11 @@ databricks:
   plugin_config: { }
 
 # -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
-# This is the canonical source of truth. All dataplane services (propeller,
-# clusterresourcesync, operator, executor) will inherit this value unless
-# explicitly overridden in their service-specific config sections
-# (config.namespace_config, config.operator.org, executor.raw_config).
+# This is the canonical source of truth (see the selfmanaged namespace-mapping
+# docs). All dataplane services (propeller, clusterresourcesync, operator,
+# executor) inherit this value via the "dataplane.namespaceTemplate" helper,
+# which pins to the release namespace under singleNamespace. The executor alone
+# may still override it via executor.raw_config.namespace_mapping.
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
@@ -1093,6 +1116,25 @@ leaseworker:
   additionalVolumeMounts: []
   # -- Appends additional environment variables to the leaseworker container's spec.
   podEnv: []
+  # -- PriorityClass the leaseworker pod runs under. The leaseworker is a Recreate
+  # singleton; a priority class keeps leases flowing when a replacement pod would
+  # otherwise sit Pending behind node scale-up. Defaults to the chart-managed class
+  # below. To bring your own existing class, set this to its name and
+  # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
+  # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
+  # ResourceQuota restricts those to kube-system. The pod still references this class
+  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  priorityClassName: union-leaseworker
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
+  # priorityClassName above. Skipped under low_privilege (namespace-only installs
+  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # (the PriorityClass would otherwise be created once per dataplane). value is used
+  # only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- nodeSelector for leaseworker deployment
   nodeSelector: { }
   # -- tolerations for leaseworker deployment
@@ -1107,7 +1149,20 @@ leaseworker:
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
-  priorityClassName: "system-cluster-critical"
+  # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
+  # class below. Set to your own existing class to bring your own, or "" for none. Do
+  # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
+  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
+  # references this class under low_privilege when it is externally managed
+  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  priorityClassName: "union-flytepropeller"
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
+  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
+  # installs can't create cluster resources). Set create: false to bring your own class,
+  # or in multi-dataplane-per-cluster setups. value is used only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
   # -- Default resources requests and limits for Flytepropeller deployment
@@ -1565,6 +1620,11 @@ operator:
   # -- nodeName constraints for the operator pods
   nodeName: ""
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure data-plane ↔ control-plane
+  # communication. Canonical toggle — read by both the operator config
+  # (config.yaml) and the operator-proxy tunnel container. Enabled by default
+  # (used by everyone except self-hosted / intra-cluster deployments, which set
+  # this to false).
   enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
@@ -1592,7 +1652,7 @@ ingress:
     # -- Ingress host
     hostOverride: "" # Can references Kubernetes service DNS, e.g. dataproxy-service.{{ .Release.Namespace }}.svc.cluster.local
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1600,10 +1660,10 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
-    hostOverride: ""
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
+    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1687,13 +1747,6 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
-    # Mount the recording rules ConfigMap generated by this chart
-    extraConfigmapMounts:
-      - name: recording-rules
-        mountPath: /etc/config/recording
-        configMap: union-recording-rules
-        readonly: true
-
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
   extraScrapeConfigs: |
@@ -1747,12 +1800,14 @@ prometheus:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
-        # Drop unused node-label bloat (NFD/azure/karpenter feature labels,
-        # providerID, noisiest NVIDIA GFD labels) to keep kube_node_labels small.
-        # providerID is emitted as label_providerID; the bare-providerID alternative
-        # covers DP versions that emit it unprefixed.
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
         - action: labeldrop
-          regex: "(label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_(gfd_timestamp|gpu_deploy_.+))|(label_)?providerID)"
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -1982,7 +2037,6 @@ proxy:
   # -- nodeName constraint for the proxy pods
   nodeName: ""
   podSecurityContext: { }
-  enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
   resources:
@@ -2017,8 +2071,11 @@ secrets:
     create: true
     # -- The client secret used to authenticate to the control plane.  This will be provided by Union.
     clientSecret: ""
-    # -- The client id used to authenticate to the control plane.  This will be provided by Union.
-    clientId: dataplane-operator
+    # -- The client id used to authenticate to the control plane. There is one
+    # -- admin client id for the dataplane; it derives from global.AUTH_CLIENT_ID
+    # -- (set per-cloud by the terraform env), and the config.* clientId sites
+    # -- reference this single source via `{{ tpl .Values.secrets.admin.clientId . }}`.
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
 
 sparkoperator:
   enabled: false
@@ -2048,7 +2105,9 @@ storage:
   endpoint: ""
   # -- Use path style instead of domain style urls to access the object storage service.
   s3ForcePathStyle: true
-  enableMultiContainer: false
+  # -- Allow the metadata and fast-registration buckets to differ (all cloud
+  # -- overlays run multi-container).
+  enableMultiContainer: true
   # -- Internal service limits for object storage access.
   limits:
     maxDownloadMBs: 1024
@@ -2298,8 +2357,16 @@ imageBuilder:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+  fullnameOverride: "dataplane-nginx"
 
   controller:
+    service:
+      # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
+      # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
 
     # Disable admission webhooks for simplicity
     admissionWebhooks:
@@ -2328,6 +2395,9 @@ namespaces:
   enabled: false
 
 monitoring:
+  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
+  # is commonly managed outside this chart. Enable as needed.
+  # TODO: consider defaulting to true.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2404,16 +2474,28 @@ monitoring:
     enabled: true
   defaultRules:
     create: true
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
   kubeApiServer:
     enabled: true
+  # These ServiceMonitors + alerting rules (defaultRules.rules above) cover the
+  # Kubernetes control-plane components (controller-manager, scheduler, etcd,
+  # kube-proxy). A managed Kubernetes provider (EKS/GKE/AKS) owns those and does
+  # not expose their metrics endpoints to workloads, so they are disabled by
+  # default to avoid false-positive TargetDown alerts. Enable per component if you
+  # are confident your Kubernetes provider allows access to these metrics.
   kubeControllerManager:
-    enabled: true
+    enabled: false
   kubeEtcd:
-    enabled: true
+    enabled: false
   kubeProxy:
-    enabled: true
+    enabled: false
   kubeScheduler:
-    enabled: true
+    enabled: false
   nodeExporter:
     enabled: true
   kubelet:

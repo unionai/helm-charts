@@ -7,28 +7,29 @@ posture. Consumers (`config.admin.admin`, `config.catalog.catalog-cache`,
 `clusterresourcesync.config.union.connection`, etc.) reference these
 helpers so the host, port, and TLS settings stay in sync across the chart.
 
-Override surface (globals declared at the top of values.yaml):
-  CONTROLPLANE_HOST           bare hostname (no scheme, no port) — required
-  CONTROLPLANE_GRPC_ENDPOINT  override the default `dns:///<host>:443`
-  QUEUE_GRPC_ENDPOINT         override the task-pod queue endpoint
-                              (cascades from CONTROLPLANE_GRPC_ENDPOINT)
+Single control-plane host interface:
+  CONTROLPLANE_HOST           bare CP hostname (no scheme, no port). The one host
+                              global; everything derives from it.
+  DEPRECATED fallbacks (still honored for backward compatibility; migrate to
+  CONTROLPLANE_HOST): top-level .Values.host and global.UNION_CONTROL_PLANE_HOST.
+  One of the three must be set or render fails.
+
+The gRPC endpoint is always `dns:///<host>` — the port is omitted, so grpc
+(dns resolver) and Connect (https) both default to 443. There is no separate
+endpoint or queue-endpoint global. Authless / direct-service routing is
+configured explicitly via `config.union.connection` + the auth toggles (see
+examples/values.authless.yaml), not via a host override.
 */}}
 
 {{- define "dataplane.cp.host" -}}
-{{- $cp := tpl (default "" .Values.global.CONTROLPLANE_HOST) . -}}
-{{- $legacy := tpl (default "" .Values.host) . -}}
-{{- coalesce $cp $legacy -}}
+{{- $cp      := tpl (default "" .Values.global.CONTROLPLANE_HOST) . -}}
+{{- $host    := tpl (default "" .Values.host) . -}}
+{{- $legacy  := tpl (default "" .Values.global.UNION_CONTROL_PLANE_HOST) . -}}
+{{- required "A control plane host is required: set global.CONTROLPLANE_HOST (the deprecated .Values.host and global.UNION_CONTROL_PLANE_HOST are still honored)" (coalesce $cp $host $legacy) -}}
 {{- end -}}
 
 {{- define "dataplane.cp.endpoint" -}}
-{{- $host := include "dataplane.cp.host" . -}}
-{{- $defaultEp := "" -}}
-{{- if $host -}}{{- $defaultEp = printf "dns:///%s:443" $host -}}{{- end -}}
-{{- default $defaultEp (tpl (default "" .Values.global.CONTROLPLANE_GRPC_ENDPOINT) .) -}}
-{{- end -}}
-
-{{- define "dataplane.cp.queueEndpoint" -}}
-{{- default (include "dataplane.cp.endpoint" .) (tpl (default "" .Values.global.QUEUE_GRPC_ENDPOINT) .) -}}
+{{- printf "dns:///%s" (include "dataplane.cp.host" .) -}}
 {{- end -}}
 
 {{/*
@@ -57,9 +58,9 @@ Override surface (.Values.updateStatus.connectionConfig):
   insecure            CP dials with plain HTTP/2 (no TLS) when true
   insecureSkipVerify  CP skips cert validation (self-signed cert envs)
 
-dataplane.dp.endpoint formats host as `dns:///<host>:443` — the same
-scheme used for CP→DP DP→CP and CP-to-DP gRPC dials elsewhere in the
-chart. Empty host returns empty string; callers gate emission on this.
+The operator self-reports the bare host (dataplane.dp.host); the control
+plane builds the http(s)://host URL from it. Empty host renders no
+connection_config resource — callers gate emission on this.
 
 dataplane.connectionConfig.emit is the single gate every consumer keys off:
 it returns the resolved host only when self-reporting is both enabled and
@@ -71,11 +72,6 @@ connection_config resource, config key, volume, or mount.
 {{- $explicit := tpl (default "" .Values.updateStatus.connectionConfig.host) . -}}
 {{- $derived := tpl (default "" .Values.ingress.host) . -}}
 {{- default $derived $explicit -}}
-{{- end -}}
-
-{{- define "dataplane.dp.endpoint" -}}
-{{- $host := include "dataplane.dp.host" . -}}
-{{- if $host -}}{{- printf "dns:///%s:443" $host -}}{{- end -}}
 {{- end -}}
 
 {{- define "dataplane.connectionConfig.emit" -}}
