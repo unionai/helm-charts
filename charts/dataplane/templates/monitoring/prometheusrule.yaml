@@ -58,9 +58,9 @@ spec:
               namespace="{{ .Release.Namespace }}"
             }[5m])
 
-        - record: union:dp:executor:active_actions
+        - record: union:dp:leaseworker:active_actions
           expr: |
-            executor::v2:active_actions_count{namespace="{{ .Release.Namespace }}"}
+            leaseworker:active_run_leases{namespace="{{ .Release.Namespace }}"}
 
     {{- if .Values.monitoring.alerting.enabled }}
     # --- Operational alerts (opt-in) ---
@@ -87,14 +87,6 @@ spec:
           annotations:
             summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
 
-        - alert: UnionDPHandlerPanic
-          expr: |
-            increase(executor:handler_panic{namespace="{{ .Release.Namespace }}"}[1h]) > 0
-          for: 0m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Handler panic detected in DP executor"
     {{- end }}
 
     {{- if .Values.monitoring.slos.enabled }}
@@ -126,18 +118,12 @@ spec:
               quantile="0.99"
             } / 1000
 
-        - record: union:dp:slo:executor_success_rate
-          expr: |
-            (
-              sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}", phase="Succeeded"}[5m]))
-              / sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}"}[5m]))
-            ) or vector(1)
-
+        # Tracks propeller round health only. Action terminal outcomes are
+        # deliberately excluded: bad user code fails actions, and that must not
+        # burn the error budget or page anyone — it is not a platform fault.
         - record: union:dp:slo:execution_success_rate
           expr: |
-            (
-              (union:dp:slo:propeller_success_rate + union:dp:slo:executor_success_rate) / 2
-            ) or vector(1)
+            union:dp:slo:propeller_success_rate or vector(1)
 
         - record: union:dp:slo:error_budget_remaining
           expr: |

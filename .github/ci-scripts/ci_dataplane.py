@@ -80,6 +80,7 @@ def _uctl_extra_env() -> dict:
     requiring a separate env var in the workflow.
     """
     import base64
+
     api_key = os.environ.get("UNION_API_KEY", "")
     if not api_key:
         return {}
@@ -121,6 +122,7 @@ async def _init_client(
     org: str = "",
 ) -> None:
     import flyte
+
     if not control_plane_url.startswith(("https://", "http://")):
         control_plane_url = "https://" + control_plane_url
     kwargs: dict = {
@@ -140,12 +142,16 @@ async def _init_client(
 
 # ── provision ───────────────────────────────────────────────────────────────
 
+
 def cmd_provision(args: argparse.Namespace) -> None:
     """Shell out to uctl provision, parse output, write values file to disk."""
-    cluster_name     = _env("CLUSTER_NAME")
-    control_plane_url = _env("CONTROL_PLANE_URL").removeprefix("https://").removeprefix("http://")
+    cluster_name = _env("CLUSTER_NAME")
+    control_plane_url = (
+        _env("CONTROL_PLANE_URL").removeprefix("https://").removeprefix("http://")
+    )
 
     import time as _time
+
     work_dir = tempfile.mkdtemp(prefix="union-ci-provision-")
     print(f"[ci] provision: working in {work_dir}", flush=True)
 
@@ -153,13 +159,25 @@ def cmd_provision(args: argparse.Namespace) -> None:
     output = ""
     for attempt in range(1, 4):
         result = subprocess.run(
-            ["uctl", "selfserve", "provision-dataplane-resources",
-             "--clusterName", cluster_name, "--provider", "metal",
-             # Default per-retry timeout is 15s with 4 retries = 60s cap.
-             # The provision RPC can take longer on a loaded control plane,
-             # so raise per-retry to 90s and keep 3 retries → up to ~5 min.
-             "--admin.perRetryTimeout", "90s", "--admin.maxRetries", "3"],
-            cwd=work_dir, capture_output=True, text=True,
+            [
+                "uctl",
+                "selfserve",
+                "provision-dataplane-resources",
+                "--clusterName",
+                cluster_name,
+                "--provider",
+                "metal",
+                # Default per-retry timeout is 15s with 4 retries = 60s cap.
+                # The provision RPC can take longer on a loaded control plane,
+                # so raise per-retry to 90s and keep 3 retries → up to ~5 min.
+                "--admin.perRetryTimeout",
+                "90s",
+                "--admin.maxRetries",
+                "3",
+            ],
+            cwd=work_dir,
+            capture_output=True,
+            text=True,
             env={**os.environ, **_uctl_extra_env()},
         )
         output = result.stdout + result.stderr
@@ -167,11 +185,23 @@ def cmd_provision(args: argparse.Namespace) -> None:
         if result.returncode == 0:
             break
         low = output.lower()
-        if attempt < 3 and ("503" in output or "unavailable" in low or "internal" in low or "name cannot be empty" in low or "deadline exceeded" in low or "deadlineexceeded" in low):
-            print(f"[ci] provision: attempt {attempt} failed (transient), retrying in 20s…", flush=True)
+        if attempt < 3 and (
+            "503" in output
+            or "unavailable" in low
+            or "internal" in low
+            or "name cannot be empty" in low
+            or "deadline exceeded" in low
+            or "deadlineexceeded" in low
+        ):
+            print(
+                f"[ci] provision: attempt {attempt} failed (transient), retrying in 20s…",
+                flush=True,
+            )
             _time.sleep(20)
             continue
-        sys.exit(f"[ci] ERROR: uctl provision-dataplane-resources failed (exit {result.returncode})")
+        sys.exit(
+            f"[ci] ERROR: uctl provision-dataplane-resources failed (exit {result.returncode})"
+        )
 
     # Locate the generated values file.  uctl prints a line like:
     #   Generated values file: values-metal.yaml   (or similar)
@@ -221,6 +251,7 @@ def cmd_provision(args: argparse.Namespace) -> None:
 
 # ── wait-healthy ─────────────────────────────────────────────────────────────
 
+
 async def _wait_healthy_async(
     cluster_name: str,
     control_plane_url: str,
@@ -239,9 +270,9 @@ async def _wait_healthy_async(
     while time.time() < deadline:
         try:
             cluster = await Cluster.get.aio(name=cluster_name)  # type: ignore
-            state  = cluster.state
+            state = cluster.state
             health = cluster.health
-            org    = cluster.organization or ""
+            org = cluster.organization or ""
             print(f"[ci]   state={state} health={health} org={org}", flush=True)
             if state == "enabled" and health == "healthy":
                 print(f"[ci] wait-healthy: HEALTHY (org={org})", flush=True)
@@ -255,9 +286,9 @@ async def _wait_healthy_async(
 
 
 def cmd_wait_healthy(args: argparse.Namespace) -> None:
-    cluster_name      = _env("CLUSTER_NAME")
+    cluster_name = _env("CLUSTER_NAME")
     control_plane_url = _env("CONTROL_PLANE_URL")
-    api_key           = _env("UNION_API_KEY", required=False)
+    api_key = _env("UNION_API_KEY", required=False)
     org = asyncio.run(
         _wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout)
     )
@@ -265,6 +296,7 @@ def cmd_wait_healthy(args: argparse.Namespace) -> None:
 
 
 # ── setup-routing ─────────────────────────────────────────────────────────────
+
 
 async def _setup_routing_async(
     cluster_name: str,
@@ -292,10 +324,10 @@ async def _setup_routing_async(
     Each PR still gets its own pool (== cluster == queue == project name), so
     parallel PRs can't land on each other's dataplane.
     """
-    from flyte.remote import Project  # type: ignore
+    from flyte.remote import Project, Settings  # type: ignore
     from flyteplugins.union.remote import Cluster, ClusterPool, Queue  # type: ignore
 
-    pool_name  = cluster_name
+    pool_name = cluster_name
     project_id = cluster_name
 
     await _init_client(control_plane_url, api_key, project=project_id, org=org)
@@ -325,7 +357,9 @@ async def _setup_routing_async(
     # same pool is a no-op; a DIFFERENT pool fails ("cannot change cluster
     # pool"), which is fatal and means the cluster name collided with a
     # previous run's cluster.
-    print(f"[ci] setup-routing: assigning {cluster_name} → pool {pool_name}", flush=True)
+    print(
+        f"[ci] setup-routing: assigning {cluster_name} → pool {pool_name}", flush=True
+    )
     await Cluster.create.aio(cluster_name, cluster_pool_name=pool_name)  # type: ignore
 
     # 3. Sanity-check the implicit queue; create it explicitly if the CP didn't
@@ -338,10 +372,13 @@ async def _setup_routing_async(
             flush=True,
         )
     except Exception:
-        print(f"[ci] setup-routing: implicit queue missing — creating '{cluster_name}'", flush=True)
+        print(
+            f"[ci] setup-routing: implicit queue missing — creating '{cluster_name}'",
+            flush=True,
+        )
         await Queue.create.aio(  # type: ignore
             cluster_name,
-            run_concurrency=0,      # 0 == no limit (matches the implicit queue)
+            run_concurrency=0,  # 0 == no limit (matches the implicit queue)
             action_concurrency=0,
             depth=0,
             clusters=[cluster_name],
@@ -371,9 +408,7 @@ async def _setup_routing_async(
             mode="w", suffix=f"-{domain}.yaml", delete=False
         )
         attr_tmp.write(
-            f"domain: {domain}\n"
-            f"project: {project_id}\n"
-            f"clusterPoolName: {pool_name}\n"
+            f"domain: {domain}\nproject: {project_id}\nclusterPoolName: {pool_name}\n"
         )
         attr_tmp.close()
         print(
@@ -382,8 +417,14 @@ async def _setup_routing_async(
         )
         try:
             rc, out = _run_uctl(
-                "uctl", "update", "cluster-pool-attributes", "--force",
-                "--attrFile", attr_tmp.name, "--org", org,
+                "uctl",
+                "update",
+                "cluster-pool-attributes",
+                "--force",
+                "--attrFile",
+                attr_tmp.name,
+                "--org",
+                org,
             )
             if rc != 0:
                 raise RuntimeError(
@@ -393,20 +434,38 @@ async def _setup_routing_async(
         finally:
             os.unlink(attr_tmp.name)
 
+    # 6. Point each domain's run.default_queue at this run's queue. This is how dataproxy resolves CreateUploadLocation:
+    # it reads run.default_queue from the settings service, resolves that queue, and takes the cluster pool
+    # to pick which cluster's object store to upload the code bundle to.
+    # Left unset it falls back to the literal queue name "default" which is incorrect.
+    for domain in ("development", "staging", "production"):
+        scoped = await Settings.get_settings_for_edit.aio(  # type: ignore
+            project=project_id, domain=domain
+        )
+        # update_settings REPLACES the scope's local overrides, so merge instead of
+        # clobbering anything already pinned at this scope.
+        overrides = dict(scoped.local_overrides() or {})
+        overrides["run.default_queue"] = cluster_name
+        await scoped.update_settings.aio(overrides)  # type: ignore
+        print(
+            f"[ci] setup-routing: {project_id}/{domain} run.default_queue = {cluster_name}",
+            flush=True,
+        )
+
     print(
         f"[ci] setup-routing: done — project '{project_id}', pool '{pool_name}', "
         f"queue '{cluster_name}' all pinned to cluster '{cluster_name}' "
-        f"(dev/staging/prod attributes set)",
+        f"(dev/staging/prod attributes + run.default_queue set)",
         flush=True,
     )
     return project_id
 
 
 def cmd_setup_routing(args: argparse.Namespace) -> None:
-    cluster_name      = _env("CLUSTER_NAME")
-    org               = _env("ORG_NAME")
+    cluster_name = _env("CLUSTER_NAME")
+    org = _env("ORG_NAME")
     control_plane_url = _env("CONTROL_PLANE_URL")
-    api_key           = _env("UNION_API_KEY", required=False)
+    api_key = _env("UNION_API_KEY", required=False)
     project = asyncio.run(
         _setup_routing_async(cluster_name, org, control_plane_url, api_key)
     )
@@ -414,6 +473,7 @@ def cmd_setup_routing(args: argparse.Namespace) -> None:
 
 
 # ── eager-api-key ──────────────────────────────────────────────────────────
+
 
 def cmd_eager_api_key(args: argparse.Namespace) -> None:
     """Create EAGER_API_KEY via uctl (idempotent).
@@ -424,6 +484,7 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
     creates the key on the control plane without triggering the cluster sync.
     """
     import time
+
     org_name = _env("ORG_NAME", required=False) or ""
     # --org is a global uctl flag (matches provision step 6 instructions)
     org_flag = ["--org", org_name] if org_name else []
@@ -431,7 +492,8 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
     for attempt in range(1, 6):
         result = subprocess.run(
             ["uctl"] + org_flag + ["create", "apikey", "--keyName", "EAGER_API_KEY"],
-            capture_output=True, text=True,
+            capture_output=True,
+            text=True,
             env={**os.environ, **_uctl_extra_env()},
         )
         output = result.stdout + result.stderr
@@ -443,8 +505,13 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
         if "already exists" in low or "alreadyexists" in low:
             print("[ci] eager-api-key: key already exists (re-propagated).", flush=True)
             return
-        if attempt < 5 and ("503" in output or "unavailable" in low or "internal" in low):
-            print(f"[ci] eager-api-key: attempt {attempt} failed (transient), retrying in 15s…", flush=True)
+        if attempt < 5 and (
+            "503" in output or "unavailable" in low or "internal" in low
+        ):
+            print(
+                f"[ci] eager-api-key: attempt {attempt} failed (transient), retrying in 15s…",
+                flush=True,
+            )
             time.sleep(15)
             continue
         sys.exit(f"[ci] ERROR: uctl create apikey failed (exit {result.returncode})")
@@ -453,6 +520,7 @@ def cmd_eager_api_key(args: argparse.Namespace) -> None:
 
 
 # ── smoke-test helpers ───────────────────────────────────────────────────────
+
 
 def _phase_name(run) -> str:  # type: ignore[no-untyped-def]
     return str(run.phase).rsplit(".", 1)[-1].lower()
@@ -463,6 +531,7 @@ _ASSERT_TIMEOUT = 600  # seconds — bound per-test wait so a stuck run fails
 
 async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -> None:  # type: ignore[no-untyped-def]
     import flyte  # type: ignore
+
     try:
         await asyncio.wait_for(run.wait.aio(wait_for="terminal"), timeout=timeout)  # type: ignore
     except asyncio.TimeoutError:
@@ -474,7 +543,10 @@ async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -
                 run.abort.aio(reason=f"CI {label}: exceeded {timeout:.0f}s wait"),  # type: ignore
                 timeout=30,
             )
-            print(f"[ci] {label}: aborted run {run.name} after {timeout:.0f}s timeout", flush=True)
+            print(
+                f"[ci] {label}: aborted run {run.name} after {timeout:.0f}s timeout",
+                flush=True,
+            )
         except Exception as exc:  # noqa: BLE001 — best-effort cleanup
             print(f"[ci] {label}: abort after timeout failed: {exc}", flush=True)
         run.sync()
@@ -509,7 +581,9 @@ async def _assert_succeeded(run, label: str, timeout: float = _ASSERT_TIMEOUT) -
                     detail = f": {act.error_info.kind}: {act.error_info.message}"
             except Exception:  # noqa: BLE001
                 pass
-        raise RuntimeError(f"{label}: run {run.name} ended in phase={run.phase}{detail}")
+        raise RuntimeError(
+            f"{label}: run {run.name} ended in phase={run.phase}{detail}"
+        )
 
 
 def _ensure_workspace_in_path() -> None:
@@ -520,7 +594,7 @@ def _ensure_workspace_in_path() -> None:
 
 
 _SUBMIT_MAX_ATTEMPTS = 40
-_SUBMIT_RETRY_DELAY  = 30
+_SUBMIT_RETRY_DELAY = 30
 
 
 async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-untyped-def]
@@ -537,6 +611,7 @@ async def _submit_with_retry(task_fn, label: str, **kwargs):  # type: ignore[no-
     job budget even with the sequential heavy tests after it.
     """
     import flyte  # type: ignore
+
     queue = os.environ.get("CLUSTER_NAME", "") or None
     run = None
     last_err = ""
@@ -585,6 +660,7 @@ async def _dump_cluster_state(cluster_name: str) -> None:
     """Print the cluster's control-plane state/health (best-effort diagnostic)."""
     try:
         from flyteplugins.union.remote import Cluster  # type: ignore
+
         c = await Cluster.get.aio(name=cluster_name)  # type: ignore
         print(
             f"[ci]   diagnostic: cluster {cluster_name!r} CP state={c.state!r} "
@@ -609,25 +685,25 @@ async def _dump_cluster_state(cluster_name: str) -> None:
 # ready within …" reach this matcher.
 _TRANSIENT_SIGNATURES = (
     "no clusters found",
-    "no cluster",                 # routing/capabilities propagation lag
+    "no cluster",  # routing/capabilities propagation lag
     "imagepullbackoff",
     "errimagepull",
-    "back-off pulling",           # registry throttling / pull backoff
-    "grace period",               # pod reaped while pull/create still backing off
-    "not ready within",           # endpoint cold-start / activation lag
+    "back-off pulling",  # registry throttling / pull backoff
+    "grace period",  # pod reaped while pull/create still backing off
+    "not ready within",  # endpoint cold-start / activation lag
     "did not reach a terminal state",  # _assert_succeeded wait timeout (resource starvation)
     "connection refused",
     "connection reset",
     "connection aborted",
     "deadline exceeded",
     "timed out",
-    "etcdserver",                 # transient control-plane store contention
+    "etcdserver",  # transient control-plane store contention
     "503",
     "502",
     "504",
     "temporarily unavailable",
     "service unavailable",
-    "too many requests",          # 429 registry rate-limit
+    "too many requests",  # 429 registry rate-limit
 )
 
 
@@ -642,7 +718,7 @@ def _is_transient(exc: Exception) -> bool:
 
 
 _SCENARIO_MAX_ATTEMPTS = 2
-_SCENARIO_RETRY_DELAY  = 15
+_SCENARIO_RETRY_DELAY = 15
 
 
 async def _run_scenario_with_retry(name: str, factory):  # type: ignore[no-untyped-def]
@@ -673,6 +749,7 @@ async def _run_scenario_with_retry(name: str, factory):  # type: ignore[no-untyp
 
 
 # ── smoke-test (hello only) ──────────────────────────────────────────────────
+
 
 async def _smoke_test_async(
     control_plane_url: str,
@@ -718,9 +795,11 @@ def cmd_smoke_test(args: argparse.Namespace) -> None:
 
 # ── smoke suite verifications ────────────────────────────────────────────────
 
+
 async def _verify_logs_async(run_name: str, project: str) -> None:
     """Fetch live logs from the run, optionally delete pods, verify logs persist."""
     from flyte.remote import Run  # type: ignore
+
     print(f"[ci] verify_logs: run={run_name}", flush=True)
     run = await Run.get.aio(name=run_name)  # type: ignore
     parts: list[str] = []
@@ -732,10 +811,21 @@ async def _verify_logs_async(run_name: str, project: str) -> None:
     # Attempt pod deletion (best-effort; pods may already be gone).
     ns = f"{project}-development"
     result = subprocess.run(
-        ["kubectl", "get", "pods", "-n", ns,
-         f"-l", f"execution-id={run_name}",
-         "--no-headers", "-o", "custom-columns=NAME:.metadata.name"],
-        capture_output=True, text=True, check=False,
+        [
+            "kubectl",
+            "get",
+            "pods",
+            "-n",
+            ns,
+            f"-l",
+            f"execution-id={run_name}",
+            "--no-headers",
+            "-o",
+            "custom-columns=NAME:.metadata.name",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     for pod in result.stdout.strip().splitlines():
         pod = pod.strip()
@@ -761,6 +851,7 @@ async def _verify_logs_async(run_name: str, project: str) -> None:
 async def _verify_io_async(run_name: str) -> None:
     """Verify Run.outputs is non-None after task completion."""
     from flyte.remote import Run  # type: ignore
+
     print(f"[ci] verify_io: run={run_name}", flush=True)
     run = await Run.get.aio(name=run_name)  # type: ignore
     outputs = run.outputs
@@ -775,9 +866,13 @@ async def _verify_image_builder_async(
     """Build a custom image (fastapi+requests) and run a task on it."""
     import uuid
     from ci_smoke_task import imgbuild_task  # type: ignore  # noqa: E402
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     nonce = str(uuid.uuid4())
-    print(f"[ci] verify_image_builder: submitting imgbuild_task (nonce={nonce})", flush=True)
+    print(
+        f"[ci] verify_image_builder: submitting imgbuild_task (nonce={nonce})",
+        flush=True,
+    )
     run = await _submit_with_retry(imgbuild_task, "verify_image_builder", nonce=nonce)
     print(f"[ci] verify_image_builder: run={run.name}", flush=True)
     await _assert_succeeded(run, "verify_image_builder")
@@ -790,15 +885,26 @@ async def _verify_image_cache_async(
     """Submit same stable-image task twice; second run should hit image cache."""
     import uuid
     from ci_smoke_task import imgcache_task  # type: ignore  # noqa: E402
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     nonce1, nonce2 = str(uuid.uuid4()), str(uuid.uuid4())
     print(f"[ci] verify_image_cache: run 1 (nonce={nonce1})", flush=True)
-    run1 = await _submit_with_retry(imgcache_task, "verify_image_cache/run1", nonce=nonce1)
+    run1 = await _submit_with_retry(
+        imgcache_task, "verify_image_cache/run1", nonce=nonce1
+    )
     await _assert_succeeded(run1, "verify_image_cache run 1")
-    print(f"[ci] verify_image_cache: run 2 (nonce={nonce2}) — expect cache hit", flush=True)
-    run2 = await _submit_with_retry(imgcache_task, "verify_image_cache/run2", nonce=nonce2)
+    print(
+        f"[ci] verify_image_cache: run 2 (nonce={nonce2}) — expect cache hit",
+        flush=True,
+    )
+    run2 = await _submit_with_retry(
+        imgcache_task, "verify_image_cache/run2", nonce=nonce2
+    )
     await _assert_succeeded(run2, "verify_image_cache run 2")
-    print(f"[ci] verify_image_cache: PASSED (run1={run1.name} run2={run2.name})", flush=True)
+    print(
+        f"[ci] verify_image_cache: PASSED (run1={run1.name} run2={run2.name})",
+        flush=True,
+    )
 
 
 async def _verify_reusable_async(
@@ -806,6 +912,7 @@ async def _verify_reusable_async(
 ) -> None:
     """Fan out square() calls over a ReusePolicy environment (replicas=1, concurrency=1)."""
     from ci_smoke_task import reuse_driver  # type: ignore  # noqa: E402
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     n = 4  # fixed for reproducibility
     print(f"[ci] verify_reusable: submitting reuse_driver(n={n})", flush=True)
@@ -823,11 +930,15 @@ async def _dump_app_state(app_name: str) -> None:
     """
     try:
         import flyte.remote  # type: ignore
+
         app = await flyte.remote.App.get.aio(name=app_name)
         pb = app.pb2
         print(f"[ci] verify_app: app {app_name!r} CP state:", flush=True)
         print(f"[ci]   spec.cluster_pool       = {pb.spec.cluster_pool!r}", flush=True)
-        print(f"[ci]   status.assigned_cluster = {pb.status.assigned_cluster!r}", flush=True)
+        print(
+            f"[ci]   status.assigned_cluster = {pb.status.assigned_cluster!r}",
+            flush=True,
+        )
         # Full status block (deployment state, conditions, failure message).
         for line in str(pb.status).splitlines():
             print(f"[ci]   status| {line}", flush=True)
@@ -840,6 +951,7 @@ async def _verify_app_async(
 ) -> None:
     """Deploy a FastAPI app, hit internal endpoints, deactivate."""
     from ci_app_task import app_deploy_test  # type: ignore  # noqa: E402
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     print("[ci] verify_app: submitting app_deploy_test", flush=True)
     run = await _submit_with_retry(app_deploy_test, "verify_app")
@@ -861,7 +973,8 @@ async def _verify_app_async(
     # dataplane (explicit cluster_pool pin — see ci_app_task.py).
     print(
         f"[ci] verify_app: PASSED (run={run.name}) — app assigned to cluster "
-        f"{cluster_name!r}", flush=True
+        f"{cluster_name!r}",
+        flush=True,
     )
 
 
@@ -875,7 +988,8 @@ async def _run_smoke_suite_async(
     _ensure_workspace_in_path()
     # Import both task modules so all TaskEnvironments register before client init.
     import ci_smoke_task  # type: ignore  # noqa: F401
-    import ci_app_task    # type: ignore  # noqa: F401
+    import ci_app_task  # type: ignore  # noqa: F401
+
     await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
     print(
         f"[ci] smoke-suite: client initialised — "
@@ -889,7 +1003,10 @@ async def _run_smoke_suite_async(
     # unable to schedule tasks ("no clusters found") even while health=healthy.
     # 120 s covers the worst-case capabilities-aggregator + control-plane cache lag
     # in the nominal path; the retry loop in _submit_with_retry handles the tail.
-    print("[ci] smoke-suite: waiting 120s for operator capabilities to propagate …", flush=True)
+    print(
+        "[ci] smoke-suite: waiting 120s for operator capabilities to propagate …",
+        flush=True,
+    )
     await asyncio.sleep(120)
 
     # Step 1: hello run (needed for verify_logs + verify_io). Wrapped in the
@@ -916,10 +1033,20 @@ async def _run_smoke_suite_async(
     # run or spin up short-lived build pods, so they don't contend for long.
     # Each is a factory (zero-arg) so _run_scenario_with_retry can re-invoke it.
     parallel_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
-        ("verify_logs",          lambda: _verify_logs_async(run_name, cluster_name)),
-        ("verify_io",            lambda: _verify_io_async(run_name)),
-        ("verify_image_builder", lambda: _verify_image_builder_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_image_cache",   lambda: _verify_image_cache_async(control_plane_url, api_key, cluster_name, org)),
+        ("verify_logs", lambda: _verify_logs_async(run_name, cluster_name)),
+        ("verify_io", lambda: _verify_io_async(run_name)),
+        (
+            "verify_image_builder",
+            lambda: _verify_image_builder_async(
+                control_plane_url, api_key, cluster_name, org
+            ),
+        ),
+        (
+            "verify_image_cache",
+            lambda: _verify_image_cache_async(
+                control_plane_url, api_key, cluster_name, org
+            ),
+        ),
     ]
     p_names = [n for n, _ in parallel_tests]
     outcomes = await asyncio.gather(
@@ -939,8 +1066,16 @@ async def _run_smoke_suite_async(
     # running them back-to-back lets each use the freed CPU instead of both
     # parking in WAITING_FOR_RESOURCES.
     sequential_tests: list[tuple[str, "typing.Callable"]] = [  # type: ignore
-        ("verify_reusable",      lambda: _verify_reusable_async(control_plane_url, api_key, cluster_name, org)),
-        ("verify_app",           lambda: _verify_app_async(control_plane_url, api_key, cluster_name, org)),
+        (
+            "verify_reusable",
+            lambda: _verify_reusable_async(
+                control_plane_url, api_key, cluster_name, org
+            ),
+        ),
+        (
+            "verify_app",
+            lambda: _verify_app_async(control_plane_url, api_key, cluster_name, org),
+        ),
     ]
     for name, factory in sequential_tests:
         try:
@@ -951,7 +1086,9 @@ async def _run_smoke_suite_async(
             print(f"[ci] smoke-suite: FAILED  {name}: {outcome}", flush=True)
 
     # Summary table.
-    print("\n[ci] ── smoke suite results ──────────────────────────────────", flush=True)
+    print(
+        "\n[ci] ── smoke suite results ──────────────────────────────────", flush=True
+    )
     for name, passed, err in results:
         status = "PASSED" if passed else "FAILED"
         detail = f"  {err[:80]}" if err else ""
@@ -972,13 +1109,11 @@ def cmd_run_smoke_suite(args: argparse.Namespace) -> None:
     )
     failed = [(n, e) for n, p, e in results if not p]
     if failed:
-        sys.exit(
-            "[ci] smoke-suite FAILED: "
-            + ", ".join(n for n, _ in failed)
-        )
+        sys.exit("[ci] smoke-suite FAILED: " + ", ".join(n for n, _ in failed))
 
 
 # ── teardown ────────────────────────────────────────────────────────────────
+
 
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
@@ -991,7 +1126,9 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     _run_uctl("uctl", "delete", "cluster", cluster_name)
 
     if not org:
-        print("[ci] teardown: ORG_NAME unset — skipping pool/routing cleanup.", flush=True)
+        print(
+            "[ci] teardown: ORG_NAME unset — skipping pool/routing cleanup.", flush=True
+        )
         print("[ci] teardown: done.", flush=True)
         return
 
@@ -1012,17 +1149,24 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     #   * archive the project (Flyte has no project delete).
     async def _drain_and_delete_async() -> None:
         from flyteplugins.union.remote import ClusterPool, Queue  # type: ignore
+
         control_plane_url = _env("CONTROL_PLANE_URL", required=False)
         api_key = _env("UNION_API_KEY", required=False)
         if not control_plane_url:
-            print("[ci] teardown: CONTROL_PLANE_URL unset — skipping queue/pool cleanup.", flush=True)
+            print(
+                "[ci] teardown: CONTROL_PLANE_URL unset — skipping queue/pool cleanup.",
+                flush=True,
+            )
             return
         await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
         try:
             await Queue.drain.aio(cluster_name)  # type: ignore
             print(f"[ci] teardown: queue '{cluster_name}' drained", flush=True)
         except Exception as e:
-            print(f"[ci] teardown: queue drain failed (ignored): {str(e)[:200]}", flush=True)
+            print(
+                f"[ci] teardown: queue drain failed (ignored): {str(e)[:200]}",
+                flush=True,
+            )
         try:
             await ClusterPool.delete.aio(cluster_name)  # type: ignore
             print(f"[ci] teardown: pool '{cluster_name}' deleted", flush=True)
@@ -1036,28 +1180,48 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     try:
         asyncio.run(_drain_and_delete_async())
     except Exception as e:  # noqa: BLE001 — teardown must never fail the job
-        print(f"[ci] teardown: queue/pool cleanup failed (ignored): {str(e)[:200]}", flush=True)
+        print(
+            f"[ci] teardown: queue/pool cleanup failed (ignored): {str(e)[:200]}",
+            flush=True,
+        )
 
     def _best_effort(label: str, *cmd: str) -> None:
         rc, _ = _run_uctl(*cmd)
         if rc != 0:
-            print(f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True)
+            print(
+                f"[ci] teardown: {label} cleanup returned rc={rc} (ignored)", flush=True
+            )
 
     for domain in ("development", "staging", "production"):
         _best_effort(
             f"routing/{domain}",
-            "uctl", "delete", "cluster-pool-attributes",
-            "-p", cluster_name, "-d", domain, "--org", org,
+            "uctl",
+            "delete",
+            "cluster-pool-attributes",
+            "-p",
+            cluster_name,
+            "-d",
+            domain,
+            "--org",
+            org,
         )
     # Projects can't be deleted, only archived — leaves no schedulable routing.
     _best_effort(
         "project",
-        "uctl", "update", "project", "-p", cluster_name, "--archive", "--org", org,
+        "uctl",
+        "update",
+        "project",
+        "-p",
+        cluster_name,
+        "--archive",
+        "--org",
+        org,
     )
     print("[ci] teardown: done.", flush=True)
 
 
 # ── main ────────────────────────────────────────────────────────────────────
+
 
 def main() -> None:
     p = argparse.ArgumentParser(description="Dataplane CI helper")
@@ -1065,7 +1229,8 @@ def main() -> None:
 
     p_prov = sub.add_parser("provision")
     p_prov.add_argument(
-        "--values-out", default="values-provision.yaml",
+        "--values-out",
+        default="values-provision.yaml",
         help="Destination for the generated values file",
     )
 
@@ -1080,13 +1245,13 @@ def main() -> None:
 
     args = p.parse_args()
     {
-        "provision":        cmd_provision,
-        "wait-healthy":     cmd_wait_healthy,
-        "setup-routing":    cmd_setup_routing,
-        "eager-api-key":    cmd_eager_api_key,
-        "smoke-test":       cmd_smoke_test,
-        "run-smoke-suite":  cmd_run_smoke_suite,
-        "teardown":         cmd_teardown,
+        "provision": cmd_provision,
+        "wait-healthy": cmd_wait_healthy,
+        "setup-routing": cmd_setup_routing,
+        "eager-api-key": cmd_eager_api_key,
+        "smoke-test": cmd_smoke_test,
+        "run-smoke-suite": cmd_run_smoke_suite,
+        "teardown": cmd_teardown,
     }[args.command](args)
 
 
