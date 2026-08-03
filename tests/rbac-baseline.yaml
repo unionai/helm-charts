@@ -5,137 +5,619 @@
 # entry means accepting a cluster-wide privilege, so it needs a
 # written justification in review.
 #
+# Schema -- one entry per (name, invariant, reason):
+#
+#   - name: union-executor        the RBAC object the violation is about
+#     invariant: cluster_write    exactly one invariant per entry
+#     reason: ...                 why this is accepted, and which phase owns it
+#     snapshots:                  tests/generated/<snapshot>.yaml renders it
+#     - dataplane.namespace-multi is pinned in -- and ONLY those
+#
+# The pinned key is the triple (snapshot, name, invariant). An entry allows
+# the violation in the snapshots it lists and nowhere else, so the same name
+# appearing in an unlisted render is a NEW VIOLATION. Split an entry into two
+# (same name and invariant, disjoint snapshot lists) when the snapshots need
+# different reasons.
+#
+# The check FAILS if any entry's reason is missing, empty, or still starts
+# with "TODO". --write-baseline carries existing reasons forward by key and
+# stamps the placeholder only on genuinely new entries, so regenerating this
+# file never silently discards a justification.
+#
 # invariants:
-#   cluster_write          a ClusterRoleBinding references this role
-#                          and it contains write verbs
+#   cluster_write          a ClusterRoleBinding references this role and it
+#                          contains write verbs -- or its aggregationRule
+#                          uses a selector form the checker cannot evaluate,
+#                          in which case it fails closed and reports here
 #   low_priv_cluster_role  this ClusterRole renders when
 #                          low_privilege is true
 allowed:
 - name: flyte-webhook-cleanup-union
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+  - dataplane.zero-trust-full-priv
+- name: flyte-webhook-cleanup-union
+  invariant: low_priv_cluster_role
+  reason: pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-eventing-operator
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-eventing-operator
+  invariant: low_priv_cluster_role
+  reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-eventing-operator-aggregated
-  invariants:
-  - low_priv_cluster_role
+  invariant: cluster_write
+  reason: knative-operator subchart; aggregation shell selects with matchExpressions, which the checker cannot evaluate, so it fails closed; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-eventing-operator-aggregated
+  invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-eventing-operator-aggregated-stable
-  invariants:
-  - low_priv_cluster_role
+  invariant: cluster_write
+  reason: knative-operator subchart; aggregation shell selects with matchExpressions, which the checker cannot evaluate, so it fails closed; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-eventing-operator-aggregated-stable
+  invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-operator-webhook
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-operator-webhook
+  invariant: low_priv_cluster_role
+  reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-serving-activator-cluster
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-addressable-resolver
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-admin
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.zero-trust-full-priv
+- name: knative-serving-admin
+  invariant: low_priv_cluster_role
+  reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-aggregated-addressable-resolver
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-core
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-namespaced-admin
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-namespaced-edit
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-namespaced-view
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: knative-serving-operator
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-serving-operator
+  invariant: low_priv_cluster_role
+  reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-serving-operator-aggregated
-  invariants:
-  - low_priv_cluster_role
+  invariant: cluster_write
+  reason: knative-operator subchart; aggregation shell selects with matchExpressions, which the checker cannot evaluate, so it fails closed; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-serving-operator-aggregated
+  invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-serving-operator-aggregated-stable
-  invariants:
-  - low_priv_cluster_role
+  invariant: cluster_write
+  reason: knative-operator subchart; aggregation shell selects with matchExpressions, which the checker cannot evaluate, so it fails closed; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.clusterresourcesync
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+- name: knative-serving-operator-aggregated-stable
+  invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: knative-serving-podspecable-binding
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: monitoring-admission
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
-  reason: kube-prometheus-stack subchart; opt-in, gated in phase 6
+  invariant: cluster_write
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+- name: monitoring-admission
+  invariant: low_priv_cluster_role
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
 - name: monitoring-kube-state-metrics
-  invariants:
-  - low_priv_cluster_role
-  reason: kube-prometheus-stack subchart; opt-in, gated in phase 6
+  invariant: low_priv_cluster_role
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
 - name: monitoring-operator
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
-  reason: kube-prometheus-stack subchart; opt-in, gated in phase 6
+  invariant: cluster_write
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+- name: monitoring-operator
+  invariant: low_priv_cluster_role
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
 - name: monitoring-prometheus
-  invariants:
-  - low_priv_cluster_role
-  reason: kube-prometheus-stack subchart; opt-in, gated in phase 6
+  invariant: low_priv_cluster_role
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
 - name: net-kourier
-  invariants:
-  - cluster_write
-  - low_priv_cluster_role
+  invariant: cluster_write
   reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.zero-trust-full-priv
+- name: net-kourier
+  invariant: low_priv_cluster_role
+  reason: vendored knative-serving gateway; trimmed in phase 6
+  snapshots:
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-overrides
 - name: operator-system
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.flytepropeller
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-multi
+  - dataplane.nodeobserver-full-priv
+  - dataplane.zero-trust-full-priv
 - name: release-name-fluentbit
-  invariants:
-  - low_priv_cluster_role
+  invariant: low_priv_cluster_role
   reason: fluent-bit subchart; resolved in phase 1
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: release-name-grafana-clusterrole
-  invariants:
-  - low_priv_cluster_role
-  reason: kube-prometheus-stack subchart; opt-in, gated in phase 6
+  invariant: low_priv_cluster_role
+  reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
+  snapshots:
+  - dataplane.monitoring
 - name: system:auth-delegator
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: built-in role bound by clusterresourcesync; binding removed in phase 5 unless a consumer is found
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.namespace-multi
 - name: union-clustersync-resource
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: clusterresourcesync; narrowed in phase 5
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.namespace-multi
 - name: union-executor
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.namespace-multi
+  - dataplane.nodeobserver-full-priv
 - name: union-leaseworker
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.namespace-multi
+  - dataplane.nodeobserver-full-priv
+- name: union-nodeobserver
+  invariant: cluster_write
+  reason: 'escape hatch (design spec 3.4): nodes are cluster-scoped, so this write cannot be namespaced; formalised and narrowed to nodes/status if viable in phase 5'
+  snapshots:
+  - dataplane.nodeobserver-full-priv
 - name: union-webhook-role
-  invariants:
-  - cluster_write
+  invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
+  snapshots:
+  - dataplane.clusterresourcesync
+  - dataplane.namespace-multi
+  - dataplane.nodeobserver-full-priv

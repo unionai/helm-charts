@@ -1,0 +1,37 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# Escape-hatch guard: nodeobserver.enabled=true AND low_privilege=false AND
+# namespaces.enabled=true.
+#
+# Design spec 3.4 lists nodeobserver as escape hatch #1: it needs write on
+# `nodes`, a cluster-scoped resource, so no namespaced Role can ever grant it
+# and no RBAC construct can scope it to "the node this pod runs on". That makes
+# its cluster-scoped, write-bearing form a grant we intend to keep and pin,
+# not one we intend to remove.
+#
+# dataplane.nodeobserver.yaml runs at the chart default low_privilege=true, so
+# union-nodeobserver renders there as a namespaced Role. The cluster-scoped
+# form therefore appeared in no snapshot at all and was invisible to both the
+# RBAC checker and to review.
+#
+# dataplane.rbacKind keys on singleNamespace (`or (not namespaces.enabled)
+# low_privilege`), so low_privilege=false on its own is not sufficient --
+# namespaces.enabled must also be true before the ClusterRole and
+# ClusterRoleBinding render.
+#
+# Pinning this render makes the escape hatch a countable baseline entry that
+# phase 5 must formalise (or narrow to nodes/status) rather than a cluster-wide
+# write no test has ever seen.
+global:
+  # Control-plane host so the dataplane->CP connection resolves. Without it the
+  # dataplane.cp.host template's required guard fails the render.
+  CONTROLPLANE_HOST: "test-controlplane-host"
+low_privilege: false
+namespaces:
+  enabled: true
+nodeobserver:
+  enabled: true
+
+secrets:
+  admin:
+    create: false

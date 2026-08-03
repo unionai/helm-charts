@@ -11,13 +11,31 @@ tests/generated/ (which `make helm-test` already proves match a fresh render):
   low_priv_cluster_role  No ClusterRole objects may render when the fixture
                          sets low_privilege true (the chart default).
 
-Known violations are pinned in tests/rbac-baseline.yaml. The check fails when a
-violation appears that is not in the baseline. Each hardening phase deletes
-entries from the baseline; nothing may ever be added without a written reason.
+Known violations are pinned in tests/rbac-baseline.yaml, keyed by the triple
+(snapshot, role name, invariant). A pinned entry allows the violation in the
+snapshots it names and nowhere else, so reintroducing a cluster-wide grant in a
+render that did not have it is still caught even when the same role name is
+legitimately pinned elsewhere.
+
+The check fails on any of:
+
+  new violation     it occurs in a snapshot it is not pinned for;
+  stale baseline    it is pinned but no longer occurs -- the expected outcome
+                    of a hardening phase, which must delete what it fixed;
+  missing reason    an entry whose reason is absent, empty, or still the
+                    generated "TODO" placeholder. Every pinned cluster-wide
+                    privilege carries a written justification or the build is
+                    red.
 
 Usage:
     python3 scripts/check_rbac.py
     python3 scripts/check_rbac.py --write-baseline
+
+--write-baseline rewrites the file from the current renders. It carries every
+existing reason forward by key and stamps the TODO placeholder only on
+genuinely new entries, so regenerating never destroys a hand-written
+justification -- and the normal check stays red until each new entry is
+justified by hand.
 """
 
 import argparse
@@ -35,6 +53,12 @@ READ_VERBS = {"get", "list", "watch"}
 
 CLUSTER_WRITE = "cluster_write"
 LOW_PRIV_CLUSTER_ROLE = "low_priv_cluster_role"
+
+TODO_REASON = "TODO: justify or remove this entry"
+
+# aggregationRule.clusterRoleSelectors[] keys this script knows how to evaluate.
+# Anything else (matchExpressions today) makes the selector unresolvable.
+RESOLVABLE_SELECTOR_KEYS = {"matchLabels"}
 
 
 def load_documents(path):
@@ -56,18 +80,36 @@ def labels_match(selector, labels):
 
 
 def effective_rules(role, roles_by_name):
-    """Rules a role grants, resolving aggregationRule against the render.
+    """Return (rules, unresolved) for a role, resolving its aggregationRule.
 
     An aggregating ClusterRole carries no rules of its own -- the API server
-    fills them in from every ClusterRole matching its selectors. Ignoring this
+    fills them in from every ClusterRole matching its selectors. Ignoring that
     would let a write-bearing role reach cluster scope through an aggregation
-    shell, which is exactly how knative-operator is wired.
+    shell, so the selectors are resolved against the rest of the render. This
+    path is live: `knative-serving-admin` has zero rules of its own and fifteen
+    aggregated ones, several of them writes.
+
+    Only `matchLabels` selectors can be evaluated here. knative-operator's four
+    `*-aggregated` shells select with `matchExpressions`, which this script
+    does not implement -- and an empty selector matches every ClusterRole in
+    the cluster, including ones this chart never renders. For those the second
+    element of the return is True and the caller MUST fail closed: an
+    unevaluated selector means the rule set is unknown, not empty. The tuple
+    return exists precisely so no caller can read an empty rule list as proof
+    of harmlessness.
+
+    Only ClusterRoles are aggregation candidates -- the API server never
+    aggregates namespaced Roles -- so a Role carrying a matching label (for
+    example `knative-serving-activator`) is deliberately not folded in.
     """
     rules = list(role.get("rules") or [])
+    unresolved = False
     aggregation = role.get("aggregationRule") or {}
     for selector in aggregation.get("clusterRoleSelectors") or []:
+        selector = selector or {}
         match_labels = selector.get("matchLabels") or {}
-        if not match_labels:
+        if set(selector) - RESOLVABLE_SELECTOR_KEYS or not match_labels:
+            unresolved = True
             continue
         for candidate in roles_by_name.values():
             if candidate is role or candidate.get("kind") != "ClusterRole":
@@ -75,7 +117,7 @@ def effective_rules(role, roles_by_name):
             candidate_labels = (candidate.get("metadata") or {}).get("labels") or {}
             if labels_match(match_labels, candidate_labels):
                 rules.extend(candidate.get("rules") or [])
-    return rules
+    return rules, unresolved
 
 
 def fixture_is_low_privilege(stem):
@@ -125,61 +167,130 @@ def find_violations(docs, low_privilege):
             # an explicit baseline entry.
             record(ref_name, CLUSTER_WRITE)
             continue
-        if any(is_write_rule(rule) for rule in effective_rules(role, roles_by_name)):
+        rules, unresolved = effective_rules(role, roles_by_name)
+        # `unresolved` first: an aggregation selector we cannot evaluate means
+        # the rule set is unknown, so the role is presumed write-bearing.
+        if unresolved or any(is_write_rule(rule) for rule in rules):
             record(ref_name, CLUSTER_WRITE)
 
     return violations
 
 
 def collect_all_violations():
-    """Aggregate violations across every dataplane snapshot."""
-    combined = {}
+    """Return {(snapshot, name, invariant)} across every dataplane snapshot."""
+    violations = set()
     for path in sorted(GENERATED_DIR.glob("dataplane*.yaml")):
         stem = path.stem
         docs = list(load_documents(path))
         found = find_violations(docs, fixture_is_low_privilege(stem))
         for name, invariants in found.items():
-            combined.setdefault(name, set()).update(invariants)
-    return combined
+            for invariant in invariants:
+                violations.add((stem, name, invariant))
+    return violations
 
 
 def load_baseline():
+    """Return ({(snapshot, name, invariant): reason}, [schema error, ...])."""
     if not BASELINE_PATH.exists():
-        return {}
+        return {}, []
     with BASELINE_PATH.open() as handle:
         data = yaml.safe_load(handle) or {}
-    return {
-        entry["name"]: set(entry.get("invariants") or [])
-        for entry in data.get("allowed") or []
-    }
+
+    baseline = {}
+    errors = []
+    for index, entry in enumerate(data.get("allowed") or []):
+        entry = entry or {}
+        name = entry.get("name")
+        invariant = entry.get("invariant")
+        snapshots = entry.get("snapshots") or []
+        reason = (entry.get("reason") or "").strip()
+        label = f"allowed[{index}] {name or '<no name>'} / {invariant or '<no invariant>'}"
+
+        if not name or not invariant or not snapshots:
+            errors.append(f"{label}: needs a name, an invariant and a non-empty snapshots list")
+            continue
+        if not reason or reason.startswith("TODO"):
+            errors.append(
+                f"{label}: reason is missing, empty or still the TODO placeholder"
+            )
+        for snapshot in snapshots:
+            key = (snapshot, name, invariant)
+            if key in baseline:
+                errors.append(f"{label}: pinned twice for snapshot {snapshot}")
+            baseline[key] = reason
+
+    return baseline, errors
 
 
-def write_baseline(violations):
+HEADER = """\
+# Pinned RBAC violations. Generated by scripts/check_rbac.py
+# --write-baseline, then edited by hand to add a reason per entry.
+#
+# Every hardening phase DELETES entries from this file. Adding an
+# entry means accepting a cluster-wide privilege, so it needs a
+# written justification in review.
+#
+# Schema -- one entry per (name, invariant, reason):
+#
+#   - name: union-executor        the RBAC object the violation is about
+#     invariant: cluster_write    exactly one invariant per entry
+#     reason: ...                 why this is accepted, and which phase owns it
+#     snapshots:                  tests/generated/<snapshot>.yaml renders it
+#     - dataplane.namespace-multi is pinned in -- and ONLY those
+#
+# The pinned key is the triple (snapshot, name, invariant). An entry allows
+# the violation in the snapshots it lists and nowhere else, so the same name
+# appearing in an unlisted render is a NEW VIOLATION. Split an entry into two
+# (same name and invariant, disjoint snapshot lists) when the snapshots need
+# different reasons.
+#
+# The check FAILS if any entry's reason is missing, empty, or still starts
+# with "TODO". --write-baseline carries existing reasons forward by key and
+# stamps the placeholder only on genuinely new entries, so regenerating this
+# file never silently discards a justification.
+#
+# invariants:
+#   cluster_write          a ClusterRoleBinding references this role and it
+#                          contains write verbs -- or its aggregationRule
+#                          uses a selector form the checker cannot evaluate,
+#                          in which case it fails closed and reports here
+#   low_priv_cluster_role  this ClusterRole renders when
+#                          low_privilege is true
+"""
+
+
+def write_baseline(violations, existing):
+    """Rewrite the baseline, carrying existing reasons forward by key."""
+    grouped = {}
+    for snapshot, name, invariant in violations:
+        reason = existing.get((snapshot, name, invariant)) or TODO_REASON
+        grouped.setdefault((name, invariant, reason), []).append(snapshot)
+
     entries = [
         {
             "name": name,
-            "invariants": sorted(invariants),
-            "reason": "TODO: justify or remove this entry",
+            "invariant": invariant,
+            "reason": reason,
+            "snapshots": sorted(snapshots),
         }
-        for name, invariants in sorted(violations.items())
+        for (name, invariant, reason), snapshots in sorted(
+            grouped.items(), key=lambda item: (item[0][0], item[0][1], sorted(item[1]))
+        )
     ]
-    header = (
-        "# Pinned RBAC violations. Generated by scripts/check_rbac.py\n"
-        "# --write-baseline, then edited by hand to add a reason per entry.\n"
-        "#\n"
-        "# Every hardening phase DELETES entries from this file. Adding an\n"
-        "# entry means accepting a cluster-wide privilege, so it needs a\n"
-        "# written justification in review.\n"
-        "#\n"
-        "# invariants:\n"
-        "#   cluster_write          a ClusterRoleBinding references this role\n"
-        "#                          and it contains write verbs\n"
-        "#   low_priv_cluster_role  this ClusterRole renders when\n"
-        "#                          low_privilege is true\n"
-    )
+
     with BASELINE_PATH.open("w") as handle:
-        handle.write(header)
-        yaml.safe_dump({"allowed": entries}, handle, default_flow_style=False, sort_keys=False)
+        handle.write(HEADER)
+        # width is deliberately large: a reason wrapped across lines is far
+        # harder to hand-edit, and hand-editing is this file's whole point.
+        yaml.safe_dump(
+            {"allowed": entries},
+            handle,
+            default_flow_style=False,
+            sort_keys=False,
+            width=4096,
+        )
+
+    return entries
 
 
 def main():
@@ -187,47 +298,56 @@ def main():
     parser.add_argument(
         "--write-baseline",
         action="store_true",
-        help="overwrite tests/rbac-baseline.yaml with the current violations",
+        help="overwrite tests/rbac-baseline.yaml with the current violations, "
+        "preserving the reason already written for every existing entry",
     )
     args = parser.parse_args()
 
     violations = collect_all_violations()
+    baseline, errors = load_baseline()
 
     if args.write_baseline:
-        write_baseline(violations)
-        print(f"Wrote {len(violations)} entries to {BASELINE_PATH.relative_to(REPO_ROOT)}")
+        entries = write_baseline(violations, baseline)
+        print(
+            f"Wrote {len(entries)} entries covering {len(violations)} pinned "
+            f"(snapshot, name, invariant) triples to "
+            f"{BASELINE_PATH.relative_to(REPO_ROOT)}"
+        )
         return 0
 
-    baseline = load_baseline()
+    def sort_key(key):
+        snapshot, name, invariant = key
+        return (invariant, name, snapshot)
 
-    new = {}
-    for name, invariants in violations.items():
-        unexpected = invariants - baseline.get(name, set())
-        if unexpected:
-            new[name] = unexpected
+    new = sorted(violations - set(baseline), key=sort_key)
+    stale = sorted(set(baseline) - violations, key=sort_key)
 
-    stale = {}
-    for name, invariants in baseline.items():
-        resolved = invariants - violations.get(name, set())
-        if resolved:
-            stale[name] = resolved
+    for message in errors:
+        print(f"BASELINE ERROR {message}", file=sys.stderr)
 
-    for name, invariants in sorted(new.items()):
-        for invariant in sorted(invariants):
-            print(f"NEW VIOLATION  {invariant:22} {name}", file=sys.stderr)
+    for snapshot, name, invariant in new:
+        print(f"NEW VIOLATION  {invariant:22} {name}  [{snapshot}]", file=sys.stderr)
 
-    for name, invariants in sorted(stale.items()):
-        for invariant in sorted(invariants):
-            print(f"STALE BASELINE {invariant:22} {name}", file=sys.stderr)
+    for snapshot, name, invariant in stale:
+        print(f"STALE BASELINE {invariant:22} {name}  [{snapshot}]", file=sys.stderr)
+
+    if errors:
+        print(
+            "\nRBAC check failed: baseline entries above are malformed or "
+            "unjustified.\n"
+            "Every pinned entry needs a written reason -- replace the TODO "
+            "placeholder\nor delete the entry.",
+            file=sys.stderr,
+        )
 
     if new:
         print(
-            "\nRBAC check failed: new violations above are not in "
-            "tests/rbac-baseline.yaml.\n"
-            "Fix the chart, or add a baseline entry with a written reason.",
+            "\nRBAC check failed: new violations above are not pinned for that "
+            "snapshot in\ntests/rbac-baseline.yaml.\n"
+            "Fix the chart, or add the snapshot to a baseline entry with a "
+            "written reason.",
             file=sys.stderr,
         )
-        return 1
 
     if stale:
         print(
@@ -236,9 +356,15 @@ def main():
             "outcome of a hardening phase.",
             file=sys.stderr,
         )
+
+    if errors or new or stale:
         return 1
 
-    print(f"RBAC check passed: {len(violations)} known violations, none new.")
+    snapshots = {snapshot for snapshot, _, _ in violations}
+    print(
+        f"RBAC check passed: {len(violations)} pinned violations across "
+        f"{len(snapshots)} snapshots, none new."
+    )
     return 0
 
 
