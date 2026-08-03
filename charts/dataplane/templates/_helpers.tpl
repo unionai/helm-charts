@@ -1138,7 +1138,9 @@ Create a full name prefix for serving resources
 
 {{/*
 App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > true.
-Both default to null so an explicit setting is distinguishable from the default.
+Both default to null so an explicit setting is distinguishable from the default;
+`kindIs "invalid"` is the Helm idiom for "is nil" (hasKey won't do — the keys are
+present in values.yaml, just null).
 Emits "true"/"" rather than "true"/"false" so callers can write
 `if include "apps.enabled" .` — the literal string "false" is truthy.
 */}}
