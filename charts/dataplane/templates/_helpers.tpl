@@ -1137,6 +1137,26 @@ Create a full name prefix for serving resources
 {{- end }}
 
 {{/*
+App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > true.
+Both default to null so an explicit setting is distinguishable from the default;
+`kindIs "invalid"` is the Helm idiom for "is nil" (hasKey won't do — the keys are
+present in values.yaml, just null).
+Emits "true"/"" rather than "true"/"false" so callers can write
+`if include "apps.enabled" .` — the literal string "false" is truthy.
+*/}}
+{{- define "apps.enabled" -}}
+{{- $apps := .Values.apps | default dict -}}
+{{- $serving := .Values.serving | default dict -}}
+{{- if not (kindIs "invalid" $apps.enabled) -}}
+{{- if $apps.enabled -}}true{{- end -}}
+{{- else if not (kindIs "invalid" $serving.enabled) -}}
+{{- if $serving.enabled -}}true{{- end -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
 Name of the serving-envoy-bootstrap ConfigMap
 */}}
 {{- define "serving.envoyBootstrapConfigMapName" -}}

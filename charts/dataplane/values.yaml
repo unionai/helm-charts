@@ -526,7 +526,7 @@ config:
     org: {}
     # -- Enable app serving
     apps:
-      enabled: "{{ .Values.serving.enabled }}"
+      enabled: '{{ if include "apps.enabled" . }}true{{ else }}false{{ end }}'
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
@@ -2153,10 +2153,24 @@ tunnelService:
     enableGlobalIngress: true
     originURL: ""
 
+# -- Union app serving (Knative Serving). Supersedes the deprecated
+# `serving.enabled`; when both are set this one wins. Left unset (null) so the
+# deprecated flag can still take effect — the effective default is `true`.
+#
+# Does NOT gate the Envoy gateway, which serves the static dataplane routes
+# zero trust depends on, nor the `knative-operator` subchart, which has its own
+# `knative-operator.enabled` condition evaluated by Helm at parse time — turn
+# that off too on the non-zero-trust path.
+apps:
+  enabled: null
+
 # -- Configure app serving and knative.
 serving:
-  # -- Enables the serving components. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work. Enables app serving in operator.
-  enabled: true
+  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
+  # unset. Left unset (null) so an explicit value is distinguishable from the
+  # default. Installs Knative Serving — knative-operator must be running in the
+  # cluster for the non-zero-trust path to work.
+  enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
   # -- Enables scraping of metrics from the serving component
