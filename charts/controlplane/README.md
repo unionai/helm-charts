@@ -37,8 +37,8 @@ cd helm-charts
 # Required when monitoring.enabled=true (chart default).
 kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
 
-# Required when scylla.enabled=true (chart default — ScyllaDB powers the
-# queue service). Skip if you manage scylla-operator + scylla CRDs
+# Required when scylla.enabled=true (chart default — ScyllaDB backs the
+# leasor + actions services). Skip if you manage scylla-operator + scylla CRDs
 # externally.
 kubectl apply --server-side --force-conflicts -f crds/scylla-operator/
 
@@ -56,8 +56,8 @@ ownership.
 
 The control plane needs **both** databases:
 
-- **Postgres** — all services except queue (identity, executions, monolith, …). Provide externally and reference via `dbHost`/`dbName`/`dbUser`/db secret.
-- **ScyllaDB** — queue service only. Can be embedded (chart-managed, default) or external (`scylla.enabled: false` + `scylla.externalHost`).
+- **Postgres** — all services except leasor and actions (identity, executions, monolith, …). Provide externally and reference via `dbHost`/`dbName`/`dbUser`/db secret.
+- **ScyllaDB** — leasor + actions services only (keyspaces `leasor` and `actions`). Can be embedded (chart-managed, default) or external (`scylla.enabled: false` + `scylla.externalHost`).
 
 ## Requirements
 
@@ -161,7 +161,7 @@ The Union control plane requires **both** database systems:
    - Configure via `dbHost`, `dbName`, `dbUser`, and database secret
    - Must be provided (external or in-cluster)
 
-2. **ScyllaDB**: Required exclusively for the queue service
+2. **ScyllaDB**: Required for the leasor and actions services
    - Configure via `scylla` section
    - Can be embedded (via chart) or external
 
@@ -181,7 +181,7 @@ bucketName: "your-s3-bucket"
 artifactsBucketName: "your-artifacts-bucket"
 region: "us-east-2"
 
-# Use external ScyllaDB for queue service
+# Use external ScyllaDB for the leasor + actions services
 scylla:
   enabled: false
   externalHost: "your-scylla-host"
@@ -199,16 +199,16 @@ helm upgrade --install union-controlplane unionai/controlplane \
 
 ### Installation with Embedded ScyllaDB
 
-If you want to use the embedded ScyllaDB cluster for the queue service, ensure the ScyllaDB Operator is installed (see Prerequisites), then create a `values.yaml`:
+If you want to use the embedded ScyllaDB cluster for the leasor + actions services, ensure the ScyllaDB Operator is installed (see Prerequisites), then create a `values.yaml`:
 
 ```yaml
-# Postgres configuration (required for all services except queue)
+# Postgres configuration (required for all services except leasor/actions)
 dbHost: "your-postgres-host"
 dbName: "your-db-name"
 dbUser: "your-db-user"
 dbPass: "your-db-password"
 
-# Embedded ScyllaDB for queue service
+# Embedded ScyllaDB for the leasor + actions services
 scylla:
   enabled: true
   datacenter: dc1
@@ -305,8 +305,8 @@ helm show values unionai/controlplane
 
 ### Key Configuration Options
 
-- **Postgres Configuration** (Required): Set `dbHost`, `dbName`, `dbUser`, and `dbPass` for the primary database used by all control plane services except the queue service
-- **ScyllaDB Configuration** (Required): Configure `scylla` section for the queue service database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
+- **Postgres Configuration** (Required): Set `dbHost`, `dbName`, `dbUser`, and `dbPass` for the primary database used by all control plane services except leasor and actions
+- **ScyllaDB Configuration** (Required): Configure `scylla` section for the leasor/actions database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
 - **Object Storage**: Configure `bucketName`, `artifactsBucketName`, and `region` for S3-compatible storage
 - **Ingress**: Set `global.INGRESS_PROVIDER` to `nginx`, `envoy`, or `both`. Enable the relevant controller (`ingress-nginx.enabled` or `envoy-gateway.enabled`) and configure `envoyGateway.gatewayClassName` when using Envoy Gateway
 

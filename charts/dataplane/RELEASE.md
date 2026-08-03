@@ -1,6 +1,27 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.7.3 WIP
+
+### Removed: executor
+
+The legacy executor Deployment has been removed, completing the deprecation announced 2026-06-30.
+Leaseworker is the only execution path; the control-plane chart drops the matching queue service in its
+own `2026.7.xxx`.
+
+- `templates/nodeexecutor/` deleted (Deployment/ConfigMap/Service/ServiceAccount)
+  along with the `executor.*` helpers and the operator's executor heartbeat entry.
+  Stale `config.operator.dependenciesHeartbeat.executor` overlay entries are
+  dropped at render time so the operator doesn't heartbeat a nonexistent service.
+- The `executor.*` values block is deleted; task log links move to
+  `leaseworker.task_logs` (same defaults, same rendered `task_logs.yaml`).
+  The deprecated `executor.task_logs` key still wins when an overlay sets it, so
+  existing overlays keep their custom log links — migrate them to
+  `leaseworker.task_logs`. All other `executor.*` overlay keys (resources,
+  scheduling, `idl2Executor`, `raw_config`, …) are now ignored. The aws/gcp
+  overlay `executor` blocks and the example files are updated accordingly.
+- Monitoring: `union:dp:executor:active_actions` is replaced by
+  `union:dp:leaseworker:active_actions`, backed by `leaseworker:active_run_leases`.
+  The metrics glossary in `unionai-docs` needs a matching update.
 
 ### Configuration changes
 
