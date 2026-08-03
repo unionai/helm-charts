@@ -2,8 +2,16 @@
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 
 global:
+  # --- Control plane (configure first) ---
+  # The single control-plane host. Everything derives from it: the DP->CP gRPC
+  # endpoint (dns:///<host>) and the app-callback URL (https://<host>). To
+  # enable/disable auth or route authless (direct in-cluster service, no nginx),
+  # use the config.union.auth / config.union.connection toggles — not a host
+  # override (see examples/values.authless.yaml).
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  UNION_CONTROL_PLANE_HOST: ""  # DEPRECATED legacy alias for CONTROLPLANE_HOST (still honored)
+
   # --- Identity ---
-  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks (e.g. "mycompany.union.ai")
   CLUSTER_NAME: ""              # Unique cluster identifier within your org
   ORG_NAME: ""                  # Organization name (must match controlplane)
 
@@ -11,19 +19,13 @@ global:
   METADATA_BUCKET: ""           # Bucket for workflow metadata
   FAST_REGISTRATION_BUCKET: ""  # Bucket for code uploads (can be same as METADATA_BUCKET)
 
-  # --- IAM ---
-  # IAM identity for backend services. Cloud-specific format:
-  #   AWS:  arn:aws:iam::<account>:role/<role-name>
-  #   GCP:  <sa-name>@<project>.iam.gserviceaccount.com
-  BACKEND_IAM_ROLE_ARN: ""
-  WORKER_IAM_ROLE_ARN: ""
+  # Backend/worker cloud identity globals are cloud-specific and live in the
+  # per-cloud overlays: values.aws.yaml + values.gcp.yaml use
+  # BACKEND_IAM_ROLE_ARN / WORKER_IAM_ROLE_ARN (IRSA role ARN / Workload
+  # Identity SA); values.azure.yaml uses AZURE_BACKEND_CLIENT_ID /
+  # AZURE_WORKER_CLIENT_ID (managed-identity client IDs).
 
-  # --- DP -> CP routing ---
-  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
-  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
-  QUEUE_GRPC_ENDPOINT: ""       # Override for task-pod queue path (see values.{cloud}.yaml)
-
-  # --- Service-to-Service OAuth2 ---
+  # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
@@ -31,9 +33,9 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- (Optional) Operator override for the control-plane host. Empty by default;
-# -- when unset the host resolves via global.CONTROLPLANE_HOST then
-# -- global.UNION_CONTROL_PLANE_HOST (see dataplane.cp.host). Precedence:
+# -- DEPRECATED: top-level control-plane host. This is the pre-globals way to
+# -- set the CP host and is still honored as a fallback, but migrate to
+# -- global.CONTROLPLANE_HOST. Precedence in dataplane.cp.host:
 # -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
 host: ""
 # -- Cluster identifier (shared with Union).
@@ -54,7 +56,7 @@ updateStatus:
     enabled: false
     # -- DP-reachable hostname the CP should dial back. e.g.
     # "dp-1.internal.<full_domain>". Bare hostname only — no scheme, no port.
-    # Chart helper derives the gRPC endpoint as `dns:///<host>:443`.
+    # Chart helper derives the gRPC endpoint as `dns:///<host>`.
     # Empty falls back to `Values.ingress.host` (the dataplane's own ingress
     # hostname), so most installs don't need to set this explicitly —
     # the chart already knows where the DP is reachable.
@@ -271,11 +273,14 @@ clusterresourcesync:
         # -- Maximum size of a message in bytes of a gRPC message
         # maxRecvMsgSize: 67108864  # 64MB
       auth:
+        enable: true
         type: ClientSecret
         clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
         clientSecretLocation: /etc/union/secret/client_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
   # -- The templates that are used to create and/or update kubernetes resources for Union projects.
   templates:
     # -- Template for namespaces resources
@@ -391,7 +396,7 @@ config:
         enabled: false
     connection:
       # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
-      # -- endpoint (dns:///<host>:443, honoring global.CONTROLPLANE_GRPC_ENDPOINT).
+      # -- endpoint (dns:///<host>; grpc/https default the port to 443).
       # -- To override, set this same key — it is authoritative (Helm deep-merge
       # -- replaces this leaf before template rendering).
       rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
@@ -699,6 +704,7 @@ config:
       # -- Maximum size of a message in bytes of a gRPC message
       # maxRecvMsgSize: 67108864  # 64MB
     auth:
+      enable: true
       type: ClientSecret
       clientId: "{{ tpl .Values.secrets.admin.clientId . }}"
       clientSecretLocation: /etc/union/secret/client_secret
@@ -1570,7 +1576,7 @@ ingress:
     # -- Ingress host
     hostOverride: "" # Can references Kubernetes service DNS, e.g. dataproxy-service.{{ .Release.Namespace }}.svc.cluster.local
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1579,9 +1585,9 @@ ingress:
   # -- Serving specific ingress configuration.
   serving:
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
-    hostOverride: ""
+    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1985,8 +1991,11 @@ secrets:
     create: true
     # -- The client secret used to authenticate to the control plane.  This will be provided by Union.
     clientSecret: ""
-    # -- The client id used to authenticate to the control plane.  This will be provided by Union.
-    clientId: dataplane-operator
+    # -- The client id used to authenticate to the control plane. There is one
+    # -- admin client id for the dataplane; it derives from global.AUTH_CLIENT_ID
+    # -- (set per-cloud by the terraform env), and the config.* clientId sites
+    # -- reference this single source via `{{ tpl .Values.secrets.admin.clientId . }}`.
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
 
 sparkoperator:
   enabled: false
@@ -2016,7 +2025,9 @@ storage:
   endpoint: ""
   # -- Use path style instead of domain style urls to access the object storage service.
   s3ForcePathStyle: true
-  enableMultiContainer: false
+  # -- Allow the metadata and fast-registration buckets to differ (all cloud
+  # -- overlays run multi-container).
+  enableMultiContainer: true
   # -- Internal service limits for object storage access.
   limits:
     maxDownloadMBs: 1024
@@ -2266,8 +2277,16 @@ imageBuilder:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+  fullnameOverride: "dataplane-nginx"
 
   controller:
+    service:
+      # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
+      # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
 
     # Disable admission webhooks for simplicity
     admissionWebhooks:
@@ -2296,6 +2315,9 @@ namespaces:
   enabled: false
 
 monitoring:
+  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
+  # is commonly managed outside this chart. Enable as needed.
+  # TODO: consider defaulting to true.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2372,16 +2394,28 @@ monitoring:
     enabled: true
   defaultRules:
     create: true
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
   kubeApiServer:
     enabled: true
+  # These ServiceMonitors + alerting rules (defaultRules.rules above) cover the
+  # Kubernetes control-plane components (controller-manager, scheduler, etcd,
+  # kube-proxy). A managed Kubernetes provider (EKS/GKE/AKS) owns those and does
+  # not expose their metrics endpoints to workloads, so they are disabled by
+  # default to avoid false-positive TargetDown alerts. Enable per component if you
+  # are confident your Kubernetes provider allows access to these metrics.
   kubeControllerManager:
-    enabled: true
+    enabled: false
   kubeEtcd:
-    enabled: true
+    enabled: false
   kubeProxy:
-    enabled: true
+    enabled: false
   kubeScheduler:
-    enabled: true
+    enabled: false
   nodeExporter:
     enabled: true
   kubelet:
