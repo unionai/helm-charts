@@ -34,6 +34,12 @@ the only execution path.
 - Overlays setting `actionsLeasor.enabled` or `services.queue.*` should drop
   those keys; both are ignored (harmless, but misleading).
 
+### Configuration changes (helm-charts)
+
+- **`connection.rootTenantURLPattern` default now the publicly-resolvable control-plane host.** It defaulted to the cluster-local ingress svc FQDN (`controlPlaneLibrary.ingressFqdn`), which only resolves intracluster — but this endpoint is minted into eager api-keys and dialed by **dataplane task pods** (and CP↔CP services), so a separate-cluster data plane couldn't reach it. It now defaults to `dns:///{{ .Values.global.UNION_HOST }}`. The union shared-services config and flyteadmin's config are converged on the same `global.UNION_HOST`. **Action:** none for cloud-managed envs (the generated overlay sets the topology-aware host); a standalone chart install that relied on the svc-FQDN default and runs an intracluster data plane may set `configMap.connection.rootTenantURLPattern` (and `flyte…connection.rootTenantURLPattern`) back to `dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}` via overlay.
+- **Render-time guard on `connection.rootTenantURLPattern`.** The chart now fails render if the value is not a `dns:///` gRPC target or carries a trailing `:port` (control-plane services strip the `dns:///` prefix and dial the bare host, and a port corrupts the eager-api-key codec's decoded fields). No effect on valid configs.
+- **Render-time consistency guard on `rootTenantURLPattern`.** The endpoint lives in two independent values paths — the top-level `configMap.connection` (control-plane services + the EAGER_API_KEY the operator mints and data-plane task pods dial) and `flyte.configmap.adminServer.connection` (flyteadmin-private's admin clientset cache, which the flyte subchart owns and can't share via a helm `include`). The chart now fails render if they resolve to different values, so an overlay that overrides one but not the other can't silently leave flyteadmin dialing a different control-plane host than every other service. Both still default to `dns:///{{ .Values.global.UNION_HOST }}`; override them together.
+
 ## 2026.7.2
 
 Bumps `version` + `appVersion` to `2026.7.2`. `appVersion` moves from `2026.7.0` to
