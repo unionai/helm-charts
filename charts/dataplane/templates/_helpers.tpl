@@ -1562,6 +1562,29 @@ namespace_mapping) so users only need to set namespaces.enabled: false.
 {{- end -}}
 
 {{/*
+RBAC object kind for a component's role, keyed on singleNamespace.
+
+Every component's RBAC must follow the deployment's namespace scope, not the
+raw low_privilege flag. singleNamespace is true when namespaces.enabled is
+false OR low_privilege is true -- in both cases every workload lives in the
+release namespace, so namespaced RBAC is sufficient and cluster-scoped RBAC is
+an unnecessary grant.
+
+Callers pass the root context. Use with "dataplane.rbacBindingKind" for the
+matching binding kind; roleRef.kind uses this helper, not the binding one.
+*/}}
+{{- define "dataplane.rbacKind" -}}
+{{- if include "singleNamespace" . -}}Role{{- else -}}ClusterRole{{- end -}}
+{{- end -}}
+
+{{/*
+Binding kind matching "dataplane.rbacKind". Callers pass the root context.
+*/}}
+{{- define "dataplane.rbacBindingKind" -}}
+{{- if include "singleNamespace" . -}}RoleBinding{{- else -}}ClusterRoleBinding{{- end -}}
+{{- end -}}
+
+{{/*
 Resolves the namespace template shared by every component that maps a run to a
 K8s namespace: the executor (namespace_mapping.template), the leaseworker
 (namespace-template), and the operator (org.namespaceTemplate). Callers wrap the
