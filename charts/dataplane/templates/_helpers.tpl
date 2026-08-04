@@ -1553,116 +1553,59 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
-In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
-namespace_mapping) so users only need to set namespaces.enabled: false.
+Returns "true" when the install runs in single-namespace / low-privilege mode,
+and the empty string otherwise. This is the chart's ONE privilege axis.
+
+Single-namespace and low-privilege are the same concept, not two:
+low_privilege: true means NO namespaces are created by any route -- neither the
+pre-seeded ones nor the ones clusterresourcesync would create per project -- so
+every workload necessarily lives in the release namespace. Templates key their
+namespace-scoping config (limitNamespace, limit-namespace, namespace_mapping)
+and their RBAC kind off this helper.
+
+namespaces.enabled is NOT part of this. It only pre-seeds the six hardcoded
+flytesnacks + health-monitoring namespaces (common/namespaces.yaml) and says
+nothing about privilege: with it off, a fully-privileged install still creates
+namespaces for new projects dynamically via clusterresourcesync. Folding it in
+here is what previously suppressed clusterresourcesync -- and forced namespaced
+RBAC -- for the default namespaces.enabled=false + low_privilege=false install.
+
+The value is normalized rather than read for Go-template truthiness: the chart
+has no values.schema.json, and a STRING "false" (from --set low_privilege="false"
+or a templated overlay) is truthy in Go templates and would silently mean true.
+"eq (toString ...) \"true\"" accepts bool true and string "true" only; bool
+false, string "false", an absent key and an explicit null all yield low
+privilege OFF, matching the pre-normalization behaviour of those last two.
 */}}
 {{- define "singleNamespace" -}}
-{{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
+{{- if eq (toString .Values.low_privilege) "true" -}}true{{- end -}}
 {{- end -}}
 
 {{/*
-RBAC scope: the two-axis model.
+RBAC object kind for a component's role: Role under singleNamespace (i.e.
+low_privilege: true), ClusterRole otherwise.
 
-The chart has two independent switches, and RBAC kind selection must be keyed
-on whichever one actually governs the rule set in question:
-
-  singleNamespace          -- "do all workloads live in the release namespace?"
-                              (or (not namespaces.enabled) low_privilege)
-                              Governs NAMESPACED rule sets.
-
-  not low_privilege        -- "may this install create cluster-scoped objects
-                              at all?" Governs CLUSTER-SCOPED rule sets. This is
-                              the same axis that gates the chart's PriorityClass
-                              templates (propeller/priorityclass.yaml,
-                              leaseworker/priorityclass.yaml).
-
-They are NOT interchangeable. singleNamespace is true whenever low_privilege is
-true, but it is ALSO true for namespaces.enabled=false + low_privilege=false --
-the chart default for namespaces. So keying a rule set on singleNamespace when
-that rule set contains a cluster-scoped resource (nodes, namespaces,
-storageclasses, CRDs, webhook configs, PriorityClasses, ...) silently emits a
-namespaced Role that can never convey the grant: the render succeeds, the
-manifest applies cleanly, and the component fails at runtime with Forbidden.
-A namespaced Role is only a correct narrowing for rules whose every resource is
-itself namespaced.
-
-Rule of thumb for future phases: if a rule set is entirely namespaced
-resources, key it on "dataplane.rbacKind"/"dataplane.rbacBindingKind". If it
-contains even one cluster-scoped resource, key it on
-"dataplane.clusterScopedRbacKind"/"dataplane.clusterScopedRbacBindingKind" and
-justify the grant as a spec 3.4 escape hatch.
-
-The two "...For" helpers below take a "namespaced?" predicate so the Role vs
-ClusterRole selection is written exactly once.
-*/}}
-
-{{/*
-Internal. Role kind for a "namespaced?" predicate (truthy => namespaced).
-*/}}
-{{- define "dataplane.rbacKindFor" -}}
-{{- if . -}}Role{{- else -}}ClusterRole{{- end -}}
-{{- end -}}
-
-{{/*
-Internal. Binding kind matching "dataplane.rbacKindFor", same argument.
-*/}}
-{{- define "dataplane.rbacBindingKindFor" -}}
-{{- printf "%sBinding" (include "dataplane.rbacKindFor" .) -}}
-{{- end -}}
-
-{{/*
-RBAC object kind for a component's role, keyed on singleNamespace. Use ONLY for
-rule sets whose resources are all namespaced -- see the two-axis note above.
-
-singleNamespace is true when namespaces.enabled is false OR low_privilege is
-true. In both cases every workload lives in the release namespace, so namespaced
-RBAC is sufficient and cluster-scoped RBAC is an unnecessary grant.
+Because singleNamespace is exactly low_privilege, this is also the correct key
+for a rule set that names cluster-scoped resources (nodes, namespaces,
+storageclasses, CRDs, webhook configs, ...): such a rule set gets a ClusterRole
+whenever the install may create cluster-scoped objects at all, and degrades to a
+namespaced Role only under low_privilege, where that component's cluster-scoped
+function is knowingly given up along with every other cluster-scoped object this
+chart would create. A grant that cannot survive that degradation belongs behind
+a low_privilege gate on the whole component, not behind a different kind helper.
 
 Callers pass the root context. Use with "dataplane.rbacBindingKind" for the
 matching binding kind; roleRef.kind uses this helper, not the binding one.
 */}}
 {{- define "dataplane.rbacKind" -}}
-{{- include "dataplane.rbacKindFor" (include "singleNamespace" .) -}}
+{{- if include "singleNamespace" . -}}Role{{- else -}}ClusterRole{{- end -}}
 {{- end -}}
 
 {{/*
 Binding kind matching "dataplane.rbacKind". Callers pass the root context.
 */}}
 {{- define "dataplane.rbacBindingKind" -}}
-{{- include "dataplane.rbacBindingKindFor" (include "singleNamespace" .) -}}
-{{- end -}}
-
-{{/*
-Returns "true" when this install is permitted to create cluster-scoped objects,
-i.e. when low_privilege is false. Deliberately NOT keyed on singleNamespace --
-see the two-axis note above.
-*/}}
-{{- define "dataplane.clusterScopedAllowed" -}}
-{{- if not .Values.low_privilege -}}true{{- end -}}
-{{- end -}}
-
-{{/*
-RBAC object kind for a rule set that contains cluster-scoped resources, keyed on
-"dataplane.clusterScopedAllowed". Yields ClusterRole whenever the install may
-create cluster-scoped objects, and falls back to a namespaced Role only under
-low_privilege, where the component's cluster-scoped function is knowingly given
-up along with every other cluster-scoped object this chart would create.
-
-Callers pass the root context. Use with
-"dataplane.clusterScopedRbacBindingKind" for the matching binding kind;
-roleRef.kind uses this helper, not the binding one.
-*/}}
-{{- define "dataplane.clusterScopedRbacKind" -}}
-{{- include "dataplane.rbacKindFor" (not (include "dataplane.clusterScopedAllowed" .)) -}}
-{{- end -}}
-
-{{/*
-Binding kind matching "dataplane.clusterScopedRbacKind". Callers pass the root
-context.
-*/}}
-{{- define "dataplane.clusterScopedRbacBindingKind" -}}
-{{- include "dataplane.rbacBindingKindFor" (not (include "dataplane.clusterScopedAllowed" .)) -}}
+{{- printf "%sBinding" (include "dataplane.rbacKind" .) -}}
 {{- end -}}
 
 {{/*
