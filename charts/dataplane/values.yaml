@@ -2010,9 +2010,19 @@ zero_trust:
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
-# -- When enabled, creates a single shared ServiceAccount for all components
-# (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
-# Automatically enabled when singleNamespace mode is active.
+# -- Collapse every component onto one ServiceAccount (`name` below).
+#
+# Setting this false creates ONE KSA PER COMPONENT. Each new KSA name needs a
+# matching workload-identity binding in the cloud repo before the workloads can
+# authenticate -- an IRSA trust-policy subject on AWS, a
+# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential.
+# additionalServiceAccountAnnotations is applied to every system-created
+# ServiceAccount and each cloud overlay points it at a single backend identity
+# (values.aws.yaml, values.gcp.yaml, values.azure.yaml), so the annotation alone
+# is not sufficient -- the cloud-side binding must name each KSA.
+#
+# That cost is why this defaults to true. It is independent of low_privilege:
+# a single-namespace install may still use per-component identities.
 commonServiceAccount:
   enabled: true
   name: union-system

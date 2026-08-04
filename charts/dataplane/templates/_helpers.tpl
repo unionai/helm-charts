@@ -1435,10 +1435,22 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- end -}}
 {{/*
 Returns "true" when a common service account should be used for all components.
-Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
+
+Keyed on commonServiceAccount.enabled ALONE. Identity sharing and privilege scope
+are orthogonal: how many ServiceAccounts exist is an operational and IAM question,
+while what those identities may reach is a security one. Confinement to a single
+namespace does not require a single identity -- per-component ServiceAccounts inside
+one namespace are strictly better isolation at no structural cost.
+
+This previously also returned true whenever singleNamespace (i.e. low_privilege) was
+set, which SILENTLY DISCARDED an explicit commonServiceAccount.enabled: false in the
+chart's default mode. The IAM cost of per-component identities -- each new KSA name
+needs a matching workload-identity binding in the cloud repo -- is real, but it is a
+reason for the DEFAULT to be true, not for the chart to overrule an operator who
+sets it false.
 */}}
 {{- define "useCommonServiceAccount" -}}
-{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*

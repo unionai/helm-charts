@@ -24,7 +24,7 @@
   - **`global.QUEUE_GRPC_ENDPOINT`** and the **`dataplane.cp.queueEndpoint`** helper — the task-pod endpoint is injected by the leaseworker/executor from `config.union.connection`; there is no separate queue global. Authless / direct-service routing (skip nginx + OAuth, dial the in-cluster Service on `:80`) is configured explicitly via `config.union.auth` + `config.union.connection`, documented in the new **`examples/values.authless.yaml`**.
   - **`global.UNION_CONTROL_PLANE_HOST`** and the top-level **`.Values.host`** are now **DEPRECATED** — both are still honored as fallbacks (precedence `CONTROLPLANE_HOST` > `.Values.host` > `UNION_CONTROL_PLANE_HOST`) but should be migrated to `CONTROLPLANE_HOST`; they will be removed in a future release. `.Values.host` is the pre-globals top-level knob; no terraform-generated env sets it. The intracluster examples are simplified to just set `CONTROLPLANE_HOST`.
 
-- **`low_privilege` is now the chart's only privilege axis; `namespaces.enabled` no longer implies single-namespace mode** (Linear UN-29; RBAC hardening phase 0). The `singleNamespace` helper — which drives RBAC kind, `limit-namespace` / `namespace_mapping` / `limitNamespace` injection, the forced common ServiceAccount, and the `clusterresourcesync` gate — was defined as `or (not namespaces.enabled) low_privilege`. That folded a namespace *pre-seed* toggle into a *privilege* decision, and the two are not the same thing: `namespaces.enabled` only pre-seeds six hardcoded namespaces (`flytesnacks-{development,staging,production}` and `union-health-monitoring-{development,staging,production}`); with it off, a fully-privileged data plane still creates namespaces for newly registered projects dynamically, via `clusterresourcesync`. `singleNamespace` is now exactly `low_privilege`, which is the one flag that really does mean "no namespaces are created by any route."
+- **`low_privilege` is now the chart's only privilege axis; `namespaces.enabled` no longer implies single-namespace mode** (Linear UN-29; RBAC hardening phase 0). The `singleNamespace` helper — which drives RBAC kind, `limit-namespace` / `namespace_mapping` / `limitNamespace` injection, and the `clusterresourcesync` gate — was defined as `or (not namespaces.enabled) low_privilege`. That folded a namespace *pre-seed* toggle into a *privilege* decision, and the two are not the same thing: `namespaces.enabled` only pre-seeds six hardcoded namespaces (`flytesnacks-{development,staging,production}` and `union-health-monitoring-{development,staging,production}`); with it off, a fully-privileged data plane still creates namespaces for newly registered projects dynamically, via `clusterresourcesync`. `singleNamespace` is now exactly `low_privilege`, which is the one flag that really does mean "no namespaces are created by any route."
 
   **This fixes a silent misconfiguration in the default full-privilege install.** `namespaces.enabled` defaults to `false`, so `low_privilege: false` alone previously put the chart in single-namespace mode — and all three `clusterresourcesync` templates are gated `not singleNamespace`, so the very component whose `a_namespace` template creates per-project namespaces was suppressed. A multi-namespace data plane that left `namespaces.enabled` at its default had nothing creating namespaces for new projects at all.
 
@@ -35,6 +35,15 @@
   `low_privilege` must be a **YAML boolean**. The chart has no `values.schema.json`, and every `low_privilege` gate reads the value for raw Go-template truthiness, so a quoted `"false"` is truthy and means `true`. Normalizing this needs a schema plus a sweep of all twelve gates — normalizing only some of them yields a mixed-scope chart that installs cleanly and is broken — so it is deliberately left to its own change. See "Upgrade notes" below.
 
   A new `make rbac-test` gate (`scripts/check_rbac.py`, pinned in `tests/rbac-baseline.yaml`) asserts against every committed render that no `ClusterRoleBinding` references a write-bearing role and that no `ClusterRole` renders under `low_privilege`. Today's violations are pinned per snapshot, each with a written justification and the phase that owns it, so later phases can only shrink the list.
+
+- **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
+  `useCommonServiceAccount` helper previously returned true whenever `singleNamespace`
+  (i.e. `low_privilege`) was set, so an explicit `commonServiceAccount.enabled: false`
+  was silently discarded in the chart's default mode. Identity sharing and privilege
+  scope are independent concerns and are now keyed independently. **The default is
+  unchanged (`true`), so no existing install is affected.** Setting it `false` creates
+  one ServiceAccount per component; each new KSA name needs a matching
+  workload-identity binding in the cloud repo before those workloads can authenticate.
 
 ### Migration / action required
 
