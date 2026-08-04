@@ -10,6 +10,35 @@ TMP_DIR=${SCRIPT_DIR}/tmp
 VALUES_DIR=${SCRIPT_DIR}/values
 CHARTS_DIR=${SCRIPT_DIR}/../charts
 
+
+# Echo the --values flags a fixture needs, from its `# helm-values:` header.
+# Used by both generate and expect-fail-tests so the two see identical inputs.
+function layered_values_flags {
+  local file=$1
+  local chart=$2
+  local flags=""
+  local line
+  line=$(head -n 10 "${file}" | grep "^# helm-values:" || true)
+  if [[ -n "${line}" ]]; then
+    local names
+    names=$(echo "${line}" | sed 's/^# helm-values: *//')
+    IFS=',' read -ra arr <<< "${names}"
+    for name in "${arr[@]}"; do
+      name=$(echo "${name}" | xargs)
+      if [[ -f "${CHARTS_DIR}/${chart}/${name}" ]]; then
+        flags="${flags} --values ${CHARTS_DIR}/${chart}/${name}"
+      fi
+    done
+  fi
+  echo "${flags}"
+}
+
+# Echo the expected-failure substring from a fixture's `# expect-fail:` header,
+# or nothing if it is a normal snapshot fixture.
+function expect_fail_substring {
+  head -n 10 "$1" | grep "^# expect-fail:" | sed 's/^# expect-fail: *//' || true
+}
+
 function generate {
   TARGET_DIR=$1
   echo "Generating test files..."
@@ -42,24 +71,12 @@ function generate {
       processed_charts="${processed_charts} ${CHART}"
     fi
 
-    # Check for additional values files specified in comments
-    ADDITIONAL_VALUES=""
-    HELM_VALUES_LINE=$(head -n 10 ${file} | grep "^# helm-values:" || true)
-    if [[ -n "${HELM_VALUES_LINE}" ]]; then
-      # Extract the values file names from the comment
-      VALUES_FILES=$(echo "${HELM_VALUES_LINE}" | sed 's/^# helm-values: *//')
-      # Split by comma and build --values flags
-      IFS=',' read -ra VALUES_ARRAY <<< "${VALUES_FILES}"
-      for val_file in "${VALUES_ARRAY[@]}"; do
-        val_file=$(echo "${val_file}" | xargs) # trim whitespace
-        if [[ -f "${CHARTS_DIR}/${CHART}/${val_file}" ]]; then
-          ADDITIONAL_VALUES="${ADDITIONAL_VALUES} --values ${CHARTS_DIR}/${CHART}/${val_file}"
-          echo "  - Including additional values file: ${val_file}"
-        else
-          echo "  - WARNING: Additional values file not found: ${val_file}"
-        fi
-      done
+    if [[ -n "$(expect_fail_substring ${file})" ]]; then
+      echo "  - expect-fail fixture; no snapshot generated"
+      continue
     fi
+
+    ADDITIONAL_VALUES=$(layered_values_flags "${file}" "${CHART}")
 
     helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
@@ -97,6 +114,52 @@ function kubeconform-tests {
   done
 }
 
+# Fixtures carrying `# expect-fail: <substring>` assert that `helm template`
+# EXITS NON-ZERO and says why. They exist because some values combinations are
+# unsatisfiable rather than merely unusual -- a component needing a
+# cluster-scoped grant under low_privilege cannot be degraded into something
+# useful -- and the chart should say so at template time instead of installing
+# green and failing at runtime. No snapshot is written for these.
+function expect-fail-tests {
+  echo "Running expect-fail tests..."
+  local failed=0
+  for file in ${VALUES_DIR}/*.yaml; do
+    local substr
+    substr=$(expect_fail_substring "${file}")
+    [[ -z "${substr}" ]] && continue
+
+    local chart output
+    chart=$(basename ${file} | cut -d. -f1)
+    echo "* $(basename ${file}) must fail with: ${substr}"
+
+    local values_flags
+    values_flags=$(layered_values_flags "${file}" "${chart}")
+
+    if output=$(helm template ${CHARTS_DIR}/${chart} \
+        --namespace union \
+        --kube-version 1.32.0 \
+        ${values_flags} \
+        --values ${file} 2>&1); then
+      echo "  FAIL: render succeeded but was expected to fail"
+      failed=1
+      continue
+    fi
+
+    if ! echo "${output}" | grep -qF "${substr}"; then
+      echo "  FAIL: render failed but the message did not contain the expected text"
+      echo "  --- actual ---"
+      echo "${output}" | tail -20
+      failed=1
+      continue
+    fi
+    echo "  ok"
+  done
+  if [[ ${failed} -ne 0 ]]; then
+    echo "Test failed!"
+    exit 1
+  fi
+}
+
 if [ $# -ne 1 ] ; then
   echo "Usage: $0 <command>"
   exit 1
@@ -108,6 +171,9 @@ case $1 in
     ;;
   kubeconform)
     kubeconform-tests
+    ;;
+  expect-fail)
+    expect-fail-tests
     ;;
   generate)
     generate ${GEN_DIR}

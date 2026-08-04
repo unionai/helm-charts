@@ -36,6 +36,15 @@
 
   A new `make rbac-test` gate (`scripts/check_rbac.py`, pinned in `tests/rbac-baseline.yaml`) asserts against every committed render that no `ClusterRoleBinding` references a write-bearing role and that no `ClusterRole` renders under `low_privilege`. Today's violations are pinned per snapshot, each with a written justification and the phase that owns it, so later phases can only shrink the list.
 
+- **`nodeobserver.enabled: true` now fails the render under `low_privilege: true`.**
+  nodeobserver's function is watching and updating `nodes`, a cluster-scoped resource
+  that no namespaced Role can convey and that RBAC cannot scope to "the node this pod
+  runs on". Previously this combination installed cleanly — a DaemonSet plus a Role
+  whose `nodes` rule the API server silently ignores — and failed at runtime on the
+  first node write. It now errors at template time naming both keys. **Affects only
+  installs that were already broken.** Set `low_privilege: false` to run nodeobserver,
+  or `nodeobserver.enabled: false`. `nodeobserver` defaults to disabled.
+
 - **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
   `useCommonServiceAccount` helper previously returned true whenever `singleNamespace`
   (i.e. `low_privilege`) was set, so an explicit `commonServiceAccount.enabled: false`
