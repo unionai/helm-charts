@@ -93,6 +93,7 @@ allowed:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   - dataplane.zero-trust-full-priv
   grant:
   - binding flyte-webhook-cleanup-union
@@ -179,6 +180,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-eventing-operator
   - subject ServiceAccount/union/knative-operator
@@ -364,6 +366,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-eventing-operator-aggregated
   - 'rules <unknown: unevaluable aggregationRule selector>'
@@ -444,6 +447,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-eventing-operator-aggregated-stable
   - 'rules <unknown: unevaluable aggregationRule selector>'
@@ -524,6 +528,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding operator-webhook
   - subject ServiceAccount/union/operator-webhook
@@ -690,6 +695,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-serving-operator
   - subject ServiceAccount/union/knative-operator
@@ -836,6 +842,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-serving-operator-aggregated
   - 'rules <unknown: unevaluable aggregationRule selector>'
@@ -916,6 +923,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
   - binding knative-serving-operator-aggregated-stable
   - 'rules <unknown: unevaluable aggregationRule selector>'
@@ -1051,6 +1059,7 @@ allowed:
   - dataplane.monitoring-full-priv
   - dataplane.namespace-multi
   - dataplane.nodeobserver-full-priv
+  - dataplane.webhook-unmanaged-config-full-priv
   - dataplane.zero-trust-full-priv
   grant:
   - binding operator-system
@@ -1139,6 +1148,7 @@ allowed:
   - dataplane.monitoring-full-priv
   - dataplane.namespace-multi
   - dataplane.nodeobserver-full-priv
+  - dataplane.webhook-unmanaged-config-full-priv
   - dataplane.zero-trust-full-priv
   grant:
   - binding union-executor
@@ -1162,6 +1172,7 @@ allowed:
   - dataplane.monitoring-full-priv
   - dataplane.namespace-multi
   - dataplane.nodeobserver-full-priv
+  - dataplane.webhook-unmanaged-config-full-priv
   - dataplane.zero-trust-full-priv
   grant:
   - binding union-leaseworker
@@ -1267,55 +1278,28 @@ allowed:
   grant:
   - binding union-webhook-binding
   - subject ServiceAccount/union/union-system
-  - write apiGroups=[*] resources=[mutatingwebhookconfigurations,pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
+  - write apiGroups=[*] resources=[pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
 - name: union-webhook-role
   invariant: cluster_write
-  reason: 'pre-existing grant; Task 7 gates mutatingwebhookconfigurations grant behind flytepropellerwebhook.managedConfig: false'
+  reason: >-
+    Per-component ServiceAccount (commonServiceAccount.enabled: false); grants
+    only pods/secrets/replicasets-finalizers writes. It previously also
+    carried mutatingwebhookconfigurations, but that grant now renders only
+    under flytepropellerwebhook.managedConfig: false, which this fixture does
+    not set -- see the escape-hatch entry below for that grant.
   snapshots:
   - dataplane.per-component-sa-full-priv
   grant:
   - binding union-webhook-binding
   - subject ServiceAccount/union/union-webhook-system
-  - write apiGroups=[*] resources=[mutatingwebhookconfigurations,pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
+  - write apiGroups=[*] resources=[pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
 - name: union-webhook-role
-  invariant: dead_cluster_rule
-  reason: 'dead rule (design spec 2.4): mutatingwebhookconfigurations is cluster-scoped, so the API server silently ignores it in a namespaced Role -- and it is unnecessary anyway under the default managedConfig: true; dropped in phase 1'
+  invariant: cluster_write
+  reason: 'Escape hatch. With flytepropellerwebhook.managedConfig: false the webhook registers its own MutatingWebhookConfiguration, which is cluster-scoped and cannot be conveyed by any Role. Reachable only at low_privilege: false -- the template fails the render otherwise. Under the default managedConfig: true, Helm creates the configuration and this grant does not render at all.'
   snapshots:
-  - dataplane.additional-podlabels
-  - dataplane.additional-templates
-  - dataplane.aws
-  - dataplane.aws.apps-disabled
-  - dataplane.aws.eks-automode
-  - dataplane.aws.with-ingress
-  - dataplane.aws.zero-trust
-  - dataplane.aws.zero-trust-apps-disabled
-  - dataplane.aws.zero-trust-overrides
-  - dataplane.aws.zero-trust-serving-disabled
-  - dataplane.azure
-  - dataplane.azure-custom-storage-prefix
-  - dataplane.cost
-  - dataplane.dcgm-exporter
-  - dataplane.fully-selfhosted
-  - dataplane.gcp
-  - dataplane.low-priv
-  - dataplane.low-priv-multi-ns
-  - dataplane.monitoring
-  - dataplane.namespace-single
-  - dataplane.oci
-  - dataplane.storage-credentials-secret
+  - dataplane.webhook-unmanaged-config-full-priv
   grant:
-  - mutatingwebhookconfigurations
-- name: union-webhook-role
-  invariant: dead_cluster_rule
-  reason: 'Pre-existing and newly visible: this fixture closes the coverage gap where union-webhook-role was only ever rendered at low_privilege: false. The grant is redundant; mutatingwebhookconfigurations is cluster-scoped and silently ignored in a namespaced Role. Task 7 gates this behind managedConfig: false.'
-  snapshots:
-  - dataplane.flytepropeller-low-priv
-  grant:
-  - mutatingwebhookconfigurations
-- name: union-webhook-role
-  invariant: dead_cluster_rule
-  reason: 'pre-existing grant; webhook ClusterRole resources aggregation; Task 7 gates behind flytepropellerwebhook.managedConfig: false'
-  snapshots:
-  - dataplane.per-component-sa
-  grant:
-  - mutatingwebhookconfigurations
+  - binding union-webhook-binding
+  - subject ServiceAccount/union/union-system
+  - write apiGroups=[*] resources=[pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations] verbs=[create,patch,update]

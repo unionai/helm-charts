@@ -45,6 +45,14 @@
   installs that were already broken.** Set `low_privilege: false` to run nodeobserver,
   or `nodeobserver.enabled: false`. `nodeobserver` defaults to disabled.
 
+- **`flytepropellerwebhook.managedConfig: false` now fails the render under
+  `low_privilege: true`,** and its `mutatingwebhookconfigurations` grant no longer
+  renders at all under the default `managedConfig: true`. With `managedConfig: false`
+  the webhook registers its own MutatingWebhookConfiguration — cluster-scoped, and
+  unconveyable by a namespaced Role. Previously the chart emitted a dead rule and the
+  webhook silently received no pods. **The default (`managedConfig: true`) is
+  unaffected;** under it Helm creates the configuration and the grant was never needed.
+
 - **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
   `useCommonServiceAccount` helper previously returned true whenever `singleNamespace`
   (i.e. `low_privilege`) was set, so an explicit `commonServiceAccount.enabled: false`
