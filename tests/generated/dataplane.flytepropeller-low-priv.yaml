@@ -5445,26 +5445,14 @@ metadata:
   labels:
     app: leaseworker
 rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
+# Allow Access All plugin objects.
+#
+# This single wildcard rule is the entire grant. Explicit rules for pods (read),
+# events (write) and customresourcedefinitions were removed because each was a
+# strict subset of it -- RBAC unions a role's rules, so a rule subsumed by a
+# sibling in the same role confers nothing. They advertised a granularity the
+# role does not have, and the CRD entry additionally went dead under
+# low_privilege, where the role is namespaced and the resource is not.
 - apiGroups:
   - '*'
   resources:
@@ -5477,18 +5465,6 @@ rules:
   - update
   - delete
   - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
 ---
 # Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5498,26 +5474,14 @@ metadata:
   labels:
     app: executor
 rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
+# Allow Access All plugin objects.
+#
+# This single wildcard rule is the entire grant. Explicit rules for pods (read),
+# events (write) and customresourcedefinitions were removed because each was a
+# strict subset of it -- RBAC unions a role's rules, so a rule subsumed by a
+# sibling in the same role confers nothing. They advertised a granularity the
+# role does not have, and the CRD entry additionally went dead under
+# low_privilege, where the role is namespaced and the resource is not.
 - apiGroups:
   - '*'
   resources:
@@ -5530,18 +5494,6 @@ rules:
   - update
   - delete
   - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5618,6 +5570,8 @@ rules:
     resources:
       - flyteworkflows
       - flyteworkflows/finalizers
+    # `post` is not a Kubernetes RBAC verb for resource requests -- POST maps to
+    # `create` via RequestInfoFactory. It only has meaning in a nonResourceURLs rule.
     verbs:
       - get
       - list
@@ -5626,7 +5580,6 @@ rules:
       - update
       - delete
       - patch
-      - post
       - deletecollection
   - apiGroups:
       - '*'
@@ -5790,26 +5743,11 @@ kind: Role
 metadata:
   name: flytepropeller-role
 rules:
-  # Allow RO access to PODS
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  # Allow Event recording access
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - update
-      - delete
-      - patch
-  # Allow Access All plugin objects
+  # Allow Access All plugin objects.
+  #
+  # Explicit rules for pods (read), events (write) and customresourcedefinitions
+  # were removed as strict subsets of this wildcard -- see the equivalent comment
+  # in nodeexecutor/serviceaccount.yaml.
   - apiGroups:
       - '*'
     resources:
@@ -5822,19 +5760,10 @@ rules:
       - update
       - delete
       - patch
-  # Allow Access to CRD
-  - apiGroups:
-      - apiextensions.k8s.io
-    resources:
-      - customresourcedefinitions
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-      - update
-  # Allow Access to all resources under flyte.lyft.com
+  # Retained: `deletecollection` is not covered by the wildcard rule above.
+  # `post` was removed -- it is not a Kubernetes RBAC verb for resource requests,
+  # where the verb comes from RequestInfoFactory and POST maps to `create`. The
+  # lowercased HTTP method is used only for nonResourceURLs.
   - apiGroups:
       - flyte.lyft.com
     resources:
@@ -5848,7 +5777,6 @@ rules:
       - update
       - delete
       - patch
-      - post
       - deletecollection
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
