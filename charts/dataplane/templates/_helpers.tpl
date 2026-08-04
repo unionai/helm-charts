@@ -1570,15 +1570,24 @@ namespaces for new projects dynamically via clusterresourcesync. Folding it in
 here is what previously suppressed clusterresourcesync -- and forced namespaced
 RBAC -- for the default namespaces.enabled=false + low_privilege=false install.
 
-The value is normalized rather than read for Go-template truthiness: the chart
-has no values.schema.json, and a STRING "false" (from --set low_privilege="false"
-or a templated overlay) is truthy in Go templates and would silently mean true.
-"eq (toString ...) \"true\"" accepts bool true and string "true" only; bool
-false, string "false", an absent key and an explicit null all yield low
-privilege OFF, matching the pre-normalization behaviour of those last two.
+The value is read for RAW Go-template truthiness, deliberately, because that is
+what every OTHER low_privilege gate in this chart does -- operator/configmap.yaml,
+operator/serviceaccount.yaml, propeller/priorityclass.yaml, propeller/configmap.yaml,
+propeller/deployment.yaml, leaseworker/priorityclass.yaml, leaseworker/deployment.yaml,
+prometheus/rbac.yaml and two more helpers below. A STRING "false" (from
+--set low_privilege="false" or a templated overlay) is truthy in Go templates
+and so silently means TRUE. That is a real bug, but normalizing it HERE ALONE is
+worse than leaving it: singleNamespace would go false while all eleven raw gates
+stayed true, rendering ClusterRoles alongside disableClusterPermissions: true and
+no PriorityClasses -- a mixed-scope chart that installs cleanly and is broken.
+
+Fixing it properly means a values.schema.json (which rejects the string at
+install time rather than coercing it) plus a sweep of every gate, and that is
+its own change. Until then operators MUST pass a YAML boolean; RELEASE.md says
+so under "Upgrade notes".
 */}}
 {{- define "singleNamespace" -}}
-{{- if eq (toString .Values.low_privilege) "true" -}}true{{- end -}}
+{{- if .Values.low_privilege -}}true{{- end -}}
 {{- end -}}
 
 {{/*
