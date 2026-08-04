@@ -1,7 +1,7 @@
 # helm-values: examples/values-test-certs.yaml
 #
-# Escape-hatch guard: nodeobserver.enabled=true AND low_privilege=false AND
-# namespaces.enabled=true.
+# Escape-hatch guard: nodeobserver.enabled=true AND low_privilege=false, with
+# namespaces.enabled left at its chart default of false.
 #
 # Design spec 3.4 lists nodeobserver as escape hatch #1: it needs write on
 # `nodes`, a cluster-scoped resource, so no namespaced Role can ever grant it
@@ -14,10 +14,14 @@
 # form therefore appeared in no snapshot at all and was invisible to both the
 # RBAC checker and to review.
 #
-# dataplane.rbacKind keys on singleNamespace (`or (not namespaces.enabled)
-# low_privilege`), so low_privilege=false on its own is not sufficient --
-# namespaces.enabled must also be true before the ClusterRole and
-# ClusterRoleBinding render.
+# low_privilege=false on its own is the whole trigger, and that is the point of
+# this fixture. nodeobserver's RBAC keys on dataplane.clusterScopedRbacKind
+# (`not low_privilege`), not on singleNamespace, precisely because its rules
+# name a cluster-scoped resource -- so the default namespaces.enabled=false
+# must still yield a ClusterRole and ClusterRoleBinding here. Pinning the
+# DEFAULT namespace setting is what makes this fixture a regression guard: if
+# the escape hatch is ever re-keyed onto singleNamespace, this render silently
+# degrades to a Role and the diff shows it.
 #
 # Pinning this render makes the escape hatch a countable baseline entry that
 # phase 5 must formalise (or narrow to nodes/status) rather than a cluster-wide
@@ -27,8 +31,6 @@ global:
   # dataplane.cp.host template's required guard fails the render.
   CONTROLPLANE_HOST: "test-controlplane-host"
 low_privilege: false
-namespaces:
-  enabled: true
 nodeobserver:
   enabled: true
 
