@@ -91,6 +91,8 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa
+  - dataplane.per-component-sa-full-priv
   - dataplane.storage-credentials-secret
   - dataplane.zero-trust-full-priv
   grant:
@@ -101,10 +103,9 @@ allowed:
   - write apiGroups=[apps] resources=[deployments] verbs=[delete]
 - name: flyte-webhook-cleanup-union
   invariant: cluster_write
-  reason: 'pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1'
+  reason: pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1; newly visible in flytepropeller-enabled low-privilege render
   snapshots:
-  - dataplane.per-component-sa
-  - dataplane.per-component-sa-full-priv
+  - dataplane.flytepropeller-low-priv
   grant:
   - binding flyte-webhook-cleanup-union
   - subject ServiceAccount/union/flyte-webhook-cleanup
@@ -137,12 +138,13 @@ allowed:
   - dataplane.namespace-single
   - dataplane.nodeobserver
   - dataplane.oci
+  - dataplane.per-component-sa
   - dataplane.storage-credentials-secret
 - name: flyte-webhook-cleanup-union
   invariant: low_priv_cluster_role
-  reason: 'pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1'
+  reason: pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1; newly visible in flytepropeller-enabled low-privilege render
   snapshots:
-  - dataplane.per-component-sa
+  - dataplane.flytepropeller-low-priv
 - name: flytepropeller-role
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
@@ -155,6 +157,17 @@ allowed:
   - write apiGroups=[*] resources=[*] verbs=[create,delete,patch,update]
   - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,update]
   - write apiGroups=[flyte.lyft.com] resources=[flyteworkflows,flyteworkflows/finalizers] verbs=[create,delete,deletecollection,patch,post,update]
+- name: flytepropeller-role
+  invariant: dead_cluster_rule
+  reason: >-
+    Pre-existing and newly visible: this fixture closes the coverage gap where
+    flytepropeller was only ever rendered at low_privilege: false. The grant is
+    redundant with the role's own wildcard rule and is removed in the next
+    commit; pinned here only so the removal shows as a baseline deletion.
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - customresourcedefinitions
 - name: knative-eventing-operator
   invariant: cluster_write
   reason: knative-operator subchart; retired entirely in phase 6
@@ -223,7 +236,51 @@ allowed:
   - write apiGroups=[trust.cert-manager.io] resources=[bundles] verbs=[create,delete,update]
 - name: knative-eventing-operator
   invariant: cluster_write
-  reason: 'knative-eventing-operator subchart; out of scope per plan constraints'
+  reason: knative-eventing-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-eventing-operator
+  - subject ServiceAccount/union/knative-operator
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete]
+  - write apiGroups=[""] resources=[events] verbs=[create,patch,update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[update]
+  - write apiGroups=[""] resources=[serviceaccounts] resourceNames=[knative-eventing-operator] verbs=[delete]
+  - write apiGroups=[""] resources=[services] verbs=[create,delete]
+  - write apiGroups=[*] resources=[configmaps,services] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[configmaps] resourceNames=[kafka-channel-config] verbs=[patch]
+  - write apiGroups=[*] resources=[configmaps] verbs=[delete]
+  - write apiGroups=[*] resources=[events] verbs=[create,patch]
+  - write apiGroups=[*] resources=[horizontalpodautoscalers] resourceNames=[kafka-webhook] verbs=[delete]
+  - write apiGroups=[*] resources=[leases] verbs=[delete]
+  - write apiGroups=[*] resources=[poddisruptionbudgets] resourceNames=[kafka-webhook] verbs=[delete]
+  - write apiGroups=[*] resources=[pods/finalizers] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[pods] verbs=[update]
+  - write apiGroups=[*] resources=[secrets] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[serviceaccounts] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[services] verbs=[patch]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[*]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[create,delete]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[update]
+  - write apiGroups=[apps] resources=[daemonsets,deployments,replicasets,statefulsets] verbs=[create,delete]
+  - write apiGroups=[apps] resources=[deployments] verbs=[deletecollection]
+  - write apiGroups=[apps] resources=[statefulsets/scale] verbs=[create,delete,patch,update]
+  - write apiGroups=[autoscaling] resources=[horizontalpodautoscalers] verbs=[create,delete,update]
+  - write apiGroups=[batch] resources=[jobs] verbs=[create,delete,update]
+  - write apiGroups=[caching.internal.knative.dev] resources=[images] verbs=[*]
+  - write apiGroups=[cert-manager.io] resources=[certificates,clusterissuers,issuers] verbs=[create,delete,update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[*]
+  - write apiGroups=[internal.kafka.eventing.knative.dev] resources=[consumergroups,consumergroups/status,consumers,consumers/status] verbs=[create,delete,patch,update]
+  - write apiGroups=[internal.kafka.eventing.knative.dev] resources=[consumergroups/finalizers,consumers/finalizers] verbs=[delete,update]
+  - write apiGroups=[keda.sh] resources=[scaledobjects,scaledobjects/finalizers,scaledobjects/status,triggerauthentications,triggerauthentications/status] verbs=[create,delete,update]
+  - write apiGroups=[operator.knative.dev] resources=[*] verbs=[*]
+  - write apiGroups=[rabbitmq.com] resources=[bindings,exchanges,queues] verbs=[create,delete,patch,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterrolebindings,rolebindings] verbs=[create,delete,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles,roles] verbs=[create,delete,escalate,update]
+  - write apiGroups=[trust.cert-manager.io] resources=[bundles] verbs=[create,delete,update]
+- name: knative-eventing-operator
+  invariant: cluster_write
+  reason: knative-eventing-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -290,7 +347,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-eventing-operator
   invariant: low_priv_cluster_role
-  reason: 'knative-eventing-operator subchart; out of scope per plan constraints'
+  reason: knative-eventing-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-eventing-operator
+  invariant: low_priv_cluster_role
+  reason: knative-eventing-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-eventing-operator-aggregated
@@ -326,7 +388,16 @@ allowed:
   - subject ServiceAccount/union/knative-operator
 - name: knative-eventing-operator-aggregated
   invariant: cluster_write
-  reason: 'knative-eventing-operator aggregation; out of scope per plan constraints'
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-eventing-operator-aggregated
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
+- name: knative-eventing-operator-aggregated
+  invariant: cluster_write
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -358,7 +429,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-eventing-operator-aggregated
   invariant: low_priv_cluster_role
-  reason: 'knative-eventing-operator aggregation; out of scope per plan constraints'
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-eventing-operator-aggregated
+  invariant: low_priv_cluster_role
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-eventing-operator-aggregated-stable
@@ -394,7 +470,16 @@ allowed:
   - subject ServiceAccount/union/knative-operator
 - name: knative-eventing-operator-aggregated-stable
   invariant: cluster_write
-  reason: 'knative-eventing-operator aggregation; out of scope per plan constraints'
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-eventing-operator-aggregated-stable
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
+- name: knative-eventing-operator-aggregated-stable
+  invariant: cluster_write
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -426,7 +511,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-eventing-operator-aggregated-stable
   invariant: low_priv_cluster_role
-  reason: 'knative-eventing-operator aggregation; out of scope per plan constraints'
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-eventing-operator-aggregated-stable
+  invariant: low_priv_cluster_role
+  reason: knative-eventing-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-operator-webhook
@@ -467,7 +557,21 @@ allowed:
   - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[create,delete,patch,update]
 - name: knative-operator-webhook
   invariant: cluster_write
-  reason: 'knative-operator subchart; out of scope per plan constraints'
+  reason: knative-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding operator-webhook
+  - subject ServiceAccount/union/operator-webhook
+  - write apiGroups=[""] resources=[namespaces/finalizers] verbs=[update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[create,patch,update]
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations,validatingwebhookconfigurations] verbs=[create,delete,patch,update]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,patch,update]
+  - write apiGroups=[apps] resources=[deployments/finalizers] verbs=[update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[create,delete,patch,update]
+- name: knative-operator-webhook
+  invariant: cluster_write
+  reason: knative-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -504,7 +608,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-operator-webhook
   invariant: low_priv_cluster_role
-  reason: 'knative-operator subchart; out of scope per plan constraints'
+  reason: knative-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-operator-webhook
+  invariant: low_priv_cluster_role
+  reason: knative-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-serving-activator-cluster
@@ -633,7 +742,38 @@ allowed:
   - write apiGroups=[rbac.authorization.k8s.io] resources=[roles] resourceNames=[extension-apiserver-authentication-reader] verbs=[bind]
 - name: knative-serving-operator
   invariant: cluster_write
-  reason: 'knative-serving-operator subchart; out of scope per plan constraints'
+  reason: knative-serving-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-serving-operator
+  - subject ServiceAccount/union/knative-operator
+  - write apiGroups=[""] resources=[configmaps] resourceNames=[config-controller] verbs=[delete]
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete,patch,update]
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete]
+  - write apiGroups=[""] resources=[deployments,horizontalpodautoscalers,services] resourceNames=[knative-ingressgateway] verbs=[delete]
+  - write apiGroups=[""] resources=[events] verbs=[create,patch,update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[update]
+  - write apiGroups=[""] resources=[serviceaccounts] resourceNames=[knative-serving-operator] verbs=[delete]
+  - write apiGroups=[""] resources=[services] verbs=[create,delete]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[*]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[create,delete]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[update]
+  - write apiGroups=[apps,policy,security.istio.io] resources=[daemonsets,deployments,peerauthentications,poddisruptionbudgets,replicasets,statefulsets] verbs=[create,delete,update]
+  - write apiGroups=[authentication.k8s.io] resources=[tokenreviews] verbs=[create]
+  - write apiGroups=[autoscaling] resources=[horizontalpodautoscalers] verbs=[create,delete]
+  - write apiGroups=[caching.internal.knative.dev] resources=[images] verbs=[*]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[*]
+  - write apiGroups=[guard.security.knative.dev] resources=[guardians] verbs=[create,delete,patch,update]
+  - write apiGroups=[operator.knative.dev] resources=[*] verbs=[*]
+  - write apiGroups=[projectcontour.io] resources=[httpproxies,tlscertificatedelegations] verbs=[create,delete,deletecollection,patch,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterrolebindings,rolebindings] verbs=[create,delete,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles,roles] verbs=[create,delete,escalate,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[system:auth-delegator] verbs=[bind]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[roles] resourceNames=[extension-apiserver-authentication-reader] verbs=[bind]
+- name: knative-serving-operator
+  invariant: cluster_write
+  reason: knative-serving-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -687,7 +827,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-serving-operator
   invariant: low_priv_cluster_role
-  reason: 'knative-serving-operator subchart; out of scope per plan constraints'
+  reason: knative-serving-operator subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-serving-operator
+  invariant: low_priv_cluster_role
+  reason: knative-serving-operator subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-serving-operator-aggregated
@@ -723,7 +868,16 @@ allowed:
   - subject ServiceAccount/union/knative-operator
 - name: knative-serving-operator-aggregated
   invariant: cluster_write
-  reason: 'knative-serving-operator aggregation; out of scope per plan constraints'
+  reason: knative-serving-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-serving-operator-aggregated
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
+- name: knative-serving-operator-aggregated
+  invariant: cluster_write
+  reason: knative-serving-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -755,7 +909,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-serving-operator-aggregated
   invariant: low_priv_cluster_role
-  reason: 'knative-serving-operator aggregation; out of scope per plan constraints'
+  reason: knative-serving-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-serving-operator-aggregated
+  invariant: low_priv_cluster_role
+  reason: knative-serving-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-serving-operator-aggregated-stable
@@ -791,7 +950,16 @@ allowed:
   - subject ServiceAccount/union/knative-operator
 - name: knative-serving-operator-aggregated-stable
   invariant: cluster_write
-  reason: 'knative-serving-operator aggregation; out of scope per plan constraints'
+  reason: knative-serving-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - binding knative-serving-operator-aggregated-stable
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
+- name: knative-serving-operator-aggregated-stable
+  invariant: cluster_write
+  reason: knative-serving-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
   - dataplane.per-component-sa-full-priv
@@ -823,7 +991,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: knative-serving-operator-aggregated-stable
   invariant: low_priv_cluster_role
-  reason: 'knative-serving-operator aggregation; out of scope per plan constraints'
+  reason: knative-serving-operator aggregation; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: knative-serving-operator-aggregated-stable
+  invariant: low_priv_cluster_role
+  reason: knative-serving-operator aggregation; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: knative-serving-podspecable-binding
@@ -916,7 +1089,7 @@ allowed:
   - write apiGroups=[serving.knative.dev] resources=[configurations,revisions,services] verbs=[create,delete,update]
 - name: operator-system
   invariant: cluster_write
-  reason: 'pre-existing grant; Task 5 narrows operator ClusterRole by removing namespaces, nodes, and /metrics grants'
+  reason: pre-existing grant; Task 5 narrows operator ClusterRole by removing namespaces, nodes, and /metrics grants
   snapshots:
   - dataplane.per-component-sa-full-priv
   grant:
@@ -957,7 +1130,15 @@ allowed:
   - nodes
 - name: operator-system
   invariant: dead_cluster_rule
-  reason: 'pre-existing grant; Task 5 removes operator namespaces/nodes/nonResourceURLs references'
+  reason: pre-existing grant; Task 5 removes operator namespaces/nodes/nonResourceURLs references; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - namespaces
+  - nodes
+- name: operator-system
+  invariant: dead_cluster_rule
+  reason: pre-existing grant; Task 5 removes operator namespaces/nodes/nonResourceURLs references
   snapshots:
   - dataplane.per-component-sa
   grant:
@@ -992,7 +1173,12 @@ allowed:
   - dataplane.storage-credentials-secret
 - name: release-name-fluentbit
   invariant: low_priv_cluster_role
-  reason: 'fluent-bit subchart; out of scope per plan constraints'
+  reason: fluent-bit subchart; out of scope per plan constraints; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+- name: release-name-fluentbit
+  invariant: low_priv_cluster_role
+  reason: fluent-bit subchart; out of scope per plan constraints
   snapshots:
   - dataplane.per-component-sa
 - name: release-name-grafana-clusterrole
@@ -1038,7 +1224,7 @@ allowed:
   - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,update]
 - name: union-executor
   invariant: cluster_write
-  reason: 'pre-existing grant; Task 4 deletes redundant union-executor rules'
+  reason: pre-existing grant; Task 4 deletes redundant union-executor rules
   snapshots:
   - dataplane.per-component-sa-full-priv
   grant:
@@ -1078,7 +1264,14 @@ allowed:
   - customresourcedefinitions
 - name: union-executor
   invariant: dead_cluster_rule
-  reason: 'pre-existing grant; Task 4 deletes redundant union-executor rules'
+  reason: pre-existing grant; Task 4 deletes redundant union-executor rules; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - customresourcedefinitions
+- name: union-executor
+  invariant: dead_cluster_rule
+  reason: pre-existing grant; Task 4 deletes redundant union-executor rules
   snapshots:
   - dataplane.per-component-sa
   grant:
@@ -1101,7 +1294,7 @@ allowed:
   - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,update]
 - name: union-leaseworker
   invariant: cluster_write
-  reason: 'pre-existing grant; Task 4 deletes redundant union-leaseworker rules'
+  reason: pre-existing grant; Task 4 deletes redundant union-leaseworker rules
   snapshots:
   - dataplane.per-component-sa-full-priv
   grant:
@@ -1141,7 +1334,14 @@ allowed:
   - customresourcedefinitions
 - name: union-leaseworker
   invariant: dead_cluster_rule
-  reason: 'pre-existing grant; Task 4 deletes redundant union-leaseworker rules'
+  reason: pre-existing grant; Task 4 deletes redundant union-leaseworker rules; newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - customresourcedefinitions
+- name: union-leaseworker
+  invariant: dead_cluster_rule
+  reason: pre-existing grant; Task 4 deletes redundant union-leaseworker rules
   snapshots:
   - dataplane.per-component-sa
   grant:
@@ -1202,7 +1402,23 @@ allowed:
   - volumeattachments
 - name: union-operator-prometheus-rbac
   invariant: dead_cluster_rule
-  reason: 'pre-existing grant; union-authored RBAC but out of scope for this plan (phase 2 / UN-29)'
+  reason: pre-existing grant; union-authored RBAC but out of scope for this plan (phase 2 / UN-29); newly visible in this render
+  snapshots:
+  - dataplane.flytepropeller-low-priv
+  grant:
+  - certificatesigningrequests
+  - mutatingwebhookconfigurations
+  - namespaces
+  - nodes
+  - nodes/metrics
+  - nodes/proxy
+  - persistentvolumes
+  - storageclasses
+  - validatingwebhookconfigurations
+  - volumeattachments
+- name: union-operator-prometheus-rbac
+  invariant: dead_cluster_rule
+  reason: pre-existing grant; union-authored RBAC but out of scope for this plan (phase 2 / UN-29)
   snapshots:
   - dataplane.per-component-sa
   grant:
@@ -1266,6 +1482,17 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - mutatingwebhookconfigurations
+- name: union-webhook-role
+  invariant: dead_cluster_rule
+  reason: >-
+    Pre-existing and newly visible: this fixture closes the coverage gap where
+    union-webhook-role was only ever rendered at low_privilege: false. The grant is
+    redundant; mutatingwebhookconfigurations is cluster-scoped and silently
+    ignored in a namespaced Role. Task 7 gates this behind managedConfig: false.
+  snapshots:
+  - dataplane.flytepropeller-low-priv
   grant:
   - mutatingwebhookconfigurations
 - name: union-webhook-role
