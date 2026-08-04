@@ -60,6 +60,7 @@ render, not the reviewer's intent, so there is nothing in them to preserve.
 """
 
 import argparse
+import itertools
 import sys
 from pathlib import Path
 
@@ -68,6 +69,7 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GENERATED_DIR = REPO_ROOT / "tests" / "generated"
 VALUES_DIR = REPO_ROOT / "tests" / "values"
+CHARTS_DIR = REPO_ROOT / "charts"
 BASELINE_PATH = REPO_ROOT / "tests" / "rbac-baseline.yaml"
 
 READ_VERBS = {"get", "list", "watch"}
@@ -75,6 +77,18 @@ READ_VERBS = {"get", "list", "watch"}
 CLUSTER_WRITE = "cluster_write"
 LOW_PRIV_CLUSTER_ROLE = "low_priv_cluster_role"
 DEAD_CLUSTER_RULE = "dead_cluster_rule"
+
+# Invariants whose baseline entry carries a `grant` fingerprint, so a pinned
+# violation cannot be WIDENED without failing the check. cluster_write pins who
+# holds the grant and how much it confers; dead_cluster_rule pins exactly which
+# cluster-scoped resources the Role names, so adding another one to an
+# already-pinned Role is a new failure rather than a silent no-op.
+#
+# low_priv_cluster_role deliberately carries none: there the violation is that
+# the ClusterRole EXISTS at all under low_privilege, not what it contains, so a
+# rules fingerprint would pin data the invariant does not assert and would churn
+# the baseline on unrelated rule edits.
+FINGERPRINTED_INVARIANTS = frozenset({CLUSTER_WRITE, DEAD_CLUSTER_RULE})
 
 TODO_REASON = "TODO: justify or remove this entry"
 
@@ -90,9 +104,16 @@ RESOLVABLE_SELECTOR_KEYS = {"matchLabels"}
 # is always safe. Matching is on the resource name only -- the apiGroup is not
 # consulted -- because no namespaced resource in this chart shares a name with a
 # cluster-scoped one.
-CLUSTER_SCOPED_RESOURCES = frozenset(
-    base + suffix
-    for base in (
+#
+# These are BASE names. Matching splits a rule's resource on the first "/" and
+# compares the base, because a subresource is scoped exactly like its parent:
+# `nodes/metrics` is as cluster-scoped as `nodes`. Enumerating a fixed suffix
+# list instead would under-report -- `nodes/metrics` is live in this chart's
+# `union-operator-prometheus-rbac` Role today and matched no such list. Splitting
+# on the base cannot over-report either: a subresource of a namespaced parent
+# (`ingresses/status`) keeps a namespaced base and is correctly ignored.
+CLUSTER_SCOPED_RESOURCE_BASES = frozenset(
+    (
         "nodes",
         "namespaces",
         "persistentvolumes",
@@ -111,7 +132,6 @@ CLUSTER_SCOPED_RESOURCES = frozenset(
         "runtimeclasses",
         "certificatesigningrequests",
     )
-    for suffix in ("", "/status", "/proxy")
 )
 
 
@@ -212,7 +232,11 @@ def dead_cluster_resources(rule):
     resources = set(rule.get("resources") or [])
     if "*" in resources:
         return set()
-    return {name for name in resources if name in CLUSTER_SCOPED_RESOURCES}
+    return {
+        name
+        for name in resources
+        if name.split("/", 1)[0] in CLUSTER_SCOPED_RESOURCE_BASES
+    }
 
 
 def find_dead_cluster_rules(role):
@@ -293,21 +317,60 @@ def grant_fingerprint(ref_name, role, roles_by_name, bindings):
     return tuple(sorted(lines))
 
 
-def fixture_is_low_privilege(stem):
-    """Read low_privilege from the fixture. The chart default is true."""
+def fixture_layered_values(stem):
+    """Values files tests/run.sh layers under the fixture, outermost first.
+
+    run.sh passes the files named in the fixture's `# helm-values:` header
+    BEFORE the fixture itself, so the fixture wins on conflict. Reading only
+    the fixture would therefore miss a key that a layered file sets and the
+    fixture does not -- charts/dataplane/examples/values-legacy.yaml sets
+    low_privilege: false today, so a future fixture pointing at it would be
+    rendered full-privilege while this script assumed low-privilege, and every
+    ClusterRole in that render would report as a bogus low_priv_cluster_role.
+    """
     values_path = VALUES_DIR / f"{stem}.yaml"
     if not values_path.exists():
-        return True
+        return []
+
+    chart = stem.split(".", 1)[0]
+    paths = []
     with values_path.open() as handle:
-        values = yaml.safe_load(handle) or {}
-    return bool(values.get("low_privilege", True))
+        for line in itertools.islice(handle, 10):
+            if not line.startswith("# helm-values:"):
+                continue
+            for name in line.split(":", 1)[1].split(","):
+                layered = CHARTS_DIR / chart / name.strip()
+                if layered.is_file():
+                    paths.append(layered)
+    paths.append(values_path)
+    return paths
+
+
+def fixture_is_low_privilege(stem):
+    """Resolve low_privilege for a snapshot. The chart default is true.
+
+    Truthiness matches Go templates rather than normalizing: every
+    `.Values.low_privilege` gate in the chart is read for raw truthiness, so a
+    STRING "false" is true there and must be true here too. Python's bool()
+    agrees with Go on the cases that matter (bool, "", "false", 0). If the
+    chart ever normalizes the value -- which needs a values.schema.json and a
+    sweep of all twelve gates, not a one-line change -- this must follow.
+    """
+    value = True
+    for path in fixture_layered_values(stem):
+        with path.open() as handle:
+            values = yaml.safe_load(handle) or {}
+        if "low_privilege" in values:
+            value = values["low_privilege"]
+    return bool(value)
 
 
 def find_violations(docs, low_privilege):
     """Return {(name, invariant): grant} for one rendered snapshot.
 
-    `grant` is the fingerprint tuple for cluster_write and None otherwise; only
-    cluster_write describes a cluster-wide grant that can be widened.
+    `grant` is a fingerprint tuple for the invariants in
+    FINGERPRINTED_INVARIANTS and None otherwise -- see that constant for why
+    low_priv_cluster_role is excluded.
     """
     roles_by_name = {}
     bindings = []
@@ -326,8 +389,10 @@ def find_violations(docs, low_privilege):
     for (kind, name), role in roles_by_name.items():
         if low_privilege and kind == "ClusterRole":
             violations[(name, LOW_PRIV_CLUSTER_ROLE)] = None
-        if kind == "Role" and find_dead_cluster_rules(role):
-            violations[(name, DEAD_CLUSTER_RULE)] = None
+        if kind == "Role":
+            dead = tuple(find_dead_cluster_rules(role))
+            if dead:
+                violations[(name, DEAD_CLUSTER_RULE)] = dead
 
     for binding in bindings:
         role_ref = binding.get("roleRef") or {}
@@ -392,10 +457,10 @@ def load_baseline():
                 f"{label}: reason is missing, empty or still the TODO placeholder"
             )
 
-        if invariant == CLUSTER_WRITE:
+        if invariant in FINGERPRINTED_INVARIANTS:
             if not grant or not isinstance(grant, list):
                 errors.append(
-                    f"{label}: cluster_write entries need a non-empty grant "
+                    f"{label}: {invariant} entries need a non-empty grant "
                     f"fingerprint -- run --write-baseline to generate it"
                 )
                 grant = None
@@ -403,7 +468,7 @@ def load_baseline():
                 grant = tuple(sorted(str(line) for line in grant))
         elif grant is not None:
             errors.append(
-                f"{label}: only cluster_write entries carry a grant fingerprint"
+                f"{label}: {invariant} entries do not carry a grant fingerprint"
             )
             grant = None
 
@@ -431,7 +496,7 @@ HEADER = """\
 #     reason: ...                 why this is accepted, and which phase owns it
 #     snapshots:                  tests/generated/<snapshot>.yaml renders it
 #     - dataplane.namespace-multi is pinned in -- and ONLY those
-#     grant:                      cluster_write only; see below
+#     grant:                      cluster_write + dead_cluster_rule; see below
 #     - binding union-executor
 #
 # The pinned key is the triple (snapshot, name, invariant). An entry allows
@@ -445,16 +510,26 @@ HEADER = """\
 # stamps the placeholder only on genuinely new entries, so regenerating this
 # file never silently discards a justification.
 #
-# grant -- REQUIRED on cluster_write entries, forbidden on the others. It
-# fingerprints the grant itself, not just its name: which ClusterRoleBindings
-# reference the role, which subjects they bind, and which write-bearing rules
-# the binding confers (aggregation resolved). Without it the baseline would
-# pin only THAT a role is over-privileged, so a pinned grant could be widened
-# freely -- a new subject, a second binding, an added `escalate` -- and stay
-# green. A grant that no longer matches the render is a GRANT CHANGED failure
+# grant -- REQUIRED on cluster_write and dead_cluster_rule entries, forbidden
+# on low_priv_cluster_role. It fingerprints WHAT was pinned, not just the name
+# it was pinned under. Without it the baseline would pin only THAT a role is
+# over-privileged, so a pinned violation could be widened freely and stay green.
+# A grant that no longer matches the render is a GRANT CHANGED failure
 # reporting the exact lines added and removed. It is machine-generated: never
 # hand-edit it to make the check pass; rerun --write-baseline and review the
 # diff, or delete the entry if the phase removed the grant.
+#
+#   cluster_write      which ClusterRoleBindings reference the role, which
+#                      subjects they bind, and which write-bearing rules the
+#                      binding confers (aggregation resolved). Widening is a
+#                      new subject, a second binding or an added `escalate`.
+#   dead_cluster_rule  the exact cluster-scoped resources and nonResourceURLs
+#                      the namespaced Role names. Widening is one more dead
+#                      resource on a Role already pinned for this invariant.
+#
+# low_priv_cluster_role carries no grant on purpose: there the violation is
+# that the ClusterRole EXISTS at all under low_privilege, not what it contains,
+# so a rules fingerprint would pin data the invariant does not assert.
 #
 # invariants:
 #   cluster_write          a ClusterRoleBinding references this role and it
@@ -542,8 +617,8 @@ def main():
         pinned_grant = baseline[key][1]
         actual_grant = violations[key]
         if actual_grant is None or pinned_grant is None:
-            # Not a cluster_write entry, or the entry is already reported as
-            # malformed above. Nothing to compare.
+            # Not a fingerprinted invariant, or the entry is already reported
+            # as malformed above. Nothing to compare.
             continue
         if pinned_grant != actual_grant:
             changed.append((key, pinned_grant, actual_grant))
@@ -586,11 +661,12 @@ def main():
         print(
             "\nRBAC check failed: the pinned grants above no longer match the "
             "render.\n"
-            "An `added` line WIDENS a cluster-wide grant that was pinned as-is "
-            "-- a new\nsubject, a new binding or a new write verb reaches "
-            "cluster scope. Justify it\nin review before re-running "
-            "--write-baseline; do not hand-edit the grant.\n"
-            "A `removed` line means the grant shrank, which is the goal: "
+            "An `added` line WIDENS a violation that was pinned as-is -- for "
+            "cluster_write\na new subject, a new binding or a new write verb "
+            "reaching cluster scope; for\ndead_cluster_rule one more "
+            "cluster-scoped resource on the Role. Justify it in\nreview before "
+            "re-running --write-baseline; do not hand-edit the grant.\n"
+            "A `removed` line means the violation shrank, which is the goal: "
             "re-run\n--write-baseline to re-pin it, or delete the entry if the "
             "violation is gone.",
             file=sys.stderr,

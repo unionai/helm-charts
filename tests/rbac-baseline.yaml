@@ -12,7 +12,7 @@
 #     reason: ...                 why this is accepted, and which phase owns it
 #     snapshots:                  tests/generated/<snapshot>.yaml renders it
 #     - dataplane.namespace-multi is pinned in -- and ONLY those
-#     grant:                      cluster_write only; see below
+#     grant:                      cluster_write + dead_cluster_rule; see below
 #     - binding union-executor
 #
 # The pinned key is the triple (snapshot, name, invariant). An entry allows
@@ -26,16 +26,26 @@
 # stamps the placeholder only on genuinely new entries, so regenerating this
 # file never silently discards a justification.
 #
-# grant -- REQUIRED on cluster_write entries, forbidden on the others. It
-# fingerprints the grant itself, not just its name: which ClusterRoleBindings
-# reference the role, which subjects they bind, and which write-bearing rules
-# the binding confers (aggregation resolved). Without it the baseline would
-# pin only THAT a role is over-privileged, so a pinned grant could be widened
-# freely -- a new subject, a second binding, an added `escalate` -- and stay
-# green. A grant that no longer matches the render is a GRANT CHANGED failure
+# grant -- REQUIRED on cluster_write and dead_cluster_rule entries, forbidden
+# on low_priv_cluster_role. It fingerprints WHAT was pinned, not just the name
+# it was pinned under. Without it the baseline would pin only THAT a role is
+# over-privileged, so a pinned violation could be widened freely and stay green.
+# A grant that no longer matches the render is a GRANT CHANGED failure
 # reporting the exact lines added and removed. It is machine-generated: never
 # hand-edit it to make the check pass; rerun --write-baseline and review the
 # diff, or delete the entry if the phase removed the grant.
+#
+#   cluster_write      which ClusterRoleBindings reference the role, which
+#                      subjects they bind, and which write-bearing rules the
+#                      binding confers (aggregation resolved). Widening is a
+#                      new subject, a second binding or an added `escalate`.
+#   dead_cluster_rule  the exact cluster-scoped resources and nonResourceURLs
+#                      the namespaced Role names. Widening is one more dead
+#                      resource on a Role already pinned for this invariant.
+#
+# low_priv_cluster_role carries no grant on purpose: there the violation is
+# that the ClusterRole EXISTS at all under low_privilege, not what it contains,
+# so a rules fingerprint would pin data the invariant does not assert.
 #
 # invariants:
 #   cluster_write          a ClusterRoleBinding references this role and it
@@ -747,6 +757,9 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - namespaces
+  - nodes
 - name: release-name-fluentbit
   invariant: low_priv_cluster_role
   reason: fluent-bit subchart; resolved in phase 1
@@ -842,6 +855,8 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - customresourcedefinitions
 - name: union-leaseworker
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
@@ -885,6 +900,8 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - customresourcedefinitions
 - name: union-nodeobserver
   invariant: cluster_write
   reason: 'escape hatch (design spec 3.4): nodes are cluster-scoped, so this write cannot be namespaced; formalised and narrowed to nodes/status if viable in phase 5'
@@ -899,6 +916,8 @@ allowed:
   reason: 'dead rule (design spec 2.4): nodes are cluster-scoped, so this namespaced grant is inert and nodeobserver gets Forbidden in the default mode; NOT deletable -- the grant is load-bearing, so phase 5 fixes the broken default and pins the spec 3.4 escape hatch instead'
   snapshots:
   - dataplane.nodeobserver
+  grant:
+  - nodes
 - name: union-operator-prometheus-rbac
   invariant: dead_cluster_rule
   reason: 'dead rule (design spec 2.4): the nodes, namespaces, persistentvolumes, storageclasses, volumeattachments, certificatesigningrequests and webhookconfiguration reads are cluster-scoped and inert in a namespaced Role; owned by phase 2 (UN-29) rather than phase 1 -- phase 2 makes this template mode-driven with scope varying by mode, which is what makes these reads live under full privilege, so deleting them first would defeat it'
@@ -926,6 +945,17 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - certificatesigningrequests
+  - mutatingwebhookconfigurations
+  - namespaces
+  - nodes
+  - nodes/metrics
+  - nodes/proxy
+  - persistentvolumes
+  - storageclasses
+  - validatingwebhookconfigurations
+  - volumeattachments
 - name: union-webhook-role
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
@@ -967,3 +997,5 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - mutatingwebhookconfigurations
