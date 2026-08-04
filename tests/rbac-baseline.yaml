@@ -5,13 +5,15 @@
 # entry means accepting a cluster-wide privilege, so it needs a
 # written justification in review.
 #
-# Schema -- one entry per (name, invariant, reason):
+# Schema -- one entry per (name, invariant, reason, grant):
 #
 #   - name: union-executor        the RBAC object the violation is about
 #     invariant: cluster_write    exactly one invariant per entry
 #     reason: ...                 why this is accepted, and which phase owns it
 #     snapshots:                  tests/generated/<snapshot>.yaml renders it
 #     - dataplane.namespace-multi is pinned in -- and ONLY those
+#     grant:                      cluster_write only; see below
+#     - binding union-executor
 #
 # The pinned key is the triple (snapshot, name, invariant). An entry allows
 # the violation in the snapshots it lists and nowhere else, so the same name
@@ -24,6 +26,17 @@
 # stamps the placeholder only on genuinely new entries, so regenerating this
 # file never silently discards a justification.
 #
+# grant -- REQUIRED on cluster_write entries, forbidden on the others. It
+# fingerprints the grant itself, not just its name: which ClusterRoleBindings
+# reference the role, which subjects they bind, and which write-bearing rules
+# the binding confers (aggregation resolved). Without it the baseline would
+# pin only THAT a role is over-privileged, so a pinned grant could be widened
+# freely -- a new subject, a second binding, an added `escalate` -- and stay
+# green. A grant that no longer matches the render is a GRANT CHANGED failure
+# reporting the exact lines added and removed. It is machine-generated: never
+# hand-edit it to make the check pass; rerun --write-baseline and review the
+# diff, or delete the entry if the phase removed the grant.
+#
 # invariants:
 #   cluster_write          a ClusterRoleBinding references this role and it
 #                          contains write verbs -- or its aggregationRule
@@ -31,6 +44,11 @@
 #                          in which case it fails closed and reports here
 #   low_priv_cluster_role  this ClusterRole renders when
 #                          low_privilege is true
+#   dead_cluster_rule      this namespaced Role names a cluster-scoped
+#                          resource (or a nonResourceURL). The API server
+#                          ignores the rule, so the grant is dead and the
+#                          workload gets Forbidden at runtime. resources:
+#                          ['*'] is exempt -- see design spec 5
 allowed:
 - name: flyte-webhook-cleanup-union
   invariant: cluster_write
@@ -65,6 +83,12 @@ allowed:
   - dataplane.oci
   - dataplane.storage-credentials-secret
   - dataplane.zero-trust-full-priv
+  grant:
+  - binding flyte-webhook-cleanup-union
+  - subject ServiceAccount/union/flyte-webhook-cleanup
+  - write apiGroups=[""] resources=[secrets] verbs=[delete]
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations] verbs=[delete]
+  - write apiGroups=[apps] resources=[deployments] verbs=[delete]
 - name: flyte-webhook-cleanup-union
   invariant: low_priv_cluster_role
   reason: pre-upgrade hook; split into namespaced Role + minimal ClusterRole in phase 1
@@ -92,6 +116,11 @@ allowed:
   - dataplane.nodeobserver
   - dataplane.oci
   - dataplane.storage-credentials-secret
+- name: flytepropeller-role
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): customresourcedefinitions is cluster-scoped, so the API server silently ignores this rule in a namespaced Role; byte-identical to the executor/leaseworker rule and deleted with them in phase 1'
+  snapshots:
+  - dataplane.flytepropeller
 - name: knative-eventing-operator
   invariant: cluster_write
   reason: knative-operator subchart; retired entirely in phase 6
@@ -119,6 +148,45 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-eventing-operator
+  - subject ServiceAccount/union/knative-operator
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete]
+  - write apiGroups=[""] resources=[events] verbs=[create,patch,update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[update]
+  - write apiGroups=[""] resources=[serviceaccounts] resourceNames=[knative-eventing-operator] verbs=[delete]
+  - write apiGroups=[""] resources=[services] verbs=[create,delete]
+  - write apiGroups=[*] resources=[configmaps,services] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[configmaps] resourceNames=[kafka-channel-config] verbs=[patch]
+  - write apiGroups=[*] resources=[configmaps] verbs=[delete]
+  - write apiGroups=[*] resources=[events] verbs=[create,patch]
+  - write apiGroups=[*] resources=[horizontalpodautoscalers] resourceNames=[kafka-webhook] verbs=[delete]
+  - write apiGroups=[*] resources=[leases] verbs=[delete]
+  - write apiGroups=[*] resources=[poddisruptionbudgets] resourceNames=[kafka-webhook] verbs=[delete]
+  - write apiGroups=[*] resources=[pods/finalizers] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[pods] verbs=[update]
+  - write apiGroups=[*] resources=[secrets] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[serviceaccounts] verbs=[create,delete,update]
+  - write apiGroups=[*] resources=[services] verbs=[patch]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[*]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[create,delete]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[update]
+  - write apiGroups=[apps] resources=[daemonsets,deployments,replicasets,statefulsets] verbs=[create,delete]
+  - write apiGroups=[apps] resources=[deployments] verbs=[deletecollection]
+  - write apiGroups=[apps] resources=[statefulsets/scale] verbs=[create,delete,patch,update]
+  - write apiGroups=[autoscaling] resources=[horizontalpodautoscalers] verbs=[create,delete,update]
+  - write apiGroups=[batch] resources=[jobs] verbs=[create,delete,update]
+  - write apiGroups=[caching.internal.knative.dev] resources=[images] verbs=[*]
+  - write apiGroups=[cert-manager.io] resources=[certificates,clusterissuers,issuers] verbs=[create,delete,update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[*]
+  - write apiGroups=[internal.kafka.eventing.knative.dev] resources=[consumergroups,consumergroups/status,consumers,consumers/status] verbs=[create,delete,patch,update]
+  - write apiGroups=[internal.kafka.eventing.knative.dev] resources=[consumergroups/finalizers,consumers/finalizers] verbs=[delete,update]
+  - write apiGroups=[keda.sh] resources=[scaledobjects,scaledobjects/finalizers,scaledobjects/status,triggerauthentications,triggerauthentications/status] verbs=[create,delete,update]
+  - write apiGroups=[operator.knative.dev] resources=[*] verbs=[*]
+  - write apiGroups=[rabbitmq.com] resources=[bindings,exchanges,queues] verbs=[create,delete,patch,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterrolebindings,rolebindings] verbs=[create,delete,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles,roles] verbs=[create,delete,escalate,update]
+  - write apiGroups=[trust.cert-manager.io] resources=[bundles] verbs=[create,delete,update]
 - name: knative-eventing-operator
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -168,6 +236,10 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-eventing-operator-aggregated
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
 - name: knative-eventing-operator-aggregated
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -217,6 +289,10 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-eventing-operator-aggregated-stable
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
 - name: knative-eventing-operator-aggregated-stable
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -266,6 +342,15 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding operator-webhook
+  - subject ServiceAccount/union/operator-webhook
+  - write apiGroups=[""] resources=[namespaces/finalizers] verbs=[update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[create,patch,update]
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations,validatingwebhookconfigurations] verbs=[create,delete,patch,update]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,patch,update]
+  - write apiGroups=[apps] resources=[deployments/finalizers] verbs=[update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[create,delete,patch,update]
 - name: knative-operator-webhook
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -307,6 +392,22 @@ allowed:
   - dataplane.aws.zero-trust
   - dataplane.aws.zero-trust-overrides
   - dataplane.zero-trust-full-priv
+  grant:
+  - binding knative-serving-controller-admin
+  - subject ServiceAccount/union/controller
+  - write apiGroups=[""] resources=[configmaps,endpoints,events,namespaces,pods,secrets,serviceaccounts,services] verbs=[create,delete,patch,update]
+  - write apiGroups=[""] resources=[endpoints/restricted] verbs=[create]
+  - write apiGroups=[""] resources=[namespaces/finalizers] verbs=[update]
+  - write apiGroups=[acme.cert-manager.io] resources=[challenges] verbs=[create,delete,patch,update]
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations,validatingwebhookconfigurations] verbs=[create,delete,patch,update]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions,customresourcedefinitions/status] verbs=[create,delete,patch,update]
+  - write apiGroups=[apps] resources=[deployments,deployments/finalizers] verbs=[create,delete,patch,update]
+  - write apiGroups=[autoscaling.internal.knative.dev,networking.internal.knative.dev,serving.knative.dev] resources=[*,*/finalizers,*/status] verbs=[create,delete,deletecollection,patch,update]
+  - write apiGroups=[autoscaling] resources=[horizontalpodautoscalers] verbs=[create,delete,patch,update]
+  - write apiGroups=[caching.internal.knative.dev] resources=[images] verbs=[create,delete,patch,update]
+  - write apiGroups=[cert-manager.io] resources=[certificaterequests,certificates,clusterissuers,issuers] verbs=[create,delete,patch,update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[create,delete,patch,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[knative-serving-certmanager] verbs=[delete]
 - name: knative-serving-admin
   invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
@@ -370,6 +471,32 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-serving-operator
+  - subject ServiceAccount/union/knative-operator
+  - write apiGroups=[""] resources=[configmaps] resourceNames=[config-controller] verbs=[delete]
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete,patch,update]
+  - write apiGroups=[""] resources=[configmaps] verbs=[create,delete]
+  - write apiGroups=[""] resources=[deployments,horizontalpodautoscalers,services] resourceNames=[knative-ingressgateway] verbs=[delete]
+  - write apiGroups=[""] resources=[events] verbs=[create,patch,update]
+  - write apiGroups=[""] resources=[namespaces] verbs=[update]
+  - write apiGroups=[""] resources=[serviceaccounts] resourceNames=[knative-serving-operator] verbs=[delete]
+  - write apiGroups=[""] resources=[services] verbs=[create,delete]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[*]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[create,delete]
+  - write apiGroups=[apiregistration.k8s.io] resources=[apiservices] verbs=[update]
+  - write apiGroups=[apps,policy,security.istio.io] resources=[daemonsets,deployments,peerauthentications,poddisruptionbudgets,replicasets,statefulsets] verbs=[create,delete,update]
+  - write apiGroups=[authentication.k8s.io] resources=[tokenreviews] verbs=[create]
+  - write apiGroups=[autoscaling] resources=[horizontalpodautoscalers] verbs=[create,delete]
+  - write apiGroups=[caching.internal.knative.dev] resources=[images] verbs=[*]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[*]
+  - write apiGroups=[guard.security.knative.dev] resources=[guardians] verbs=[create,delete,patch,update]
+  - write apiGroups=[operator.knative.dev] resources=[*] verbs=[*]
+  - write apiGroups=[projectcontour.io] resources=[httpproxies,tlscertificatedelegations] verbs=[create,delete,deletecollection,patch,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterrolebindings,rolebindings] verbs=[create,delete,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles,roles] verbs=[create,delete,escalate,update]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[system:auth-delegator] verbs=[bind]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[roles] resourceNames=[extension-apiserver-authentication-reader] verbs=[bind]
 - name: knative-serving-operator
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -419,6 +546,10 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-serving-operator-aggregated
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
 - name: knative-serving-operator-aggregated
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -468,6 +599,10 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.storage-credentials-secret
+  grant:
+  - binding knative-serving-operator-aggregated-stable
+  - 'rules <unknown: unevaluable aggregationRule selector>'
+  - subject ServiceAccount/union/knative-operator
 - name: knative-serving-operator-aggregated-stable
   invariant: low_priv_cluster_role
   reason: knative-operator subchart; retired entirely in phase 6
@@ -502,6 +637,10 @@ allowed:
   snapshots:
   - dataplane.monitoring
   - dataplane.monitoring-full-priv
+  grant:
+  - binding monitoring-admission
+  - subject ServiceAccount/union/monitoring-admission
+  - write apiGroups=[admissionregistration.k8s.io] resources=[mutatingwebhookconfigurations,validatingwebhookconfigurations] verbs=[patch,update]
 - name: monitoring-admission
   invariant: low_priv_cluster_role
   reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
@@ -518,6 +657,16 @@ allowed:
   snapshots:
   - dataplane.monitoring
   - dataplane.monitoring-full-priv
+  grant:
+  - binding monitoring-operator
+  - subject ServiceAccount/union/monitoring-operator
+  - write apiGroups=["",events.k8s.io] resources=[events] verbs=[create,patch]
+  - write apiGroups=[""] resources=[configmaps,secrets] verbs=[*]
+  - write apiGroups=[""] resources=[endpoints,services,services/finalizers] verbs=[create,delete,update]
+  - write apiGroups=[""] resources=[pods] verbs=[delete]
+  - write apiGroups=[apps] resources=[statefulsets] verbs=[*]
+  - write apiGroups=[discovery.k8s.io] resources=[endpointslices] verbs=[create,delete,update]
+  - write apiGroups=[monitoring.coreos.com] resources=[alertmanagerconfigs,alertmanagers,alertmanagers/finalizers,alertmanagers/status,podmonitors,podmonitors/status,probes,probes/status,prometheusagents,prometheusagents/finalizers,prometheusagents/status,prometheuses,prometheuses/finalizers,prometheuses/status,prometheusrules,prometheusrules/status,scrapeconfigs,scrapeconfigs/status,servicemonitors,servicemonitors/status,thanosrulers,thanosrulers/finalizers,thanosrulers/status] verbs=[*]
 - name: monitoring-operator
   invariant: low_priv_cluster_role
   reason: kube-prometheus-stack subchart; opt-in optional workload, gated in phase 5
@@ -535,6 +684,13 @@ allowed:
   - dataplane.aws.zero-trust
   - dataplane.aws.zero-trust-overrides
   - dataplane.zero-trust-full-priv
+  grant:
+  - binding net-kourier
+  - subject ServiceAccount/union/net-kourier
+  - write apiGroups=[""] resources=[events] verbs=[create,patch,update]
+  - write apiGroups=[coordination.k8s.io] resources=[leases] verbs=[create,delete,patch,update]
+  - write apiGroups=[networking.internal.knative.dev] resources=[ingresses/status] verbs=[update]
+  - write apiGroups=[networking.internal.knative.dev] resources=[ingresses] verbs=[patch]
 - name: net-kourier
   invariant: low_priv_cluster_role
   reason: vendored knative-serving gateway; trimmed in phase 6
@@ -551,6 +707,39 @@ allowed:
   - dataplane.namespace-multi
   - dataplane.nodeobserver-full-priv
   - dataplane.zero-trust-full-priv
+  grant:
+  - binding operator-system
+  - subject ServiceAccount/union/union-system
+  - write apiGroups=[*] resources=[configmaps,namespaces,nodes,pods,podtemplates,resourcequotas,secrets] verbs=[create,delete,update]
+  - write apiGroups=[flyte.lyft.com] resources=[flyteworkflows,flyteworkflows/finalizers] verbs=[create,delete,deletecollection,patch,post,update]
+  - write apiGroups=[serving.knative.dev] resources=[configurations,revisions,services] verbs=[create,delete,update]
+- name: operator-system
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): namespaces and nodes are cluster-scoped, so the API server silently ignores them in a namespaced Role; deleted in phase 1'
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: release-name-fluentbit
   invariant: low_priv_cluster_role
   reason: fluent-bit subchart; resolved in phase 1
@@ -589,32 +778,185 @@ allowed:
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  grant:
+  - binding union-clustersync-auth-delegator
+  - 'rules <unknown: roleRef is not rendered by this chart>'
+  - subject ServiceAccount/union/union-clustersync-system
 - name: union-clustersync-resource
   invariant: cluster_write
   reason: clusterresourcesync; narrowed in phase 5
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  grant:
+  - binding union-clustersync-resource
+  - subject ServiceAccount/union/union-clustersync-system
+  - write apiGroups=["",rbac.authorization.k8s.io] resources=[clusterrolebindings,configmaps,limitranges,namespaces,pods,podtemplates,resourcequotas,rolebindings,roles,secrets,serviceaccounts,services] verbs=[*]
 - name: union-executor
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  grant:
+  - binding union-executor
+  - subject ServiceAccount/union/union-system
+  - write apiGroups=[""] resources=[events] verbs=[create,delete,patch,update]
+  - write apiGroups=[*] resources=[*] verbs=[create,delete,patch,update]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,update]
+- name: union-executor
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): customresourcedefinitions is cluster-scoped, so the API server silently ignores this rule in a namespaced Role; deleted in phase 1'
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+  - dataplane.zero-trust-full-priv
 - name: union-leaseworker
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  grant:
+  - binding union-leaseworker
+  - subject ServiceAccount/union/union-system
+  - write apiGroups=[""] resources=[events] verbs=[create,delete,patch,update]
+  - write apiGroups=[*] resources=[*] verbs=[create,delete,patch,update]
+  - write apiGroups=[apiextensions.k8s.io] resources=[customresourcedefinitions] verbs=[create,delete,update]
+- name: union-leaseworker
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): customresourcedefinitions is cluster-scoped, so the API server silently ignores this rule in a namespaced Role; deleted in phase 1'
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+  - dataplane.zero-trust-full-priv
 - name: union-nodeobserver
   invariant: cluster_write
   reason: 'escape hatch (design spec 3.4): nodes are cluster-scoped, so this write cannot be namespaced; formalised and narrowed to nodes/status if viable in phase 5'
   snapshots:
   - dataplane.nodeobserver-full-priv
+  grant:
+  - binding union-nodeobserver
+  - subject ServiceAccount/union/nodeobserver-system
+  - write apiGroups=[""] resources=[nodes] verbs=[update]
+- name: union-nodeobserver
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): nodes are cluster-scoped, so this namespaced grant is inert and nodeobserver gets Forbidden in the default mode; NOT deletable -- the grant is load-bearing, so phase 5 fixes the broken default and pins the spec 3.4 escape hatch instead'
+  snapshots:
+  - dataplane.nodeobserver
+- name: union-operator-prometheus-rbac
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): the nodes, namespaces, persistentvolumes, storageclasses, volumeattachments, certificatesigningrequests and webhookconfiguration reads are cluster-scoped and inert in a namespaced Role; owned by phase 2 (UN-29) rather than phase 1 -- phase 2 makes this template mode-driven with scope varying by mode, which is what makes these reads live under full privilege, so deleting them first would defeat it'
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
 - name: union-webhook-role
   invariant: cluster_write
   reason: core workload; viewer/editor split in phase 3
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  grant:
+  - binding union-webhook-binding
+  - subject ServiceAccount/union/union-system
+  - write apiGroups=[*] resources=[mutatingwebhookconfigurations,pods,replicasets/finalizers,secrets] verbs=[create,patch,update]
+- name: union-webhook-role
+  invariant: dead_cluster_rule
+  reason: 'dead rule (design spec 2.4): mutatingwebhookconfigurations is cluster-scoped, so the API server silently ignores it in a namespaced Role -- and it is unnecessary anyway under the default managedConfig: true; dropped in phase 1'
+  snapshots:
+  - dataplane.additional-podlabels
+  - dataplane.additional-templates
+  - dataplane.aws
+  - dataplane.aws.apps-disabled
+  - dataplane.aws.eks-automode
+  - dataplane.aws.with-ingress
+  - dataplane.aws.zero-trust
+  - dataplane.aws.zero-trust-apps-disabled
+  - dataplane.aws.zero-trust-overrides
+  - dataplane.aws.zero-trust-serving-disabled
+  - dataplane.azure
+  - dataplane.azure-custom-storage-prefix
+  - dataplane.cost
+  - dataplane.dcgm-exporter
+  - dataplane.flytepropeller
+  - dataplane.fully-selfhosted
+  - dataplane.gcp
+  - dataplane.low-priv
+  - dataplane.low-priv-multi-ns
+  - dataplane.monitoring
+  - dataplane.monitoring-full-priv
+  - dataplane.namespace-single
+  - dataplane.nodeobserver
+  - dataplane.nodeobserver-full-priv
+  - dataplane.oci
+  - dataplane.storage-credentials-secret
+  - dataplane.zero-trust-full-priv
