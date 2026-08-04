@@ -148,11 +148,20 @@ spec:
           {{- end }}
           readinessProbe:
             httpGet:
+              {{- if include "apps.enabled" . }}
               httpHeaders:
                 - name: Host
                   value: internalkourier
               path: /ready
               port: 8081
+              {{- else }}
+              # App serving is off, so there is no net-kourier-controller and no
+              # xDS listener on :8081 — probing it would leave the pod NotReady
+              # forever. Probe the stats listener instead: it is defined in the
+              # static bootstrap and answers 200 on /stats.
+              path: /stats
+              port: 9000
+              {{- end }}
               scheme: HTTP
             initialDelaySeconds: 10
             periodSeconds: 5
@@ -190,14 +199,17 @@ spec:
   selector:
     app: gateway
   ports:
+    {{- if include "apps.enabled" . }}
     - name: http-apps
       port: {{ .Values.gateway.service.httpAppsPort }}
       protocol: TCP
       targetPort: 8081
+    {{- end }}
     - name: http-static
       port: {{ .Values.gateway.service.httpStaticPort }}
       protocol: TCP
       targetPort: 8888
+{{- if include "apps.enabled" . }}
 ---
 # net-kourier-controller probes endpoints/kourier-internal (name is hardcoded in
 # upstream) to confirm envoy loaded the xDS snapshot. Without this Service the
@@ -224,6 +236,7 @@ spec:
       port: 443
       protocol: TCP
       targetPort: 8444
+{{- end }}
 {{- with $comp.hpa }}
 ---
 apiVersion: autoscaling/v2

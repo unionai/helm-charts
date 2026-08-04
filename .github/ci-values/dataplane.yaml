@@ -141,16 +141,21 @@ dcgm-exporter:
 ingress-nginx:
   enabled: false
 
-# Disable components not needed for basic CI (and that have huge CPU requests).
-# leaseworker default: 4 CPU / 8 Gi — would consume the entire runner.
+# Leaseworker is the only task execution path (the legacy executor is
+# removed), so the smoke suite needs it. Its default request (4 CPU / 8 Gi)
+# would consume the entire runner — trim it like the operator below.
 leaseworker:
-  enabled: false
+  enabled: true
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "512Mi"
 
 # flyteconnector default: 1 CPU × HPA-min-2 = 2 CPUs; not needed for smoke test.
 flyteconnector:
   enabled: false
 
-# Lower operator/executor/proxy requests so all pods fit on the runner
+# Lower operator/proxy requests so all pods fit on the runner
 # alongside k3s. The operator defaults to a 1-CPU request — the single biggest
 # consumer on the 4-vCPU node — which left no room for the verify_app Knative
 # revision to schedule (RevisionFailed: Insufficient cpu). It bursts to its
@@ -159,12 +164,6 @@ operator:
   resources:
     requests:
       cpu: "300m"
-      memory: "512Mi"
-
-executor:
-  resources:
-    requests:
-      cpu: "200m"
       memory: "512Mi"
 
 proxy:

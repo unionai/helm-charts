@@ -1,10 +1,21 @@
-# Union Dataplane — AWS overlay.
-# Layer on top of values.yaml. Topology is decided by env-layer DNS + LB
-# annotations, not by this overlay.
+# Union Dataplane — AWS cloud overlay.
+#
+# PURPOSE (for humans and agents): this file holds ONLY cloud-specific
+# configuration for AWS — the provider, S3 object storage, IAM/IRSA service-
+# account annotations, region wiring, and the AWS-unique globals a user fills
+# in. It layers on top of the chart's base values.yaml.
+#
+# It MUST NOT carry deployment-topology or Union-platform config — auth
+# enablement, ingress/ingress-nginx, secret creation, namespace/RBAC, billing,
+# etc. Those are chart defaults in base values.yaml and are set per-topology
+# (managed-CP vs selfhosted, intracluster vs split) by the terraform
+# union_extension module. Keep this overlay cloud-only.
 
 global:
+  # --- Control plane (configure first) ---
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+
   # --- Identity ---
-  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks
   CLUSTER_NAME: ""              # Unique cluster identifier
   ORG_NAME: ""                  # Organization name (must match controlplane)
 
@@ -21,38 +32,20 @@ global:
   BACKEND_IAM_ROLE_ARN: ""      # IAM role for Union backend services
   WORKER_IAM_ROLE_ARN: ""       # IAM role for workflow execution pods
 
-  # --- Images ---
-  IMAGE_REPOSITORY_PREFIX: "public.ecr.aws/p0i0a9q8"
-
-  # --- DP -> CP routing ---
-  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
-  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
-
-  # DEPRECATED — long-term plan is to remove this once propeller injects
-  # OAuth credentials into task pods (see chart MIGRATION.md). Until then it
-  # remains as the auth-less escape hatch task pods need (their queue events
-  # bypass nginx auth via this endpoint). Empty falls through to
-  # CONTROLPLANE_GRPC_ENDPOINT; for intracluster set the queue Service URL
-  # via examples/values.aws.intracluster.yaml.
-  QUEUE_GRPC_ENDPOINT: ""
-
-  # --- Service-to-Service OAuth2 ---
+  # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Core Identity Configuration (REQUIRED)
+# Cloud provider
 # ----------------------------------------------------------------------------
-# These values reference the globals defined above.
-
-# Cloud provider identifier (do not change for AWS)
+# Cloud provider identifier (do not change for AWS).
 provider: aws
 
 # ----------------------------------------------------------------------------
-# SECTION 3: Object Storage Configuration (REQUIRED)
+# Object storage — S3
 # ----------------------------------------------------------------------------
-# Configure S3 buckets for workflow metadata and fast registration.
-# These buckets must be created before deployment.
+# S3 buckets for workflow metadata and fast registration; create before deploy.
 
 storage:
   provider: aws
@@ -60,24 +53,11 @@ storage:
 
   # AWS region for S3 buckets
   region: '{{ .Values.global.AWS_REGION }}'
-  enableMultiContainer: true
 
 # ----------------------------------------------------------------------------
-# SECTION 3.5: Image Configuration
+# IAM roles (IRSA)
 # ----------------------------------------------------------------------------
-# Image configuration for Union dataplane components
-# Images are pulled from Union's public ECR registry
-
-image:
-  union:
-    repository: "public.ecr.aws/p0i0a9q8/unionoperator"
-    # tag will be set from Chart.AppVersion or can be overridden
-
-# ----------------------------------------------------------------------------
-# SECTION 4: IAM Roles (REQUIRED for AWS)
-# ----------------------------------------------------------------------------
-# Configure IRSA (IAM Roles for Service Accounts) for secure AWS access.
-# These IAM roles must be created with appropriate trust policies and permissions.
+# IAM Roles for Service Accounts; create with the appropriate trust policies.
 
 # IAM role for Union backend services (operator, propeller, etc.)
 additionalServiceAccountAnnotations:
@@ -88,232 +68,24 @@ userRoleAnnotationKey: eks.amazonaws.com/role-arn
 userRoleAnnotationValue: "{{ tpl .Values.global.WORKER_IAM_ROLE_ARN . }}"
 
 # ----------------------------------------------------------------------------
-# SECTION 2: Cluster Resource Sync Configuration
+# Secret Manager backend identity
 # ----------------------------------------------------------------------------
-# Syncs Kubernetes resources (namespaces, service accounts, quotas) with
-# the control plane using intra-cluster communication.
-
-clusterresourcesync:
-  config:
-    union:
-      # Service-to-service OAuth2 (client_credentials grant) for outgoing calls
-      # to the control plane. Connection wiring (host, TLS) comes from base
-      # values.yaml via the dataplane.cp.endpoint helper.
-      auth:
-        enable: true
-        type: "ClientSecret"
-        clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
-        clientSecretLocation: "/etc/union/secret/client_secret"
-        authorizationMetadataKey: "flyte-authorization"
-        tokenRefreshWindow: "5m"
-        scopes:
-        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
-
-# ----------------------------------------------------------------------------
-# Core Service Configuration
-# ----------------------------------------------------------------------------
-
+# Identify the AWS Secrets Manager backend so the operator can report a canonical
+# secret store identity to the control plane (used for cluster-pool drift
+# detection). Read only when proxy.secretManager.type is AWS.
 config:
-  sharedService:
-    security:
-      singleTenantOrgID: '{{ .Values.global.ORG_NAME }}'
-
-  # Selfmanaged auth shape: client_credentials grant; clientId from a global
-  # so the env layer can inject the AUTH_CLIENT_ID without forking the chart.
-  admin:
-    admin:
-      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
-      clientSecretLocation: "/etc/union/secret/client_secret"
-
-  catalog:
-    catalog-cache:
-      use-admin-auth: false
-
-  k8s:
-    plugins:
-      k8s:
-        default-env-vars:
-          - _U_EP_OVERRIDE: '{{ include `dataplane.cp.queueEndpoint` . }}'
-          - _U_INSECURE: false
-          - _U_INSECURE_SKIP_VERIFY: false
-
-  # Operator acquires OAuth2 tokens via client_credentials and sends them on
-  # outgoing calls to the control plane. Connection wiring (host, TLS) is in
-  # base values.yaml via the dataplane.cp.endpoint helper.
-  union:
-    auth:
-      enable: true
-      type: "ClientSecret"
-      clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
-      clientSecretLocation: "/etc/union/secret/client_secret"
-      authorizationMetadataKey: "flyte-authorization"
-      tokenRefreshWindow: "5m"
-
-  # Identify the AWS Secrets Manager backend so the operator can report a canonical
-  # secret store identity to the control plane (used for cluster-pool drift detection).
-  # These fields are read only when proxy.secretManager.type is AWS.
   proxy:
     smConfig:
       awsConfig:
         account: '{{ .Values.global.AWS_ACCOUNT_ID }}'
         region: '{{ .Values.global.AWS_REGION }}'
 
-  operator:
-    # Disable billable usage collector (typically for Union-managed control planes)
-    billableUsageCollector:
-      enabled: false
-
 # ----------------------------------------------------------------------------
-# Executor Configuration
+# Task-level monitoring — DCGM exporter (GPU) node affinity
 # ----------------------------------------------------------------------------
-# Configure how workflow tasks are executed.
-
-executor:
-  config:
-    unionAuth:
-      # --- API key injection ---
-      # Injects the EAGER_API_KEY secret into task pods
-      # for authenticated eager-mode execution.
-      injectSecret: true
-      secretName: "EAGER_API_KEY"
-
-# ----------------------------------------------------------------------------
-# Ingress Configuration
-# ----------------------------------------------------------------------------
-# Configure ingress for external access to dataplane services.
-
-# Extra Kubernetes objects to be deployed alongside Union
-extraObjects: []
-
-# Ingress configuration for Union dataplane and serving
-ingress:
-  dataproxy:
-    class: "dataplane"
-  enabled: true
-
-  # Ingress architecture for serving will change in the future.
-  # This is a temporary configuration for intra-cluster deployments.
-  serving:
-    # Knative wildcard hostname matching for *.apps.<CONTROLPLANE_HOST>.
-    # CONTROLPLANE_HOST is contractually a bare hostname (no port).
-    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
-    # Assume the same ingress class as the dataproxy
-    class: "dataplane"
-
-# NGINX Ingress controller for dataplane
-ingress-nginx:
-  enabled: true
-
-  # Service name for the ingress controller
-  # This creates a service: "dataplane-nginx-controller"
-  # External traffic enters through this service
-  fullnameOverride: "dataplane-nginx"
-
-  controller:
-    service:
-      # Use ClusterIP for intra-cluster only (no external LoadBalancer)
-      # Change to LoadBalancer or NodePort for external access
-      type: "ClusterIP"
-      ports:
-        http: 80
-        https: 443
-
-    ingressClassResource:
-      # Ingress class name used in Ingress resources
-      name: "dataplane"
-
-# ----------------------------------------------------------------------------
-# Monitoring Configuration
-# ----------------------------------------------------------------------------
-
-# kube-prometheus-stack monitoring subchart (selfhosted-intracluster specific).
-#
-# In selfhosted-intracluster mode, the controlplane and dataplane share a
-# single cluster. The controlplane chart owns the full monitoring stack
-# (operator, prometheus, grafana, kube-state-metrics, node-exporter).
-# In selfhosted-intracluster mode, the controlplane owns the full
-# kube-prometheus-stack (Prometheus operator, Prometheus, Grafana, etc.).
-# The DP does NOT enable the monitoring subchart (monitoring.enabled: false)
-# to avoid cluster-scoped resource conflicts (ClusterRole, webhooks, etc.).
-#
-# Union monitoring resources (ServiceMonitors, PrometheusRules, Dashboards)
-# are independent of the subchart and enabled by their own flags.
-# The CP Prometheus discovers them across namespaces via nil-selector config.
-#
-# To enable alerting rules (PrometheusRule alert groups), set
-# monitoring.alerting.enabled to true in your environment-specific
-# values overlay. This should be paired with AlertManager configuration
-# to route alerts to Grafana or another notification target.
-#
-# The full `monitoring:` block (kube-prometheus-stack subchart) is configured
-# at the bottom of this file under "Monitoring Configuration (AWS/EKS specific)".
-
-# Union-features Prometheus for metrics collection and cost tracking
-prometheus:
-  prometheusOperator:
-    admissionWebhooks:
-      # Disable admission webhooks by default
-      # Enable if you have cert-manager installed
-      enabled: false
-
-      # Optional: Enable webhooks with cert-manager
-      # enabled: true
-      # certManager:
-      #   enabled: true
-      #   issuerRef:
-      #     group: "cert-manager.io"
-      #     kind: "ClusterIssuer"
-      #     name: "selfsigned-issuer"
-
-      patch:
-        enabled: false
-
-# ----------------------------------------------------------------------------
-# Secrets Configuration
-# ----------------------------------------------------------------------------
-
-secrets:
-  admin:
-    # --- OAuth secret configuration ---
-    # Mounts union-secret-auth K8s Secret with the client_secret into dataplane pods.
-    # Set create: false when using ExternalSecrets to provision the secret.
-    enable: true
-    create: false
-    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
-    clientSecret: "placeholder"
-
-# ----------------------------------------------------------------------------
-# App Serving Configuration (Work in Progress)
-# ----------------------------------------------------------------------------
-
-serving:
-  auth:
-    # Disable authentication for serving (work in progress)
-    enabled: false
-
-# ----------------------------------------------------------------------------
-# SECTION 6: Logging Configuration (REQUIRED)
-# ----------------------------------------------------------------------------
-# FluentBit collects and forwards logs to the control plane.
-
-fluentbit:
-  serviceAccount:
-    name: fluentbit-system
-    # IRSA annotation to grant FluentBit write access to the S3 metadata bucket.
-    # The IAM role must allow s3:PutObject, s3:GetObject, s3:ListBucket on the bucket.
-    annotations: {}
-    # annotations:
-    #   eks.amazonaws.com/role-arn: "arn:aws:iam::<ACCOUNT_ID>:role/<FLUENTBIT_ROLE_NAME>"
-
-# ----------------------------------------------------------------------------
-# SECTION 7: Task Level Monitoring
-# ----------------------------------------------------------------------------
-
-# DCGM Exporter
+# Only the AWS-specific GPU-instance node affinity lives here; whether the
+# exporter is enabled is a base values.yaml default.
 dcgm-exporter:
-
-  # dcgm-exporter
-  enabled: true
 
   # Configure AWS specific affinity
   # Reference: https://github.com/aws-observability/helm-charts/blob/release-4.2.1/charts/amazon-cloudwatch-observability/values.yaml#L1371-L1503
@@ -472,36 +244,3 @@ imageBuilder:
   buildkit:
     rootless: false
 
-flytepropeller: {}
-
-flytepropellerwebhook: {}
-
-
-# ----------------------------------------------------------------------------
-# Monitoring Configuration (AWS/EKS specific)
-# ----------------------------------------------------------------------------
-
-# EKS manages controller-manager, scheduler, etcd, and kube-proxy internally.
-# Their metrics endpoints are not accessible from within the cluster.
-# -- Control plane namespace for cross-namespace RBAC (secretsWatcher).
-controlplaneNamespace: "union-cp"
-
-# Disable scraping and alerting rules for these components to avoid
-# false-positive TargetDown and *Down alerts.
-monitoring:
-  enabled: false
-  kubeControllerManager:
-    enabled: false
-  kubeScheduler:
-    enabled: false
-  kubeEtcd:
-    enabled: false
-  kubeProxy:
-    enabled: false
-  defaultRules:
-    rules:
-      kubeControllerManager: false
-      kubeSchedulerAlerting: false
-      kubeSchedulerRecording: false
-      kubeProxy: false
-      etcd: false

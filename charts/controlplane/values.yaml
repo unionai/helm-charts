@@ -500,8 +500,10 @@ configMap:
   connection:
     environment: "staging"
     region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
-    # Use controlplane ingress controller for gRPC routing.
-    rootTenantURLPattern: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}'
+    # Operator eager-key (CreateAPI) bootstrap + CP↔CP dial. Converged with
+    # flyteadmin's connection on global.UNION_HOST; override per-env for
+    # intracluster svc-FQDN or internal-VPC routing.
+    rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
@@ -1049,15 +1051,13 @@ services:
           # When true and no identity service is reachable, all runs display "Unknown"
           # even when created_by is populated in the DB.
           enrichIdentities: false
-          # v2-actions routing knobs (default off; per-env overlay opts in):
-          #   • useActionsServiceForOrgs — orgs whose CreateRun goes through
-          #     the v2 actions service. Empty = legacy queue path.
-          #   • rejectLegacySDKVersions — hard-reject sub-2.0.4 SDK CreateRun
-          #     instead of routing to the legacy queue service. Safe-default
-          #     false so chart upgrades don't break existing legacy-SDK users;
-          #     fresh self-hosted deployments flip to true via overlay.
-          useActionsServiceForOrgs: []
-          rejectLegacySDKVersions: false
+          # v2-actions routing is unconditional: templates/_helpers.tpl
+          # (unionai.configMap) always injects
+          # useActionsServiceForOrgs=[global.UNION_ORG] and
+          # rejectLegacySDKVersions=true here. The legacy queue service was
+          # removed from this chart, so every CreateRun goes through the v2
+          # actions service and sub-2.0.4 SDK CreateRun is hard-rejected.
+          # Overlay values for those two keys are overwritten by the helper.
           clusterCacheConfig:
             ttl: 10m
   identity:
@@ -1307,48 +1307,14 @@ services:
           maxOpenConnections: 20
           maxConnectionLifetime: 1m
 
-  queue:
-    fullnameOverride: "queue"
-
-    # Queue service must only run a single replica.
-    replicaCount: 1
-    autoscaling:
-      enabled: false
-
-    args:
-      - queue
-      - serve
-      - '--config'
-      - /etc/config/*.yaml
-    initContainers:
-      - name: migrate
-        args:
-          - queue
-          - migrate
-          - --config
-          - "/etc/config/*.yaml"
-    configMap:
-      sharedService:
-        metrics:
-          scope: "queue:"
-      queue:
-        db:
-          hosts:
-            - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
-          threadCount: 64
-          type: cql
-        eventer:
-          recordActionThreadCount: 16
-          type: runservice
-          updateActionStatusThreadCount: 16
-
   # Leasor is the lease-based scheduler that hands actions to the data-plane
   # leaseworker. It is the authoritative in-memory lease store, so it runs as a
   # single replica with a Recreate strategy (two pods would split-brain).
   #
   # Internally leasor is sharded across many tenants behind an Envoy router. A
   # self-hosted deployment is single-tenant, so one shard owns everything and no
-  # router is needed — leasor rides the generic services renderer like queue.
+  # router is needed — leasor rides the generic services renderer like the
+  # other services.
   #
   # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
   # services renderer. templates/leasor/configmap.yaml builds it instead so it
@@ -1477,31 +1443,22 @@ services:
 # shard via the actions-shard-id header — the same routing semantics used in
 # Union's managed control plane.
 #
-# actionsLeasor: deployment-wide opt-in for v2-actions CreateRun routing.
-# When enabled:
-#   - This deployment's own UNION_ORG goes through the v2 actions service
-#     (services.executions.configMap.executions.apps.task.useActionsServiceForOrgs
-#     gets [.Values.global.UNION_ORG]).
-#   - Sub-2.0.4 SDK CreateRun requests are hard-rejected
-#     (rejectLegacySDKVersions = true), exercising the queue/executor
-#     decommissioning path.
-# Chart default is on as of the 2026-07-31 switch-over (see timeline below): every
-# deployment routes its own UNION_ORG through the v2 actions service and rejects
-# sub-2.0.4 SDK CreateRun. Envs that must stay on the legacy queue path (e.g. still
-# on SDK <2.0.4) set `enabled: false` explicitly in their per-env
-# values-overrides.yaml. The injection happens in templates/_helpers.tpl
-# (unionai.configMap), see actionsLeasor block there.
+# actionsLeasor: DEPRECATED, no-op. v2-actions CreateRun routing is now
+# unconditional — templates/_helpers.tpl (unionai.configMap) always injects
+# useActionsServiceForOrgs=[global.UNION_ORG] and rejectLegacySDKVersions=true
+# into the executions config. The key is kept only so existing overlays that
+# set it don't look load-bearing; it is ignored and will be removed in a
+# future release. Drop it from overlays.
 #
 # DEPRECATION TIMELINE
 #   2026-06-30 — queue + executor services formally deprecated. SDK <2.0.4 still
 #                works through the legacy path but customers should migrate.
-#   2026-07-31 — complete switch-over. Chart default flips to `enabled: true`
-#                (this change). Still pending: queue + executor templates are
-#                removed and this knob becomes a no-op (kept briefly for
-#                compatibility, then removed). Any env still on SDK <2.0.4 will
-#                hard-fail CreateRun once the default is on.
-# After 2026-07-31, env overlays that set `actionsLeasor.enabled: true`
-# explicitly can drop the override entirely.
+#   2026-07-31 — complete switch-over. Chart default flips to `enabled: true`;
+#                every deployment routes CreateRun through the v2 actions
+#                service and rejects sub-2.0.4 SDK CreateRun.
+#   2026-07-28 — queue service templates removed from this chart (2026.7.3);
+#                this knob became a no-op. SDK <2.0.4 CreateRun hard-fails.
+#                Deployments that need the legacy path must pin chart <= 2026.7.2.
 actionsLeasor:
   enabled: true
 
@@ -2194,7 +2151,7 @@ flyte:
       connection:
         environment: "staging"
         region: ""  # Cloud-specific: set in overlay
-        rootTenantURLPattern: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}'
+        rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
       flyteadmin:
         metricsKeys:
           - phase
@@ -2340,10 +2297,11 @@ ingress-nginx:
       controllerValue: union.ai/controlplane
 
 # ScyllaDB configuration
-# REQUIRED: ScyllaDB is used exclusively by the queue service for high-performance message queueing
-# Postgres (configured above) is used by all other control plane services
+# REQUIRED: ScyllaDB backs the leasor and actions services (keyspaces `leasor`
+# and `actions`). Postgres (configured above) is used by all other control
+# plane services
 #
-# When enabled, deploys ScyllaDB Operator and Cluster as the queue service backend
+# When enabled, deploys ScyllaDB Operator and Cluster as the leasor/actions backend
 #
 # IMPORTANT: Before enabling ScyllaDB, you MUST manually install the CRDs:
 #   Run the helper script: ./scripts/install-scylla-crds.sh

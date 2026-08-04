@@ -178,68 +178,6 @@ tolerations:
 {{- end }}
 {{- end -}}
 
-{{- define "executor.scheduling.topologySpreadConstraints" -}}
-{{- with .Values.executor.topologySpreadConstraints }}
-topologySpreadConstraints:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.affinity" -}}
-{{- with .Values.executor.affinity }}
-affinity:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.nodeSelector" -}}
-{{- with .Values.executor.nodeSelector }}
-nodeSelector:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.nodeName" -}}
-{{- with .Values.executor.nodeName }}
-nodeName: {{ toYaml . }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.tolerations" -}}
-{{- with .Values.executor.tolerations }}
-tolerations:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling" -}}
-{{- if .Values.executor.topologySpreadConstraints }}
-{{- include "executor.scheduling.topologySpreadConstraints" . }}
-{{- else }}
-{{- include "global.scheduling.topologySpreadConstraints" . }}
-{{- end }}
-{{- if .Values.executor.affinity }}
-{{- include "executor.scheduling.affinity" . }}
-{{- else }}
-{{- include "global.scheduling.affinity" . }}
-{{- end }}
-{{- if .Values.executor.nodeSelector }}
-{{- include "executor.scheduling.nodeSelector" . }}
-{{- else }}
-{{- include "global.scheduling.nodeSelector" . }}
-{{- end }}
-{{- if .Values.executor.nodeName }}
-{{- include "executor.scheduling.nodeName" . }}
-{{- else }}
-{{- include "global.scheduling.nodeName" . }}
-{{- end }}
-{{- if .Values.executor.tolerations }}
-{{- include "executor.scheduling.tolerations" . }}
-{{- else }}
-{{- include "global.scheduling.tolerations" . }}
-{{- end }}
-{{- end -}}
-
 {{- define "leaseworker.scheduling.topologySpreadConstraints" -}}
 {{- with .Values.leaseworker.topologySpreadConstraints }}
 topologySpreadConstraints:
@@ -835,10 +773,6 @@ http://{{ include "prometheus.service.name" . }}:80
 http://flytepropeller:10254
 {{- end -}}
 
-{{- define "executor.health.url" -}}
-http://union-operator-executor:10254
-{{- end -}}
-
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
 {{- end -}}
@@ -1086,10 +1020,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
     auth_type             key
 {{/* fluent-bit's azure_blob output only supports key/sas auth (no workload
-     identity), so it needs its own shared key independent of the executor's
-     stow config. Prefer a dedicated fluentbit.azureBlobSharedKey (which may be
-     a ${ENV} placeholder expanded by fluent-bit at runtime); fall back to the
-     stow config key for backward compatibility. */}}
+     identity), so it needs its own shared key independent of the dataplane's
+     stow storage config. Prefer a dedicated fluentbit.azureBlobSharedKey (which
+     may be a ${ENV} placeholder expanded by fluent-bit at runtime); fall back
+     to the stow config key for backward compatibility. */}}
 {{- $fbSharedKey := .Values.storage.custom.stow.config.key }}
 {{- if .Values.fluentbit.azureBlobSharedKey }}
 {{- $fbSharedKey = .Values.fluentbit.azureBlobSharedKey }}
@@ -1135,6 +1069,26 @@ Create a full name prefix for serving resources
 {{- $name := include "union-operator.fullname" . }}
 {{- printf "%s-serving" $name }}
 {{- end }}
+
+{{/*
+App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > true.
+Both default to null so an explicit setting is distinguishable from the default;
+`kindIs "invalid"` is the Helm idiom for "is nil" (hasKey won't do — the keys are
+present in values.yaml, just null).
+Emits "true"/"" rather than "true"/"false" so callers can write
+`if include "apps.enabled" .` — the literal string "false" is truthy.
+*/}}
+{{- define "apps.enabled" -}}
+{{- $apps := .Values.apps | default dict -}}
+{{- $serving := .Values.serving | default dict -}}
+{{- if not (kindIs "invalid" $apps.enabled) -}}
+{{- if $apps.enabled -}}true{{- end -}}
+{{- else if not (kindIs "invalid" $serving.enabled) -}}
+{{- if $serving.enabled -}}true{{- end -}}
+{{- else -}}
+true
+{{- end -}}
+{{- end -}}
 
 {{/*
 Name of the serving-envoy-bootstrap ConfigMap
@@ -1249,36 +1203,10 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- end }}
 {{- end -}}
 
-{{- define "executor.serviceAccount.annotations" -}}
-{{- include "global.serviceAccountAnnotations" . }}
-{{- with .Values.executor.serviceAccount.annotations }}
-{{ toYaml . }}
-{{- end }}
-{{- end }}
-
 {{/*
 TODO: Make these consistent with label sets in other components.
 Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
 */}}
-{{- define "executor.selectorLabels" -}}
-{{- if and .Values.executor.selector .Values.executor.selector.matchLabels -}}
-{{- .Values.executor.selector.matchLabels | toYaml }}
-{{- else -}}
-app: executor
-{{- end -}}
-{{- end -}}
-
-{{- define "executor.labels" -}}
-{{- include "executor.selectorLabels" . }}
-{{- end -}}
-
-{{- define "executor.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ $labels := include "executor.labels" . | fromYaml -}}
-{{- $podLabels := .Values.executor.podLabels | default dict -}}
-{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
-{{- end -}}
-
 {{- define "leaseworker.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.leaseworker.serviceAccount.annotations }}
@@ -1429,17 +1357,6 @@ Returns the common service account name.
 {{- end -}}
 
 {{/*
-Returns the executor service account name, using the common SA when enabled.
-*/}}
-{{- define "executor.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
-{{- include "common.serviceAccountName" . -}}
-{{- else -}}
-executor
-{{- end -}}
-{{- end -}}
-
-{{/*
 Returns the leaseworker service account name, using the common SA when enabled.
 */}}
 {{- define "leaseworker.serviceAccountName" -}}
@@ -1543,9 +1460,9 @@ namespace_mapping) so users only need to set namespaces.enabled: false.
 
 {{/*
 Resolves the namespace template shared by every component that maps a run to a
-K8s namespace: the executor (namespace_mapping.template), the leaseworker
-(namespace-template), and the operator (org.namespaceTemplate). Callers wrap the
-returned string in their own config key.
+K8s namespace: the leaseworker (namespace-template) and the operator
+(org.namespaceTemplate). Callers wrap the returned string in their own config
+key.
 
 Single-namespace mode pins to the release namespace so namespace-scoped RBAC is
 never exceeded. Otherwise it returns namespace_mapping.template (the single
@@ -1555,7 +1472,7 @@ default).
 
 Returns the raw value WITHOUT tpl so the single caller that re-templates its
 config blob (leaseworker) renders the Terraform-escaped form exactly once;
-callers that emit directly (executor, operator) apply tpl themselves.
+the caller that emits directly (the operator) applies tpl itself.
 */}}
 {{- define "dataplane.namespaceTemplate" -}}
 {{- if include "singleNamespace" . -}}
@@ -1569,7 +1486,9 @@ callers that emit directly (executor, operator) apply tpl themselves.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
-{{- else if and (eq $key "executor") (not $.Values.executor.enabled) }}
+{{- /* The executor was removed from this chart; drop stale overlay entries so
+       the operator doesn't heartbeat a nonexistent service. */}}
+{{- else if eq $key "executor" }}
 {{- else if and (eq $key "prometheus") $.Values.low_privilege }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
