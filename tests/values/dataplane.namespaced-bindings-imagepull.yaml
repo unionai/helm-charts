@@ -1,0 +1,25 @@
+# helm-values: examples/values-test-certs.yaml
+# expect-fail: requires either rbac.clusterWideBindings: true or a non-empty taskNamespaces
+#
+# The webhook mirrors image-pull secrets into each task namespace. With
+# cluster-wide bindings off and no enumerated namespaces to bind into, it has no
+# reach -- and the resulting Forbidden is SWALLOWED rather than surfaced, so the
+# pod is admitted without its secret and fails later with ImagePullBackOff.
+#
+# This is the one component in the chart whose RBAC failure is silent, which is
+# why it is a template-time error instead of a documentation note.
+#
+# taskNamespaces is set explicitly to [] rather than left to inherit the chart
+# default (six non-empty names) -- with the default in place, the webhook guard's
+# `not .Values.taskNamespaces` condition would be false and this fixture would
+# render cleanly instead of exercising the guard it exists to test.
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+low_privilege: false
+rbac:
+  clusterWideBindings: false
+taskNamespaces: []
+
+secrets:
+  admin:
+    create: false

@@ -62,6 +62,9 @@ Args: dict with
 {{- define "dataplane.rbac.emitBucket" -}}
 {{- $rules := .rules | default list -}}
 {{- if $rules -}}
+{{- if and .ctx.Values.low_privilege (not .ctx.Values.rbac.clusterWideBindings) -}}
+{{- fail "rbac.clusterWideBindings: false has no meaning under low_privilege: true. In single-namespace mode there are no task namespaces and nothing is bound cluster-wide, so setting this changes nothing -- it reads as a hardening step that did not happen. Remove the setting, or set low_privilege: false if you intended the multi-namespace posture." -}}
+{{- end -}}
 {{- $isCluster := include "dataplane.rbac.isClusterBucket" .bucket -}}
 {{- $name := include "dataplane.rbac.roleName" (dict "ctx" .ctx "identity" .identity "bucket" .bucket) -}}
 {{- if and $isCluster .ctx.Values.low_privilege -}}

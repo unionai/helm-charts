@@ -132,6 +132,22 @@
   unchanged**; `namespaces` is cluster-scoped and no RoleBinding can convey it, so an
   install that relies on `clusterresourcesync` creating namespaces must keep it.
 
+- **`rbac.clusterWideBindings: false` now fails the render under `low_privilege: true`.**
+  In single-namespace mode there are no task namespaces and nothing is bound
+  cluster-wide, so the setting changes nothing — it reads as a hardening step that did
+  not happen. **Affects only installs where the setting was already a no-op.**
+- **`nodeobserver.enabled: true` now requires `rbac.clusterWideBindings: true`.**
+  nodeobserver lists pods with an empty namespace plus a `spec.nodeName` field
+  selector, which Kubernetes authorizes as a cluster-scope check — no number of
+  per-namespace RoleBindings can satisfy it. Previously this combination installed
+  cleanly and crash-looped on the first check, leaving the node tainted.
+- **The pod webhook now requires reach into task namespaces when image-pull secret
+  mirroring is enabled.** With `rbac.clusterWideBindings: false` and an empty
+  `taskNamespaces` the webhook cannot create the mirrored secret, and the resulting
+  `Forbidden` is swallowed rather than surfaced — pods are admitted without their
+  secret and fail later with `ImagePullBackOff`. The render now fails instead.
+  Enumerate `taskNamespaces`, or disable image-pull secret mirroring.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
