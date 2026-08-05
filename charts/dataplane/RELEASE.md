@@ -106,6 +106,17 @@
   verify that anything creates them**; if nothing does, the install renders green and
   task pods fail with `Forbidden` at their first execution rather than at deploy.
 
+- **`taskNamespaces` (new) enumerates the task namespaces to pre-seed and to bind union
+  roles into.** It defaults to the six names `common/namespaces.yaml` previously
+  hardcoded, so existing renders are unchanged, but that list is now configurable.
+  Under `low_privilege: false` the chart emits a `RoleBinding` per listed namespace for
+  each union `ns-read` / `ns-write` role. Combined with
+  `rbac.clusterWideBindings: false`, union workloads then hold permissions only in
+  these namespaces and the release namespace. **This is not the full set a dataplane
+  uses** — `clusterresourcesync` creates one namespace per project/domain at runtime and
+  cannot know those names in advance, so enumerating this list is only appropriate when
+  task namespaces are provisioned ahead of time.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).

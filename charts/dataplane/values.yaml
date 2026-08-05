@@ -2451,17 +2451,34 @@ ingress-nginx:
 ## -- Extra Kubernetes objects to deploy with the helm chart
 extraObjects: []
 
-## -- Pre-seed a fixed set of namespaces at install time: the three flytesnacks
-## demo-project namespaces (development/staging/production) and the three
-## union-health-monitoring namespaces. That is ALL this flag does.
-##
-## It is NOT a privilege switch and NOT a mode switch. Leaving it false does not
-## make the install single-namespace: with low_privilege=false, namespaces for
-## newly registered projects are still created dynamically by clusterresourcesync.
-## Privilege, RBAC scope and namespace creation are governed solely by
-## low_privilege. Under low_privilege=true nothing is pre-seeded even if this is
-## set to true, because no namespaces are created by any route in that mode.
+# -- Task namespaces to pre-seed and to bind union roles into.
+#
+# Defaults to the six names common/namespaces.yaml previously hardcoded, so
+# existing installs are unaffected. This is NOT the full set of namespaces a
+# dataplane will use: clusterresourcesync creates one per project/domain as
+# projects are registered, and it cannot know those names in advance.
+#
+# Enumerate this list when the task namespaces are known ahead of time and
+# pre-created. Combined with rbac.clusterWideBindings: false, the chart then
+# emits a RoleBinding per listed namespace for each union ns-* role and no
+# cluster-wide binding at all -- union workloads hold permissions only in
+# these namespaces and the release namespace.
+#
+# Names must be literal. namespace_mapping.template is a TEMPLATE
+# ("{{ project }}-{{ domain }}") expanded per run against project/domain pairs
+# that come from the control plane at runtime, so it cannot be enumerated here.
+taskNamespaces:
+  - flytesnacks-development
+  - flytesnacks-staging
+  - flytesnacks-production
+  - union-health-monitoring-development
+  - union-health-monitoring-staging
+  - union-health-monitoring-production
+
 namespaces:
+  # -- Create the Namespace objects listed in taskNamespaces. Independent of
+  # whether union roles are bound into them: an operator may pre-create the
+  # namespaces by another route and still want the bindings.
   enabled: false
 
 monitoring:

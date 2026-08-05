@@ -107,6 +107,36 @@ subjects:
   - kind: ServiceAccount
     name: {{ .serviceAccount }}
     namespace: {{ .ctx.Release.Namespace }}
+{{- if and (not $isCluster) (not .ctx.Values.low_privilege) }}
+{{/*
+One RoleBinding per enumerated task namespace, binding the same ns-* role.
+
+A RoleBinding may reference a ClusterRole: the grant is then scoped to the
+RoleBinding's own namespace. That is the whole mechanism this posture rests on
+-- the rules are defined once, cluster-wide reach is not implied, and each
+namespace is named explicitly.
+
+Emitted whenever taskNamespaces is non-empty, independently of
+rbac.clusterWideBindings, so that enumerating namespaces and dropping the
+cluster-wide binding are separate steps an operator can take in either order.
+*/}}
+{{- range $ns := .ctx.Values.taskNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.serviceAccount }}
+    namespace: {{ $.ctx.Release.Namespace }}
+{{- end }}
+{{- end }}
 {{- if and (not $isCluster) (not .ctx.Values.low_privilege) .ctx.Values.rbac.clusterWideBindings }}
 {{/*
 Cluster-wide binding for a NAMESPACED bucket.
