@@ -1,0 +1,74 @@
+name: Trigger Union Internal Checks
+
+# On merge to main, trigger the unionai/cloud Buildkite pipelines that keep the
+# canary selfmanaged fleet in sync with this repo (auth: BUILDKITE_API_TOKEN secret).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'charts/*/values.yaml'
+      - 'charts/*/values.*.yaml'      # any per-cloud overlay (values.<cloud>.yaml)
+      - '!charts/*/values.k3d.yaml'   # …except the local-only k3d dev overlay
+      - 'charts/*/templates/**'
+      - 'charts/*/Chart.yaml'
+
+permissions:
+  contents: read  # only to checkout + diff; the Buildkite call uses its own token, not GITHUB_TOKEN
+
+jobs:
+  trigger:
+    # Never run on forks (they get no secret anyway; this is belt-and-suspenders).
+    if: github.repository == 'unionai/helm-charts'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Route changed files to pipelines
+        id: route
+        run: |
+          set -euo pipefail
+          before="${{ github.event.before }}"
+          if [ -z "$before" ] || [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            before="$(git rev-parse "${{ github.sha }}^")"
+          fi
+          changed="$(git diff --name-only "$before" "${{ github.sha }}")"
+          echo "Changed files:"; echo "$changed"
+
+          overlays=false
+          charts=false
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            # Order matters: base values.yaml / Chart.yaml / templates and the
+            # k3d ignore are matched before the generic values.*.yaml overlay
+            # catch-all (case takes the first match).
+            case "$f" in
+              charts/*/values.yaml|charts/*/Chart.yaml)
+                charts=true ;;
+              charts/*/templates/*)
+                charts=true ;;
+              charts/*/values.k3d.yaml)
+                : ;;  # local-only dev overlay, no k3d env in the fleet — ignore
+              charts/*/values.*.yaml)
+                overlays=true ;;  # any per-cloud overlay: values.<cloud>.yaml
+            esac
+          done <<< "$changed"
+
+          echo "overlays=$overlays" >> "$GITHUB_OUTPUT"
+          echo "charts=$charts" >> "$GITHUB_OUTPUT"
+          echo "Routing: overlays=$overlays charts=$charts"
+
+      - name: Trigger tf-fanout-canary-deploy (overlay change)
+        if: steps.route.outputs.overlays == 'true'
+        env:
+          BUILDKITE_API_TOKEN: ${{ secrets.BUILDKITE_API_TOKEN }}
+        run: .github/scripts/trigger-buildkite-build.sh tf-fanout-canary-deploy SKIP_INPUT=TRUE
+
+      - name: Trigger internal-selfmanaged-canary-sync-all (chart change)
+        if: steps.route.outputs.charts == 'true'
+        env:
+          BUILDKITE_API_TOKEN: ${{ secrets.BUILDKITE_API_TOKEN }}
+        run: .github/scripts/trigger-buildkite-build.sh internal-selfmanaged-canary-sync-all
