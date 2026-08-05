@@ -25,51 +25,26 @@ as components toggle, so enabling a component moves rules between four roles
 rather than adding a fifth.
 */}}
 {{/*
-The set of (ServiceAccount -> identity) roles to emit, and their names, are NOT
-decided here: they come from dataplane.rbac.identities (_rbac.tpl), the same
-computation clusterresourcesync/serviceaccount.yaml's bind grant derives its
-resourceNames from. That is the fix for the drift Task 4 exists to close: this
-file used to compute "is this SA the shared one -> call it union" locally, and
-a second such decision anywhere else could disagree about which roles exist.
-Now there is exactly one place that decision is made.
+$components and $identities both derive from dataplane.rbac.components /
+dataplane.rbac.identities (_rbac.tpl) -- the SAME enumeration
+clusterresourcesync/serviceaccount.yaml's bind grant derives its resourceNames
+from, via dataplane.rbac.bucketRoleNames. Nothing here re-declares which
+components exist, which ServiceAccount each runs as, or which of them share the
+"union" identity: that is decided in exactly one place, so a component added or
+removed there is added or removed here and in the bind list at the same time.
 
-$identities does not, however, tell us WHICH components' declared buckets feed
-a given ServiceAccount -- collapsing to "sa -> identity" is exactly what makes
-it safe to reuse for the bind list, but it also discards the per-component
-detail this file still needs: a shared SA's role is the union of only the
-ENABLED contributors sharing it (executor's rules must not leak onto
-union-system when executor is disabled and leaseworker is not), and that is a
-content question, not a naming question. $components below stays for that
-purpose only -- it decides CONTENTS merged into an already-identified group and
-the group's emission order, never whether a group exists or what it is called.
+$components carries the per-component {name, sa} pairs this file still needs
+that $identities (collapsed to sa -> identity) cannot supply: a shared SA's
+role is the union of only its ENABLED contributors' declared buckets
+(executor's rules must not leak onto union-system when executor is disabled
+and leaseworker is not), and that per-component detail is a content question,
+not a naming question. It is used below only to decide CONTENTS merged into an
+already-identified group and the group's emission order, never whether a group
+exists or what it is called -- that comes from $identities, looked up by
+ServiceAccount name.
 */}}
+{{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
 {{- $identities := fromYaml (include "dataplane.rbac.identities" .) -}}
-
-{{- $components := list -}}
-{{- if .Values.executor.enabled -}}
-{{- $components = append $components (dict "name" "executor" "sa" (include "executor.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if .Values.leaseworker.enabled -}}
-{{- $components = append $components (dict "name" "leaseworker" "sa" (include "leaseworker.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if .Values.operator.serviceAccount.create -}}
-{{- $components = append $components (dict "name" "operator" "sa" (include "operator.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if .Values.proxy.serviceAccount.create -}}
-{{- $components = append $components (dict "name" "proxy" "sa" (include "proxy.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if .Values.flytepropellerwebhook.enabled -}}
-{{- $components = append $components (dict "name" "webhook" "sa" (include "webhook.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if .Values.flytepropeller.enabled -}}
-{{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
-{{- end -}}
-{{- if .Values.nodeobserver.enabled -}}
-{{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
-{{- end -}}
-{{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
-{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
-{{- end -}}
 
 {{- $buckets := list "ns-read" "ns-write" "cluster-read" "cluster-write" -}}
 
@@ -80,8 +55,10 @@ keys would not be (map key order, sorted alphabetically, is not the same
 sequence and would reorder the rendered manifest).
 
 Each group's identity is looked up in $identities by ServiceAccount name --
-not recomputed here -- so it can never disagree with the roles
-dataplane.rbac.bucketRoleNames names.
+not recomputed here. Both $components and $identities derive from
+dataplane.rbac.components, so the set of ServiceAccounts iterated below and the
+set dataplane.rbac.bucketRoleNames names roles for are, by construction, the
+same set: there is no second enumeration that could disagree with it.
 */}}
 {{- $groups := dict -}}
 {{- $order := list -}}

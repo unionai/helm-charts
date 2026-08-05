@@ -174,20 +174,21 @@ subjects:
 {{- end -}}
 
 {{/*
-Enabled components, grouped by the ServiceAccount their pods actually run as.
+The single enumeration of which components are enabled and which ServiceAccount
+each runs as. Every other RBAC helper in this chart -- common/rbac.yaml's
+per-component bucket-content gathering, and dataplane.rbac.identities' naming
+below -- ranges over THIS, not a copy of it. A component that appears in one
+enumeration and not the other is exactly the failure this task exists to
+prevent: its ServiceAccount either gets rules with no name to bind
+(dataplane.rbac.identities has no entry for it, so bucketRoleNames can't name
+its role) or a name with no rules (the reverse), and either way the mismatch is
+invisible at render time -- it shows up as a runtime Forbidden in a provisioner,
+not a template error.
 
-Lifted verbatim out of common/rbac.yaml so the bind grant in
-clusterresourcesync/serviceaccount.yaml derives from the SAME computation that
-emits the roles. Two independent lists would drift, and the failure mode is
-silent at render time: a resourceNames entry that names no rendered role simply
-never matches, and the provisioner gets a Forbidden at runtime instead.
-
-Returns a YAML mapping of serviceAccountName -> identity segment. "Identity" is
-the ServiceAccount, NOT the commonServiceAccount flag: flytepropeller,
-nodeobserver and clusterresourcesync keep dedicated ServiceAccounts even when
-that flag is on, so they are separate identities in every configuration.
+Returns a YAML list of {name, sa} pairs, one per enabled component, in a fixed
+order (this fixes emission order downstream: first-seen-sa wins its position).
 */}}
-{{- define "dataplane.rbac.identities" -}}
+{{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}
 {{- if .Values.executor.enabled -}}
 {{- $components = append $components (dict "name" "executor" "sa" (include "executor.serviceAccountName" .)) -}}
@@ -213,6 +214,23 @@ that flag is on, so they are separate identities in every configuration.
 {{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
 {{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
 {{- end -}}
+{{- toYaml $components -}}
+{{- end -}}
+
+{{/*
+dataplane.rbac.components collapsed by ServiceAccount, naming the identity each
+group renders under. This is a pure function of dataplane.rbac.components plus
+the useCommonServiceAccount/common.serviceAccountName inputs -- it enumerates
+nothing on its own, so it cannot drift from the set of components
+common/rbac.yaml gathers bucket content for: both derive from the same list.
+
+Returns a YAML mapping of serviceAccountName -> identity segment. "Identity" is
+the ServiceAccount, NOT the commonServiceAccount flag: flytepropeller,
+nodeobserver and clusterresourcesync keep dedicated ServiceAccounts even when
+that flag is on, so they are separate identities in every configuration.
+*/}}
+{{- define "dataplane.rbac.identities" -}}
+{{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
 {{- $shared := include "useCommonServiceAccount" . -}}
 {{- $commonSA := include "common.serviceAccountName" . -}}
 {{- $out := dict -}}
