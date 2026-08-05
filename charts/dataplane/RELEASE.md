@@ -62,8 +62,10 @@ Docker Hub, reject those pulls with `ErrImagePull`.
 - **`flytepropellerwebhook.legacyWebhookCleanup.image.repository`** — now
   `docker.io/alpine/k8s`.
 - **`fluentbit.testFramework.image.repository`** — new override, pinning the
-  subchart's bare `busybox` default to `docker.io/busybox`. Rendered only by
-  `helm test`.
+  subchart's bare `busybox` default to `docker.io/library/busybox`. Rendered
+  only by `helm test`. The `library/` namespace is spelled out because that is
+  where official images actually live on Docker Hub; a bare `busybox` relies on
+  the client to infer it.
 
 A `make check-image-paths` gate (wired into `make test` and the `image-paths` CI
 job) now fails the build on any unqualified reference, in chart values or in

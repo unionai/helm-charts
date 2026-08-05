@@ -110,15 +110,26 @@ def scan_rendered() -> list[tuple[str, str, str]]:
 
 
 def scan_values() -> list[tuple[str, str, int]]:
-    """Yield (ref, path, lineno) for unqualified repository literals in values."""
+    """Yield (ref, path, lineno) for unqualified image literals in chart values.
+
+    Covers every chart-root `values*.yaml`, not just `values.yaml` — the
+    per-cloud overlays (`values.aws.yaml`, `values.gcp.yaml`, …) and
+    `charts/sandbox/values-dataplane.yaml` ship as defaults too.
+
+    Matches both spellings an image default takes: a `repository:` /
+    `agentRepository:` key, and a scalar `image: <ref>` (e.g. the
+    envoy-gateway-config `redis.image`). A mapping-valued `image:` has nothing
+    after the colon, so the regex simply doesn't match it.
+    """
     findings = []
-    for path in sorted(CHARTS_DIR.glob("*/values.yaml")):
+    for path in sorted(CHARTS_DIR.glob("*/values*.yaml")):
         rel = path.relative_to(REPO_ROOT).as_posix()
         for lineno, line in enumerate(path.read_text().splitlines(), start=1):
-            match = VALUES_REPO_RE.match(line)
-            if not match:
+            repo_match = VALUES_REPO_RE.match(line)
+            image_match = None if repo_match else IMAGE_RE.match(line)
+            if not repo_match and not image_match:
                 continue
-            ref = strip_quotes(match.group(2))
+            ref = strip_quotes(repo_match.group(2) if repo_match else image_match.group(1))
             if not is_scannable(ref) or ref in ALLOWLIST:
                 continue
             if not is_qualified(ref):
