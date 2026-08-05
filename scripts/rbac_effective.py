@@ -34,7 +34,6 @@ import yaml
 
 CLUSTER = "\x00CLUSTER"  # sorts before any real namespace; not a legal ns name
 BASELINE = "tests/rbac-effective-baseline.json"
-ROLE_KINDS = ("Role", "ClusterRole")
 BINDING_KINDS = ("RoleBinding", "ClusterRoleBinding")
 
 
@@ -61,21 +60,27 @@ def rule_triples(rule):
 def collect(path):
     """Map serviceAccount -> scope -> sorted list of triples, for one snapshot."""
     docs = load_docs(path)
-    roles = {
-        (d["kind"], d["metadata"]["name"]): (d.get("rules") or [])
+    # ClusterRole names are cluster-unique, so they are keyed by name alone.
+    # Role names are only unique per-namespace -- two Role objects can share a
+    # name across namespaces with different rules -- so Role lookups are
+    # additionally keyed by namespace. A RoleBinding's roleRef to a Role always
+    # resolves within the binding's own namespace (a ClusterRoleBinding can
+    # only reference a ClusterRole, never a Role), which is why the namespace
+    # for that key can be taken from the binding once its scope is known.
+    cluster_roles = {
+        d["metadata"]["name"]: (d.get("rules") or [])
         for d in docs
-        if d.get("kind") in ROLE_KINDS
+        if d.get("kind") == "ClusterRole"
+    }
+    namespaced_roles = {
+        (d["metadata"]["name"], d["metadata"].get("namespace") or "union"): (d.get("rules") or [])
+        for d in docs
+        if d.get("kind") == "Role"
     }
 
     out = {}
     for d in docs:
         if d.get("kind") not in BINDING_KINDS:
-            continue
-        ref = d.get("roleRef") or {}
-        rules = roles.get((ref.get("kind"), ref.get("name")))
-        if rules is None:
-            # Dangling reference, or a built-in ClusterRole this chart does not
-            # define (system:auth-delegator). Not this tool's business.
             continue
 
         if d["kind"] == "ClusterRoleBinding":
@@ -87,6 +92,18 @@ def collect(path):
                 # namespace at install time. Every fixture renders with
                 # --namespace union, so that is what it resolves to.
                 scope = "union"
+
+        ref = d.get("roleRef") or {}
+        if ref.get("kind") == "ClusterRole":
+            rules = cluster_roles.get(ref.get("name"))
+        elif ref.get("kind") == "Role":
+            rules = namespaced_roles.get((ref.get("name"), scope))
+        else:
+            rules = None
+        if rules is None:
+            # Dangling reference, or a built-in ClusterRole this chart does not
+            # define (system:auth-delegator). Not this tool's business.
+            continue
 
         triples = set()
         for rule in rules:
