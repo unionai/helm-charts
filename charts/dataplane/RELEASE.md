@@ -111,11 +111,16 @@
   hardcoded, so existing renders are unchanged, but that list is now configurable.
   Under `low_privilege: false` the chart emits a `RoleBinding` per listed namespace for
   each union `ns-read` / `ns-write` role. Combined with
-  `rbac.clusterWideBindings: false`, union workloads then hold permissions only in
-  these namespaces and the release namespace. **This is not the full set a dataplane
-  uses** — `clusterresourcesync` creates one namespace per project/domain at runtime and
-  cannot know those names in advance, so enumerating this list is only appropriate when
-  task namespaces are provisioned ahead of time.
+  `rbac.clusterWideBindings: false`, union's own `ns-*` roles then hold permissions
+  only in these namespaces and the release namespace — no cluster-wide `ns-*` binding
+  remains. **This is not the full set a dataplane uses** — `clusterresourcesync`
+  creates one namespace per project/domain at runtime and cannot know those names in
+  advance, so enumerating this list is only appropriate when task namespaces are
+  provisioned ahead of time. **The shared `union-system` identity is not fully confined
+  by this alone:** with `fluentbit.enabled: true` (the default), fluent-bit runs as the
+  same ServiceAccount and holds its own read-only cluster-wide grant (`get`/`list`/`watch`
+  on `namespaces`/`pods`) for log shipping, independent of `taskNamespaces` and
+  `rbac.clusterWideBindings`.
 
 ### Migration / action required
 
