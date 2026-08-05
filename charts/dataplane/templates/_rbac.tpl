@@ -172,3 +172,87 @@ subjects:
 {{- end }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Enabled components, grouped by the ServiceAccount their pods actually run as.
+
+Lifted verbatim out of common/rbac.yaml so the bind grant in
+clusterresourcesync/serviceaccount.yaml derives from the SAME computation that
+emits the roles. Two independent lists would drift, and the failure mode is
+silent at render time: a resourceNames entry that names no rendered role simply
+never matches, and the provisioner gets a Forbidden at runtime instead.
+
+Returns a YAML mapping of serviceAccountName -> identity segment. "Identity" is
+the ServiceAccount, NOT the commonServiceAccount flag: flytepropeller,
+nodeobserver and clusterresourcesync keep dedicated ServiceAccounts even when
+that flag is on, so they are separate identities in every configuration.
+*/}}
+{{- define "dataplane.rbac.identities" -}}
+{{- $components := list -}}
+{{- if .Values.executor.enabled -}}
+{{- $components = append $components (dict "name" "executor" "sa" (include "executor.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $components = append $components (dict "name" "leaseworker" "sa" (include "leaseworker.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.operator.serviceAccount.create -}}
+{{- $components = append $components (dict "name" "operator" "sa" (include "operator.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.proxy.serviceAccount.create -}}
+{{- $components = append $components (dict "name" "proxy" "sa" (include "proxy.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.flytepropellerwebhook.enabled -}}
+{{- $components = append $components (dict "name" "webhook" "sa" (include "webhook.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
+{{- end -}}
+{{- if .Values.nodeobserver.enabled -}}
+{{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
+{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
+{{- end -}}
+{{- $shared := include "useCommonServiceAccount" . -}}
+{{- $commonSA := include "common.serviceAccountName" . -}}
+{{- $out := dict -}}
+{{- range $c := $components -}}
+{{- $sa := $c.sa -}}
+{{- $identity := $c.name -}}
+{{- if and $shared (eq $sa $commonSA) -}}
+{{- $identity = "union" -}}
+{{- end -}}
+{{- $_ := set $out $sa $identity -}}
+{{- end -}}
+{{- toYaml $out -}}
+{{- end -}}
+
+{{/*
+The ns-* bucket ClusterRole names a provisioner may need to bind into task
+namespaces, derived from dataplane.rbac.identities so the list can never be
+narrower than what the emitter renders.
+
+Only ns-* appears: cluster-* roles are bound by ClusterRoleBinding, which no
+namespaced provisioner should be creating.
+
+Names are emitted even for identities whose ns-* buckets turn out to be empty,
+so no role is ever rendered without a matching bind entry. A resourceNames entry
+for a role that does not exist is an inert no-op; the reverse -- a rendered role
+missing from the list -- is a runtime Forbidden. The check in this task's Step 4
+enforces that direction specifically.
+
+Returns a YAML list, for splicing into a resourceNames field.
+*/}}
+{{- define "dataplane.rbac.bucketRoleNames" -}}
+{{- $ctx := . -}}
+{{- $identities := fromYaml (include "dataplane.rbac.identities" .) -}}
+{{- $names := list -}}
+{{- range $sa, $identity := $identities -}}
+{{- range $bucket := list "ns-read" "ns-write" -}}
+{{- $names = append $names (include "dataplane.rbac.roleName" (dict "ctx" $ctx "identity" $identity "bucket" $bucket)) -}}
+{{- end -}}
+{{- end -}}
+{{- range $name := ($names | uniq | sortAlpha) }}
+- {{ $name }}
+{{- end }}
+{{- end -}}

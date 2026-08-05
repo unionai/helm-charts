@@ -1105,7 +1105,7 @@ allowed:
   - subject ServiceAccount/union/union-clustersync-system
 - name: union-clusterresourcesync-cluster-write
   invariant: cluster_write
-  reason: 'clusterresourcesync; narrowed in phase 5. Carried forward unchanged from the entry previously pinned as union-clustersync-resource, which this role renames rather than replaces: same ServiceAccount, same rules, same two snapshots.'
+  reason: 'clusterresourcesync; narrowed in phase 5. Carried forward from the entry previously pinned as union-clustersync-resource, which this role renames rather than replaces: same ServiceAccount, same snapshots. Also grants bind on rbac.authorization.k8s.io/clusterroles, confined by resourceNames to the union ns-* bucket roles (dataplane RBAC namespaced-bindings plan, task 4). This ServiceAccount does not hold apiGroups:[*] resources:[*], so without bind, RBAC escalation prevention refuses "attempting to grant RBAC permissions not currently held" when it creates a RoleBinding referencing one of those ClusterRoles to provision a task namespace. It adds no reach beyond what clusterRoleRules above already permits by another route: that list grants roles at verbs [*], and * includes escalate, so this identity can already author and bind an arbitrary Role -- naming the ClusterRoles explicitly here is the narrower, more auditable path. Emitted outside clusterresourcesync.clusterRoleRules so an operator overlay that replaces that list wholesale does not silently drop the grant.'
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
@@ -1113,6 +1113,7 @@ allowed:
   - binding union-clusterresourcesync-cluster-write
   - subject ServiceAccount/union/union-clustersync-system
   - write apiGroups=["",rbac.authorization.k8s.io] resources=[clusterrolebindings,configmaps,limitranges,namespaces,pods,podtemplates,resourcequotas,rolebindings,roles,secrets,serviceaccounts,services] verbs=[*]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[union-clusterresourcesync-ns-read,union-clusterresourcesync-ns-write,union-union-ns-read,union-union-ns-write] verbs=[bind]
 - name: union-executor-ns-write
   invariant: cluster_write
   reason: 'rbac.clusterWideBindings defaults to true (dataplane RBAC namespaced-bindings plan, task 2). Task namespaces are created at runtime by clusterresourcesync or an external provisioner, so Helm cannot enumerate them at template time and cannot emit a RoleBinding per namespace for a set it does not know. The executor''s ns-write ClusterRole is bound cluster-wide by default so it can reach task namespaces to launch task pods -- ns-write for the executor is apiGroups:[*] resources:[*] write. The release-namespace RoleBinding is emitted alongside it, so setting rbac.clusterWideBindings: false is a pure removal with no window in which the workload holds neither binding. See charts/dataplane/RELEASE.md (Unreleased) and the rbac.clusterWideBindings comment in charts/dataplane/values.yaml.'
