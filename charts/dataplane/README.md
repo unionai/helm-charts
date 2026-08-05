@@ -298,8 +298,12 @@ namespaces are created at runtime as projects are registered, so the chart canno
 enumerate them and cannot emit a RoleBinding for each one.
 
 Two settings let you replace that cluster-wide reach with explicitly named namespaces.
-Both require `low_privilege: false` — in single-namespace mode there are no task
-namespaces and nothing is bound cluster-wide, so neither setting changes anything.
+Both require `low_privilege: false`. `taskNamespaces` alone is a genuine no-op under
+`low_privilege: true` — there are no task namespaces there, so the per-namespace
+RoleBinding loop never runs. `rbac.clusterWideBindings: false` is **not** a no-op under
+`low_privilege: true`: the chart fails the render instead, on the theory that an
+operator setting it believes they have narrowed something, and staying silent would
+confirm a belief that is false.
 
 ### Option 1 — a provisioner creates the bindings
 
@@ -307,14 +311,40 @@ namespaces and nothing is bound cluster-wide, so neither setting changes anythin
 low_privilege: false
 rbac:
   clusterWideBindings: false
+taskNamespaces: []
 clusterresourcesync:
   enabled: true
 ```
 
-The chart binds union roles only in the release namespace. `clusterresourcesync` is
-responsible for creating a RoleBinding for each union `ns-*` role as it provisions each
-task namespace. It holds `bind` on exactly those roles for this purpose, unconditionally
-— whether or not `commonServiceAccount` is enabled.
+`taskNamespaces: []` is required here, not optional. The chart's own default is six
+non-empty names, and the per-namespace RoleBinding loop that binds union roles into
+`taskNamespaces` fires whenever the list is non-empty — **independently of
+`rbac.clusterWideBindings`**. Leaving the default in place binds union roles into those
+six namespaces too, which is Option 2's behavior, not this one.
+
+With `taskNamespaces` empty, the chart binds union roles only in the release namespace.
+`clusterresourcesync` is responsible for creating a RoleBinding for each union `ns-*`
+role as it provisions each task namespace, and holds `bind` cluster-wide on exactly
+those roles for this purpose — unconditionally, whether or not `commonServiceAccount`
+is enabled.
+
+**This combination is incompatible with image-pull secret mirroring**, which is enabled
+by default (`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled:
+true`). The pod webhook mirrors pull secrets into each task namespace; with
+`taskNamespaces` empty and `clusterWideBindings` false it has no reach to do that, and
+the chart fails the render rather than let that fail silently at image-pull time (see
+"Components that cannot use these options" below). To use Option 1, also set:
+
+```yaml
+config:
+  core:
+    webhook:
+      embeddedSecretManagerConfig:
+        imagePullSecrets:
+          enabled: false
+```
+
+or use Option 2 instead if your task pods need managed image-pull secrets.
 
 ### Option 2 — namespaces are known ahead of time
 
@@ -330,8 +360,14 @@ namespaces:
 ```
 
 The chart emits a RoleBinding per listed namespace. In this posture
-`clusterresourcesync` needs no cluster-scoped RBAC object at all, and uses
-`clusterresourcesync.namespacedRoleRules` instead of `clusterRoleRules`.
+`clusterresourcesync` needs none of its *own* cluster-scoped RBAC — its provisioning
+rules move to a ClusterRole bound only by per-namespace RoleBindings, via
+`clusterresourcesync.namespacedRoleRules` instead of `clusterRoleRules`. One
+cluster-scoped object remains regardless of this posture: a `ClusterRoleBinding` to the
+built-in `system:auth-delegator` `ClusterRole`, required for its apiserver
+auth-delegation and emitted whenever `clusterresourcesync.enabled` is true. The chart
+does not define that `ClusterRole` itself, so it sits outside the bucket model this
+section otherwise describes and isn't affected by either option.
 
 Use this only when task namespaces really are provisioned ahead of time. A project
 registered later will get a namespace that is not in the list, and workloads will have
@@ -381,9 +417,10 @@ reason to prefer Option 1 even when the namespace set happens to be known.
   this is a property of how the query is written rather than of what it needs.)
 - **The pod webhook requires reach into task namespaces** when
   `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` is true (the
-  default), because it creates the mirrored secret in each task namespace. Option 1 or
-  Option 2 both provide that; `rbac.clusterWideBindings: false` with an empty
-  `taskNamespaces` does not, and the render fails.
+  default), because it creates the mirrored secret in each task namespace. Option 2
+  provides that automatically, since `taskNamespaces` is non-empty. Option 1 does
+  not — it deliberately empties `taskNamespaces` — so it also requires disabling
+  image-pull secret mirroring (see Option 1 above); the render fails otherwise.
 
 ### Diagnosing a missing binding
 
@@ -421,8 +458,13 @@ registry, suspect a missing binding before suspecting the registry.
 The pod webhook mirrors image-pull secrets into each task namespace. If it cannot, the
 `Forbidden` is **swallowed** — the pod is admitted without its secret and the failure
 appears at image pull, with nothing in the pod's events pointing at RBAC. Check the
-webhook's own logs from around the time of admission for an error creating the mirrored
-secret; that is the only trace.
+webhook's own logs from around the time of admission:
+
+```bash
+kubectl logs -n <release-ns> deploy/union-pod-webhook
+```
+
+for an error creating the mirrored secret — that is the only trace.
 
 The render-time guard prevents the configuration that causes this, so you should only
 ever see it if the bindings were removed out-of-band after install.
