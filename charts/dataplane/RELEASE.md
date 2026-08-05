@@ -122,6 +122,16 @@
   on `namespaces`/`pods`) for log shipping, independent of `taskNamespaces` and
   `rbac.clusterWideBindings`.
 
+- **`clusterresourcesync.namespacedRoleRules` (new) is used instead of
+  `clusterRoleRules` when the component is confined to `taskNamespaces`.** With
+  `rbac.clusterWideBindings: false` and a non-empty `taskNamespaces`,
+  `clusterresourcesync` renders **no cluster-scoped RBAC object at all** — its rules
+  live in a ClusterRole that is bound only by per-namespace RoleBindings. The
+  constrained list is `clusterRoleRules` minus `namespaces` (pre-created in this
+  posture) and `clusterrolebindings` (unused in this posture). **The default posture is
+  unchanged**; `namespaces` is cluster-scoped and no RoleBinding can convey it, so an
+  install that relies on `clusterresourcesync` creating namespaces must keep it.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
