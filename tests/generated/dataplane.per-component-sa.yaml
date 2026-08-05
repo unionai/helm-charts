@@ -7555,12 +7555,6 @@ rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
     verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "delete"]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7574,6 +7568,43 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount

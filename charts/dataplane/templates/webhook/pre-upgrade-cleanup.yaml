@@ -20,6 +20,62 @@ metadata:
     helm.sh/hook-weight: "-5"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: {{ .Release.Namespace }}
+---
+{{/*
+Cluster-scoped half, KEPT IN BOTH PRIVILEGE MODES.
+
+MutatingWebhookConfiguration is cluster-scoped, so this cannot be a Role. It is
+retained under low_privilege rather than gated off because:
+
+  1. The grant is hook-scoped and self-deleting -- this object, its binding and
+     its ServiceAccount all carry hook-delete-policy and do not outlive the hook.
+     Because the hook is pre-upgrade, none of them render on a fresh install at
+     all; `helm template` shows them only because it renders hooks unconditionally.
+  2. It is load-bearing exactly once per cluster, ever. The Job names the literal
+     pre-rename string `flyte-pod-webhook` with --ignore-not-found; the current
+     name is union-pod-webhook-<org>. Once a cluster has upgraded past the rename
+     the deletion is permanently inert.
+  3. Dropping it would be worse than keeping it. The orphaned
+     MutatingWebhookConfiguration causes "service not found" errors on pod
+     creation, so a low-privilege upgrade would get a cluster-wide broken pod
+     admission path with the symptom appearing after the upgrade.
+
+Pinned in tests/rbac-baseline.yaml as the single union escape hatch.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: flyte-webhook-cleanup-{{ .Release.Namespace }}
@@ -30,12 +86,6 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
     verbs: ["get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
