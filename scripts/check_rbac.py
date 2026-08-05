@@ -20,6 +20,29 @@ tests/generated/ (which `make helm-test` already proves match a fresh render):
                          stop another one being written, so this makes it
                          mechanical.
 
+  ns_role_cluster_bound_when_restricted
+                         An ns-read or ns-write bucket role may not be
+                         referenced by a ClusterRoleBinding IN A RENDER THAT
+                         HAS OPTED OUT of cluster-wide bindings. Those buckets
+                         hold namespaced resource types; when an operator sets
+                         rbac.clusterWideBindings: false they have asked for
+                         reach to be named per namespace, and a surviving
+                         ClusterRoleBinding silently returns cluster-wide reach
+                         -- for ns-read that is every Secret in the cluster.
+
+                         It is NOT an error by default: task namespaces are
+                         created at runtime, so the chart cannot enumerate them
+                         and the cluster-wide binding is load-bearing. Making
+                         this unconditional is what broke multi-namespace
+                         dataplanes in d37f4a9f.
+
+  low_priv_union_cluster_role
+                         A union-authored, non-hook ClusterRole may not render
+                         under low_privilege: true. Has NO baseline: a
+                         cluster-scoped grant that cannot survive namespacing
+                         means the COMPONENT must be gated, not its rules
+                         degraded into something inert.
+
 Known violations are pinned in tests/rbac-baseline.yaml, keyed by the triple
 (snapshot, role name, invariant). A pinned entry allows the violation in the
 snapshots it names and nowhere else, so reintroducing a cluster-wide grant in a
@@ -77,6 +100,51 @@ READ_VERBS = {"get", "list", "watch"}
 CLUSTER_WRITE = "cluster_write"
 LOW_PRIV_CLUSTER_ROLE = "low_priv_cluster_role"
 DEAD_CLUSTER_RULE = "dead_cluster_rule"
+NS_ROLE_CLUSTER_BOUND_WHEN_RESTRICTED = "ns_role_cluster_bound_when_restricted"
+LOW_PRIV_UNION_CLUSTER_ROLE = "low_priv_union_cluster_role"
+
+# Bucket suffixes the scope x verb RBAC emitter can produce
+# (dataplane.rbac.roleName: {release-namespace}-{identity}-{bucket}).
+# NAMESPACED_BUCKET_SUFFIXES denotes namespaced resource types, for the
+# cluster-binding-when-restricted check. BUCKET_SUFFIXES is all four, for the
+# low-privilege union-role check below.
+NAMESPACED_BUCKET_SUFFIXES = ("-ns-read", "-ns-write")
+BUCKET_SUFFIXES = NAMESPACED_BUCKET_SUFFIXES + ("-cluster-read", "-cluster-write")
+
+# Union-authored RBAC object name prefixes, for the hard-fail low-privilege
+# check, covering the handful of union objects that do NOT go through the
+# bucket emitter above and so carry no bucket suffix (clusterresourcesync's
+# ServiceAccount and its ClusterRoleBinding to system:auth-delegator name
+# themselves with a literal "union-" prefix baked into the template, not
+# derived from .Release.Namespace).
+#
+# This is deliberately NOT how bucket roles are recognized: a bucket role's
+# name is {release-namespace}-{identity}-{bucket}, and the release namespace
+# is an operator-chosen value this checker cannot predict. A fixed prefix
+# like "union-" would only match a bucket role by accident of the fixture's
+# release namespace happening to be named "union" -- every other release
+# namespace would render e.g. "acme-union-ns-read", silently turning this
+# hard-fail check into a no-op for every real deployment. See is_union_role,
+# which matches bucket roles by SUFFIX instead, and falls back to this prefix
+# list only for non-bucket objects.
+#
+# CURATED and deliberately not exhaustive, matching the
+# CLUSTER_SCOPED_RESOURCE_BASES precedent: a missing prefix is a false
+# negative, not a false positive, so growing this list is always safe. Third-
+# party ClusterRoles (knative, fluent-bit, the monitoring stack) keep the
+# pinnable low_priv_cluster_role ratchet instead.
+UNION_ROLE_NAME_PREFIXES = (
+    "union-",
+)
+
+# Objects carrying this annotation live and die with a Helm hook rather than
+# with the release. A pre-upgrade hook's ClusterRole does not render on a fresh
+# install and is deleted on hook success or failure, so its grant is bounded in
+# TIME rather than in scope. That is a materially different risk from a standing
+# cluster-wide grant, so hook objects are exempt from the hard-fail check and
+# fall back to the pinnable ratchet. Keying on the annotation rather than a name
+# list states the actual reason and covers any future hook automatically.
+HELM_HOOK_ANNOTATION = "helm.sh/hook"
 
 # Invariants whose baseline entry carries a `grant` fingerprint, so a pinned
 # violation cannot be WIDENED without failing the check. cluster_write pins who
@@ -365,6 +433,78 @@ def fixture_is_low_privilege(stem):
     return bool(value)
 
 
+def is_namespaced_bucket_role(name):
+    """True if this role name denotes an ns-read or ns-write bucket."""
+    return name.endswith(NAMESPACED_BUCKET_SUFFIXES)
+
+
+def is_union_role(name):
+    """True if this RBAC object is authored by this chart rather than a subchart.
+
+    Two signals: a bucket role's name ends in one of BUCKET_SUFFIXES
+    regardless of release namespace (the chart controls the identity and
+    bucket segments, not the operator), and UNION_ROLE_NAME_PREFIXES catches
+    the handful of union objects that do not go through the bucket emitter.
+    """
+    return name.endswith(BUCKET_SUFFIXES) or name.startswith(UNION_ROLE_NAME_PREFIXES)
+
+
+def is_hook_object(doc):
+    """True if this object's lifetime is bounded by a Helm hook, not the release."""
+    annotations = (doc.get("metadata") or {}).get("annotations") or {}
+    return HELM_HOOK_ANNOTATION in annotations
+
+
+def restricts_cluster_bindings(docs):
+    """True if the render shows evidence that at least one ns-* role is meant
+    to be confined to named namespaces rather than bound cluster-wide.
+
+    Evidence is PER-ROLE: a role counts as confined when some RoleBinding
+    reaches it and NO ClusterRoleBinding also reaches it. Under the default
+    posture, dataplane.rbac.emitBucket always pairs the two -- every
+    namespaced bucket role gets both a RoleBinding (into each task namespace)
+    and a ClusterRoleBinding -- so a role appearing confined this way cannot
+    happen by accident of the default configuration; it only happens once
+    rbac.clusterWideBindings: false has removed that role's ClusterRoleBinding
+    while its RoleBindings stayed.
+
+    The signal returned is RENDER-WIDE ("does at least one role show this
+    evidence"), deliberately not evaluated only for the specific role
+    find_violations' loop is asking about. A role with both a RoleBinding and
+    a ClusterRoleBinding looks unremarkable in isolation -- that is exactly
+    what the default posture looks like -- so the only way to tell that
+    render apart from one where THIS role's ClusterRoleBinding leaked despite
+    an opt-out is to find at least one OTHER role in the same render that
+    stayed properly confined. That is the render's proof it rejected
+    cluster-wide reach; a role that still has a ClusterRoleBinding alongside
+    it is the anomaly.
+
+    Conservative by construction: when in doubt it reports False, so the
+    invariant simply does not fire. A false negative here is a missed
+    warning; a false positive would fail CI on the default configuration --
+    which is why this asks "does at least one role show confinement"
+    rather than "do ALL roles show confinement": requiring unanimity would
+    let a single leaked ClusterRoleBinding erase the very evidence needed to
+    catch it, which is the failure mode this replaces (see d37f4a9f and the
+    unconditional predecessor of this check). The blind spot that remains: a
+    regression that hits every ns-* role at once -- rbac.clusterWideBindings
+    itself being ignored outright, rather than one role's binding bypassing
+    it -- renders indistinguishably from the default posture and is not
+    caught here.
+    """
+    ns_bound = set()
+    cluster_bound = set()
+    for d in docs:
+        ref = (d.get("roleRef") or {}).get("name", "")
+        if not is_namespaced_bucket_role(ref):
+            continue
+        if d.get("kind") == "ClusterRoleBinding":
+            cluster_bound.add(ref)
+        elif d.get("kind") == "RoleBinding":
+            ns_bound.add(ref)
+    return bool(ns_bound - cluster_bound)
+
+
 def find_violations(docs, low_privilege):
     """Return {(name, invariant): grant} for one rendered snapshot.
 
@@ -388,17 +528,24 @@ def find_violations(docs, low_privilege):
 
     for (kind, name), role in roles_by_name.items():
         if low_privilege and kind == "ClusterRole":
-            violations[(name, LOW_PRIV_CLUSTER_ROLE)] = None
+            if is_union_role(name) and not is_hook_object(role):
+                violations[(name, LOW_PRIV_UNION_CLUSTER_ROLE)] = None
+            else:
+                violations[(name, LOW_PRIV_CLUSTER_ROLE)] = None
         if kind == "Role":
             dead = tuple(find_dead_cluster_rules(role))
             if dead:
                 violations[(name, DEAD_CLUSTER_RULE)] = dead
+
+    restricted = restricts_cluster_bindings(docs)
 
     for binding in bindings:
         role_ref = binding.get("roleRef") or {}
         ref_name = role_ref.get("name")
         if not ref_name:
             continue
+        if is_namespaced_bucket_role(ref_name) and restricted:
+            violations[(ref_name, NS_ROLE_CLUSTER_BOUND_WHEN_RESTRICTED)] = None
         # A roleRef we cannot resolve is a built-in cluster role (for example
         # system:auth-delegator). We cannot read its rules, so we cannot prove
         # it is read-only. Treat it as a violation requiring a baseline entry.
@@ -527,9 +674,13 @@ HEADER = """\
 #                      the namespaced Role names. Widening is one more dead
 #                      resource on a Role already pinned for this invariant.
 #
-# low_priv_cluster_role carries no grant on purpose: there the violation is
-# that the ClusterRole EXISTS at all under low_privilege, not what it contains,
-# so a rules fingerprint would pin data the invariant does not assert.
+# low_priv_cluster_role and ns_role_cluster_bound_when_restricted carry no
+# grant on purpose: there the violation is that the object EXISTS (or the
+# binding survives) at all, not what it contains, so a rules fingerprint would
+# pin data the invariant does not assert.
+#
+# low_priv_union_cluster_role NEVER appears in this file: it has no baseline
+# and cannot be pinned. See scripts/check_rbac.py's module docstring.
 #
 # invariants:
 #   cluster_write          a ClusterRoleBinding references this role and it
@@ -543,6 +694,11 @@ HEADER = """\
 #                          ignores the rule, so the grant is dead and the
 #                          workload gets Forbidden at runtime. resources:
 #                          ['*'] is exempt -- see design spec 5
+#   ns_role_cluster_bound_when_restricted
+#                          this ns-read or ns-write bucket role is referenced
+#                          by a ClusterRoleBinding in a render that opted out
+#                          of cluster-wide bindings (rbac.clusterWideBindings:
+#                          false) -- see scripts/check_rbac.py
 """
 
 
@@ -596,6 +752,31 @@ def main():
     violations = collect_all_violations()
     baseline, errors = load_baseline()
 
+    # low_priv_union_cluster_role has NO baseline: pull its keys out before any
+    # baseline comparison so it can never be pinned via --write-baseline, and
+    # so a hand-added baseline entry for it always reads as STALE (nothing in
+    # the trimmed violations set can ever match it) rather than as accepted.
+    hard_failures = sorted(
+        key for key in violations if key[2] == LOW_PRIV_UNION_CLUSTER_ROLE
+    )
+    violations = {
+        key: grant
+        for key, grant in violations.items()
+        if key[2] != LOW_PRIV_UNION_CLUSTER_ROLE
+    }
+
+    for snapshot, name, invariant in hard_failures:
+        print(f"FORBIDDEN      {invariant:22} {name}  [{snapshot}]", file=sys.stderr)
+    if hard_failures:
+        print(
+            "\nA union-authored ClusterRole rendered under low_privilege: true.\n"
+            "This invariant has NO baseline: a cluster-scoped grant that cannot\n"
+            "survive namespacing means the COMPONENT must be gated, not its rules\n"
+            "degraded. See the gating framework in the RBAC scope-split spec.\n"
+            "Helm hook objects are exempt -- their lifetime is bounded by the hook.",
+            file=sys.stderr,
+        )
+
     if args.write_baseline:
         entries = write_baseline(violations, baseline)
         print(
@@ -603,7 +784,7 @@ def main():
             f"(snapshot, name, invariant) triples to "
             f"{BASELINE_PATH.relative_to(REPO_ROOT)}"
         )
-        return 0
+        return 1 if hard_failures else 0
 
     def sort_key(key):
         snapshot, name, invariant = key
@@ -680,7 +861,7 @@ def main():
             file=sys.stderr,
         )
 
-    if errors or new or changed or stale:
+    if errors or new or changed or stale or hard_failures:
         return 1
 
     snapshots = {snapshot for snapshot, _, _ in violations}
