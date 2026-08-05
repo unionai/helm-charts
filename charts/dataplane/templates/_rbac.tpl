@@ -130,7 +130,7 @@ subjects:
 {{/*
 skipReleaseNamespaceBinding is set: the caller does not want this identity to
 hold a grant in the release namespace at all, only in the namespaces named by
-the per-taskNamespaces loop below. Today the only caller is
+the per-namespaces.managed loop below. Today the only caller is
 clusterresourcesync's constrained posture (see
 clusterresourcesync/serviceaccount.yaml): it provisions OTHER namespaces, and
 its reach there is meant to be exactly the enumerated task namespaces and
@@ -151,22 +151,23 @@ RoleBinding's own namespace. That is the whole mechanism this posture rests on
 -- the rules are defined once, cluster-wide reach is not implied, and each
 namespace is named explicitly.
 
-Emitted whenever taskNamespaces is non-empty AND namespaces.create is true,
-independently of rbac.clusterWideBindings, so that enumerating namespaces and
-dropping the cluster-wide binding are separate steps an operator can take in
-either order.
+Emitted whenever namespaces.managed is non-empty AND namespaces.enabled is
+true, independently of rbac.clusterWideBindings, so that enumerating
+namespaces and dropping the cluster-wide binding are separate steps an
+operator can take in either order.
 
-namespaces.create is load-bearing here, not just for Namespace creation: it is
-the chart's only signal that the namespaces named by taskNamespaces actually
-exist (or will, because the chart itself is creating them a few lines away in
-common/namespaces.yaml). Without this gate, a bare low_privilege: false
-install -- taskNamespaces at its non-empty default, namespaces.create at its
-default false -- would emit RoleBindings into six namespaces nothing has
-created, and a fresh install or ArgoCD sync would fail with "namespaces
-<name> not found" before clusterresourcesync ever ran. See RELEASE.md.
+namespaces.enabled is load-bearing here, not just for Namespace creation: it
+is the chart's only signal that the namespaces named by namespaces.managed
+actually exist (or will, because the chart itself is creating them a few
+lines away in common/namespaces.yaml). Without this gate, a bare
+low_privilege: false install -- namespaces.managed at its non-empty default,
+namespaces.enabled at its default false -- would emit RoleBindings into six
+namespaces nothing has created, and a fresh install or ArgoCD sync would fail
+with "namespaces <name> not found" before clusterresourcesync ever ran. See
+RELEASE.md.
 */}}
-{{- if .ctx.Values.namespaces.create }}
-{{- range $ns := .ctx.Values.taskNamespaces }}
+{{- if .ctx.Values.namespaces.enabled }}
+{{- range $ns := .ctx.Values.namespaces.managed }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

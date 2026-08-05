@@ -32,8 +32,6 @@
 
   **All other combinations are unaffected.** `namespaces.enabled: true` + `low_privilege: false` keeps cluster-scoped RBAC and the six pre-seeded namespaces; every `low_privilege: true` deployment is namespace-scoped exactly as before, and pre-seeds nothing regardless of `namespaces.enabled`.
 
-  **`namespaces.enabled` is renamed `namespaces.create` later in this same release** (see "Union RBAC roles are renamed and split by resource scope and verb class" and the entries below it) and gains a second responsibility there — gating the `taskNamespaces` RoleBindings, not just Namespace pre-seeding. Everywhere `namespaces.enabled` appears in this entry describes the flag as it existed when this paragraph was written; by the time this release ships, use `namespaces.create`.
-
   `low_privilege` must be a **YAML boolean**. The chart has no `values.schema.json`, and every `low_privilege` gate reads the value for raw Go-template truthiness, so a quoted `"false"` is truthy and means `true`. Normalizing this needs a schema plus a sweep of all twelve gates — normalizing only some of them yields a mixed-scope chart that installs cleanly and is broken — so it is deliberately left to its own change. See "Upgrade notes" below.
 
   A new `make rbac-test` gate (`scripts/check_rbac.py`, pinned in `tests/rbac-baseline.yaml`) asserts against every committed render that no `ClusterRoleBinding` references a write-bearing role and that no `ClusterRole` renders under `low_privilege`. Today's violations are pinned per snapshot, each with a written justification and the phase that owns it, so later phases can only shrink the list.
@@ -89,15 +87,15 @@
   runtime, so the chart cannot enumerate them and the ClusterRoleBinding is what
   gives union workloads reach into them. Setting this `false` drops those bindings
   and relies on per-namespace RoleBindings instead — either the ones this chart emits
-  for `taskNamespaces`, or ones a provisioner creates at runtime. **The chart cannot
+  for `namespaces.managed`, or ones a provisioner creates at runtime. **The chart cannot
   verify that anything creates them**; if nothing does, the install renders green and
   task pods fail with `Forbidden` at their first execution rather than at deploy.
 
-- **`taskNamespaces` (new) enumerates the task namespaces to pre-seed and to bind union
-  roles into, when `namespaces.create: true` (see below).** It defaults to the six
-  names `common/namespaces.yaml` previously hardcoded. By itself this default is
-  inert — see the `namespaces.create` entry immediately below for why, and for the
-  installs it protects. Under `low_privilege: false` **with `namespaces.create: true`**
+- **`namespaces.managed` (new) enumerates the task namespaces to pre-seed and to bind
+  union roles into, when `namespaces.enabled: true` (see below).** It defaults to the
+  six names `common/namespaces.yaml` previously hardcoded. By itself this default is
+  inert — see the `namespaces.enabled` entry immediately below for why, and for the
+  installs it protects. Under `low_privilege: false` **with `namespaces.enabled: true`**
   the chart emits a `RoleBinding` per listed namespace for each union `ns-read` /
   `ns-write` role. Combined with `rbac.clusterWideBindings: false`, union's own `ns-*`
   roles then hold permissions only in these namespaces and the release namespace — no
@@ -108,38 +106,43 @@
   fully confined by this alone:** with `fluentbit.enabled: true` (the default),
   fluent-bit runs as the same ServiceAccount and holds its own read-only cluster-wide
   grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping, independent of
-  `taskNamespaces` and `rbac.clusterWideBindings`.
+  `namespaces.managed` and `rbac.clusterWideBindings`.
 
-- **`namespaces.enabled` is renamed `namespaces.create`, and now also gates the
-  per-`taskNamespaces` RoleBindings described above (not just Namespace object
-  creation).** Setting the old key `namespaces.enabled` now fails the render with
-  instructions to rename it — Helm does not error on unknown values keys, so a silent
-  rename would leave an overlay that still sets the old key believing namespace
-  pre-seeding and binding are configured when neither is happening.
+- **`namespaces.enabled` now also gates the per-`namespaces.managed` RoleBindings
+  described above, not just Namespace object creation.** The two were previously
+  independent: `namespaces.enabled` only pre-seeded the six hardcoded namespaces, and
+  said nothing about whether union roles were bound into them. They are now one
+  decision, expressed as one flag next to the list it governs — the chart only asserts
+  reach into namespaces it creates (or that an operator has told it, via this same
+  flag, are otherwise already there). **`namespaces.enabled: true` keeps its existing
+  meaning and gains this second one**: an overlay that already sets it will gain
+  RoleBindings into the namespaces it was already creating. That is additive, and
+  redundant with the `ClusterRoleBinding` emitted under the default
+  `rbac.clusterWideBindings: true`, so it is not a privilege change for the common
+  case.
 
   **This closes a gap in an earlier version of this same change.** An intermediate
-  state of this branch gated the per-`taskNamespaces` RoleBinding loop on
-  `taskNamespaces` alone, independently of `namespaces.enabled`/`namespaces.create`.
-  Combined with `taskNamespaces` defaulting to six non-empty names, a bare
-  `low_privilege: false` install — the chart's default full-privilege posture, with
-  every other setting left alone — would have emitted twelve `RoleBinding`s into six
-  namespaces that nothing creates (`namespaces.create` defaults `false`). On a fresh
-  install or ArgoCD sync those namespaces do not exist yet — `clusterresourcesync`
-  hasn't run — so the release would fail with `namespaces "flytesnacks-development"
-  not found`. Gating the loop on `namespaces.create` as well restores the default
-  render to exactly what it was before `taskNamespaces` was introduced: a default
-  install has `namespaces.create: false`, so it emits no per-namespace RoleBindings
-  regardless of `taskNamespaces`'s contents. This never shipped as a release, so there
-  is no prior version to migrate away from — only the key rename above is a real
-  migration concern.
+  state of this branch gated the per-`namespaces.managed` RoleBinding loop on
+  `namespaces.managed` alone, independently of `namespaces.enabled`. Combined with
+  `namespaces.managed` defaulting to six non-empty names, a bare `low_privilege: false`
+  install — the chart's default full-privilege posture, with every other setting left
+  alone — would have emitted twelve `RoleBinding`s into six namespaces that nothing
+  creates (`namespaces.enabled` defaults `false`). On a fresh install or ArgoCD sync
+  those namespaces do not exist yet — `clusterresourcesync` hasn't run — so the release
+  would fail with `namespaces "flytesnacks-development" not found`. Gating the loop on
+  `namespaces.enabled` as well restores the default render to exactly what it was
+  before `namespaces.managed` was introduced: a default install has
+  `namespaces.enabled: false`, so it emits no per-namespace RoleBindings regardless of
+  `namespaces.managed`'s contents. This never shipped as a release, so there is no
+  migration concern here.
 
 - **`clusterresourcesync.namespacedRoleRules` (new) is used instead of
-  `clusterRoleRules` when the component is confined to `taskNamespaces`.** With
-  `rbac.clusterWideBindings: false`, a non-empty `taskNamespaces`, **and
-  `namespaces.create: true`,** `clusterresourcesync` renders **no cluster-scoped RBAC
+  `clusterRoleRules` when the component is confined to `namespaces.managed`.** With
+  `rbac.clusterWideBindings: false`, a non-empty `namespaces.managed`, **and
+  `namespaces.enabled: true`,** `clusterresourcesync` renders **no cluster-scoped RBAC
   object at all** — its rules live in a ClusterRole that is bound only by per-namespace
-  RoleBindings. (`namespaces.create` gates this the same way it gates the
-  `taskNamespaces` RoleBinding loop above: without it, routing clusterresourcesync's
+  RoleBindings. (`namespaces.enabled` gates this the same way it gates the
+  `namespaces.managed` RoleBinding loop above: without it, routing clusterresourcesync's
   rules into that same loop would leave it with a ClusterRole and no binding of any
   kind, so this combination instead falls back to the default posture below rather
   than silently bricking the component.) The constrained list is `clusterRoleRules`
@@ -159,18 +162,17 @@
   cleanly and crash-looped on the first check, leaving the node tainted.
 - **The pod webhook now requires reach into task namespaces when image-pull secret
   mirroring is enabled.** With `rbac.clusterWideBindings: false` and either an empty
-  `taskNamespaces` or `namespaces.create: false`, the webhook cannot create the
+  `namespaces.managed` or `namespaces.enabled: false`, the webhook cannot create the
   mirrored secret, and the resulting `Forbidden` is swallowed rather than surfaced —
   pods are admitted without their secret and fail later with `ImagePullBackOff`. The
-  render now fails instead. Enumerate `taskNamespaces` and set `namespaces.create:
+  render now fails instead. Enumerate `namespaces.managed` and set `namespaces.enabled:
   true`, or disable image-pull secret mirroring.
 
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
 - **fluentbit `ServiceAccount` renamed** to `union-system` (from `fluentbit-system`). No action unless you bound external policy (e.g. a cloud IAM trust) to the old ServiceAccount name.
-- **`namespaces.enabled` is renamed `namespaces.create` — rename the key in every overlay that sets it.** Setting the old key now fails the render at template time (`namespaces.enabled has been renamed to namespaces.create`) rather than being silently ignored. This is a rename, not just a new name for the old behavior: `namespaces.create` also now gates whether the `taskNamespaces` RoleBindings are emitted (see "Configuration changes" above) — an overlay that previously set `namespaces.enabled: true` only to pre-seed the six default namespaces will, after the rename, also start binding union roles into them if `rbac.clusterWideBindings: false` is set. Review your `taskNamespaces` / `rbac.clusterWideBindings` settings alongside the rename, not just the key name.
-- **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a genuine multi-namespace deployment.** If you were running that combination and relying on it behaving as single-namespace, it will not any more: task pods are no longer pinned to the release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`). ServiceAccounts are unaffected: `commonServiceAccount.enabled` defaults to `true`, so components keep sharing `union-system` in this mode as before. **If you actually want single-namespace behavior, set `low_privilege: true`** — that is now the flag that means it, and `namespaces.enabled` (now `namespaces.create`) `: false` on its own never did.
+- **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a genuine multi-namespace deployment.** If you were running that combination and relying on it behaving as single-namespace, it will not any more: task pods are no longer pinned to the release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`). ServiceAccounts are unaffected: `commonServiceAccount.enabled` defaults to `true`, so components keep sharing `union-system` in this mode as before. **If you actually want single-namespace behavior, set `low_privilege: true`** — that is now the flag that means it, and `namespaces.enabled: false` on its own never did.
 - **`clusterresourcesync.enabled` defaults to `false` — a `low_privilege: false` data plane must now enable it (or pre-create namespaces).** It was previously suppressed entirely in this mode by the `singleNamespace` gate, so leaving it off looked harmless. Now that the mode is genuinely multi-namespace, something has to create the per-project/per-domain namespaces and their RBAC as projects are registered. Either set `clusterresourcesync.enabled: true`, or pre-create every namespace your `namespace_mapping.template` can produce by some other means. Task pods land in `Forbidden`/`namespace not found` otherwise.
 - **RBAC scope in that mode is unchanged from the last release** — it stays cluster-scoped. Nothing that binds to `flytepropeller-role`, `union-executor`, `union-leaseworker`, `proxy-system` or `union-webhook-role` by name needs to change, and there is no leftover-`ClusterRoleBinding` cleanup to do.
 - **`low_privilege` must be a YAML boolean — check for a quoted value.** If any overlay sets `low_privilege: "false"` as a quoted string (or templates the value), it is read for Go-template truthiness and therefore means `true`: the deployment is silently low-privilege. This is **unchanged** in this release and is not fixed by it — the chart has no `values.schema.json` to reject the string, and normalizing one gate without the other eleven would render a mixed-scope chart. Grep your generated values for a quoted `low_privilege` and unquote it; a deployment that has been silently low-privilege will change scope when you do, so treat it as a privilege change and roll out accordingly.
