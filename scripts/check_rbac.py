@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Enforce RBAC invariants on the rendered dataplane chart.
 
-Three invariants, all evaluated against the committed renders in
+Six invariants, all evaluated against the committed renders in
 tests/generated/ (which `make helm-test` already proves match a fresh render):
 
   cluster_write          No ClusterRoleBinding may reference a role that
@@ -42,6 +42,38 @@ tests/generated/ (which `make helm-test` already proves match a fresh render):
                          cluster-scoped grant that cannot survive namespacing
                          means the COMPONENT must be gated, not its rules
                          degraded into something inert.
+
+  ns_role_missing_from_bind_list
+                         Every rendered ns-read / ns-write bucket ClusterRole
+                         must appear in the resourceNames of some union-
+                         authored `bind` grant on `clusterroles` (the grant
+                         clusterresourcesync holds so it can create
+                         RoleBindings referencing those roles without an
+                         escalation check failure). Has NO baseline: the `bind`
+                         list is DERIVED (dataplane.rbac.bucketRoleNames,
+                         itself derived from dataplane.rbac.identities), so if
+                         it and the roleName helper it derives from ever fall
+                         out of step -- e.g. a future refactor of the identity
+                         helpers -- the drift is invisible at render time and
+                         surfaces only as a runtime `Forbidden` when a
+                         provisioner tries to bind a role that exists but was
+                         never named. This is the dangerous direction: the
+                         reverse (a resourceNames entry naming a role that
+                         never renders) is an inert no-op, because nothing can
+                         bind a role that does not exist, and is deliberately
+                         NOT checked here.
+
+                         Scoped to union-authored roles only (is_union_role):
+                         evaluated unscoped, this would also match vendored
+                         subcharts' own `bind` rules (knative-serving-operator
+                         ships one), which name their own ClusterRoles and
+                         have nothing to do with this chart's ns-* buckets.
+
+                         Only fires in a render that has a union `bind` grant
+                         at all (clusterresourcesync enabled and not
+                         singleNamespace); a render with no such grant asserts
+                         nothing about which roles a provisioner can bind, so
+                         there is nothing to check.
 
 Known violations are pinned in tests/rbac-baseline.yaml, keyed by the triple
 (snapshot, role name, invariant). A pinned entry allows the violation in the
@@ -102,6 +134,21 @@ LOW_PRIV_CLUSTER_ROLE = "low_priv_cluster_role"
 DEAD_CLUSTER_RULE = "dead_cluster_rule"
 NS_ROLE_CLUSTER_BOUND_WHEN_RESTRICTED = "ns_role_cluster_bound_when_restricted"
 LOW_PRIV_UNION_CLUSTER_ROLE = "low_priv_union_cluster_role"
+NS_ROLE_MISSING_FROM_BIND_LIST = "ns_role_missing_from_bind_list"
+
+# Invariants with NO baseline: a violation here is always a bug, never an
+# accepted tradeoff, so it cannot be pinned via tests/rbac-baseline.yaml.
+# --write-baseline strips these out before writing, and the normal check
+# reports them as FORBIDDEN regardless of what the baseline says.
+HARD_FAIL_INVARIANTS = frozenset({LOW_PRIV_UNION_CLUSTER_ROLE, NS_ROLE_MISSING_FROM_BIND_LIST})
+
+# The `bind` grant this chart emits so clusterresourcesync can create
+# RoleBindings referencing union ns-* ClusterRoles (see
+# clusterresourcesync/serviceaccount.yaml). Matching on resource + verb, not
+# apiGroup, mirrors is_write_rule/dead_cluster_resources elsewhere in this
+# script: a rule's apiGroups list is not consulted for matching purposes.
+BIND_RESOURCE = "clusterroles"
+BIND_VERB = "bind"
 
 # Bucket suffixes the scope x verb RBAC emitter can produce
 # (dataplane.rbac.roleName: {release-namespace}-{identity}-{bucket}).
@@ -505,6 +552,71 @@ def restricts_cluster_bindings(docs):
     return bool(ns_bound - cluster_bound)
 
 
+def find_union_bind_resource_names(docs):
+    """Return (resourceNames, found) for the union-authored `bind` grant(s).
+
+    `found` is True iff at least one union-authored role carries a `bind`
+    grant on `clusterroles` -- distinct from the resourceNames set being
+    empty, which would otherwise be indistinguishable from "no grant renders
+    in this snapshot at all" and silently skip the check it is meant to gate.
+
+    Scoped to is_union_role(name) roles only: unscoped, this would also match
+    vendored subcharts' own `bind` rules on their own ClusterRoles (notably
+    knative-serving-operator), which have nothing to do with this chart's
+    ns-* buckets and would report as false failures for every role that grant
+    doesn't happen to name.
+    """
+    names = set()
+    found = False
+    for doc in docs:
+        if doc.get("kind") not in ("Role", "ClusterRole"):
+            continue
+        role_name = (doc.get("metadata") or {}).get("name")
+        if not role_name or not is_union_role(role_name):
+            continue
+        for rule in doc.get("rules") or []:
+            if BIND_VERB not in (rule.get("verbs") or []):
+                continue
+            if BIND_RESOURCE not in (rule.get("resources") or []):
+                continue
+            found = True
+            names.update(rule.get("resourceNames") or [])
+    return names, found
+
+
+def find_ns_roles_missing_from_bind_list(docs):
+    """Return sorted names of rendered ns-* bucket ClusterRoles absent from
+    the union `bind` grant's resourceNames, for the dangerous direction only.
+
+    The dangerous direction is a rendered role the bind list does NOT name --
+    a provisioner cannot create a RoleBinding for it and gets a runtime
+    Forbidden with nothing wrong in the render. The reverse (a resourceNames
+    entry naming a role that never renders) is an inert no-op and is
+    deliberately not checked: nothing can bind a role that does not exist.
+
+    Only ClusterRoles are checked -- ns-* buckets render as namespaced Roles
+    under low_privilege: true, where clusterresourcesync itself never renders
+    (gating framework case 1), so there is no bind grant to check against in
+    that mode in the first place.
+
+    Returns an empty list (not a failure) when this snapshot carries no union
+    `bind` grant at all -- see find_union_bind_resource_names's `found`.
+    """
+    bind_names, found = find_union_bind_resource_names(docs)
+    if not found:
+        return []
+    missing = []
+    for doc in docs:
+        if doc.get("kind") != "ClusterRole":
+            continue
+        name = (doc.get("metadata") or {}).get("name")
+        if not name or not is_namespaced_bucket_role(name):
+            continue
+        if name not in bind_names:
+            missing.append(name)
+    return sorted(missing)
+
+
 def find_violations(docs, low_privilege):
     """Return {(name, invariant): grant} for one rendered snapshot.
 
@@ -538,6 +650,9 @@ def find_violations(docs, low_privilege):
                 violations[(name, DEAD_CLUSTER_RULE)] = dead
 
     restricted = restricts_cluster_bindings(docs)
+
+    for name in find_ns_roles_missing_from_bind_list(docs):
+        violations[(name, NS_ROLE_MISSING_FROM_BIND_LIST)] = None
 
     for binding in bindings:
         role_ref = binding.get("roleRef") or {}
@@ -679,8 +794,9 @@ HEADER = """\
 # binding survives) at all, not what it contains, so a rules fingerprint would
 # pin data the invariant does not assert.
 #
-# low_priv_union_cluster_role NEVER appears in this file: it has no baseline
-# and cannot be pinned. See scripts/check_rbac.py's module docstring.
+# low_priv_union_cluster_role and ns_role_missing_from_bind_list NEVER appear
+# in this file: they have no baseline and cannot be pinned. See
+# scripts/check_rbac.py's module docstring.
 #
 # invariants:
 #   cluster_write          a ClusterRoleBinding references this role and it
@@ -699,6 +815,10 @@ HEADER = """\
 #                          by a ClusterRoleBinding in a render that opted out
 #                          of cluster-wide bindings (rbac.clusterWideBindings:
 #                          false) -- see scripts/check_rbac.py
+#   ns_role_missing_from_bind_list
+#                          this ns-read or ns-write bucket ClusterRole is not
+#                          named in the union `bind` grant's resourceNames --
+#                          see scripts/check_rbac.py
 """
 
 
@@ -752,28 +872,40 @@ def main():
     violations = collect_all_violations()
     baseline, errors = load_baseline()
 
-    # low_priv_union_cluster_role has NO baseline: pull its keys out before any
-    # baseline comparison so it can never be pinned via --write-baseline, and
-    # so a hand-added baseline entry for it always reads as STALE (nothing in
+    # HARD_FAIL_INVARIANTS have NO baseline: pull their keys out before any
+    # baseline comparison so they can never be pinned via --write-baseline, and
+    # so a hand-added baseline entry for one always reads as STALE (nothing in
     # the trimmed violations set can ever match it) rather than as accepted.
     hard_failures = sorted(
-        key for key in violations if key[2] == LOW_PRIV_UNION_CLUSTER_ROLE
+        key for key in violations if key[2] in HARD_FAIL_INVARIANTS
     )
     violations = {
         key: grant
         for key, grant in violations.items()
-        if key[2] != LOW_PRIV_UNION_CLUSTER_ROLE
+        if key[2] not in HARD_FAIL_INVARIANTS
     }
 
     for snapshot, name, invariant in hard_failures:
         print(f"FORBIDDEN      {invariant:22} {name}  [{snapshot}]", file=sys.stderr)
-    if hard_failures:
+    if any(invariant == LOW_PRIV_UNION_CLUSTER_ROLE for _, _, invariant in hard_failures):
         print(
             "\nA union-authored ClusterRole rendered under low_privilege: true.\n"
             "This invariant has NO baseline: a cluster-scoped grant that cannot\n"
             "survive namespacing means the COMPONENT must be gated, not its rules\n"
             "degraded. See the gating framework in the RBAC scope-split spec.\n"
             "Helm hook objects are exempt -- their lifetime is bounded by the hook.",
+            file=sys.stderr,
+        )
+    if any(invariant == NS_ROLE_MISSING_FROM_BIND_LIST for _, _, invariant in hard_failures):
+        print(
+            "\nA rendered ns-read / ns-write bucket ClusterRole is not named in the\n"
+            "union `bind` grant's resourceNames. This invariant has NO baseline: the\n"
+            "bind list is DERIVED from the same identity/roleName helpers that render\n"
+            "the roles, so this can only mean the two fell out of step -- a\n"
+            "provisioner will get a runtime Forbidden trying to bind this role, with\n"
+            "nothing wrong in the render to point at. See\n"
+            "dataplane.rbac.bucketRoleNames in _rbac.tpl and\n"
+            "clusterresourcesync/serviceaccount.yaml.",
             file=sys.stderr,
         )
 
