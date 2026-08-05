@@ -1,0 +1,35 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# Coverage for commonServiceAccount.enabled: false together with
+# clusterresourcesync.enabled: true -- the combination dataplane RBAC
+# namespaced-bindings plan task 4 depends on for its bind grant to have any
+# teeth. dataplane.per-component-sa-full-priv.yaml covers per-component
+# ServiceAccounts alone; dataplane.clusterresourcesync.yaml covers
+# clusterresourcesync alone under the default shared ServiceAccount. Neither
+# renders a clusterresourcesync bind list naming more than one identity, so
+# neither would fail if the bind grant's resourceNames were hardcoded to name
+# only "union"'s ns-* roles instead of being derived per identity.
+#
+# This is that render: five per-component identities (executor, leaseworker,
+# operator, proxy, webhook) plus clusterresourcesync itself, each with its own
+# ns-* ClusterRoles. clusterresourcesync's bind grant must name all of them --
+# a regression back to a hardcoded "union" identity fails here first.
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+low_privilege: false
+commonServiceAccount:
+  enabled: false
+
+namespaces:
+  enabled: true
+
+secrets:
+  admin:
+    create: false
+
+clusterresourcesync:
+  enabled: true
+  config:
+    union:
+      auth:
+        enable: false

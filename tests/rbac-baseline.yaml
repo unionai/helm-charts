@@ -92,6 +92,7 @@ allowed:
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
   - dataplane.per-component-sa
+  - dataplane.per-component-sa-clustersync
   - dataplane.per-component-sa-full-priv
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
@@ -168,6 +169,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -356,6 +358,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -439,6 +442,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -522,6 +526,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -691,6 +696,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -840,6 +846,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -923,6 +930,7 @@ allowed:
   - dataplane.namespaced-bindings
   - dataplane.nodeobserver-full-priv
   - dataplane.oci
+  - dataplane.per-component-sa-clustersync
   - dataplane.storage-credentials-secret
   - dataplane.task-namespaces
   - dataplane.webhook-unmanaged-config-full-priv
@@ -1099,6 +1107,7 @@ allowed:
   snapshots:
   - dataplane.clusterresourcesync
   - dataplane.namespace-multi
+  - dataplane.per-component-sa-clustersync
   grant:
   - binding union-clustersync-auth-delegator
   - 'rules <unknown: roleRef is not rendered by this chart>'
@@ -1114,10 +1123,21 @@ allowed:
   - subject ServiceAccount/union/union-clustersync-system
   - write apiGroups=["",rbac.authorization.k8s.io] resources=[clusterrolebindings,configmaps,limitranges,namespaces,pods,podtemplates,resourcequotas,rolebindings,roles,secrets,serviceaccounts,services] verbs=[*]
   - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[union-clusterresourcesync-ns-read,union-clusterresourcesync-ns-write,union-union-ns-read,union-union-ns-write] verbs=[bind]
+- name: union-clusterresourcesync-cluster-write
+  invariant: cluster_write
+  reason: 'Same role and same bind rationale as the entry above (clusterresourcesync; narrowed in phase 5; bind on the union ns-* bucket roles per dataplane RBAC namespaced-bindings plan task 4). Pinned separately, not merged, because the resourceNames differ: this snapshot sets commonServiceAccount.enabled: false, so the bind grant names each per-component identitys own ns-* roles (executor, leaseworker, operator, proxy, webhook, clusterresourcesync) instead of a single shared union-* pair. This is the fixture that exists specifically to prove dataplane.rbac.bucketRoleNames tracks that split correctly -- a regression back to a hardcoded "union" identity would fail here first (see tests/values/dataplane.per-component-sa-clustersync.yaml). The bind rule itself is unconditional (task 4 fix: it used to be gated on useCommonServiceAccount, which dropped the grant entirely in exactly this configuration; the guard added no safety since the resourceNames list already derives per identity).'
+  snapshots:
+  - dataplane.per-component-sa-clustersync
+  grant:
+  - binding union-clusterresourcesync-cluster-write
+  - subject ServiceAccount/union/union-clustersync-system
+  - write apiGroups=["",rbac.authorization.k8s.io] resources=[clusterrolebindings,configmaps,limitranges,namespaces,pods,podtemplates,resourcequotas,rolebindings,roles,secrets,serviceaccounts,services] verbs=[*]
+  - write apiGroups=[rbac.authorization.k8s.io] resources=[clusterroles] resourceNames=[union-clusterresourcesync-ns-read,union-clusterresourcesync-ns-write,union-executor-ns-read,union-executor-ns-write,union-leaseworker-ns-read,union-leaseworker-ns-write,union-operator-ns-read,union-operator-ns-write,union-proxy-ns-read,union-proxy-ns-write,union-webhook-ns-read,union-webhook-ns-write] verbs=[bind]
 - name: union-executor-ns-write
   invariant: cluster_write
   reason: 'rbac.clusterWideBindings defaults to true (dataplane RBAC namespaced-bindings plan, task 2). Task namespaces are created at runtime by clusterresourcesync or an external provisioner, so Helm cannot enumerate them at template time and cannot emit a RoleBinding per namespace for a set it does not know. The executor''s ns-write ClusterRole is bound cluster-wide by default so it can reach task namespaces to launch task pods -- ns-write for the executor is apiGroups:[*] resources:[*] write. The release-namespace RoleBinding is emitted alongside it, so setting rbac.clusterWideBindings: false is a pure removal with no window in which the workload holds neither binding. See charts/dataplane/RELEASE.md (Unreleased) and the rbac.clusterWideBindings comment in charts/dataplane/values.yaml.'
   snapshots:
+  - dataplane.per-component-sa-clustersync
   - dataplane.per-component-sa-full-priv
   grant:
   - binding union-executor-ns-write
@@ -1137,6 +1157,7 @@ allowed:
   invariant: cluster_write
   reason: 'rbac.clusterWideBindings defaults to true (dataplane RBAC namespaced-bindings plan, task 2). Task namespaces are created at runtime by clusterresourcesync or an external provisioner, so Helm cannot enumerate them at template time and cannot emit a RoleBinding per namespace for a set it does not know. The leaseworker''s ns-write ClusterRole is bound cluster-wide by default so it can reach task namespaces for the write operations its ns-write bucket grants -- apiGroups:[*] resources:[*] write. The release-namespace RoleBinding is emitted alongside it, so setting rbac.clusterWideBindings: false is a pure removal with no window in which the workload holds neither binding. See charts/dataplane/RELEASE.md (Unreleased) and the rbac.clusterWideBindings comment in charts/dataplane/values.yaml.'
   snapshots:
+  - dataplane.per-component-sa-clustersync
   - dataplane.per-component-sa-full-priv
   grant:
   - binding union-leaseworker-ns-write
@@ -1155,6 +1176,7 @@ allowed:
   invariant: cluster_write
   reason: 'rbac.clusterWideBindings defaults to true (dataplane RBAC namespaced-bindings plan, task 2). Task namespaces are created at runtime by clusterresourcesync or an external provisioner, so Helm cannot enumerate them at template time and cannot emit a RoleBinding per namespace for a set it does not know. The operator''s ns-write ClusterRole is bound cluster-wide by default so it can reach task namespaces to launch task pods and manage FlyteWorkflow and Knative objects there. The release-namespace RoleBinding is emitted alongside it, so setting rbac.clusterWideBindings: false is a pure removal with no window in which the workload holds neither binding. See charts/dataplane/RELEASE.md (Unreleased) and the rbac.clusterWideBindings comment in charts/dataplane/values.yaml.'
   snapshots:
+  - dataplane.per-component-sa-clustersync
   - dataplane.per-component-sa-full-priv
   grant:
   - binding union-operator-ns-write
@@ -1265,6 +1287,7 @@ allowed:
   invariant: cluster_write
   reason: 'rbac.clusterWideBindings defaults to true (dataplane RBAC namespaced-bindings plan, task 2). Task namespaces are created at runtime by clusterresourcesync or an external provisioner, so Helm cannot enumerate them at template time and cannot emit a RoleBinding per namespace for a set it does not know. The webhook''s ns-write ClusterRole is bound cluster-wide by default so it can reach task namespaces to mutate pods and secrets there. The release-namespace RoleBinding is emitted alongside it, so setting rbac.clusterWideBindings: false is a pure removal with no window in which the workload holds neither binding. See charts/dataplane/RELEASE.md (Unreleased) and the rbac.clusterWideBindings comment in charts/dataplane/values.yaml.'
   snapshots:
+  - dataplane.per-component-sa-clustersync
   - dataplane.per-component-sa-full-priv
   grant:
   - binding union-webhook-ns-write
