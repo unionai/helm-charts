@@ -908,6 +908,13 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # Upstream defaults this to a bare `busybox`, which resolves against the
+  # implicit docker.io/library/ default and fails on clusters that pin an
+  # allowed-registry policy. Only rendered by `helm test`, but the policy
+  # applies there too.
+  testFramework:
+    image:
+      repository: docker.io/busybox
   # Allow fluentbit to run on all nodes to be able to push all logs.
   tolerations:
     - operator: Exists
@@ -1165,7 +1172,10 @@ flytepropellerwebhook:
     # THIS IS MOSTLY NEEDED FOR UPGRADES FROM PRE 2026.24.7 VERSIONS.  IT DOESN'T ACT ON NEW INSTALLS.
     enabled: true
     image:
-      repository: alpine/k8s
+      # Registry host spelled out — an unqualified repository resolves against
+      # the implicit docker.io default and fails on clusters that pin an
+      # allowed-registry policy.
+      repository: docker.io/alpine/k8s
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
@@ -1403,11 +1413,16 @@ image:
     tag: ""
     pullPolicy: IfNotPresent
   # -- Kubectl image configuration for Helm hook cleanup jobs.
+  # Registry host is spelled out: an unqualified repository resolves against the
+  # implicit docker.io default, which clusters with an allowed-registry policy
+  # reject with ErrImagePull. alpine/k8s (rather than bitnami/kubectl) because
+  # upstream pruned every version tag from bitnami/kubectl, leaving only
+  # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
   kubectl:
     # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
-    repository: bitnami/kubectl
+    repository: docker.io/alpine/k8s
     # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
-    tag: latest
+    tag: "1.32.3"
     # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
     pullPolicy: ""
     # -- Optional imagePullSecrets for dataplane Helm hook cleanup jobs.

@@ -18,7 +18,15 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test
+test: check-vendored-crds helm-test kubeconform-test check-image-paths
+
+# Gate on fully qualified image references. Reads the checked-in
+# tests/generated/ corpus, so it needs neither network nor helm — but that
+# means it is only as fresh as `make generate-expected`. helm-test is what
+# enforces that freshness.
+.PHONY: check-image-paths
+check-image-paths:
+	python3 scripts/check-image-paths.py
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
