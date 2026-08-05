@@ -62,6 +62,40 @@
   one ServiceAccount per component; each new KSA name needs a matching
   workload-identity binding in the cloud repo before those workloads can authenticate.
 
+- **Union RBAC roles are renamed and split by resource scope and verb class.** Each
+  component's rules now live in up to four roles — `<ns>-<identity>-ns-read`,
+  `-ns-write`, `-cluster-read`, `-cluster-write` — emitted per ServiceAccount rather
+  than per component, since the default `commonServiceAccount.enabled: true` collapses
+  every component onto one identity. `operator-system`, `proxy-system`,
+  `union-executor`, `union-leaseworker`, `union-webhook-role`, `union-nodeobserver`,
+  `flytepropeller-role` and `union-clustersync-resource` no longer exist under those
+  names. **Effective permissions per ServiceAccount are unchanged**, with one
+  narrowing: read-only rules are now bound by RoleBinding rather than
+  ClusterRoleBinding under `low_privilege: false`, so cluster-wide read (including
+  every Secret in the cluster) is no longer granted. Any external tooling referencing
+  the old role names by name must be updated.
+
+  Three components keep a dedicated ServiceAccount even under the shared default
+  (`flytepropeller-system`, `nodeobserver-system`, `union-clustersync-system`), so they
+  get their own `union-flytepropeller-*`, `union-nodeobserver-*` and
+  `union-clusterresourcesync-*` roles rather than being folded into `union-union-*`.
+
+- **BREAKING under `low_privilege: false`: namespaced union rules no longer reach
+  project namespaces.** The narrowing above applies to `-ns-write` as well as
+  `-ns-read`: both are now bound by a RoleBinding in the release namespace only. Before
+  this change every union role was a ClusterRole bound cluster-wide in this mode, so
+  the operator, executor, leaseworker and propeller could act in every per-project
+  namespace that `clusterresourcesync` (or `namespaces.enabled`) creates. They no
+  longer can, and nothing in the chart or in the `clusterresourcesync.templates`
+  cluster-resource templates creates a per-namespace RoleBinding to replace it. **If
+  you run a multi-namespace data plane (`low_privilege: false`), task execution in
+  project namespaces will fail with `Forbidden` until a per-namespace binding exists.**
+  Add one via `clusterresourcesync.additionalTemplates` — a RoleBinding in
+  `{{ namespace }}` whose `roleRef` names the `<ns>-union-ns-read` / `-ns-write`
+  ClusterRoles and whose subject is your `commonServiceAccount.name` — before
+  upgrading. `low_privilege: true` deployments are unaffected: they never had
+  cluster-wide reach and have no project namespaces.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).

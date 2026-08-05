@@ -70,7 +70,15 @@ directly here would silently drift out of step if rbacKind is ever changed to
 key on something else, producing a namespace-less Role or a namespaced
 ClusterRole with no error. Do not "simplify" this back to a low_privilege test.
 */}}
-{{- $nsRoleKind := include "dataplane.rbacKind" .ctx -}}
+{{/*
+The action below deliberately does NOT chomp its trailing newline, so every
+emitted block starts with one. Callers invoke this with `{{- include ... }}`,
+which strips the whitespace in front of the call; without the newline here two
+consecutive buckets render as `namespace: union---`, splicing the document
+separator onto the previous line and silently corrupting the manifest stream.
+It sits inside `if $rules` so an empty bucket still emits nothing at all.
+*/}}
+{{- $nsRoleKind := include "dataplane.rbacKind" .ctx }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: {{ if $isCluster }}ClusterRole{{ else }}{{ $nsRoleKind }}{{ end }}

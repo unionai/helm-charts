@@ -1,0 +1,104 @@
+{{/*
+Emits every union component's RBAC from the buckets each component declares.
+
+Objects are emitted PER IDENTITY, not per component. Under the default
+commonServiceAccount.enabled: true most components share union-system, so
+per-component role objects would describe a granularity that does not exist:
+that ServiceAccount holds the union of all of them, and executor's wildcard
+write subsumes the rest. Aggregating makes the rendered RBAC and the effective
+RBAC the same objects.
+
+"Identity" means the ServiceAccount a component's pods actually run as, NOT the
+commonServiceAccount flag. Three components keep a dedicated ServiceAccount even
+when the flag is on -- flytepropeller (flytepropeller-system), nodeobserver
+(nodeobserver-system) and clusterresourcesync (union-clustersync-system) -- so
+they are grouped separately. Aggregating them onto union-system would both strip
+their own ServiceAccount of every grant and hand union-system permissions it
+never had.
+
+Rule DEFINITIONS stay per-component (see each component's
+dataplane.rbac.buckets.* template) so "does this component need cluster scope"
+stays answerable -- that is the input the gating framework needs.
+
+Consequence to accept: under the shared path an aggregated role's contents shift
+as components toggle, so enabling a component moves rules between four roles
+rather than adding a fifth.
+*/}}
+{{- $components := list -}}
+{{- if .Values.executor.enabled -}}
+{{- $components = append $components (dict "name" "executor" "sa" (include "executor.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $components = append $components (dict "name" "leaseworker" "sa" (include "leaseworker.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.operator.serviceAccount.create -}}
+{{- $components = append $components (dict "name" "operator" "sa" (include "operator.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.proxy.serviceAccount.create -}}
+{{- $components = append $components (dict "name" "proxy" "sa" (include "proxy.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.flytepropellerwebhook.enabled -}}
+{{- $components = append $components (dict "name" "webhook" "sa" (include "webhook.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
+{{- end -}}
+{{- if .Values.nodeobserver.enabled -}}
+{{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
+{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
+{{- end -}}
+
+{{- $buckets := list "ns-read" "ns-write" "cluster-read" "cluster-write" -}}
+{{- $commonSA := include "common.serviceAccountName" . -}}
+{{- $shared := include "useCommonServiceAccount" . -}}
+
+{{/*
+Group components by the ServiceAccount they run as. $order preserves first-seen
+order so the rendered manifest is stable across renders; ranging over the dict's
+keys would not be.
+
+The group sharing commonServiceAccount is named "union" rather than after
+whichever component happened to be first, since its contents are the union of
+several. Every other group holds exactly one component and takes its name.
+*/}}
+{{- $groups := dict -}}
+{{- $order := list -}}
+{{- range $c := $components -}}
+{{- if not (hasKey $groups $c.sa) -}}
+{{- $identity := $c.name -}}
+{{- if and $shared (eq $c.sa $commonSA) -}}
+{{- $identity = "union" -}}
+{{- end -}}
+{{- $group := dict "identity" $identity -}}
+{{- range $bucket := $buckets -}}
+{{- $_ := set $group $bucket list -}}
+{{- end -}}
+{{- $_ := set $groups $c.sa $group -}}
+{{- $order = append $order $c.sa -}}
+{{- end -}}
+{{- $group := index $groups $c.sa -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.buckets.%s" $c.name) $) -}}
+{{- range $bucket := $buckets -}}
+{{- $_ := set $group $bucket (concat (index $group $bucket) (index $decl $bucket | default list)) -}}
+{{- end -}}
+{{- end -}}
+
+{{- range $sa := $order -}}
+{{- $group := index $groups $sa -}}
+{{- range $bucket := $buckets }}
+{{/*
+uniq drops rules two components declare identically (executor's and
+leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so this
+changes nothing an API server would decide -- it only keeps the rendered role
+readable.
+*/}}
+{{- include "dataplane.rbac.emitBucket" (dict
+      "ctx" $
+      "identity" $group.identity
+      "bucket" $bucket
+      "rules" (index $group $bucket | uniq)
+      "serviceAccount" $sa) }}
+{{- end }}
+{{- end -}}
