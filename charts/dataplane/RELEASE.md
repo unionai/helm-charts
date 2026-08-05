@@ -45,6 +45,32 @@ own `2026.7.xxx`.
   - **`global.QUEUE_GRPC_ENDPOINT`** and the **`dataplane.cp.queueEndpoint`** helper — the task-pod endpoint is injected by the leaseworker/executor from `config.union.connection`; there is no separate queue global. Authless / direct-service routing (skip nginx + OAuth, dial the in-cluster Service on `:80`) is configured explicitly via `config.union.auth` + `config.union.connection`, documented in the new **`examples/values.authless.yaml`**.
   - **`global.UNION_CONTROL_PLANE_HOST`** and the top-level **`.Values.host`** are now **DEPRECATED** — both are still honored as fallbacks (precedence `CONTROLPLANE_HOST` > `.Values.host` > `UNION_CONTROL_PLANE_HOST`) but should be migrated to `CONTROLPLANE_HOST`; they will be removed in a future release. `.Values.host` is the pre-globals top-level knob; no terraform-generated env sets it. The intracluster examples are simplified to just set `CONTROLPLANE_HOST`.
 
+### Fully qualified image repository paths
+
+Every image the chart renders now spells out its registry host. An unqualified
+repository (`bitnami/kubectl`) resolves against the implicit `docker.io/`
+default — and one with no slash at all (`busybox`) against `docker.io/library/`.
+Clusters that run an allowed-registry admission policy, or that cannot reach
+Docker Hub, reject those pulls with `ErrImagePull`.
+
+- **`image.kubectl`** — now `docker.io/alpine/k8s:1.32.3`, was `bitnami/kubectl:latest`.
+  Two changes in one: the registry host is explicit, and the image moves off
+  `bitnami/kubectl`, from which upstream has pruned every version tag — only
+  `latest` remains, so it could not be pinned. `alpine/k8s` is what
+  `flytepropellerwebhook.legacyWebhookCleanup` already used, so both Helm hooks
+  now share one image. Override as usual if you mirror internally.
+- **`flytepropellerwebhook.legacyWebhookCleanup.image.repository`** — now
+  `docker.io/alpine/k8s`.
+- **`fluentbit.testFramework.image.repository`** — new override, pinning the
+  subchart's bare `busybox` default to `docker.io/library/busybox`. Rendered
+  only by `helm test`. The `library/` namespace is spelled out because that is
+  where official images actually live on Docker Hub; a bare `busybox` relies on
+  the client to infer it.
+
+A `make check-image-paths` gate (wired into `make test` and the `image-paths` CI
+job) now fails the build on any unqualified reference, in chart values or in
+rendered subchart output.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).

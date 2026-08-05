@@ -2,6 +2,16 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.7.3 WIP
+
+### Configuration changes
+
+- **Fully qualified image repository path.** `image.repository` is now
+  `docker.io/alpine/kubectl` (was `alpine/kubectl`). An unqualified repository
+  resolves against the implicit `docker.io/` default, which clusters running an
+  allowed-registry admission policy reject with `ErrImagePull`. Same image, same
+  tag — only the name is now explicit.
+
 ## 2026.7.2
 
 Lockstep `version` bump only. No migration-tool or template changes.

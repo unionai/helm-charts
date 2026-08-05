@@ -6723,6 +6723,17 @@ template:
       - name: default
         image: docker.io/rwgrim/docker-noop
 ---
+# Source: dataplane/templates/common/pre-upgrade-hook.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-pre-upgrade
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -6772,6 +6783,40 @@ subjects:
     name: flyte-webhook-cleanup
     namespace: union
 ---
+# Source: dataplane/templates/common/pre-upgrade-hook.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-pre-upgrade
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/common/pre-upgrade-hook.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-pre-upgrade
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-pre-upgrade
+subjects:
+- kind: ServiceAccount
+  name: release-name-pre-upgrade
+  namespace: union
+---
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
 kind: Pod
@@ -6793,6 +6838,36 @@ spec:
       command: ["sh"]
       args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
   restartPolicy: Never
+
+---
+# Source: dataplane/templates/common/pre-upgrade-hook.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: release-name-pre-upgrade
+  namespace: union
+  annotations:
+    "helm.sh/hook": pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  ttlSecondsAfterFinished: 120
+  template:
+    spec:
+      serviceAccountName: release-name-pre-upgrade
+      restartPolicy: Never
+      containers:
+      - name: cleanup
+        image: docker.io/alpine/k8s:1.32.3
+        command:
+        - /bin/sh
+        - -c
+        - |
+          kubectl delete deployment \
+            union-operator-prometheus \
+            union-pod-webhook \
+            --ignore-not-found=true \
+            -n union
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
