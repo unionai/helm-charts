@@ -51,6 +51,13 @@ Args: dict with
   bucket          one of ns-read, ns-write, cluster-read, cluster-write
   rules           list of rule maps, already partitioned by the caller
   serviceAccount  name of the ServiceAccount to bind
+  skipReleaseNamespaceBinding  optional, default false. NS BUCKETS ONLY (ignored
+                  for cluster-read/cluster-write, where the primary binding is
+                  the only grant there is). When true, omits the release-namespace
+                  RoleBinding that this function otherwise always emits for a
+                  namespaced bucket -- see the comment at its emission site
+                  below for why a caller would want that, and why it must stay
+                  a narrow, explicit opt-out rather than a new default.
 */}}
 {{- define "dataplane.rbac.emitBucket" -}}
 {{- $rules := .rules | default list -}}
@@ -60,6 +67,14 @@ Args: dict with
 {{- if and $isCluster .ctx.Values.low_privilege -}}
 {{- fail (printf "RBAC bucket %q for %q is non-empty under low_privilege: true. Cluster-scoped grants cannot be conveyed by any namespaced Role, so the COMPONENT must be gated rather than its rules degraded. See the gating framework in docs/superpowers/specs/2026-08-04-dataplane-rbac-scope-split-design.md section 6." .bucket .identity) -}}
 {{- end -}}
+{{/*
+Only meaningful for a namespaced bucket -- see the flag's doc comment above
+and the comment at its use below. `and` short-circuits, but spelling out
+"not cluster" here (rather than relying on the caller to never pass the flag
+for a cluster bucket) means a future cluster-bucket caller that passes it by
+mistake gets a no-op, not a dropped ClusterRoleBinding.
+*/}}
+{{- $skipReleaseNamespaceBinding := and (not $isCluster) .skipReleaseNamespaceBinding -}}
 {{/*
 Resolve the object kind once and reuse it for both the namespaced-object kind
 and the decision to emit metadata.namespace. Both must key off the same value:
@@ -91,6 +106,7 @@ metadata:
   {{- end }}
 rules:
   {{- toYaml $rules | nindent 2 }}
+{{- if not $skipReleaseNamespaceBinding }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: {{ if $isCluster }}ClusterRoleBinding{{ else }}RoleBinding{{ end }}
@@ -107,6 +123,22 @@ subjects:
   - kind: ServiceAccount
     name: {{ .serviceAccount }}
     namespace: {{ .ctx.Release.Namespace }}
+{{- else }}
+{{/*
+skipReleaseNamespaceBinding is set: the caller does not want this identity to
+hold a grant in the release namespace at all, only in the namespaces named by
+the per-taskNamespaces loop below. Today the only caller is
+clusterresourcesync's constrained posture (see
+clusterresourcesync/serviceaccount.yaml): it provisions OTHER namespaces, and
+its reach there is meant to be exactly the enumerated task namespaces and
+nothing else -- gaining release-namespace access as a side effect of this
+function's usual behavior would be an unrequested, unreviewed grant. This is
+a narrow, explicit per-call opt-out, not a reversal of the policy below: the
+release-namespace RoleBinding stays the default for every other ns-* bucket,
+and the deliberate overlap with the cluster-wide binding it describes is
+unaffected.
+*/}}
+{{- end }}
 {{- if and (not $isCluster) (not .ctx.Values.low_privilege) }}
 {{/*
 One RoleBinding per enumerated task namespace, binding the same ns-* role.
@@ -150,6 +182,10 @@ It is emitted IN ADDITION TO the release-namespace RoleBinding above, never
 instead of it. The overlap is deliberate: it means setting
 rbac.clusterWideBindings: false is a pure removal, with the narrower bindings
 already in place, so there is no window in which a workload holds neither.
+(skipReleaseNamespaceBinding callers are the one narrow exception to "above":
+they never had a release-namespace RoleBinding to remove, by their own
+request -- see that flag's doc comment. This paragraph's "pure removal"
+guarantee is otherwise unchanged.)
 
 Dropping this without something creating per-namespace RoleBindings leaves
 union workloads with no reach into task namespaces at all. That failure is
