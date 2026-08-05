@@ -290,6 +290,145 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
+## Restricting union workloads to task namespaces
+
+By default, union workloads reach task namespaces through a ClusterRoleBinding on the
+`<release-namespace>-union-ns-read` and `-ns-write` roles. This is deliberate: task
+namespaces are created at runtime as projects are registered, so the chart cannot
+enumerate them and cannot emit a RoleBinding for each one.
+
+Two settings let you replace that cluster-wide reach with explicitly named namespaces.
+Both require `low_privilege: false` — in single-namespace mode there are no task
+namespaces and nothing is bound cluster-wide, so neither setting changes anything.
+
+### Option 1 — a provisioner creates the bindings
+
+```yaml
+low_privilege: false
+rbac:
+  clusterWideBindings: false
+clusterresourcesync:
+  enabled: true
+```
+
+The chart binds union roles only in the release namespace. `clusterresourcesync` is
+responsible for creating a RoleBinding for each union `ns-*` role as it provisions each
+task namespace. It holds `bind` on exactly those roles for this purpose, unconditionally
+— whether or not `commonServiceAccount` is enabled.
+
+### Option 2 — namespaces are known ahead of time
+
+```yaml
+low_privilege: false
+rbac:
+  clusterWideBindings: false
+taskNamespaces:
+  - tenant-a-production
+  - tenant-b-production
+namespaces:
+  enabled: true
+```
+
+The chart emits a RoleBinding per listed namespace. In this posture
+`clusterresourcesync` needs no cluster-scoped RBAC object at all, and uses
+`clusterresourcesync.namespacedRoleRules` instead of `clusterRoleRules`.
+
+Use this only when task namespaces really are provisioned ahead of time. A project
+registered later will get a namespace that is not in the list, and workloads will have
+no permissions there.
+
+**This does not confine every workload sharing the identity.** `fluentbit.enabled: true`
+(the default) runs FluentBit as the same `union-system` ServiceAccount as the shared
+`commonServiceAccount`, and FluentBit separately carries its own read-only cluster-wide
+grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping. That grant is
+independent of `taskNamespaces` and `rbac.clusterWideBindings`; hardening it is
+deliberately out of scope here. Within the union-authored RBAC this chart controls,
+Option 2 does confine the shared identity to `taskNamespaces` plus the release
+namespace, and nowhere else.
+
+### What each option costs
+
+Bindings are emitted per `(role × namespace)` — `roleRef` names exactly one role and is
+immutable, so there is no way to cover several roles with one binding. At the chart's
+default 6 `taskNamespaces`, each `ns-*` role gets 7 RoleBindings (the 6 task namespaces
+plus one in the release namespace):
+
+| Configuration | `ns-*` roles | Bindings at 6 task namespaces |
+|---|---|---|
+| Shared ServiceAccount (default) | 2 | 14 |
+| Shared, with flytepropeller enabled | 4 | 28 |
+| `commonServiceAccount.enabled: false` | 9 | 63 |
+
+The count is linear in `roles × namespaces`, so 50 task namespaces with per-component
+ServiceAccounts is roughly 450 RoleBindings. They are tiny, inert objects, but they all
+land in the Helm release and therefore in every ArgoCD diff. (`clusterresourcesync`
+keeps its own dedicated ServiceAccount in every configuration above and, under Option 2,
+adds one RoleBinding per task namespace for its own `bind` grant — 6 more at the default
+namespace count, not shown in the table because it doesn't vary with the shared/split
+axis above.)
+
+**This cost applies to Option 2 only.** Under Option 1 the chart renders none of the
+per-namespace `ns-*` bindings — the provisioner creates them at runtime, so they are
+cluster objects rather than release objects. If you have many task namespaces, that is a
+reason to prefer Option 1 even when the namespace set happens to be known.
+
+### Components that cannot use these options
+
+- **`nodeobserver` requires `rbac.clusterWideBindings: true`.** It lists pods with an
+  empty namespace plus a `spec.nodeName` field selector, which Kubernetes authorizes as
+  a cluster-scope check; per-namespace RoleBindings cannot convey it at any count. The
+  render fails if you combine them. (The pods it reads are in the release namespace, so
+  this is a property of how the query is written rather than of what it needs.)
+- **The pod webhook requires reach into task namespaces** when
+  `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` is true (the
+  default), because it creates the mirrored secret in each task namespace. Option 1 or
+  Option 2 both provide that; `rbac.clusterWideBindings: false` with an empty
+  `taskNamespaces` does not, and the render fails.
+
+### Diagnosing a missing binding
+
+**The chart cannot verify that anything creates the per-namespace RoleBindings.** If
+nothing does, the install renders green and ArgoCD reports healthy. The failure appears
+at the first task execution, not at deploy:
+
+```
+pods is forbidden: User "system:serviceaccount:<release-ns>:union-system"
+cannot create resource "pods" in API group "" in the namespace "<task-namespace>"
+```
+
+Look in the propeller or operator logs, and in events on the failing task pod. To
+confirm:
+
+```bash
+kubectl get rolebindings -n <task-namespace> \
+  -o custom-columns=NAME:.metadata.name,ROLE:.roleRef.name
+
+kubectl auth can-i create pods \
+  -n <task-namespace> \
+  --as=system:serviceaccount:<release-ns>:union-system
+```
+
+If the RoleBinding is missing, either add the namespace to `taskNamespaces`, or set
+`rbac.clusterWideBindings: true` to restore cluster-wide reach while you investigate.
+Reverting that setting is safe and immediate — the release-namespace RoleBindings are
+emitted in both postures, so nothing is removed by turning it back on.
+
+### One failure that does not look like RBAC
+
+If task pods fail with `ImagePullBackOff` or `ErrImagePull` on images from a private
+registry, suspect a missing binding before suspecting the registry.
+
+The pod webhook mirrors image-pull secrets into each task namespace. If it cannot, the
+`Forbidden` is **swallowed** — the pod is admitted without its secret and the failure
+appears at image pull, with nothing in the pod's events pointing at RBAC. Check the
+webhook's own logs from around the time of admission for an error creating the mirrored
+secret; that is the only trace.
+
+The render-time guard prevents the configuration that causes this, so you should only
+ever see it if the bindings were removed out-of-band after install.
+
+---
+
 ## Requirements
 
 Kubernetes: `>= 1.28.0-0`
