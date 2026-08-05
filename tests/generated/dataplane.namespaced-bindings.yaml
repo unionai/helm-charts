@@ -128,13 +128,6 @@ metadata:
     {}
 
 ---
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-clustersync-system
-  namespace: union
----
 # Source: dataplane/templates/common/system-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -182,19 +175,6 @@ metadata:
     app.kubernetes.io/name: knative-operator
 # The data is populated at install time.
 ---
-# Source: dataplane/templates/common/auth-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: union-secret-auth
-  namespace: union
-type: Opaque
-data:
-  # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: bXktc2VjcmV0
-  client_secret: bXktc2VjcmV0
-
----
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
 kind: Secret
@@ -202,7 +182,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: bXktY2x1c3Rlcg==
+  cluster_name: 
 
 ---
 # Source: dataplane/templates/webhook/mutatingwebhookconfiguration.yaml
@@ -270,153 +250,6 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
 data: {}
 ---
-# Source: dataplane/templates/clusterresourcesync/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-clusterresourcesync-config
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  cluster_resources.yaml: | 
-    cluster_resources:
-      clusterName: 'my-cluster'
-      customData:
-      - production:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      - staging:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      - development:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      refreshInterval: 5m
-      standaloneDeployment: true
-      templatePath: /etc/flyte/clusterresource/templates
-    clusterResourcesPrivate:
-      app:
-        isServerless: false
-    union:
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
-        clientSecretLocation: /etc/union/secret/client_secret
-        enable: true
-        scopes:
-        - 'all'
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-      connection:
-        host: 'dns:///union.us-west-2.union.ai'
-        insecureSkipVerify: false
-  admin.yaml: | 
-    admin:
-      clientId: 'my-client-id'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.us-west-2.union.ai'
-      insecure: false
-      insecureSkipVerify: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  domain.yaml: | 
-    domains:
-    - id: development
-      name: development
-    - id: staging
-      name: staging
-    - id: production
-      name: production
-  clusters.yaml: |
-    clusters:
-      clusterConfigs: []
-      labelClusterMap: {}
-  logger.yaml: |
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-  namespace_mapping.yaml: |
-    namespace_mapping:
-      template: test-{{ project }}-{{ domain }}
----
-# Source: dataplane/templates/clusterresourcesync/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-clusterresource-template
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  a_namespace.yaml: | 
-    apiVersion: v1
-    kind: Namespace
-    metadata:
-      name: {{ namespace }}
-      labels:
-        union.ai/namespace-type: flyte
-    spec:
-      finalizers:
-      - kubernetes
-    
-  b_default_service_account.yaml: | 
-    apiVersion: v1
-    kind: ServiceAccount
-    metadata:
-      name: default
-      namespace: {{ namespace }}
-      annotations:
-        {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}
-    
-  c_project_resource_quota.yaml: | 
-    apiVersion: v1
-    kind: ResourceQuota
-    metadata:
-      name: project-quota
-      namespace: {{ namespace }}
-    spec:
-      hard:
-        limits.cpu: {{ projectQuotaCpu }}
-        limits.memory: {{ projectQuotaMemory }}
-        requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
-    
-
----
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -460,9 +293,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-west-2
-        bucket bucket
-        endpoint http://localstack.aws.svc.cluster.local:4566
+        region us-east-1
+        bucket 
 
 ---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
@@ -523,7 +355,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/my-cluster/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -567,7 +399,7 @@ data:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
       embeddedSecretManagerConfig:
-        clusterName: 'my-cluster'
+        clusterName: ''
         imagePullSecrets:
           enabled: true
         k8sConfig:
@@ -604,10 +436,10 @@ data:
   config.yaml: |
     leaseworker:
       capacity: 100000
-      cluster: 'my-cluster'
+      cluster: ''
       dispatcherCount: 512
-      namespace-template: test-{{ project }}-{{ domain }}
-      organization: 'union'
+      namespace-template: '{{ project }}-{{ domain }}'
+      organization: ''
       refreshInterval: 10s
       task_resources:
         defaults:
@@ -620,35 +452,35 @@ data:
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
-      workerName: 'union-my-cluster-worker1'
+      workerName: '--worker1'
     union:
       connection:
-        host: 'dns:///union.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'my-client-id'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///union.us-west-2.union.ai'
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -686,26 +518,23 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
         default-cpus: 100m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: http://localstack.aws.svc.cluster.local:4566
-        - FLYTE_AWS_ACCESS_KEY_ID: test123
-        - FLYTE_AWS_SECRET_ACCESS_KEY: test
+        default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
         disable-inject-owner-references: true
         inject-finalizer: true
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -2726,7 +2555,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/my-cluster/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2785,10 +2614,10 @@ data:
         - connector-service
   config.yaml: |
     executor:
-      cluster: 'my-cluster'
+      cluster: ''
       evaluatorCount: 64
       maxActions: 2000
-      organization: 'union'
+      organization: ''
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
@@ -2802,35 +2631,35 @@ data:
           gpu: 256
           memory: 2Ti
     namespace_mapping:
-      template: "test-{{ project }}-{{ domain }}"
+      template: "{{ project }}-{{ domain }}"
     union:
       connection:
-        host: 'dns:///union.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'my-client-id'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///union.us-west-2.union.ai'
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -2868,10 +2697,7 @@ data:
       k8s:
         disable-inject-owner-references: true
         default-cpus: 100m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: http://localstack.aws.svc.cluster.local:4566
-        - FLYTE_AWS_ACCESS_KEY_ID: test123
-        - FLYTE_AWS_SECRET_ACCESS_KEY: test
+        default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
         co-pilot:
@@ -2879,17 +2705,17 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -2913,20 +2739,17 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: http://localstack.aws.svc.cluster.local:4566
-        - FLYTE_AWS_ACCESS_KEY_ID: test123
-        - FLYTE_AWS_SECRET_ACCESS_KEY: test
+        default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
   config.yaml: |
     union:
       connection:
-        host: 'dns:///union.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
@@ -2939,7 +2762,7 @@ data:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
@@ -2956,16 +2779,16 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        name: 'my-cluster'
-        organization: 'union'
+        name: ''
+        organization: ''
       clusterData:
-        appId: 'my-client-id'
-        bucketName: 'bucket'
-        bucketRegion: 'us-west-2'
-        cloudHostName: 'union.us-west-2.union.ai'
-        cloudProvider: 'metal'
+        appId: ''
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test-controlplane-host'
+        cloudProvider: ''
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
+        metadataBucketPrefix: 's3://'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -2980,7 +2803,7 @@ data:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
-        namespaceTemplate: "test-{{ project }}-{{ domain }}"
+        namespaceTemplate: "{{ project }}-{{ domain }}"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -3013,20 +2836,20 @@ data:
       identity:
         enabled: false
     connection:
-      rootTenantURLPattern: 'dns:///union.us-west-2.union.ai'
+      rootTenantURLPattern: 'dns:///test-controlplane-host'
   storage.yaml: | 
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -3035,19 +2858,19 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: "localhost:5000/union-dataplane"
+  image-builder.default-repository: "union-dataplane"
   image-builder.authentication-type: "noop"
 
 ---
@@ -5375,31 +5198,6 @@ rules:
     - update
     - patch
 ---
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-clusterresourcesync-cluster-write
-rules:
-  - apiGroups:
-    - ""
-    - rbac.authorization.k8s.io
-    resources:
-    - clusterrolebindings
-    - configmaps
-    - limitranges
-    - namespaces
-    - podtemplates
-    - pods
-    - resourcequotas
-    - rolebindings
-    - roles
-    - secrets
-    - serviceaccounts
-    - services
-    verbs:
-    - '*'
----
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5569,63 +5367,6 @@ subjects:
     name: knative-operator
     namespace: "union"
 ---
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-clustersync-auth-delegator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:auth-delegator
-subjects:
-  - kind: ServiceAccount
-    name: union-clustersync-system
-    namespace: union
-
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-union-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-union-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-union-ns-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-union-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-clusterresourcesync-cluster-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-clusterresourcesync-cluster-write
-subjects:
-  - kind: ServiceAccount
-    name: union-clustersync-system
-    namespace: union
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5748,6 +5489,8 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
+
+
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6615,111 +6358,6 @@ spec:
           emptyDir:
             sizeLimit: 10Gi
 ---
-# Source: dataplane/templates/clusterresourcesync/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: union-syncresources
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: clusterresourcesync
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "3c05b3b39a6121ae46880dca41b82be5b677a3aec37eb98a97a6ea6cc24016e"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        app.kubernetes.io/name: clusterresourcesync
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      containers:
-        - command:
-            - clusterresource
-            - --config
-            - /etc/flyte/config/*.yaml
-            - clusterresource
-            - run
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
-          imagePullPolicy: "IfNotPresent"
-          name: sync-cluster-resources
-          resources:
-            limits:
-              cpu: "1"
-              memory: 500Mi
-            requests:
-              cpu: 500m
-              memory: 100Mi
-          volumeMounts:
-            - name: auth
-              mountPath: /etc/union/secret
-            - name: resource-templates
-              mountPath: /etc/flyte/clusterresource/templates
-            - name: config-volume
-              mountPath: /etc/flyte/config
-          ports:
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-      serviceAccountName: union-clustersync-system
-      volumes:
-        - configMap:
-            name: union-clusterresource-template
-          name: resource-templates
-        - configMap:
-            name: union-clusterresourcesync-config
-          name: config-volume
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      
-      
-
----
 # Source: dataplane/templates/flyteconnector/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -6914,7 +6552,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9d5b1847a145e107d6c32a8d1602f58302bb96fb0de972f642804e8bc11f2ea"
+        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7017,7 +6655,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "c7f291d2ea12c2b9c9444b11359ad367984a822866d1bb5308db7aefd77f2fa"
+        configChecksum: "770d383022e8e85ce1271fff3522a37e11ef864af20cfc91c626f2d63ee7fbd"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7124,7 +6762,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9a12bac277855f58be687b48dbe4de525755cc16c126f77a3e34ebb7b9ef9db"
+        configChecksum: "6e42adb062c4c75c57c28379e7621df44d951815e179b292797d7010b7b9c02"
         
       labels:
         
@@ -7139,8 +6777,6 @@ spec:
             sources:
             - configMap:
                 name: union-operator
-            - configMap:
-                name: union-clusterresourcesync-config
         - name: secret-volume
           secret:
             secretName: union-secret-auth
@@ -7264,7 +6900,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9a12bac277855f58be687b48dbe4de525755cc16c126f77a3e34ebb7b9ef9db"
+        configChecksum: "6e42adb062c4c75c57c28379e7621df44d951815e179b292797d7010b7b9c02"
         
       labels:
         
@@ -7390,7 +7026,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "9d5b1847a145e107d6c32a8d1602f58302bb96fb0de972f642804e8bc11f2ea"
+        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
         
     spec:
       securityContext:
@@ -7506,7 +7142,7 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: union-pod-webhook-union
+  name: union-pod-webhook-
   labels:
     app.kubernetes.io/name: union-pod-webhook
     app.kubernetes.io/instance: release-name
@@ -7529,7 +7165,7 @@ webhooks:
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
-        organization: 'union'
+        organization: ''
     reinvocationPolicy: Never
     rules:
       - apiGroups:
@@ -7721,7 +7357,7 @@ spec:
       queue-sidecar-memory-limit: "800Mi"
       queue-sidecar-ephemeral-storage-request: "512Mi"
       queue-sidecar-ephemeral-storage-limit: "1024Mi"
-      registries-skipping-tag-resolving: managed.cr.union.ai,ghcr.io,docker.io,localhost:5000
+      registries-skipping-tag-resolving: managed.cr.union.ai,ghcr.io,docker.io,union-dataplane
     features:
       kubernetes.podspec-affinity: "enabled"
       kubernetes.podspec-nodeselector: "enabled"
@@ -7781,11 +7417,11 @@ spec:
     - container: kourier-gateway
       envVars:
       - name: UNION_AUTHZ_TENANTAUTHURL
-        value: "https://union.us-west-2.union.ai/me"
+        value: "https://test-controlplane-host/me"
       - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
-        value: "https://union.us-west-2.union.ai/login"
+        value: "https://test-controlplane-host/login"
       - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
-        value: "https://union.us-west-2.union.ai"
+        value: "https://test-controlplane-host"
     resources:
       - container: kourier-gateway
         limits:

@@ -96,6 +96,16 @@
   upgrading. `low_privilege: true` deployments are unaffected: they never had
   cluster-wide reach and have no project namespaces.
 
+- **`rbac.clusterWideBindings` (new, defaults to `true`) controls whether the union
+  `ns-read` / `ns-write` roles are bound cluster-wide under `low_privilege: false`.**
+  The default preserves current behaviour exactly. Task namespaces are created at
+  runtime, so the chart cannot enumerate them and the ClusterRoleBinding is what
+  gives union workloads reach into them. Setting this `false` drops those bindings
+  and relies on per-namespace RoleBindings instead — either the ones this chart emits
+  for `taskNamespaces`, or ones a provisioner creates at runtime. **The chart cannot
+  verify that anything creates them**; if nothing does, the install renders green and
+  task pods fail with `Forbidden` at their first execution rather than at deploy.
+
 ### Migration / action required
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).

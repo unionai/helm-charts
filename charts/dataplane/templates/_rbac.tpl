@@ -107,5 +107,38 @@ subjects:
   - kind: ServiceAccount
     name: {{ .serviceAccount }}
     namespace: {{ .ctx.Release.Namespace }}
+{{- if and (not $isCluster) (not .ctx.Values.low_privilege) .ctx.Values.rbac.clusterWideBindings }}
+{{/*
+Cluster-wide binding for a NAMESPACED bucket.
+
+This is the grant that reaches task namespaces. They are created at runtime, so
+the chart cannot enumerate them and cannot emit a RoleBinding per namespace for
+a set it does not know -- which is why the ns-* ClusterRole is bound
+cluster-wide rather than per namespace by default.
+
+It is emitted IN ADDITION TO the release-namespace RoleBinding above, never
+instead of it. The overlap is deliberate: it means setting
+rbac.clusterWideBindings: false is a pure removal, with the narrower bindings
+already in place, so there is no window in which a workload holds neither.
+
+Dropping this without something creating per-namespace RoleBindings leaves
+union workloads with no reach into task namespaces at all. That failure is
+loud (Forbidden, named SA and verb, in propeller logs) but DELAYED -- it
+appears at the first task execution, not at deploy.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccount }}
+    namespace: {{ .ctx.Release.Namespace }}
+{{- end }}
 {{- end -}}
 {{- end -}}
