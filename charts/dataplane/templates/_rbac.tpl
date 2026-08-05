@@ -151,10 +151,21 @@ RoleBinding's own namespace. That is the whole mechanism this posture rests on
 -- the rules are defined once, cluster-wide reach is not implied, and each
 namespace is named explicitly.
 
-Emitted whenever taskNamespaces is non-empty, independently of
-rbac.clusterWideBindings, so that enumerating namespaces and dropping the
-cluster-wide binding are separate steps an operator can take in either order.
+Emitted whenever taskNamespaces is non-empty AND namespaces.create is true,
+independently of rbac.clusterWideBindings, so that enumerating namespaces and
+dropping the cluster-wide binding are separate steps an operator can take in
+either order.
+
+namespaces.create is load-bearing here, not just for Namespace creation: it is
+the chart's only signal that the namespaces named by taskNamespaces actually
+exist (or will, because the chart itself is creating them a few lines away in
+common/namespaces.yaml). Without this gate, a bare low_privilege: false
+install -- taskNamespaces at its non-empty default, namespaces.create at its
+default false -- would emit RoleBindings into six namespaces nothing has
+created, and a fresh install or ArgoCD sync would fail with "namespaces
+<name> not found" before clusterresourcesync ever ran. See RELEASE.md.
 */}}
+{{- if .ctx.Values.namespaces.create }}
 {{- range $ns := .ctx.Values.taskNamespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -170,6 +181,7 @@ subjects:
   - kind: ServiceAccount
     name: {{ $.serviceAccount }}
     namespace: {{ $.ctx.Release.Namespace }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- if and (not $isCluster) (not .ctx.Values.low_privilege) .ctx.Values.rbac.clusterWideBindings }}

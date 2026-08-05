@@ -124,7 +124,7 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
   # -- Enable or disable the syncresources service. Required whenever
-  # low_privilege=false, regardless of namespaces.enabled: it is what creates the
+  # low_privilege=false, regardless of namespaces.create: it is what creates the
   # per-project/per-domain namespaces + RBAC that task pods land in as new
   # projects are registered. Its namespace_mapping.yaml is driven by the
   # top-level namespace_mapping. It is gated off under low_privilege, where task
@@ -1995,7 +1995,7 @@ prometheus:
 #
 # This is the chart's single privilege axis, and it governs three things together:
 # - Namespace creation. low_privilege=true means NO namespaces are created by any
-#   route: the namespaces.enabled pre-seed is suppressed and clusterresourcesync
+#   route: the namespaces.create pre-seed is suppressed and clusterresourcesync
 #   is not rendered, so nothing provisions per-project namespaces.
 # - RBAC scope. Every component role renders as a namespaced Role + RoleBinding in
 #   the release namespace instead of a ClusterRole + ClusterRoleBinding.
@@ -2004,9 +2004,10 @@ prometheus:
 # Because no namespace outside the release namespace exists, workloads are pinned
 # to it (limit-namespace / namespace_mapping / limitNamespace are auto-injected).
 #
-# namespaces.enabled is a separate, non-privilege flag: it only pre-seeds the six
-# hardcoded flytesnacks + health-monitoring namespaces. Setting it false does not
-# make an install low-privilege.
+# namespaces.create is a separate, non-privilege flag: it only pre-seeds the six
+# hardcoded flytesnacks + health-monitoring namespaces (and gates whether union
+# roles are bound into them -- see namespaces.create below). Setting it false
+# does not make an install low-privilege.
 #
 # Accepts bool true/false; the strings "true"/"false" are normalized. An absent
 # or null value means low_privilege is OFF (full privilege).
@@ -2477,18 +2478,26 @@ ingress-nginx:
 ## -- Extra Kubernetes objects to deploy with the helm chart
 extraObjects: []
 
-# -- Task namespaces to pre-seed and to bind union roles into.
+# -- Task namespaces to pre-seed (when namespaces.create: true) and to bind
+# union roles into (also gated on namespaces.create: true -- see that flag).
 #
-# Defaults to the six names common/namespaces.yaml previously hardcoded, so
-# existing installs are unaffected. This is NOT the full set of namespaces a
-# dataplane will use: clusterresourcesync creates one per project/domain as
-# projects are registered, and it cannot know those names in advance.
+# Defaults to the six names common/namespaces.yaml previously hardcoded. By
+# itself this list is inert: namespaces.create defaults false, and the
+# per-namespace RoleBinding loop fires only when BOTH this list is non-empty
+# AND namespaces.create is true, so a default install (namespaces.create left
+# false) renders no per-namespace RoleBindings and is unaffected by this
+# default. This is NOT the full set of namespaces a dataplane will use:
+# clusterresourcesync creates one per project/domain as projects are
+# registered, and it cannot know those names in advance.
 #
-# Enumerate this list when the task namespaces are known ahead of time and
-# pre-created. Combined with rbac.clusterWideBindings: false, the chart then
-# emits a RoleBinding per listed namespace for each union ns-* role and no
-# cluster-wide binding at all -- union's own ns-* roles hold permissions only
-# in these namespaces and the release namespace.
+# Enumerate this list when the task namespaces are known ahead of time, and
+# set namespaces.create: true -- either to have the chart pre-create them, or
+# because they are pre-created by another route and you still want the
+# bindings (see namespaces.create's own comment). Combined with
+# rbac.clusterWideBindings: false, the chart then emits a RoleBinding per
+# listed namespace for each union ns-* role and no cluster-wide binding at all
+# -- union's own ns-* roles hold permissions only in these namespaces and the
+# release namespace.
 #
 # This does not confine every workload on the shared identity. With
 # fluentbit.enabled: true (the default), fluent-bit runs as the same
@@ -2508,10 +2517,26 @@ taskNamespaces:
   - union-health-monitoring-production
 
 namespaces:
-  # -- Create the Namespace objects listed in taskNamespaces. Independent of
-  # whether union roles are bound into them: an operator may pre-create the
-  # namespaces by another route and still want the bindings.
-  enabled: false
+  # -- Create the Namespace objects listed in taskNamespaces, AND gate whether
+  # the per-taskNamespaces RoleBindings (see _rbac.tpl) are emitted at all.
+  #
+  # These two things are coupled deliberately, not independently controllable:
+  # taskNamespaces enumerates the namespaces this chart creates and manages
+  # when this is true, so binding union roles into them is coherent. With this
+  # false, the chart has no reason to believe those namespaces exist -- they
+  # may not have been created by anything yet, e.g. on a fresh install or
+  # ArgoCD sync, before clusterresourcesync has run -- so it does not emit
+  # RoleBindings into them either. Renamed from `namespaces.enabled` for
+  # clarity about what the flag now does; setting the old key fails the
+  # render with instructions to rename it.
+  #
+  # If you pre-create these namespaces by some other route and still want the
+  # bindings, set this true anyway. Note that Helm will refuse to adopt a
+  # Namespace it did not create (it errors rather than silently taking
+  # ownership), so pre-creating one out-of-band and then setting this true
+  # requires either creating it via this chart from the start or annotating it
+  # for Helm adoption first.
+  create: false
 
 monitoring:
   # kube-prometheus-stack subchart; disabled by default, as the monitoring stack

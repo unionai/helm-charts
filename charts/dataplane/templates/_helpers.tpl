@@ -1575,12 +1575,14 @@ every workload necessarily lives in the release namespace. Templates key their
 namespace-scoping config (limitNamespace, limit-namespace, namespace_mapping)
 and their RBAC kind off this helper.
 
-namespaces.enabled is NOT part of this. It only pre-seeds the six hardcoded
-flytesnacks + health-monitoring namespaces (common/namespaces.yaml) and says
-nothing about privilege: with it off, a fully-privileged install still creates
-namespaces for new projects dynamically via clusterresourcesync. Folding it in
-here is what previously suppressed clusterresourcesync -- and forced namespaced
-RBAC -- for the default namespaces.enabled=false + low_privilege=false install.
+namespaces.create (renamed from namespaces.enabled) is NOT part of this. It
+only pre-seeds the six hardcoded flytesnacks + health-monitoring namespaces
+(common/namespaces.yaml) and gates whether union roles are bound into
+taskNamespaces (see _rbac.tpl), and says nothing about privilege: with it off,
+a fully-privileged install still creates namespaces for new projects
+dynamically via clusterresourcesync. Folding it in here is what previously
+suppressed clusterresourcesync -- and forced namespaced RBAC -- for the
+default namespaces.create=false + low_privilege=false install.
 
 The value is read for RAW Go-template truthiness, deliberately, because that is
 what every OTHER low_privilege gate in this chart does -- operator/configmap.yaml,

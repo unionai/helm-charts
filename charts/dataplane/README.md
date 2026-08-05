@@ -297,13 +297,22 @@ By default, union workloads reach task namespaces through a ClusterRoleBinding o
 namespaces are created at runtime as projects are registered, so the chart cannot
 enumerate them and cannot emit a RoleBinding for each one.
 
-Two settings let you replace that cluster-wide reach with explicitly named namespaces.
-Both require `low_privilege: false`. `taskNamespaces` alone is a genuine no-op under
-`low_privilege: true` — there are no task namespaces there, so the per-namespace
-RoleBinding loop never runs. `rbac.clusterWideBindings: false` is **not** a no-op under
-`low_privilege: true`: the chart fails the render instead, on the theory that an
-operator setting it believes they have narrowed something, and staying silent would
-confirm a belief that is false.
+Three settings together replace that cluster-wide reach with explicitly named
+namespaces. All require `low_privilege: false`. `taskNamespaces` alone is a genuine
+no-op under `low_privilege: true` — there are no task namespaces there, so the
+per-namespace RoleBinding loop never runs. `rbac.clusterWideBindings: false` is
+**not** a no-op under `low_privilege: true`: the chart fails the render instead, on
+the theory that an operator setting it believes they have narrowed something, and
+staying silent would confirm a belief that is false.
+
+**The per-namespace RoleBinding loop itself requires `namespaces.create: true`, in
+addition to a non-empty `taskNamespaces`.** The chart never emits a RoleBinding into
+a namespace it has no reason to believe exists: `namespaces.create` is what states
+that belief, either because the chart is creating the namespace itself or because you
+are asserting it exists by another route. Leaving `namespaces.create` at its default
+(`false`) with the default non-empty `taskNamespaces` is intentionally inert — it is
+what keeps a bare `low_privilege: false` install from emitting RoleBindings into
+namespaces nothing has created yet.
 
 ### Option 1 — a provisioner creates the bindings
 
@@ -316,11 +325,13 @@ clusterresourcesync:
   enabled: true
 ```
 
-`taskNamespaces: []` is required here, not optional. The chart's own default is six
-non-empty names, and the per-namespace RoleBinding loop that binds union roles into
-`taskNamespaces` fires whenever the list is non-empty — **independently of
-`rbac.clusterWideBindings`**. Leaving the default in place binds union roles into those
-six namespaces too, which is Option 2's behavior, not this one.
+`taskNamespaces: []` is required here, not optional, and `namespaces.create` must stay
+at its default `false` (do not set it true). The chart's own default `taskNamespaces`
+is six non-empty names, and the per-namespace RoleBinding loop that binds union roles
+into `taskNamespaces` fires whenever the list is non-empty AND `namespaces.create` is
+true — **independently of `rbac.clusterWideBindings`**. Leaving `taskNamespaces` at
+its default (with `namespaces.create: true`) binds union roles into those six
+namespaces too, which is Option 2's behavior, not this one.
 
 With `taskNamespaces` empty, the chart binds union roles only in the release namespace.
 `clusterresourcesync` is responsible for creating a RoleBinding for each union `ns-*`
@@ -356,8 +367,14 @@ taskNamespaces:
   - tenant-a-production
   - tenant-b-production
 namespaces:
-  enabled: true
+  create: true
 ```
+
+`namespaces.create: true` is required here, not optional: the per-namespace
+RoleBinding loop emits nothing unless it is set, regardless of `taskNamespaces`. Set
+it even if you pre-create these namespaces by another route — it is the chart's only
+signal that the namespaces named by `taskNamespaces` actually exist, which is also
+why it creates the `Namespace` objects listed there when `low_privilege: false`.
 
 The chart emits a RoleBinding per listed namespace. In this posture
 `clusterresourcesync` needs none of its *own* cluster-scoped RBAC — its provisioning
@@ -418,9 +435,10 @@ reason to prefer Option 1 even when the namespace set happens to be known.
 - **The pod webhook requires reach into task namespaces** when
   `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` is true (the
   default), because it creates the mirrored secret in each task namespace. Option 2
-  provides that automatically, since `taskNamespaces` is non-empty. Option 1 does
-  not — it deliberately empties `taskNamespaces` — so it also requires disabling
-  image-pull secret mirroring (see Option 1 above); the render fails otherwise.
+  provides that automatically, since `taskNamespaces` is non-empty AND
+  `namespaces.create: true`. Option 1 does not — it deliberately empties
+  `taskNamespaces` — so it also requires disabling image-pull secret mirroring (see
+  Option 1 above); the render fails otherwise.
 
 ### Diagnosing a missing binding
 
@@ -445,7 +463,8 @@ kubectl auth can-i create pods \
   --as=system:serviceaccount:<release-ns>:union-system
 ```
 
-If the RoleBinding is missing, either add the namespace to `taskNamespaces`, or set
+If the RoleBinding is missing, either add the namespace to `taskNamespaces` (and
+confirm `namespaces.create: true` is set — the loop emits nothing without it), or set
 `rbac.clusterWideBindings: true` to restore cluster-wide reach while you investigate.
 Reverting that setting is safe and immediate — the release-namespace RoleBindings are
 emitted in both postures, so nothing is removed by turning it back on.
