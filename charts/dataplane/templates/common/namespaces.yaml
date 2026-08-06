@@ -7,11 +7,48 @@ existing renders are unchanged.
 This is only the statically-known set. clusterresourcesync creates additional
 namespaces at runtime as projects are registered, and those cannot appear here.
 */}}
+{{/*
+helm.sh/resource-policy: keep makes `helm uninstall` leave these Namespaces in
+place instead of deleting them.
+
+Without it, uninstalling the release deletes the namespace and CASCADES to
+everything inside it -- every task pod, Secret, PVC and ResourceQuota, including
+objects this chart never created and clusterresourcesync added at runtime. That
+is the ordinary consequence of Helm owning a resource, but the resource here is
+a whole namespace, so it is by far the largest blast radius in the chart and the
+one least likely to be what the operator meant by "uninstall the dataplane".
+
+It also removes the sharp edge on the documented path for externally-managed
+namespaces. namespaces.enabled gates BOTH creation and the per-namespace
+RoleBindings, deliberately and by ruling (see values.yaml), so an operator whose
+namespaces are created by another system still has to set it true to get the
+bindings -- which meant handing Helm a namespace it would later delete. Now the
+ownership is real for install and upgrade but not for delete, which is the
+narrower thing that was actually wanted.
+
+The cost is that uninstall leaves namespaces behind for an operator who did want
+them cleaned up. That is recoverable with one kubectl delete; the reverse is
+not.
+
+Verified on k3s 1.35, since the interaction with reinstall is not obvious:
+`helm uninstall` leaves the Namespace AND its Helm ownership metadata
+(meta.helm.sh/release-name, meta.helm.sh/release-namespace,
+app.kubernetes.io/managed-by), so reinstalling under the SAME release name
+adopts it cleanly. Reinstalling under a DIFFERENT release name fails with
+"invalid ownership metadata ... key meta.helm.sh/release-name must equal ...".
+Renaming the release therefore requires transferring ownership first --
+re-annotating meta.helm.sh/release-name and release-namespace and re-applying
+the managed-by label, which RELEASE.md spells out. NOT deleting the namespaces:
+that would destroy exactly the data this annotation exists to protect, and is
+the reverse of the point.
+*/}}
 {{- range $ns := .Values.namespaces.managed }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
   name: {{ $ns }}
+  annotations:
+    helm.sh/resource-policy: keep
 {{- end }}
 {{- end }}

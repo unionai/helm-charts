@@ -1,0 +1,60 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# Option 1 from README.md's "Restricting union workloads to task namespaces":
+# cluster-wide bindings off with the task namespaces NOT known ahead of time.
+#
+# This is the posture where the chart cannot emit the per-namespace RoleBindings
+# itself -- namespaces.managed is empty, so there is nothing to enumerate -- and
+# clusterresourcesync creates them per project namespace instead, from the
+# d_union_rolebinding_* templates dataplane.rbac.provisionerBindingTemplates
+# generates into the clusterresource template ConfigMap.
+#
+# The property to look at in this render is that those template entries name
+# EXACTLY the ns-* ClusterRoles the chart renders. The `bind` grant in
+# clusterresourcesync's rules only authorizes creating those RoleBindings; it is
+# these templates that cause one to be created. A missing entry is a task
+# namespace with no union grant, and a surplus entry is a RoleBinding with a
+# dangling roleRef -- both accepted by the API server, neither visible until a
+# task runs. scripts/check_rbac.py's provisioner_binding_template_mismatch
+# invariant enforces the equality mechanically, in both directions, across every
+# snapshot.
+#
+# namespaces.managed is empty AND namespaces.enabled stays at its default false,
+# so clusterresourcesync is NOT in the constrained posture: it keeps its
+# cluster-scoped rules (including `namespaces`) and its a_namespace template,
+# because in this posture it is what creates the task namespaces. Contrast
+# dataplane.task-namespaces.yaml, which is Option 2 -- namespaces pre-created,
+# a_namespace dropped, and no provisioner templates because the chart binds the
+# enumerated namespaces directly.
+#
+# Image-pull secret mirroring is left ENABLED (the chart default), because this
+# posture supports it: the generated d_union_rolebinding_* templates give the
+# webhook `secrets` write in every namespace clusterresourcesync provisions, and
+# the webhook's own binding is ordered first (the 00 phase prefix) so it lands
+# before any identity that can create a pod there. Earlier revisions of this
+# branch documented Option 1 as mutually exclusive with mirroring and this fixture
+# carried an override to match; both were wrong once the templates existed.
+#
+# Committing the render with the default in place is the point -- it is the only
+# snapshot covering the route the webhook guard now accepts.
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+low_privilege: false
+rbac:
+  clusterWideBindings: false
+namespaces:
+  managed: []
+namespace_mapping:
+  template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
+
+clusterresourcesync:
+  enabled: true
+  config:
+    union:
+      auth:
+        enable: false
+
+
+secrets:
+  admin:
+    create: false

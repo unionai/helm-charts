@@ -11,54 +11,6 @@ globalDefault: false
 description: "Priority for the Union leaseworker (a Recreate singleton) so it schedules ahead of task pods and leases keep flowing during node scale-up. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
 
 ---
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-development
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-staging
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-production
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-development
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-staging
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-production
-  annotations:
-    helm.sh/resource-policy: keep
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -147,17 +99,12 @@ metadata:
   name: union-clustersync-system
   namespace: union
 ---
-# Source: dataplane/templates/fluent-bit/serviceaccount.yaml
+# Source: dataplane/templates/common/system-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: union-system
   namespace: union
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
   annotations:
     
 
@@ -172,63 +119,6 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
----
-# Source: dataplane/templates/imagebuilder/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-imagebuilder
-  annotations:
-    
-
----
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: leaseworker
-  namespace: union
-  labels:
-    app: leaseworker
----
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
----
-# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: proxy-system
-  labels:
-    app.kubernetes.io/name: operator-proxy
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-
----
-# Source: dataplane/templates/operator/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: operator-system
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-webhook-system
-  namespace: union
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -428,6 +318,9 @@ data:
         type: json
       level: 4
       show-source: true
+  namespace_mapping.yaml: |
+    namespace_mapping:
+      template: '{{ project }}-{{ domain }}'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -473,6 +366,34 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
     
+  d_union_rolebinding_00_union_ns-read.yaml: | 
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: union-union-ns-read
+      namespace: {{ namespace }}
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: union-union-ns-read
+    subjects:
+      - kind: ServiceAccount
+        name: union-system
+        namespace: union
+  d_union_rolebinding_00_union_ns-write.yaml: | 
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: union-union-ns-write
+      namespace: {{ namespace }}
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: union-union-ns-write
+    subjects:
+      - kind: ServiceAccount
+        name: union-system
+        namespace: union
 
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
@@ -663,6 +584,7 @@ data:
       capacity: 100000
       cluster: ''
       dispatcherCount: 512
+      namespace-template: '{{ project }}-{{ domain }}'
       organization: ''
       refreshInterval: 10s
       task_resources:
@@ -2854,6 +2776,8 @@ data:
           cpu: 4096
           gpu: 256
           memory: 2Ti
+    namespace_mapping:
+      template: "{{ project }}-{{ domain }}"
     union:
       connection:
         host: 'dns:///test-controlplane-host'
@@ -3024,6 +2948,8 @@ data:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "{{ project }}-{{ domain }}"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -5283,7 +5209,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-executor-ns-read
+  name: union-union-ns-read
 rules:
   - apiGroups:
     - '*'
@@ -5293,60 +5219,6 @@ rules:
     - get
     - list
     - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-executor-ns-write
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - '*'
-    verbs:
-    - create
-    - update
-    - delete
-    - patch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-leaseworker-ns-read
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - '*'
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-leaseworker-ns-write
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - '*'
-    verbs:
-    - create
-    - update
-    - delete
-    - patch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-operator-ns-read
-rules:
   - apiGroups:
     - flyte.lyft.com
     resources:
@@ -5379,13 +5251,45 @@ rules:
     - get
     - list
     - watch
+  - apiGroups:
+    - '*'
+    resources:
+    - events
+    - flyteworkflows
+    - pods/log
+    - pods
+    - rayjobs
+    - resourcequotas
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - '*'
+    resources:
+    - secrets
+    - pods
+    - replicasets/finalizers
+    verbs:
+    - get
+    - list
+    - watch
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-operator-ns-write
+  name: union-union-ns-write
 rules:
+  - apiGroups:
+    - '*'
+    resources:
+    - '*'
+    verbs:
+    - create
+    - update
+    - delete
+    - patch
   - apiGroups:
     - flyte.lyft.com
     resources:
@@ -5429,50 +5333,6 @@ rules:
     - create
     - update
     - delete
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-proxy-ns-read
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - events
-    - flyteworkflows
-    - pods/log
-    - pods
-    - rayjobs
-    - resourcequotas
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-webhook-ns-read
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - secrets
-    - pods
-    - replicasets/finalizers
-    verbs:
-    - get
-    - list
-    - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-webhook-ns-write
-rules:
   - apiGroups:
     - '*'
     resources:
@@ -5511,15 +5371,8 @@ rules:
   - apiGroups:
     - rbac.authorization.k8s.io
     resourceNames:
-    - union-executor-ns-read
-    - union-executor-ns-write
-    - union-leaseworker-ns-read
-    - union-leaseworker-ns-write
-    - union-operator-ns-read
-    - union-operator-ns-write
-    - union-proxy-ns-read
-    - union-webhook-ns-read
-    - union-webhook-ns-write
+    - union-union-ns-read
+    - union-union-ns-write
     resources:
     - clusterroles
     verbs:
@@ -5713,132 +5566,6 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-executor-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-executor-ns-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-operator-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-operator-ns-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-proxy-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-webhook-ns-read
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-webhook-ns-write
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
   name: union-clusterresourcesync-cluster-write
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -5890,7 +5617,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: proxy-system-secret
+  name: union-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -5946,952 +5673,37 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-executor-ns-read
+  name: union-union-ns-read
   namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: union-executor-ns-read
+  name: union-union-ns-read
 subjects:
   - kind: ServiceAccount
-    name: executor
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-executor-ns-read
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-read
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-read
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-read
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-read
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-read
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
+  name: union-union-ns-write
   namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: union-executor-ns-write
+  name: union-union-ns-write
 subjects:
   - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor-ns-write
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-executor-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: executor
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-read
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-leaseworker-ns-write
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: leaseworker
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-read
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-ns-write
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-operator-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: operator-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-proxy-ns-read
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-proxy-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: proxy-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-read
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-webhook-ns-write
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-ns-write
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
+    name: union-system
     namespace: union
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: proxy-system-secret
+  name: union-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -6901,10 +5713,10 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: proxy-system-secret
+  name: union-system-secret
 subjects:
   - kind: ServiceAccount
-    name: proxy-system
+    name: union-system
     namespace: union
 
 ---
@@ -7773,7 +6585,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f9c75c3107ce97d9e968000c8e163ff5ebca82e5b83ad5a43a1830a15690c6e"
+        configChecksum: "b346aa9637de84bc17b1191ec698ce0e2a10b3b3f8ac69cec1f5b940b29253f"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7947,7 +6759,7 @@ spec:
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
-      serviceAccountName: "union-imagebuilder"
+      serviceAccountName: "union-system"
       containers:
         - name: "buildkit"
           image: "docker.io/moby/buildkit:buildx-stable-1"
@@ -8052,7 +6864,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1e995cca394ddf36fac75dec5c2c13f0963bfd2bdf15ec6e606141b618a0eb7"
+        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -8063,7 +6875,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: leaseworker
+      serviceAccountName: union-system
       priorityClassName: union-leaseworker
       terminationGracePeriodSeconds: 75
       volumes:
@@ -8155,7 +6967,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5495f701970c138309ee87a0aaf1d066c953590b10ae2d79914d9dcef362777"
+        configChecksum: "770d383022e8e85ce1271fff3522a37e11ef864af20cfc91c626f2d63ee7fbd"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -8166,7 +6978,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: executor
+      serviceAccountName: union-system
       volumes:
         - name: config-volume
           configMap:
@@ -8262,7 +7074,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "40ed766ce3529eb91582b5ecc66d06a49768281715e23d773a5535aab29501f"
+        configChecksum: "6e42adb062c4c75c57c28379e7621df44d951815e179b292797d7010b7b9c02"
         
       labels:
         
@@ -8282,7 +7094,7 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
-      serviceAccountName: proxy-system
+      serviceAccountName: union-system
       securityContext:
         {}
       containers:
@@ -8402,7 +7214,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "40ed766ce3529eb91582b5ecc66d06a49768281715e23d773a5535aab29501f"
+        configChecksum: "6e42adb062c4c75c57c28379e7621df44d951815e179b292797d7010b7b9c02"
         
       labels:
         
@@ -8411,7 +7223,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      serviceAccountName: operator-system
+      serviceAccountName: union-system
       securityContext:
         {}
       volumes:
@@ -8528,7 +7340,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "1e995cca394ddf36fac75dec5c2c13f0963bfd2bdf15ec6e606141b618a0eb7"
+        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
         
     spec:
       securityContext:
@@ -8536,7 +7348,7 @@ spec:
         fsGroupChangePolicy: Always
         runAsNonRoot: true
         runAsUser: 1001
-      serviceAccountName: union-webhook-system
+      serviceAccountName: union-system
       containers:
         - name: webhook
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"

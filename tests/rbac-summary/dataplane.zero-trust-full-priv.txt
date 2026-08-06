@@ -1,0 +1,46 @@
+# dataplane.zero-trust-full-priv
+
+union/activator
+  knative-serving-activator  [Role via RoleBinding]  -> union
+      ""/configmaps,secrets: get,list,watch
+      ""/secrets: get,list,watch [names: knative-serving-certs,routing-serving-certs]
+  knative-serving-activator-cluster  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/endpoints,services: get,list,watch
+      serving.knative.dev/revisions: get,list,watch
+
+union/controller
+  knative-serving-admin  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+  knative-serving-aggregated-addressable-resolver  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+
+union/flyte-webhook-cleanup
+  flyte-webhook-cleanup-union  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+      admissionregistration.k8s.io/mutatingwebhookconfigurations: delete,get
+
+union/net-kourier
+  net-kourier  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/configmaps: get,list,watch
+      ""/endpoints,pods,secrets,services: get,list,watch
+      ""/events: create,patch,update
+      coordination.k8s.io/leases: create,delete,get,list,patch,update,watch
+      networking.internal.knative.dev/ingresses/status: update
+      networking.internal.knative.dev/ingresses: get,list,patch,watch
+
+union/union-system
+  release-name-fluentbit  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/namespaces,pods: get,list,watch
+  union-system-secret  [Role via RoleBinding]  -> union
+      */secrets: create,delete,get,list,update
+  union-union-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+      */*: get,list,watch
+      */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: get,list,watch
+      */events,flyteworkflows,pods,pods/log,rayjobs,resourcequotas: get,list,watch
+      */pods,replicasets/finalizers,secrets: get,list,watch
+      flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: get,list,watch
+      serving.knative.dev/configurations,revisions,services: get,list,watch
+  union-union-ns-write  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+      */*: create,delete,patch,update
+      */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: create,update
+      */configmaps,pods,podtemplates,resourcequotas,secrets: delete
+      */pods,replicasets/finalizers,secrets: create,patch,update
+      flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: create,delete,deletecollection,patch,update
+      serving.knative.dev/configurations,revisions,services: create,delete,update

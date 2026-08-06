@@ -1,0 +1,176 @@
+# dataplane.gcp
+
+union/flyte-webhook-cleanup
+  flyte-webhook-cleanup-union  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+      admissionregistration.k8s.io/mutatingwebhookconfigurations: delete,get
+
+union/knative-operator
+  knative-eventing-operator  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/configmaps: create,delete,get,list,watch
+      ""/events: create,patch,update
+      ""/namespaces: get,update,watch
+      ""/serviceaccounts: delete [names: knative-eventing-operator]
+      ""/services: create,delete,get,list,watch
+      */configmaps,services: create,delete,get,list,update,watch
+      */configmaps: delete
+      */configmaps: patch [names: kafka-channel-config]
+      */events: create,patch
+      */horizontalpodautoscalers: delete [names: kafka-webhook]
+      */leases: delete
+      */nodes: get,list,watch
+      */poddisruptionbudgets: delete [names: kafka-webhook]
+      */pods/finalizers: create,delete,get,list,update
+      */pods: get,list,update,watch
+      */secrets: create,delete,get,list,update,watch
+      */serviceaccounts: create,delete,get,list,update,watch
+      */services: patch
+      apiextensions.k8s.io/customresourcedefinitions: *
+      apiregistration.k8s.io/apiservices: create,delete,get,list
+      apiregistration.k8s.io/apiservices: update
+      apps/daemonsets,deployments,replicasets,statefulsets: create,delete,get,list,watch
+      apps/deployments: deletecollection
+      apps/statefulsets/scale: create,delete,get,list,patch,update,watch
+      autoscaling/horizontalpodautoscalers: create,delete,get,list,update
+      batch/jobs: create,delete,get,list,update,watch
+      caching.internal.knative.dev/images: *
+      cert-manager.io/certificates,clusterissuers,issuers: create,delete,get,list,update,watch
+      coordination.k8s.io/leases: *
+      internal.kafka.eventing.knative.dev/consumergroups,consumergroups/status,consumers,consumers/status: create,delete,get,list,patch,update,watch
+      internal.kafka.eventing.knative.dev/consumergroups/finalizers,consumers/finalizers: delete,update
+      keda.sh/scaledobjects,scaledobjects/finalizers,scaledobjects/status,triggerauthentications,triggerauthentications/status: create,delete,get,list,update,watch
+      operator.knative.dev/*: *
+      rabbitmq.com/bindings,exchanges,queues: create,delete,get,list,patch,update,watch
+      rabbitmq.com/bindings/status,exchanges/status,queues/status: get
+      rabbitmq.com/rabbitmqclusters: get,list,watch
+      rbac.authorization.k8s.io/clusterrolebindings,rolebindings: create,delete,get,list,update
+      rbac.authorization.k8s.io/clusterrolebindings: watch
+      rbac.authorization.k8s.io/clusterroles,roles: create,delete,escalate,get,list,update
+      trust.cert-manager.io/bundles: create,delete,get,list,update,watch
+  knative-eventing-operator-aggregated  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+  knative-eventing-operator-aggregated-stable  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+  knative-serving-operator  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/configmaps: create,delete,get,list,patch,update,watch
+      ""/configmaps: create,delete,get,list,watch
+      ""/configmaps: delete [names: config-controller]
+      ""/deployments,horizontalpodautoscalers,services: delete [names: knative-ingressgateway]
+      ""/events: create,patch,update
+      ""/namespaces: get,update,watch
+      ""/pods: get
+      ""/serviceaccounts: delete [names: knative-serving-operator]
+      ""/services: create,delete,get,list,watch
+      apiextensions.k8s.io/customresourcedefinitions: *
+      apiregistration.k8s.io/apiservices: create,delete,get,list
+      apiregistration.k8s.io/apiservices: update
+      apps,policy,security.istio.io/daemonsets,deployments,peerauthentications,poddisruptionbudgets,replicasets,statefulsets: create,delete,get,list,update,watch
+      authentication.k8s.io/tokenreviews: create
+      autoscaling/horizontalpodautoscalers: create,delete,get,list
+      caching.internal.knative.dev/images: *
+      coordination.k8s.io/leases: *
+      guard.security.knative.dev/guardians: create,delete,get,list,patch,update,watch
+      operator.knative.dev/*: *
+      projectcontour.io/httpproxies,tlscertificatedelegations: create,delete,deletecollection,get,list,patch,update,watch
+      rbac.authorization.k8s.io/clusterrolebindings,rolebindings: create,delete,get,list,update
+      rbac.authorization.k8s.io/clusterroles,roles: create,delete,escalate,get,list,update
+      rbac.authorization.k8s.io/clusterroles: bind,get [names: system:auth-delegator]
+      rbac.authorization.k8s.io/roles: bind,get [names: extension-apiserver-authentication-reader]
+  knative-serving-operator-aggregated  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+  knative-serving-operator-aggregated-stable  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+
+union/operator-webhook
+  knative-operator-webhook  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+      ""/configmaps: get,list,watch
+      ""/namespaces/finalizers: update
+      ""/namespaces: create,get,list,patch,update,watch
+      admissionregistration.k8s.io/mutatingwebhookconfigurations,validatingwebhookconfigurations: create,delete,get,list,patch,update,watch
+      apiextensions.k8s.io/customresourcedefinitions: create,delete,get,list,patch,update,watch
+      apps/deployments/finalizers: update
+      apps/deployments: get
+      coordination.k8s.io/leases: create,delete,get,list,patch,update,watch
+
+union/release-name-prometheus-kube-state-metrics
+  union-operator-prometheus-rbac  [Role via RoleBinding]  -> union
+      ""/configmaps,endpoints,ingresses,nodes,nodes/metrics,nodes/proxy,pods,services: get,list,watch (dead: nodes,nodes/metrics,nodes/proxy)
+      ""/configmaps: list,watch
+      ""/endpoints: list,watch
+      ""/limitranges: list,watch
+      ""/namespaces: list,watch (dead: namespaces)
+      ""/persistentvolumeclaims: list,watch
+      ""/persistentvolumes: list,watch (dead: persistentvolumes)
+      ""/pods: list,watch
+      ""/replicationcontrollers: list,watch
+      ""/resourcequotas: list,watch
+      ""/secrets: list,watch
+      ""/services: list,watch
+      admissionregistration.k8s.io/mutatingwebhookconfigurations: list,watch (dead: mutatingwebhookconfigurations)
+      admissionregistration.k8s.io/validatingwebhookconfigurations: list,watch (dead: validatingwebhookconfigurations)
+      apps,extensions/daemonsets: list,watch
+      apps,extensions/deployments: list,watch
+      apps,extensions/replicasets: list,watch
+      apps/statefulsets: list,watch
+      autoscaling/horizontalpodautoscalers: list,watch
+      batch/cronjobs: list,watch
+      batch/jobs: list,watch
+      certificates.k8s.io/certificatesigningrequests: list,watch (dead: certificatesigningrequests)
+      coordination.k8s.io/leases: list,watch
+      discovery.k8s.io/endpointslices: get,list,watch
+      discovery.k8s.io/endpointslices: list,watch
+      extensions,networking.k8s.io/ingresses,ingresses/status: get,list,watch
+      extensions,networking.k8s.io/ingresses: list,watch
+      networking.k8s.io/networkpolicies: list,watch
+      policy/poddisruptionbudgets: list,watch
+      storage.k8s.io/storageclasses: list,watch (dead: storageclasses)
+      storage.k8s.io/volumeattachments: list,watch (dead: volumeattachments)
+
+union/union-operator-prometheus
+  union-operator-prometheus-rbac  [Role via RoleBinding]  -> union
+      ""/configmaps,endpoints,ingresses,nodes,nodes/metrics,nodes/proxy,pods,services: get,list,watch (dead: nodes,nodes/metrics,nodes/proxy)
+      ""/configmaps: list,watch
+      ""/endpoints: list,watch
+      ""/limitranges: list,watch
+      ""/namespaces: list,watch (dead: namespaces)
+      ""/persistentvolumeclaims: list,watch
+      ""/persistentvolumes: list,watch (dead: persistentvolumes)
+      ""/pods: list,watch
+      ""/replicationcontrollers: list,watch
+      ""/resourcequotas: list,watch
+      ""/secrets: list,watch
+      ""/services: list,watch
+      admissionregistration.k8s.io/mutatingwebhookconfigurations: list,watch (dead: mutatingwebhookconfigurations)
+      admissionregistration.k8s.io/validatingwebhookconfigurations: list,watch (dead: validatingwebhookconfigurations)
+      apps,extensions/daemonsets: list,watch
+      apps,extensions/deployments: list,watch
+      apps,extensions/replicasets: list,watch
+      apps/statefulsets: list,watch
+      autoscaling/horizontalpodautoscalers: list,watch
+      batch/cronjobs: list,watch
+      batch/jobs: list,watch
+      certificates.k8s.io/certificatesigningrequests: list,watch (dead: certificatesigningrequests)
+      coordination.k8s.io/leases: list,watch
+      discovery.k8s.io/endpointslices: get,list,watch
+      discovery.k8s.io/endpointslices: list,watch
+      extensions,networking.k8s.io/ingresses,ingresses/status: get,list,watch
+      extensions,networking.k8s.io/ingresses: list,watch
+      networking.k8s.io/networkpolicies: list,watch
+      policy/poddisruptionbudgets: list,watch
+      storage.k8s.io/storageclasses: list,watch (dead: storageclasses)
+      storage.k8s.io/volumeattachments: list,watch (dead: volumeattachments)
+
+union/union-system
+  release-name-fluentbit  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      ""/namespaces,pods: get,list,watch
+  union-system-secret  [Role via RoleBinding]  -> union
+      */secrets: create,delete,get,list,update
+  union-union-ns-read  [Role via RoleBinding]  -> union
+      */*: get,list,watch
+      */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: get,list,watch
+      */events,flyteworkflows,pods,pods/log,rayjobs,resourcequotas: get,list,watch
+      */pods,replicasets/finalizers,secrets: get,list,watch
+      flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: get,list,watch
+      serving.knative.dev/configurations,revisions,services: get,list,watch
+  union-union-ns-write  [Role via RoleBinding]  -> union
+      */*: create,delete,patch,update
+      */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: create,update
+      */configmaps,pods,podtemplates,resourcequotas,secrets: delete
+      */pods,replicasets/finalizers,secrets: create,patch,update
+      flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: create,delete,deletecollection,patch,update
+      serving.knative.dev/configurations,revisions,services: create,delete,update

@@ -1,21 +1,28 @@
 # helm-values: examples/values-test-certs.yaml
-# expect-fail: requires either rbac.clusterWideBindings: true or a non-empty namespaces.managed
+# expect-fail: needs write reach into task namespaces, and this configuration gives it none
 #
 # The webhook mirrors image-pull secrets into each task namespace. With
-# cluster-wide bindings off and no enumerated namespaces to bind into, it has no
-# reach -- and the resulting Forbidden is SWALLOWED rather than surfaced, so the
-# pod is admitted without its secret and fails later with ImagePullBackOff.
+# cluster-wide bindings off, no enumerated namespaces to bind into, AND no
+# provisioner to create the bindings at runtime, it has no reach -- and the
+# resulting Forbidden is SWALLOWED rather than surfaced, so the pod is admitted
+# without its secret and fails later with ImagePullBackOff.
+#
+# All three routes must be absent for this to fire. clusterresourcesync stays at
+# its default (disabled) here, which is what removes the third: with it enabled
+# this same posture is README Option 1 and the generated d_union_rolebinding_*
+# templates supply the reach, so the guard correctly does NOT fire there.
 #
 # This is the one component in the chart whose RBAC failure is silent, which is
 # why it is a template-time error instead of a documentation note.
 #
 # namespaces.managed is set explicitly to [] rather than left to inherit the
-# chart default (six non-empty names) -- with the default in place (and even
-# with namespaces.enabled left at its own default of false), the webhook
-# guard's `not (and .Values.namespaces.managed .Values.namespaces.enabled)`
-# condition would still need namespaces.managed empty to fire on this axis
-# alone; leaving it at [] is what exercises the guard deterministically
-# regardless of namespaces.enabled.
+# chart default (six non-empty names). Strictly it is redundant: the webhook
+# guard's condition is `not (and .Values.namespaces.managed
+# .Values.namespaces.enabled)`, and namespaces.enabled is already false by
+# default here, so the guard fires on that axis whatever this list contains.
+# It is kept because it states the posture the fixture is about -- no
+# enumerated task namespaces for the webhook to reach -- rather than leaving
+# that to be inferred from a default several files away.
 global:
   CONTROLPLANE_HOST: "test-controlplane-host"
 low_privilege: false

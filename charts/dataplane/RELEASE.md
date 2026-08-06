@@ -32,9 +32,9 @@
 
   **All other combinations are unaffected.** `namespaces.enabled: true` + `low_privilege: false` keeps cluster-scoped RBAC and the six pre-seeded namespaces; every `low_privilege: true` deployment is namespace-scoped exactly as before, and pre-seeds nothing regardless of `namespaces.enabled`.
 
-  `low_privilege` must be a **YAML boolean**. The chart has no `values.schema.json`, and every `low_privilege` gate reads the value for raw Go-template truthiness, so a quoted `"false"` is truthy and means `true`. Normalizing this needs a schema plus a sweep of all twelve gates — normalizing only some of them yields a mixed-scope chart that installs cleanly and is broken — so it is deliberately left to its own change. See "Upgrade notes" below.
+  `low_privilege` must be a **YAML boolean**, and nothing enforces it. Every gate reads the value for raw Go-template truthiness, so a quoted `"false"` is truthy and means `true` — the deployment is silently single-namespace while the values file reads false. See "Upgrade notes" below; the same hazard applies to every boolean in the chart, and to `rbac.clusterWideBindings` it applies in the direction that *widens* privilege.
 
-  A new `make rbac-test` gate (`scripts/check_rbac.py`, pinned in `tests/rbac-baseline.yaml`) asserts against every committed render that no `ClusterRoleBinding` references a write-bearing role and that no `ClusterRole` renders under `low_privilege`. Today's violations are pinned per snapshot, each with a written justification and the phase that owns it, so later phases can only shrink the list.
+  RBAC is verified by review of committed golden artifacts: the full rendered manifests in `tests/generated/`, plus a per-snapshot RBAC summary in `tests/rbac-summary/` that collapses each render to who holds what, where, and through which binding kind. `make test` fails if a summary is stale, so a change to the rendered RBAC has to be regenerated and reviewed in the same commit.
 
 - **`nodeobserver.enabled: true` now fails the render under `low_privilege: true`.**
   nodeobserver's function is watching and updating `nodes`, a cluster-scoped resource
@@ -139,9 +139,11 @@
 - **`clusterresourcesync.namespacedRoleRules` (new) is used instead of
   `clusterRoleRules` when the component is confined to `namespaces.managed`.** With
   `rbac.clusterWideBindings: false`, a non-empty `namespaces.managed`, **and
-  `namespaces.enabled: true`,** `clusterresourcesync` renders **no cluster-scoped RBAC
-  object at all** — its rules live in a ClusterRole that is bound only by per-namespace
-  RoleBindings. (`namespaces.enabled` gates this the same way it gates the
+  `namespaces.enabled: true`,** `clusterresourcesync` renders **none of its own
+  cluster-scoped rule grants** — its rules live in a ClusterRole that is bound only by
+  per-namespace RoleBindings. (The `system:auth-delegator` ClusterRoleBinding remains
+  in every posture: it references a built-in ClusterRole this chart does not define and
+  cannot express as a bucket, so it sits outside the model entirely.) (`namespaces.enabled` gates this the same way it gates the
   `namespaces.managed` RoleBinding loop above: without it, routing clusterresourcesync's
   rules into that same loop would leave it with a ClusterRole and no binding of any
   kind, so this combination instead falls back to the default posture below rather
@@ -151,6 +153,71 @@
   and no RoleBinding can convey it, so an install that relies on `clusterresourcesync`
   creating namespaces must keep it.
 
+- **`clusterresourcesync` now creates the per-task-namespace RoleBindings when nothing
+  else can.** With `rbac.clusterWideBindings: false` and the task namespaces NOT
+  enumerated (README Option 1), the chart generates one `d_union_rolebinding_*` entry
+  per rendered `ns-*` role into `clusterresourcesync`'s template ConfigMap. The `bind`
+  grant shipped previously made those RoleBindings *permitted*; nothing made them
+  *happen*, so the posture rendered clean, applied clean, and left every task namespace
+  with no union bindings until the first task execution failed. The two sets are now
+  both listed per snapshot in `tests/rbac-summary/`, so a drift between them is a
+  reviewable diff. **No action for the default posture**,
+  which generates no such templates because the cluster-wide binding carries the reach.
+- **The `a_namespace` template is dropped when `clusterresourcesync` is confined to
+  `namespaces.managed`.** In that posture it holds no `namespaces` permission by design,
+  and pre-creating the namespace does not make reconciling it authorized — the create is
+  a cluster-scoped attribute check and returns `Forbidden` — on every project namespace,
+  on every sync cycle, forever, since the template checksum is only cached on success.
+  At flyteadmin's default `BatchSize: 10` the batched sync path logs each namespace's
+  error and continues, so other projects and the remaining templates still apply and
+  this is persistent error noise plus a permanently climbing `ResourceAddErrors` metric
+  rather than an outage. **If you set `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.batchSize: 0`
+  it becomes an outage**: zero selects serial processing, where the first namespace error
+  aborts the remaining projects for that cycle.
+  **Affects only
+  `rbac.clusterWideBindings: false` + non-empty `namespaces.managed` +
+  `namespaces.enabled: true`**, which is new in this release.
+- **Namespaces created from `namespaces.managed` now carry
+  `helm.sh/resource-policy: keep`, so `helm uninstall` no longer deletes them.**
+  Previously uninstalling the release cascade-deleted each managed namespace and
+  everything inside it — task pods, Secrets, PVCs, and objects `clusterresourcesync`
+  created at runtime that this chart never knew about. That is the ordinary
+  consequence of Helm owning a resource, but the resource is a whole namespace, which
+  made it the largest blast radius in the chart and rarely what "uninstall the
+  dataplane" was meant to mean. It also removes the sharp edge on the documented path
+  for externally-managed namespaces: `namespaces.enabled` gates both creation and the
+  per-namespace RoleBindings, so getting the bindings meant handing Helm a namespace it
+  would later delete. **Action if you relied on uninstall cleaning these up:** delete
+  them with `kubectl` instead. Helm still owns them for install and upgrade; only
+  delete changes. **One workflow this makes harder — renaming the release.** Uninstall
+  leaves the namespaces *and* their Helm ownership annotations, so reinstalling under
+  the same release name adopts them cleanly, but reinstalling under a *different* name
+  fails with `invalid ownership metadata … key "meta.helm.sh/release-name" must equal`.
+  **Transfer ownership rather than deleting the namespaces** — deleting them destroys
+  the workload data this annotation exists to protect:
+
+  ```bash
+  kubectl annotate namespace <ns> \
+    meta.helm.sh/release-name=<new-release> \
+    meta.helm.sh/release-namespace=<release-namespace> --overwrite
+  kubectl label namespace <ns> app.kubernetes.io/managed-by=Helm --overwrite
+  ```
+
+  (Both the failure and this procedure verified on k3s 1.35, including that a ConfigMap
+  in the namespace survives the transfer.)
+- **`rbac.clusterWideBindings: false` with no enumerated task namespaces now requires
+  `clusterresourcesync.enabled: true`.** That combination is README Option 1, and
+  `clusterresourcesync` is what creates the per-task-namespace RoleBindings in it. With
+  the component off, union workloads hold their `ns-*` roles in the release namespace
+  and nowhere else, and the render gives no sign of it. **Affects only deployments that
+  had already opted out of cluster-wide bindings**, which is new in this release.
+- **`namespaces.managed` now rejects duplicates and the release namespace** when
+  `namespaces.enabled: true`. A duplicate rendered the same Namespace and the same
+  RoleBinding twice in one release; naming the release namespace rendered a `Namespace`
+  manifest for an object Helm does not own plus a RoleBinding duplicating the one
+  `emitBucket` already emits there. Both now fail the render. **Inert lists are
+  unaffected** — the checks are gated on `namespaces.enabled`, so an overlay carrying a
+  harmless stale entry still upgrades.
 - **`rbac.clusterWideBindings: false` now fails the render under `low_privilege: true`.**
   In single-namespace mode there are no task namespaces and nothing is bound
   cluster-wide, so the setting changes nothing — it reads as a hardening step that did
@@ -175,7 +242,8 @@
 - **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a genuine multi-namespace deployment.** If you were running that combination and relying on it behaving as single-namespace, it will not any more: task pods are no longer pinned to the release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`). ServiceAccounts are unaffected: `commonServiceAccount.enabled` defaults to `true`, so components keep sharing `union-system` in this mode as before. **If you actually want single-namespace behavior, set `low_privilege: true`** — that is now the flag that means it, and `namespaces.enabled: false` on its own never did.
 - **`clusterresourcesync.enabled` defaults to `false` — a `low_privilege: false` data plane must now enable it (or pre-create namespaces).** It was previously suppressed entirely in this mode by the `singleNamespace` gate, so leaving it off looked harmless. Now that the mode is genuinely multi-namespace, something has to create the per-project/per-domain namespaces and their RBAC as projects are registered. Either set `clusterresourcesync.enabled: true`, or pre-create every namespace your `namespace_mapping.template` can produce by some other means. Task pods land in `Forbidden`/`namespace not found` otherwise.
 - **RBAC scope in that mode is unchanged from the last release** — it stays cluster-scoped. Nothing that binds to `flytepropeller-role`, `union-executor`, `union-leaseworker`, `proxy-system` or `union-webhook-role` by name needs to change, and there is no leftover-`ClusterRoleBinding` cleanup to do.
-- **`low_privilege` must be a YAML boolean — check for a quoted value.** If any overlay sets `low_privilege: "false"` as a quoted string (or templates the value), it is read for Go-template truthiness and therefore means `true`: the deployment is silently low-privilege. This is **unchanged** in this release and is not fixed by it — the chart has no `values.schema.json` to reject the string, and normalizing one gate without the other eleven would render a mixed-scope chart. Grep your generated values for a quoted `low_privilege` and unquote it; a deployment that has been silently low-privilege will change scope when you do, so treat it as a privilege change and roll out accordingly.
+- **`rbac.clusterWideBindings` and `namespaces.enabled` must be YAML booleans — the render now fails on a quoted value.** Both are read for Go-template truthiness, so `"false"` means **true**. For `rbac.clusterWideBindings` that silently keeps the cluster-wide posture — `ClusterRoleBinding`s for every `ns-*` role, which for `ns-read` is `get` on every Secret in the cluster — while the values file reads `false`. For `namespaces.enabled` it silently creates every namespace in `namespaces.managed` and binds into them. **If your overlay stringifies scalars (a `templatefile`/heredoc generator will, `yamlencode` will not), check these two keys before upgrading**: the render will now stop rather than mislead you. Use `--set`, not `--set-string`, if you set them on the command line.
+- **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject them.** Go's template engine treats any non-empty string as true, so `"false"` means **true**. The consequences differ by key: `rbac.clusterWideBindings: "false"` keeps the cluster-wide posture — `ClusterRoleBinding`s for every `ns-*` role, which for `ns-read` is `get` on every Secret in the cluster — while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses per-component identities onto the shared ServiceAccount, so each component holds the union of the others' rules. `config.operator.secretsWatcher.enabled: "false"` adds cluster-wide `update`/`patch` on Deployments. `low_privilege: "false"` fails safe, landing on the more restrictive branch. **If your values are generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline stringifies scalars, `yamlencode` does not. The rendered RBAC for every fixture is committed under `tests/rbac-summary/`, which is where a wrong reading becomes visible.
 - **Regenerate before adopting if your env still sets the retired CP-host globals.** An environment whose generated `values.yaml` still contains `global.CONTROLPLANE_GRPC_ENDPOINT` / `global.QUEUE_GRPC_ENDPOINT`, or a task-pod `default-env-vars` `_U_EP_OVERRIDE: "{{ include \`dataplane.cp.queueEndpoint\` . }}"`, must be regenerated (terraform apply) before moving to this chart — the `queueEndpoint` helper is removed, so the stale `include` fails to render. The retired globals are inert if set; drop them. Authless deployments move to `config.union.auth`/`config.union.connection` per `examples/values.authless.yaml`.
 
 ## 2026.7.2

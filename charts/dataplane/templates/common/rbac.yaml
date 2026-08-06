@@ -25,73 +25,47 @@ as components toggle, so enabling a component moves rules between four roles
 rather than adding a fifth.
 */}}
 {{/*
-$components and $identities both derive from dataplane.rbac.components /
+dataplane.rbac.groups derives from dataplane.rbac.components /
 dataplane.rbac.identities (_rbac.tpl) -- the SAME enumeration
 clusterresourcesync/serviceaccount.yaml's bind grant derives its resourceNames
-from, via dataplane.rbac.bucketRoleNames. Nothing here re-declares which
+from, via dataplane.rbac.bucketRoleNames, and the same one its provisioner
+RoleBinding templates derive from, via
+dataplane.rbac.provisionerBindingTemplates. Nothing here re-declares which
 components exist, which ServiceAccount each runs as, or which of them share the
 "union" identity: that is decided in exactly one place, so a component added or
-removed there is added or removed here and in the bind list at the same time.
-
-$components carries the per-component {name, sa} pairs this file still needs
-that $identities (collapsed to sa -> identity) cannot supply: a shared SA's
-role is the union of only its ENABLED contributors' declared buckets
-(executor's rules must not leak onto union-system when executor is disabled
-and leaseworker is not), and that per-component detail is a content question,
-not a naming question. It is used below only to decide CONTENTS merged into an
-already-identified group and the group's emission order, never whether a group
-exists or what it is called -- that comes from $identities, looked up by
-ServiceAccount name.
+removed there is added or removed here, in the bind list, and in the provisioner
+templates at the same time.
 */}}
-{{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
-{{- $identities := fromYaml (include "dataplane.rbac.identities" .) -}}
-
 {{- $buckets := list "ns-read" "ns-write" "cluster-read" "cluster-write" -}}
 
 {{/*
-Group components by the ServiceAccount they run as. $order preserves first-seen
-order so the rendered manifest is stable across renders; ranging over the dict's
-keys would not be (map key order, sorted alphabetically, is not the same
-sequence and would reorder the rendered manifest).
-
-Each group's identity is looked up in $identities by ServiceAccount name --
-not recomputed here. Both $components and $identities derive from
-dataplane.rbac.components, so the set of ServiceAccounts iterated below and the
-set dataplane.rbac.bucketRoleNames names roles for are, by construction, the
-same set: there is no second enumeration that could disagree with it.
+The grouping itself lives in dataplane.rbac.groups (_rbac.tpl), not here: the
+clusterresourcesync provisioner templates need the SAME per-identity bucket
+contents to decide which ns-* roles actually render, and computing that twice is
+the drift this chart's RBAC helpers are built to prevent. See that define's
+comment for the ordering guarantee and why a shared ServiceAccount's group is the
+union of only its enabled contributors.
 */}}
-{{- $groups := dict -}}
-{{- $order := list -}}
-{{- range $c := $components -}}
-{{- if not (hasKey $groups $c.sa) -}}
-{{- $group := dict "identity" (index $identities $c.sa) -}}
-{{- range $bucket := $buckets -}}
-{{- $_ := set $group $bucket list -}}
-{{- end -}}
-{{- $_ := set $groups $c.sa $group -}}
-{{- $order = append $order $c.sa -}}
-{{- end -}}
-{{- $group := index $groups $c.sa -}}
-{{- $decl := fromYaml (include (printf "dataplane.rbac.buckets.%s" $c.name) $) -}}
-{{- range $bucket := $buckets -}}
-{{- $_ := set $group $bucket (concat (index $group $bucket) (index $decl $bucket | default list)) -}}
-{{- end -}}
-{{- end -}}
-
-{{- range $sa := $order -}}
-{{- $group := index $groups $sa -}}
+{{- range $group := fromYamlArray (include "dataplane.rbac.groups" .) -}}
+{{- $sa := $group.sa -}}
 {{- range $bucket := $buckets }}
 {{/*
 uniq drops rules two components declare identically (executor's and
 leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so this
 changes nothing an API server would decide -- it only keeps the rendered role
 readable.
+
+`default list` is load-bearing, not defensive padding: toYaml serializes an empty
+list as `null`, not `[]`, so a bucket that is empty in dataplane.rbac.groups
+comes back from fromYamlArray as nil rather than an empty list, and uniq nil is a
+template panic ("invalid memory address"). Every render whose cluster-* buckets
+are empty -- i.e. every low_privilege render -- hits this. Do not remove it.
 */}}
 {{- include "dataplane.rbac.emitBucket" (dict
       "ctx" $
       "identity" $group.identity
       "bucket" $bucket
-      "rules" (index $group $bucket | uniq)
+      "rules" (index $group $bucket | default list | uniq)
       "serviceAccount" $sa) }}
 {{- end }}
 {{- end -}}
