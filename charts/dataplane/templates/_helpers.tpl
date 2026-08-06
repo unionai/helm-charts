@@ -1577,7 +1577,7 @@ and their RBAC kind off this helper.
 
 namespaces.enabled is NOT part of this. It only pre-seeds the six hardcoded
 flytesnacks + health-monitoring namespaces (common/namespaces.yaml) and gates
-whether union roles are bound into namespaces.managed (see _rbac.tpl), and
+whether union roles are bound into namespaces.static (see _rbac.tpl), and
 says nothing about privilege: with it off, a fully-privileged install still
 creates namespaces for new projects dynamically via clusterresourcesync.
 Folding it in here is what previously suppressed clusterresourcesync -- and

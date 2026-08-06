@@ -306,11 +306,11 @@ and there are exactly two candidates. Which one is active is decided by
 | | Task namespaces | Who creates the RoleBindings |
 |---|---|---|
 | **Option 1** (default) | created at runtime, as projects are registered | `clusterresourcesync`, from templates the chart generates |
-| **Option 2** | known ahead of time | the chart, one per `namespaces.managed` entry |
+| **Option 2** | known ahead of time | the chart, one per `namespaces.static` entry |
 
 Under `low_privilege: true` none of this applies: there are no task namespaces, the
 `ns-*` roles are plain namespaced `Role`s, and everything is confined to the release
-namespace. `namespaces.managed` is a genuine no-op there.
+namespace. `namespaces.static` is a genuine no-op there.
 
 ### Option 1 — a provisioner creates the bindings (default)
 
@@ -327,7 +327,7 @@ provisions each namespace, and holds `bind` on exactly those roles for the purpo
 unconditionally, whether or not `commonServiceAccount` is enabled.
 
 Leave `namespaces.enabled` at its default `false`. It is what selects Option 2, and the
-chart's default `namespaces.managed` is six non-empty names, so setting it true switches
+chart's default `namespaces.static` is six non-empty names, so setting it true switches
 postures rather than adding to this one.
 
 Two separate things have to be true for this to work, and it is worth being explicit
@@ -375,9 +375,9 @@ namespaces:
 ```
 
 `namespaces.enabled: true` is required here, not optional: the per-namespace
-RoleBinding loop emits nothing unless it is set, regardless of `namespaces.managed`.
+RoleBinding loop emits nothing unless it is set, regardless of `namespaces.static`.
 Set it even if you pre-create these namespaces by another route — it is the chart's
-only signal that the namespaces named by `namespaces.managed` actually exist, which is
+only signal that the namespaces named by `namespaces.static` actually exist, which is
 also why it creates the `Namespace` objects listed there when `low_privilege: false`.
 
 Setting it is safe for namespaces managed by another system: the chart annotates every
@@ -419,15 +419,15 @@ projects are registered at runtime.
 (the default) runs FluentBit as the same `union-system` ServiceAccount as the shared
 `commonServiceAccount`, and FluentBit separately carries its own read-only cluster-wide
 grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping. That grant is
-independent of `namespaces.managed`; hardening it is deliberately out of scope here.
+independent of `namespaces.static`; hardening it is deliberately out of scope here.
 Within the union-authored RBAC this chart controls, Option 2 does confine the shared
-identity to `namespaces.managed` plus the release namespace, and nowhere else.
+identity to `namespaces.static` plus the release namespace, and nowhere else.
 
 ### What Option 2 costs
 
 Bindings are emitted per `(role × namespace)` — `roleRef` names exactly one role and is
 immutable, so there is no way to cover several roles with one binding. At the chart's
-default 6 `namespaces.managed`, each `ns-*` role gets 7 RoleBindings (the 6 task
+default 6 `namespaces.static`, each `ns-*` role gets 7 RoleBindings (the 6 task
 namespaces plus one in the release namespace):
 
 | Configuration | `ns-*` roles | Bindings at 6 task namespaces |
@@ -458,7 +458,7 @@ with an empty namespace plus a `spec.nodeName` field selector, which Kubernetes
 authorizes as a cluster-scope check — per-namespace RoleBindings cannot satisfy it at any
 count, so that rule sits in its cluster-scoped bucket too and the pod list is
 cluster-wide. Both are `ClusterRole` + `ClusterRoleBinding` and are unaffected by
-`namespaces.managed`. `nodeobserver.enabled` defaults to `false`; leave it there unless
+`namespaces.static`. `nodeobserver.enabled` defaults to `false`; leave it there unless
 you need it, and note that it requires `low_privilege: false`.
 
 The pod webhook also needs reach into task namespaces when
@@ -494,7 +494,7 @@ kubectl auth can-i create pods \
 If the RoleBinding is missing, check which posture you are in. Under Option 1, confirm
 `clusterresourcesync` is running and look at its logs for errors applying the
 `d_union_rolebinding_*` templates. Under Option 2, add the namespace to
-`namespaces.managed` and confirm `namespaces.enabled: true` is set — the loop emits
+`namespaces.static` and confirm `namespaces.enabled: true` is set — the loop emits
 nothing without it.
 
 ### One failure that does not look like RBAC

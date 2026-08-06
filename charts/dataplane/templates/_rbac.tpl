@@ -19,7 +19,7 @@ once rather than duplicated across N task namespaces. NOTHING in this chart bind
 them with a ClusterRoleBinding, so they grant nothing cluster-wide: a union
 workload holds them in the release namespace, plus whichever task namespaces
 something has created a RoleBinding in. That "something" is one of two things --
-the per-namespaces.managed loop below, when the namespaces are enumerated at
+the per-namespaces.static loop below, when the namespaces are enumerated at
 template time, or clusterresourcesync applying the templates
 dataplane.rbac.provisionerBindingTemplates generates, when they are created at
 runtime. Neither in play means no task-namespace reach at all; see that helper
@@ -134,7 +134,7 @@ subjects:
 {{/*
 skipReleaseNamespaceBinding is set: the caller does not want this identity to
 hold a grant in the release namespace at all, only in the namespaces named by
-the per-namespaces.managed loop below. Today the only caller is
+the per-namespaces.static loop below. Today the only caller is
 clusterresourcesync's constrained posture (see
 clusterresourcesync/serviceaccount.yaml): it provisions OTHER namespaces, and
 its reach there is meant to be exactly the enumerated task namespaces and
@@ -161,17 +161,17 @@ mutually exclusive, keyed off the same condition (see
 dataplane.rbac.clusterresourcesyncConstrained).
 
 namespaces.enabled is load-bearing here, not just for Namespace creation: it
-is the chart's only signal that the namespaces named by namespaces.managed
+is the chart's only signal that the namespaces named by namespaces.static
 actually exist (or will, because the chart itself is creating them a few
 lines away in common/namespaces.yaml). Without this gate, a bare
-low_privilege: false install -- namespaces.managed at its non-empty default,
+low_privilege: false install -- namespaces.static at its non-empty default,
 namespaces.enabled at its default false -- would emit RoleBindings into six
 namespaces nothing has created, and a fresh install or ArgoCD sync would fail
 with "namespaces <name> not found" before clusterresourcesync ever ran. See
 RELEASE.md.
 */}}
 {{- if .ctx.Values.namespaces.enabled }}
-{{- range $ns := .ctx.Values.namespaces.managed }}
+{{- range $ns := .ctx.Values.namespaces.static }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -385,17 +385,17 @@ into them itself and clusterresourcesync is confined to them rather than holding
 cluster-scoped RBAC.
 
 Both inputs are required. namespaces.enabled is one of them, not just
-namespaces.managed: this posture routes clusterresourcesync's rules through
-dataplane.rbac.emitBucket's per-namespaces.managed RoleBinding loop, which itself
+namespaces.static: this posture routes clusterresourcesync's rules through
+dataplane.rbac.emitBucket's per-namespaces.static RoleBinding loop, which itself
 only emits those RoleBindings when namespaces.enabled is true. Without requiring
-it here too, a render with a non-empty namespaces.managed but namespaces.enabled
+it here too, a render with a non-empty namespaces.static but namespaces.enabled
 left at its default false would drop clusterresourcesync's cluster-scoped RBAC
 while ALSO getting no per-namespace RoleBindings to replace it with -- a
 ClusterRole with no binding at all, silently non-functional. Folding
 namespaces.enabled in means that combination instead falls back to the
 runtime-provisioner posture, which still works.
 
-Note this is the chart's DEFAULT namespaces.managed being non-empty as much as an
+Note this is the chart's DEFAULT namespaces.static being non-empty as much as an
 operator's list: leaving both at their defaults (six names, enabled: false) lands
 in the provisioner posture, which is the intended default for a data plane whose
 projects are registered at runtime.
@@ -409,7 +409,7 @@ untenable.
 Returns "true" or the empty string, so callers test it with `if`.
 */}}
 {{- define "dataplane.rbac.clusterresourcesyncConstrained" -}}
-{{- if and .Values.namespaces.managed .Values.namespaces.enabled -}}true{{- end -}}
+{{- if and .Values.namespaces.static .Values.namespaces.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*

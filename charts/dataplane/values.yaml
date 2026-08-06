@@ -162,7 +162,7 @@ clusterresourcesync:
       verbs:
         - '*'
   # -- Rules used INSTEAD of clusterRoleRules when clusterresourcesync is
-  # confined to namespaces.managed (a non-empty namespaces.managed with
+  # confined to namespaces.static (a non-empty namespaces.static with
   # namespaces.enabled: true). Every entry must be a namespaced resource
   # type: this list is conveyed by RoleBindings, which cannot grant anything
   # cluster-scoped.
@@ -2017,7 +2017,7 @@ prometheus:
 # TRUE: the deployment is silently single-namespace while the values file reads
 # false. The same applies to every other boolean in this chart, including
 # namespaces.enabled, where the wrong reading silently creates every namespace in
-# namespaces.managed and binds into them. If your values are generated, make sure
+# namespaces.static and binds into them. If your values are generated, make sure
 # the generator emits real booleans rather than stringified ones.
 #
 # An absent or null value means low_privilege is OFF (full privilege).
@@ -2044,7 +2044,7 @@ rbac:
   # That means something has to bind them into each task namespace. Two things
   # can, and exactly one of them is active in any given render:
   #
-  #   - This chart, for the namespaces in `namespaces.managed`, when
+  #   - This chart, for the namespaces in `namespaces.static`, when
   #     `namespaces.enabled: true` (README Option 2).
   #   - clusterresourcesync at provision time, from RoleBinding templates the
   #     chart generates for it, when the namespaces are created at runtime
@@ -2505,77 +2505,50 @@ ingress-nginx:
 extraObjects: []
 
 namespaces:
-  # -- Create the Namespace objects listed in `managed`, and gate whether the
-  # per-namespace RoleBindings (see _rbac.tpl) are emitted at all.
+  # -- Use the static work-namespace posture.
   #
-  # These two things are coupled deliberately, not independently controllable:
-  # `managed` enumerates the namespaces this chart creates when this is true,
-  # so binding union roles into them is coherent. With this false, the chart
-  # has no reason to believe those namespaces exist -- they may not have been
-  # created by anything yet, e.g. on a fresh install or ArgoCD sync, before
-  # clusterresourcesync has run -- so it does not emit RoleBindings into them
-  # either.
+  # When true (with a non-empty `static`), this chart emits a RoleBinding for
+  # the pooled `work-ns` ClusterRole in every namespace listed in `static`, and
+  # clusterresourcesync is confined to that list -- it gets NO cluster-wide
+  # grant at all, and its `a_namespace` template is dropped.
   #
-  # If you pre-create these namespaces by some other route and still want the
-  # bindings, set this true anyway. Note that Helm will refuse to adopt a
-  # Namespace it did not create (it errors rather than silently taking
-  # ownership), so pre-creating one out-of-band and then setting this true
-  # requires either creating it via this chart from the start or annotating it
-  # for Helm adoption first.
+  # When false, work namespaces are created at runtime by clusterresourcesync,
+  # which holds a small cluster-wide grant to bootstrap each one. That is the
+  # default, and the right posture for a dataplane whose projects are
+  # registered at runtime.
   #
-  # Uninstall does NOT delete these namespaces. The chart annotates every
-  # Namespace it creates here with `helm.sh/resource-policy: keep`, so
-  # `helm uninstall` leaves them (and everything inside them -- task pods,
-  # Secrets, PVCs, and whatever clusterresourcesync added at runtime) in place.
-  # Without that, uninstalling the release would cascade-delete the namespace
-  # contents, which is the largest blast radius in this chart and rarely what
-  # "uninstall the dataplane" is meant to do. Clean them up with kubectl if you
-  # do want them gone.
-  #
-  # This is about DELETE only. Helm still owns these objects for install and
-  # upgrade, which is why the adoption note above still applies: a namespace
-  # that already exists and was not created by this release must be annotated
-  # for adoption before Helm will take it over.
-  #
-  # There is no way to get the RoleBindings without this flag: it gates both,
-  # deliberately -- see `managed`.
+  # Uninstall does NOT delete namespaces this chart created: they carry
+  # `helm.sh/resource-policy: keep`, so `helm uninstall` leaves them and
+  # everything inside them (task pods, Secrets, PVCs, whatever
+  # clusterresourcesync added at runtime) in place. Clean them up with kubectl
+  # if you do want them gone.
   enabled: false
-  # -- Task namespaces this chart creates and manages (when `enabled: true`)
-  # and binds union roles into (also gated on `enabled: true` -- see that
-  # flag). This is NOT the full set of namespaces a dataplane will use:
+  # -- Also create the Namespace objects listed in `static`.
+  #
+  # Only consulted when `enabled: true`. Set false when the namespaces are
+  # created outside this chart -- by Terraform, by a platform team, by
+  # anything. You still get the RoleBindings; Helm simply never touches the
+  # Namespace objects, so there is no ownership to negotiate.
+  #
+  # This is the supported path for externally-managed namespaces. Previously
+  # the only route was setting `enabled: true` with `create` unavailable, which
+  # meant handing Helm a Namespace it had not created -- and Helm refuses to
+  # adopt one without `meta.helm.sh/release-name`, `release-namespace` and the
+  # `app.kubernetes.io/managed-by` label being set by hand first.
+  #
+  # If the namespaces do not actually exist, the RoleBindings fail to apply
+  # with `namespaces "<name>" not found` at install or sync time. That is loud
+  # and immediate, which is what makes this safe to offer.
+  create: true
+  # -- Work namespaces known at render time.
+  #
+  # This is NOT the full set a dataplane will use when `enabled: false`:
   # clusterresourcesync creates one per project/domain as projects are
-  # registered, and it cannot know those names in advance.
+  # registered, and cannot know those names in advance.
   #
-  # By itself this list is inert: `enabled` defaults false, and the
-  # per-namespace RoleBinding loop fires only when BOTH this list is
-  # non-empty AND `enabled` is true, so a default install (`enabled` left
-  # false) renders no per-namespace RoleBindings and is unaffected by this
-  # default.
-  #
-  # Enumerate this list when the task namespaces are known ahead of time, and
-  # set `enabled: true` -- either to have the chart pre-create them, or
-  # because they are pre-created by another route and you still want the
-  # bindings (see `enabled`'s own comment). The chart then emits a RoleBinding
-  # per listed namespace for each union ns-* role, and clusterresourcesync
-  # generates none of its own -- union's ns-* roles hold permissions in exactly
-  # these namespaces and the release namespace.
-  #
-  # Setting this list is therefore a NARROWING, not a widening: leaving it at
-  # the default (with `enabled: false`) lets clusterresourcesync bind union
-  # roles into every task namespace it provisions, which is every project and
-  # domain the control plane registers.
-  #
-  # This does not confine every workload on the shared identity. With
-  # fluentbit.enabled: true (the default), fluent-bit runs as the same
-  # ServiceAccount and carries its own read-only cluster-wide grant
-  # (get/list/watch on namespaces/pods) for log shipping, independent of this
-  # setting.
-  #
-  # Names must be literal. namespace_mapping.template is a TEMPLATE
-  # ("{{ project }}-{{ domain }}") expanded per run against project/domain
-  # pairs that come from the control plane at runtime, so it cannot be
-  # enumerated here.
-  managed:
+  # By itself this list is inert -- `enabled` defaults false, so a default
+  # install is unaffected by this default.
+  static:
     - flytesnacks-development
     - flytesnacks-staging
     - flytesnacks-production
