@@ -1605,33 +1605,6 @@ so under "Upgrade notes".
 {{- end -}}
 
 {{/*
-RBAC object kind for a component's role: Role under singleNamespace (i.e.
-low_privilege: true), ClusterRole otherwise.
-
-Because singleNamespace is exactly low_privilege, this is also the correct key
-for a rule set that names cluster-scoped resources (nodes, namespaces,
-storageclasses, CRDs, webhook configs, ...): such a rule set gets a ClusterRole
-whenever the install may create cluster-scoped objects at all, and degrades to a
-namespaced Role only under low_privilege, where that component's cluster-scoped
-function is knowingly given up along with every other cluster-scoped object this
-chart would create. A grant that cannot survive that degradation belongs behind
-a low_privilege gate on the whole component, not behind a different kind helper.
-
-Callers pass the root context. Use with "dataplane.rbacBindingKind" for the
-matching binding kind; roleRef.kind uses this helper, not the binding one.
-*/}}
-{{- define "dataplane.rbacKind" -}}
-{{- if include "singleNamespace" . -}}Role{{- else -}}ClusterRole{{- end -}}
-{{- end -}}
-
-{{/*
-Binding kind matching "dataplane.rbacKind". Callers pass the root context.
-*/}}
-{{- define "dataplane.rbacBindingKind" -}}
-{{- printf "%sBinding" (include "dataplane.rbacKind" .) -}}
-{{- end -}}
-
-{{/*
 Resolves the namespace template shared by every component that maps a run to a
 K8s namespace: the executor (namespace_mapping.template), the leaseworker
 (namespace-template), and the operator (org.namespaceTemplate). Callers wrap the

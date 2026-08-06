@@ -46,63 +46,28 @@ metadata:
   labels:
     {{- include "clusterresourcesync.labels" . | nindent 4 }}
 data:
-{{- /*
-The template set must match the RBAC posture. clusterresourcesync applies every
-entry here per project namespace, so a template naming a resource this
-ServiceAccount cannot touch is not inert: syncNamespace collects the error and
-returns it, and the failure recurs on every sync cycle forever because the
-template's checksum is only cached on success.
-
-At the DEFAULT batch size it is not an outage. flyteadmin registers
-UnionProjectSyncConfig.BatchSize: 10 (flyteadmin/pkg/runtime/cluster_resource_provider.go),
-so the BATCHED path is live, and that path deliberately logs the per-namespace
-error and returns nil "in order to not block other namespaces from being synced".
-Other projects and the remaining templates for this one still apply. The cost is a
-permanent Forbidden per project namespace per cycle, a ResourceAddErrors metric
-that never stops climbing, and that namespace's sync stats never being recorded.
-
-It IS an outage if an operator sets
-clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.batchSize: 0.
-The chart renders that, and zero selects serial processing, where processProjects
-returns on the first namespace error and every remaining project goes
-unprovisioned for that cycle.
-
-(An earlier revision of this comment claimed the serial path was live because the
-chart sets no BatchSize, and that one bad template stranded every project after
-the first. That was wrong: an unset BatchSize takes the registered default of 10,
-not 0.)
-
-Two adjustments, both keyed off the same posture the RBAC is keyed off:
-*/ -}}
-{{- $constrained := include "dataplane.rbac.clusterresourcesyncConstrained" . }}
+{{- $static := include "dataplane.rbac.staticPosture" . }}
 {{- range .Values.clusterresourcesync.templates }}
 {{- /*
-1. Drop a_namespace when confined to namespaces.static. In that posture the
-   namespaces are pre-created (by common/namespaces.yaml) and this
-   ServiceAccount deliberately holds no `namespaces` permission at all -- see
-   clusterresourcesync.namespacedRoleRules, which is clusterRoleRules minus
-   `namespaces`. Pre-creating the object does not make reconciling it
-   authorized: the create is a cluster-scoped attribute check and returns
-   Forbidden, on every project namespace, on every sync cycle, with a render and
-   an apply that both look clean.
+Drop a_namespace in the static posture. The namespaces are pre-created (by
+common/namespaces.yaml, or out of band under namespaces.create: false) and this
+ServiceAccount deliberately holds no `namespaces` permission there. Pre-creating
+the object does not make reconciling it authorized: the create is a
+cluster-scoped attribute check and returns Forbidden, on every project
+namespace, on every sync cycle, with a render and an apply that both look clean.
 */ -}}
-{{- if and (eq .key "a_namespace") $constrained }}
+{{- if and (eq .key "a_namespace") $static }}
 {{- else }}
   {{ .key }}.yaml: | {{ .value | nindent 4 }}
 {{- end }}
 {{- end }}
 {{- /*
-2. Add a RoleBinding template per rendered ns-* role when nothing else is
-   binding union workloads into task namespaces. See
-   dataplane.rbac.provisionerBindingsNeeded and
-   dataplane.rbac.provisionerBindingTemplates for which postures need this and
-   why the `bind` grant alone is not sufficient -- a grant authorizes an
-   attempt, it does not make one.
+Add the work-ns RoleBinding when this chart is not binding it. Keyed `ab_` so it
+applies immediately after a_namespace and before the ServiceAccount and
+ResourceQuota, which now depend on the reach it grants.
 */ -}}
-{{- if include "dataplane.rbac.provisionerBindingsNeeded" . }}
-{{- range fromYamlArray (include "dataplane.rbac.provisionerBindingTemplates" .) }}
-  {{ .key }}.yaml: | {{ .value | nindent 4 }}
-{{- end }}
+{{- if not $static }}
+  ab_union_rolebinding.yaml: | {{ include "dataplane.rbac.provisionerBindingTemplate" . | nindent 4 }}
 {{- end }}
 {{- range .Values.clusterresourcesync.additionalTemplates }}
   {{ .key }}.yaml: | {{ .value | nindent 4 }}

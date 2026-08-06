@@ -1,71 +1,66 @@
 {{/*
-Emits every union component's RBAC from the buckets each component declares.
+Emits every union component's RBAC from the slots each component declares.
 
-Objects are emitted PER IDENTITY, not per component. Under the default
-commonServiceAccount.enabled: true most components share union-system, so
-per-component role objects would describe a granularity that does not exist:
-that ServiceAccount holds the union of all of them, and executor's wildcard
-write subsumes the rest. Aggregating makes the rendered RBAC and the effective
-RBAC the same objects.
+Pooled slots produce ONE object holding the union of every enabled declarer's
+rules, bound to every declarer's ServiceAccount. Per-component slots produce
+one object per declarer. Which is which is decided in dataplane.rbac.slotSpec,
+by the pooling rule: pooled if conveyed by a RoleBinding, per-component if
+conveyed by a ClusterRoleBinding.
 
-"Identity" means the ServiceAccount a component's pods actually run as, NOT the
-commonServiceAccount flag. Three components keep a dedicated ServiceAccount even
-when the flag is on -- flytepropeller (flytepropeller-system), nodeobserver
-(nodeobserver-system) and clusterresourcesync (union-clustersync-system) -- so
-they are grouped separately. Aggregating them onto union-system would both strip
-their own ServiceAccount of every grant and hand union-system permissions it
-never had.
+Rule DEFINITIONS stay per-component (dataplane.rbac.slots.*) even where the
+OBJECT is shared, so "does this component need cluster scope" and "what did
+this component actually ask for" both stay answerable from the source.
 
-Rule DEFINITIONS stay per-component (see each component's
-dataplane.rbac.buckets.* template) so "does this component need cluster scope"
-stays answerable -- that is the input the gating framework needs.
-
-Consequence to accept: under the shared path an aggregated role's contents shift
-as components toggle, so enabling a component moves rules between four roles
-rather than adding a fifth.
+A pooled slot's contents are the union of only its ENABLED contributors, which
+is what lets a dataplane running operator + proxy + webhook -- without the
+executor or propeller and their resource wildcards -- get a genuinely narrow
+work-ns role rather than one covering every apiGroup and resource.
 */}}
+{{- $ctx := . -}}
+{{- $spec := fromYaml (include "dataplane.rbac.slotSpec" .) -}}
+{{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
+{{- range $slot := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
+{{- $slotSpec := index $spec $slot -}}
+{{- if $slotSpec.pooled -}}
 {{/*
-dataplane.rbac.groups derives from dataplane.rbac.components /
-dataplane.rbac.identities (_rbac.tpl) -- the SAME enumeration
-clusterresourcesync/serviceaccount.yaml's bind grant derives its resourceNames
-from, via dataplane.rbac.bucketRoleNames, and the same one its provisioner
-RoleBinding templates derive from, via
-dataplane.rbac.provisionerBindingTemplates. Nothing here re-declares which
-components exist, which ServiceAccount each runs as, or which of them share the
-"union" identity: that is decided in exactly one place, so a component added or
-removed there is added or removed here, in the bind list, and in the provisioner
-templates at the same time.
+`uniq` drops rules two components declare identically (executor's and
+leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so
+this changes nothing an API server would decide -- it only keeps the rendered
+role readable.
 */}}
-{{- $buckets := list "ns-read" "ns-write" "cluster-read" "cluster-write" -}}
-
+{{- $rules := list -}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- $rules = concat $rules (index $decl $slot | default list) -}}
+{{- end -}}
+{{- include "dataplane.rbac.emitSlot" (dict
+      "ctx" $ctx
+      "slot" $slot
+      "rules" ($rules | uniq)
+      "component" ""
+      "subjects" (fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" $ctx "slot" $slot)))) }}
+{{- else -}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- $rules := index $decl $slot | default list -}}
+{{- $trusted := list -}}
+{{- if and (eq $slot "cluster-write") (eq $c.name "clusterresourcesync") -}}
 {{/*
-The grouping itself lives in dataplane.rbac.groups (_rbac.tpl), not here: the
-clusterresourcesync provisioner templates need the SAME per-identity bucket
-contents to decide which ns-* roles actually render, and computing that twice is
-the drift this chart's RBAC helpers are built to prevent. See that define's
-comment for the ordering guarantee and why a shared ServiceAccount's group is the
-union of only its enabled contributors.
+The bind rule is emitter-authored, and only for clusterresourcesync's
+cluster-write role -- passed as `trusted` rather than folded into `rules` so it
+never runs through emitSlot's declaration-verb allowlist, which rejects `bind`
+by design (a component declaring it is exactly the case that check exists to
+catch). See dataplane.rbac.provisionerBindRule.
 */}}
-{{- range $group := fromYamlArray (include "dataplane.rbac.groups" .) -}}
-{{- $sa := $group.sa -}}
-{{- range $bucket := $buckets }}
-{{/*
-uniq drops rules two components declare identically (executor's and
-leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so this
-changes nothing an API server would decide -- it only keeps the rendered role
-readable.
-
-`default list` is load-bearing, not defensive padding: toYaml serializes an empty
-list as `null`, not `[]`, so a bucket that is empty in dataplane.rbac.groups
-comes back from fromYamlArray as nil rather than an empty list, and uniq nil is a
-template panic ("invalid memory address"). Every render whose cluster-* buckets
-are empty -- i.e. every low_privilege render -- hits this. Do not remove it.
-*/}}
-{{- include "dataplane.rbac.emitBucket" (dict
-      "ctx" $
-      "identity" $group.identity
-      "bucket" $bucket
-      "rules" (index $group $bucket | default list | uniq)
-      "serviceAccount" $sa) }}
-{{- end }}
+{{- $trusted = fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list -}}
+{{- end -}}
+{{- include "dataplane.rbac.emitSlot" (dict
+      "ctx" $ctx
+      "slot" $slot
+      "rules" $rules
+      "trusted" $trusted
+      "component" $c.name
+      "subjects" (list $c.sa)) }}
+{{- end -}}
+{{- end -}}
 {{- end -}}

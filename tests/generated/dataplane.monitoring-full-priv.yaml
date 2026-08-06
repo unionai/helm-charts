@@ -1099,33 +1099,22 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
     
-  d_union_rolebinding_00_union_ns-read.yaml: | 
+  ab_union_rolebinding.yaml: | 
     apiVersion: rbac.authorization.k8s.io/v1
     kind: RoleBinding
     metadata:
-      name: union-union-ns-read
+      name: union-work-ns
       namespace: {{ namespace }}
     roleRef:
       apiGroup: rbac.authorization.k8s.io
       kind: ClusterRole
-      name: union-union-ns-read
+      name: union-work-ns
     subjects:
       - kind: ServiceAccount
         name: union-system
         namespace: union
-  d_union_rolebinding_00_union_ns-write.yaml: | 
-    apiVersion: rbac.authorization.k8s.io/v1
-    kind: RoleBinding
-    metadata:
-      name: union-union-ns-write
-      namespace: {{ namespace }}
-    roleRef:
-      apiGroup: rbac.authorization.k8s.io
-      kind: ClusterRole
-      name: union-union-ns-write
-    subjects:
       - kind: ServiceAccount
-        name: union-system
+        name: union-clustersync-system
         namespace: union
 
 ---
@@ -6279,7 +6268,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
-  name: union-union-ns-read
+  name: union-work-ns
 rules:
   - apiGroups:
     - '*'
@@ -6289,6 +6278,11 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - flyte.lyft.com
     resources:
@@ -6298,6 +6292,11 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - '*'
     resources:
@@ -6311,6 +6310,11 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - serving.knative.dev
     resources:
@@ -6321,6 +6325,11 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - '*'
     resources:
@@ -6334,6 +6343,11 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - '*'
     resources:
@@ -6344,75 +6358,25 @@ rules:
     - get
     - list
     - watch
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-union-ns-write
-rules:
-  - apiGroups:
-    - '*'
-    resources:
-    - '*'
-    verbs:
     - create
     - update
-    - delete
     - patch
-  - apiGroups:
-    - flyte.lyft.com
-    resources:
-    - flyteworkflows
-    - flyteworkflows/finalizers
-    verbs:
-    - create
-    - update
     - delete
-    - patch
     - deletecollection
   - apiGroups:
-    - '*'
+    - ""
     resources:
+    - serviceaccounts
     - resourcequotas
-    - pods
-    - configmaps
-    - podtemplates
-    - secrets
-    - deployments
     verbs:
-    - create
-    - update
-  - apiGroups:
-    - '*'
-    resources:
-    - resourcequotas
-    - pods
-    - configmaps
-    - podtemplates
-    - secrets
-    verbs:
-    - delete
-  - apiGroups:
-    - serving.knative.dev
-    resources:
-    - revisions
-    - configurations
-    - services
-    verbs:
-    - create
-    - update
-    - delete
-  - apiGroups:
-    - '*'
-    resources:
-    - secrets
-    - pods
-    - replicasets/finalizers
-    verbs:
+    - get
+    - list
+    - watch
     - create
     - update
     - patch
+    - delete
+    - deletecollection
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6422,27 +6386,24 @@ metadata:
 rules:
   - apiGroups:
     - ""
+    resources:
+    - namespaces
+    verbs:
+    - get
+    - create
+    - patch
+  - apiGroups:
     - rbac.authorization.k8s.io
     resources:
-    - clusterrolebindings
-    - configmaps
-    - limitranges
-    - namespaces
-    - podtemplates
-    - pods
-    - resourcequotas
     - rolebindings
-    - roles
-    - secrets
-    - serviceaccounts
-    - services
     verbs:
-    - '*'
+    - get
+    - create
+    - patch
   - apiGroups:
     - rbac.authorization.k8s.io
     resourceNames:
-    - union-union-ns-read
-    - union-union-ns-write
+    - union-work-ns
     resources:
     - clusterroles
     verbs:
@@ -6726,7 +6687,6 @@ subjects:
   - kind: ServiceAccount
     name: union-clustersync-system
     namespace: union
-
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6792,6 +6752,22 @@ metadata:
     app.kubernetes.io/version: "12.3.0"
 rules: []
 
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-comp-ns-read
+  namespace: union
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - podtemplates
+    verbs:
+    - get
+    - list
+    - watch
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -6874,27 +6850,12 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-union-ns-read
+  name: union-comp-ns-read
   namespace: union
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-union-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-union-ns-write
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-union-ns-write
+  kind: Role
+  name: union-comp-ns-read
 subjects:
   - kind: ServiceAccount
     name: union-system
@@ -8509,7 +8470,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ebc23a01180cbdd4dcc1d21e00d8d6c36576425cd5c01052bbe7ee3d4cac3f3"
+        configChecksum: "ec29c82589b184e8c186acaa28b34b193ed9dd3a24fd45cc78c8d3bf408f113"
         
       labels:
         platform.union.ai/zone: "dataplane"
