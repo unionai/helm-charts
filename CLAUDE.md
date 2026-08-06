@@ -90,12 +90,8 @@ The manifest (`metrics-manifest.yaml`) is auto-generated — do not edit it manu
 
 ## Selfhosted Documentation
 
-The canonical self-managed / selfhosted deployment guide lives on
-[docs.union.ai](https://www.union.ai/docs/v2/union/deployment/selfmanaged/) — start with
-the per-cloud `prepare-infra` page, then return to a chart's `README.md` for the Helm
-install. The colocated `charts/{controlplane,dataplane}/SELFHOSTED_INTRA_CLUSTER_{AWS,GCP}.md`
-guides were retired in favor of that guide (#398) and no longer exist in this repo.
-
-Each chart's `README.md` still carries chart-local operational detail that has no home
-on the external site — for `charts/dataplane/README.md`, see Logging, Monitoring &
-Observability, and Restricting union workloads to task namespaces.
+Deployment guides are colocated with the charts:
+- `charts/controlplane/SELFHOSTED_INTRA_CLUSTER_GCP.md`
+- `charts/controlplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
+- `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_GCP.md`
+- `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
