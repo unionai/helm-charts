@@ -1,9 +1,9 @@
 # dataplane.per-component-sa-full-priv
 
 union/executor
-  union-executor-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-executor-ns-read  [ClusterRole via RoleBinding]  -> union
       */*: get,list,watch
-  union-executor-ns-write  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-executor-ns-write  [ClusterRole via RoleBinding]  -> union
       */*: create,delete,patch,update
 
 union/flyte-webhook-cleanup
@@ -83,17 +83,17 @@ union/knative-operator
   knative-serving-operator-aggregated-stable  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
 
 union/leaseworker
-  union-leaseworker-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-leaseworker-ns-read  [ClusterRole via RoleBinding]  -> union
       */*: get,list,watch
-  union-leaseworker-ns-write  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-leaseworker-ns-write  [ClusterRole via RoleBinding]  -> union
       */*: create,delete,patch,update
 
 union/operator-system
-  union-operator-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-operator-ns-read  [ClusterRole via RoleBinding]  -> union
       */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: get,list,watch
       flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: get,list,watch
       serving.knative.dev/configurations,revisions,services: get,list,watch
-  union-operator-ns-write  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-operator-ns-write  [ClusterRole via RoleBinding]  -> union
       */configmaps,deployments,pods,podtemplates,resourcequotas,secrets: create,update
       */configmaps,pods,podtemplates,resourcequotas,secrets: delete
       flyte.lyft.com/flyteworkflows,flyteworkflows/finalizers: create,delete,deletecollection,patch,update
@@ -113,15 +113,22 @@ union/operator-webhook
 union/proxy-system
   proxy-system-secret  [Role via RoleBinding]  -> union
       */secrets: create,delete,get,list,update
-  union-proxy-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-proxy-ns-read  [ClusterRole via RoleBinding]  -> union
       */events,flyteworkflows,pods,pods/log,rayjobs,resourcequotas: get,list,watch
+
+union/union-clustersync-system
+  system:auth-delegator  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      (rules not defined by this chart)
+  union-clusterresourcesync-cluster-write  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
+      "",rbac.authorization.k8s.io/clusterrolebindings,configmaps,limitranges,namespaces,pods,podtemplates,resourcequotas,rolebindings,roles,secrets,serviceaccounts,services: *
+      rbac.authorization.k8s.io/clusterroles: bind [names: union-executor-ns-read,union-executor-ns-write,union-leaseworker-ns-read,union-leaseworker-ns-write,union-operator-ns-read,union-operator-ns-write,union-proxy-ns-read,union-webhook-ns-read,union-webhook-ns-write]
 
 union/union-system
   release-name-fluentbit  [ClusterRole via ClusterRoleBinding]  -> cluster-wide
       ""/namespaces,pods: get,list,watch
 
 union/union-webhook-system
-  union-webhook-ns-read  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-webhook-ns-read  [ClusterRole via RoleBinding]  -> union
       */pods,replicasets/finalizers,secrets: get,list,watch
-  union-webhook-ns-write  [ClusterRole via ClusterRoleBinding]  -> union +cluster-wide
+  union-webhook-ns-write  [ClusterRole via RoleBinding]  -> union
       */pods,replicasets/finalizers,secrets: create,patch,update

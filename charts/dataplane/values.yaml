@@ -162,8 +162,8 @@ clusterresourcesync:
       verbs:
         - '*'
   # -- Rules used INSTEAD of clusterRoleRules when clusterresourcesync is
-  # confined to namespaces.managed (rbac.clusterWideBindings: false and a
-  # non-empty namespaces.managed). Every entry must be a namespaced resource
+  # confined to namespaces.managed (a non-empty namespaces.managed with
+  # namespaces.enabled: true). Every entry must be a namespaced resource
   # type: this list is conveyed by RoleBindings, which cannot grant anything
   # cluster-scoped.
   #
@@ -2016,9 +2016,9 @@ prometheus:
 # non-empty string as true. A quoted `low_privilege: "false"` therefore means
 # TRUE: the deployment is silently single-namespace while the values file reads
 # false. The same applies to every other boolean in this chart, including
-# rbac.clusterWideBindings and namespaces.enabled, where the wrong reading widens
-# privilege instead of narrowing it. If your values are generated, make sure the
-# generator emits real booleans rather than stringified ones.
+# namespaces.enabled, where the wrong reading silently creates every namespace in
+# namespaces.managed and binds into them. If your values are generated, make sure
+# the generator emits real booleans rather than stringified ones.
 #
 # An absent or null value means low_privilege is OFF (full privilege).
 #
@@ -2036,35 +2036,34 @@ prometheus:
 low_privilege: true
 
 rbac:
-  # -- Bind the union `ns-read` / `ns-write` roles cluster-wide under
-  # low_privilege: false.
+  # The union `ns-read` / `ns-write` roles are NEVER bound cluster-wide. Under
+  # low_privilege: false they render as ClusterRoles so their rules are defined
+  # once, but every binding is a per-namespace RoleBinding -- so `ns-read`, for
+  # example, never grants `get` on every Secret in the cluster.
   #
-  # Task namespaces are created at RUNTIME (by clusterresourcesync, or by
-  # whatever provisions them when it is disabled), so Helm cannot enumerate
-  # them at template time and cannot emit a RoleBinding per namespace for a
-  # set it does not know. The ClusterRoleBinding is what gives union workloads
-  # reach into those namespaces, and it is therefore load-bearing by default.
+  # That means something has to bind them into each task namespace. Two things
+  # can, and exactly one of them is active in any given render:
   #
-  # Set this false to drop those ClusterRoleBindings and rely on per-namespace
-  # RoleBindings instead -- either the ones this chart emits for
-  # `namespaces.managed`, or ones a provisioner creates at runtime. THE CHART
-  # CANNOT VERIFY THAT SOMETHING CREATES THEM. If nothing does, the install
-  # renders green and task pods fail with Forbidden at their first execution,
-  # not at deploy time.
+  #   - This chart, for the namespaces in `namespaces.managed`, when
+  #     `namespaces.enabled: true` (README Option 2).
+  #   - clusterresourcesync at provision time, from RoleBinding templates the
+  #     chart generates for it, when the namespaces are created at runtime
+  #     (README Option 1). This is the default.
   #
-  # Has no effect under low_privilege: true, where there are no task
-  # namespaces and everything is already confined to the release namespace.
-  clusterWideBindings: true
+  # THE CHART CANNOT VERIFY THAT EITHER ACTUALLY RAN. If neither does, the
+  # install renders green and task pods fail with Forbidden at their first
+  # execution, not at deploy time -- see README, "Diagnosing a missing binding".
+
   # -- Assert that something OUTSIDE this chart creates the per-task-namespace
   # RoleBindings.
   #
-  # Only consulted when `clusterWideBindings: false` and the task namespaces are
-  # not enumerated -- the posture where the chart emits no per-namespace
-  # RoleBindings of its own and clusterresourcesync is what normally creates
-  # them (from the templates the chart generates for it). In that posture the
-  # chart requires `clusterresourcesync.enabled: true`, because the alternative
-  # is a render that looks correct and leaves every task namespace with no union
-  # bindings until the first task execution fails.
+  # Only consulted when the task namespaces are not enumerated -- the posture
+  # where the chart emits no per-namespace RoleBindings of its own and
+  # clusterresourcesync is what normally creates them (from the templates the
+  # chart generates for it). In that posture the deployment needs
+  # `clusterresourcesync.enabled: true`, because the alternative is a render
+  # that looks correct and leaves every task namespace with no union bindings
+  # until the first task execution fails.
   #
   # Set this true if some other system creates those RoleBindings. It disables
   # that requirement and nothing else: no RBAC changes, no objects added or
@@ -2556,11 +2555,15 @@ namespaces:
   # Enumerate this list when the task namespaces are known ahead of time, and
   # set `enabled: true` -- either to have the chart pre-create them, or
   # because they are pre-created by another route and you still want the
-  # bindings (see `enabled`'s own comment). Combined with
-  # rbac.clusterWideBindings: false, the chart then emits a RoleBinding per
-  # listed namespace for each union ns-* role and no cluster-wide binding at
-  # all -- union's own ns-* roles hold permissions only in these namespaces
-  # and the release namespace.
+  # bindings (see `enabled`'s own comment). The chart then emits a RoleBinding
+  # per listed namespace for each union ns-* role, and clusterresourcesync
+  # generates none of its own -- union's ns-* roles hold permissions in exactly
+  # these namespaces and the release namespace.
+  #
+  # Setting this list is therefore a NARROWING, not a widening: leaving it at
+  # the default (with `enabled: false`) lets clusterresourcesync bind union
+  # roles into every task namespace it provisions, which is every project and
+  # domain the control plane registers.
   #
   # This does not confine every workload on the shared identity. With
   # fluentbit.enabled: true (the default), fluent-bit runs as the same

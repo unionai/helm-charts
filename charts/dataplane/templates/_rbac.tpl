@@ -15,8 +15,15 @@ resource is accepted by the API server and simply never matches.
   cluster-write  must not exist        ClusterRole            ClusterRoleBinding
 
 The ns-* ClusterRoles under full privilege exist ONLY so their rules are defined
-once rather than duplicated across N task namespaces. They are never referenced
-by a ClusterRoleBinding, so they grant nothing cluster-wide.
+once rather than duplicated across N task namespaces. NOTHING in this chart binds
+them with a ClusterRoleBinding, so they grant nothing cluster-wide: a union
+workload holds them in the release namespace, plus whichever task namespaces
+something has created a RoleBinding in. That "something" is one of two things --
+the per-namespaces.managed loop below, when the namespaces are enumerated at
+template time, or clusterresourcesync applying the templates
+dataplane.rbac.provisionerBindingTemplates generates, when they are created at
+runtime. Neither in play means no task-namespace reach at all; see that helper
+for why the chart cannot detect it and what it does instead.
 
 A component whose cluster-* bucket is non-empty under low_privilege is a bug in
 that component's gating, not something to paper over here -- see the gating
@@ -62,9 +69,6 @@ Args: dict with
 {{- define "dataplane.rbac.emitBucket" -}}
 {{- $rules := .rules | default list -}}
 {{- if $rules -}}
-{{- if and .ctx.Values.low_privilege (not .ctx.Values.rbac.clusterWideBindings) -}}
-{{- fail "rbac.clusterWideBindings: false has no meaning under low_privilege: true. In single-namespace mode there are no task namespaces and nothing is bound cluster-wide, so setting this changes nothing -- it reads as a hardening step that did not happen. Remove the setting, or set low_privilege: false if you intended the multi-namespace posture." -}}
-{{- end -}}
 {{- $isCluster := include "dataplane.rbac.isClusterBucket" .bucket -}}
 {{- $name := include "dataplane.rbac.roleName" (dict "ctx" .ctx "identity" .identity "bucket" .bucket) -}}
 {{- if and $isCluster .ctx.Values.low_privilege -}}
@@ -136,10 +140,9 @@ clusterresourcesync/serviceaccount.yaml): it provisions OTHER namespaces, and
 its reach there is meant to be exactly the enumerated task namespaces and
 nothing else -- gaining release-namespace access as a side effect of this
 function's usual behavior would be an unrequested, unreviewed grant. This is
-a narrow, explicit per-call opt-out, not a reversal of the policy below: the
+a narrow, explicit per-call opt-out, not a reversal of the policy: the
 release-namespace RoleBinding stays the default for every other ns-* bucket,
-and the deliberate overlap with the cluster-wide binding it describes is
-unaffected.
+whose pods do run there and do need namespaced access of their own.
 */}}
 {{- end }}
 {{- if and (not $isCluster) (not .ctx.Values.low_privilege) }}
@@ -147,14 +150,15 @@ unaffected.
 One RoleBinding per enumerated task namespace, binding the same ns-* role.
 
 A RoleBinding may reference a ClusterRole: the grant is then scoped to the
-RoleBinding's own namespace. That is the whole mechanism this posture rests on
--- the rules are defined once, cluster-wide reach is not implied, and each
-namespace is named explicitly.
+RoleBinding's own namespace. That is the whole mechanism this chart's
+multi-namespace RBAC rests on -- the rules are defined once, cluster-wide reach
+is not implied, and each namespace is named explicitly.
 
-Emitted whenever namespaces.managed is non-empty AND namespaces.enabled is
-true, independently of rbac.clusterWideBindings, so that enumerating
-namespaces and dropping the cluster-wide binding are separate steps an
-operator can take in either order.
+This loop covers the task namespaces this chart knows at template time. The ones
+created at runtime are covered by clusterresourcesync instead, from the
+templates dataplane.rbac.provisionerBindingTemplates generates; the two are
+mutually exclusive, keyed off the same condition (see
+dataplane.rbac.clusterresourcesyncConstrained).
 
 namespaces.enabled is load-bearing here, not just for Namespace creation: it
 is the chart's only signal that the namespaces named by namespaces.managed
@@ -184,43 +188,6 @@ subjects:
     namespace: {{ $.ctx.Release.Namespace }}
 {{- end }}
 {{- end }}
-{{- end }}
-{{- if and (not $isCluster) (not .ctx.Values.low_privilege) .ctx.Values.rbac.clusterWideBindings }}
-{{/*
-Cluster-wide binding for a NAMESPACED bucket.
-
-This is the grant that reaches task namespaces. They are created at runtime, so
-the chart cannot enumerate them and cannot emit a RoleBinding per namespace for
-a set it does not know -- which is why the ns-* ClusterRole is bound
-cluster-wide rather than per namespace by default.
-
-It is emitted IN ADDITION TO the release-namespace RoleBinding above, never
-instead of it. The overlap is deliberate: it means setting
-rbac.clusterWideBindings: false is a pure removal, with the narrower bindings
-already in place, so there is no window in which a workload holds neither.
-(skipReleaseNamespaceBinding callers are the one narrow exception to "above":
-they never had a release-namespace RoleBinding to remove, by their own
-request -- see that flag's doc comment. This paragraph's "pure removal"
-guarantee is otherwise unchanged.)
-
-Dropping this without something creating per-namespace RoleBindings leaves
-union workloads with no reach into task namespaces at all. That failure is
-loud (Forbidden, named SA and verb, in propeller logs) but DELAYED -- it
-appears at the first task execution, not at deploy.
-*/}}
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: {{ $name }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: {{ $name }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ .serviceAccount }}
-    namespace: {{ .ctx.Release.Namespace }}
 {{- end }}
 {{- end -}}
 {{- end -}}
@@ -413,21 +380,25 @@ Args: dict with ctx (root) and exclude (list of component names).
 {{- end -}}
 
 {{/*
-True when clusterresourcesync is confined to namespaces.managed rather than
-holding cluster-scoped RBAC.
+True when the task namespaces are known at template time, so this chart binds
+into them itself and clusterresourcesync is confined to them rather than holding
+cluster-scoped RBAC.
 
-Three inputs, all required. namespaces.enabled is one of them, not just
-clusterWideBindings and namespaces.managed: this posture routes
-clusterresourcesync's rules through dataplane.rbac.emitBucket's
-per-namespaces.managed RoleBinding loop, which itself only emits those
-RoleBindings when namespaces.enabled is true. Without requiring it here too, a
-render with clusterWideBindings: false and a non-empty namespaces.managed but
-namespaces.enabled left at its default false would drop clusterresourcesync's
-cluster-scoped RBAC while ALSO getting no per-namespace RoleBindings to replace
-it with -- a ClusterRole with no binding at all, silently non-functional. Folding
-namespaces.enabled in means that combination instead falls back to the default
-posture, which is wrong only in the sense of not being maximally confined, not in
-the sense of silently bricking the component.
+Both inputs are required. namespaces.enabled is one of them, not just
+namespaces.managed: this posture routes clusterresourcesync's rules through
+dataplane.rbac.emitBucket's per-namespaces.managed RoleBinding loop, which itself
+only emits those RoleBindings when namespaces.enabled is true. Without requiring
+it here too, a render with a non-empty namespaces.managed but namespaces.enabled
+left at its default false would drop clusterresourcesync's cluster-scoped RBAC
+while ALSO getting no per-namespace RoleBindings to replace it with -- a
+ClusterRole with no binding at all, silently non-functional. Folding
+namespaces.enabled in means that combination instead falls back to the
+runtime-provisioner posture, which still works.
+
+Note this is the chart's DEFAULT namespaces.managed being non-empty as much as an
+operator's list: leaving both at their defaults (six names, enabled: false) lands
+in the provisioner posture, which is the intended default for a data plane whose
+projects are registered at runtime.
 
 Defined once and included from all three sites that need it
 (clusterresourcesync/serviceaccount.yaml twice, clusterresourcesync/configmap.yaml
@@ -438,25 +409,26 @@ untenable.
 Returns "true" or the empty string, so callers test it with `if`.
 */}}
 {{- define "dataplane.rbac.clusterresourcesyncConstrained" -}}
-{{- if and (not .Values.rbac.clusterWideBindings) .Values.namespaces.managed .Values.namespaces.enabled -}}true{{- end -}}
+{{- if and .Values.namespaces.managed .Values.namespaces.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
 True when a runtime provisioner must create the per-task-namespace RoleBindings,
-because cluster-wide bindings are off and the chart is not emitting them itself.
+because the chart is not emitting them itself.
 
-The chart emits a RoleBinding per namespaces.managed entry only when
-namespaces.enabled is true AND that list is non-empty -- i.e. exactly when
-dataplane.rbac.clusterresourcesyncConstrained is true. Outside that, with
-clusterWideBindings false, union workloads hold their ns-* roles only in the
-release namespace and have no reach into task namespaces at all until something
-binds them there. That something is clusterresourcesync, via the templates
+No ns-* role is ever bound cluster-wide (see dataplane.rbac.emitBucket), so
+SOMETHING has to bind union workloads into each task namespace. The chart does it
+itself for the namespaces it knows at template time -- exactly when
+dataplane.rbac.clusterresourcesyncConstrained is true. Outside that, union
+workloads hold their ns-* roles only in the release namespace and have no reach
+into task namespaces at all until something binds them there. That something is
+clusterresourcesync, via the templates
 dataplane.rbac.provisionerBindingTemplates generates.
 
 Returns "true" or the empty string.
 */}}
 {{- define "dataplane.rbac.provisionerBindingsNeeded" -}}
-{{- if and (not .Values.rbac.clusterWideBindings) (not (include "dataplane.rbac.clusterresourcesyncConstrained" .)) -}}true{{- end -}}
+{{- if not (include "dataplane.rbac.clusterresourcesyncConstrained" .) -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -524,7 +496,7 @@ One clusterresource-template entry per RENDERED ns-* bucket role, instructing
 clusterresourcesync to create the matching RoleBinding in every task namespace it
 provisions.
 
-This is what makes rbac.clusterWideBindings: false workable when the task
+This is what makes the chart's namespace-confined RBAC workable when the task
 namespaces are NOT known ahead of time. The chart cannot enumerate namespaces
 that are created at runtime, so it cannot emit those RoleBindings itself; the
 `bind` grant in clusterresourcesync's rules authorizes it to create them, but a
