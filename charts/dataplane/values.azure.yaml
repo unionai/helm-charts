@@ -103,31 +103,12 @@ userRoleAnnotationValue: "{{ .Values.global.AZURE_WORKER_CLIENT_ID }}"
 # ----------------------------------------------------------------------------
 # Logging Configuration
 # ----------------------------------------------------------------------------
-# FluentBit collects and forwards logs to Azure Blob Storage.
-
+# Azure task logs flow via Container Insights / Log Analytics (config.proxy
+# .persistedLogs below), not fluentbit. The fluentbit -> Blob daemonset is
+# disabled — it crashloops without an azureBlobSharedKey (azure_blob can't use
+# workload identity). For the Blob path, set enabled: true + that key.
 fluentbit:
-  serviceAccount:
-    name: union-system
-    annotations: {}
-  # fluent-bit's azure_blob output only supports shared-key (or SAS) auth — it
-  # does NOT support workload/managed identity, unlike the dataplane services,
-  # which read storage.custom.stow.config.key (leave that empty to use Workload
-  # Identity). Set the storage account shared key here so it stays decoupled
-  # from the dataplane's stow storage config. To keep the key out of the rendered ConfigMap,
-  # use a ${ENV} placeholder that fluent-bit expands at runtime and inject the
-  # value via fluentbit.env from a Kubernetes secret, e.g.:
-  #
-  # azureBlobSharedKey: "${AZURE_STORAGE_SHARED_KEY}"
-  # env:
-  #   - name: AZURE_STORAGE_SHARED_KEY
-  #     valueFrom:
-  #       secretKeyRef:
-  #         name: fluentbit-azure-key
-  #         key: shared_key
-  azureBlobSharedKey: ""
-  # Blob type for the azure_blob output. Defaults to "blockblob" — append blobs
-  # cap at 50,000 blocks, which long-lived pods exhaust (409 BlockCountExceedsLimit).
-  # azureBlobType: blockblob
+  enabled: false
 
 # ----------------------------------------------------------------------------
 # Workload Identity Pod Labels
@@ -176,6 +157,11 @@ config:
       metadataBucketPrefix: "abfs://{{.Values.global.METADATA_CONTAINER}}@{{.Values.global.AZURE_STORAGE_ACCOUNT}}.dfs.core.windows.net"
   # Proxy configuration with Azure Log Analytics and secret manager
   proxy:
+    # Operator queries task-pod logs from a Log Analytics workspace fed by the AKS
+    # Container Insights (OMS) addon. To enable: grant the AMA/kubelet identity
+    # "Monitoring Metrics Publisher" on the cluster (ODS ingestion checks it there)
+    # and the operator identity "Log Analytics Reader" on the workspace, which
+    # needs internet ingest+query (no VNet service-endpoint support).
     persistedLogs:
       sourceType: AzureLogAnalytics
       azureLogAnalytics:
@@ -225,7 +211,7 @@ config:
   k8s:
     plugins:
       k8s:
-        # Workload Identity label for worker pods
+        # Workload Ident!ity label for worker pods
         default-labels:
           - azure.workload.identity/use: "true"
 
