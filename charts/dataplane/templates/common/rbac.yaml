@@ -43,22 +43,20 @@ role readable.
 {{- range $c := $components -}}
 {{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
 {{- $rules := index $decl $slot | default list -}}
-{{- $trusted := list -}}
 {{- if and (eq $slot "cluster-write") (eq $c.name "clusterresourcesync") -}}
 {{/*
-The bind rule is emitter-authored, and only for clusterresourcesync's
-cluster-write role -- passed as `trusted` rather than folded into `rules` so it
-never runs through emitSlot's declaration-verb allowlist, which rejects `bind`
-by design (a component declaring it is exactly the case that check exists to
-catch). See dataplane.rbac.provisionerBindRule.
+The bind rule is appended here rather than declared, and only to
+clusterresourcesync's cluster-write role. See
+dataplane.rbac.provisionerBindRule. It flows through the same allowlist check
+as any declared rule -- emitSlot recognizes it structurally rather than
+through a bypass, so there is no side channel into a slot's rule list.
 */}}
-{{- $trusted = fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list -}}
+{{- $rules = concat $rules (fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list) -}}
 {{- end -}}
 {{- include "dataplane.rbac.emitSlot" (dict
       "ctx" $ctx
       "slot" $slot
       "rules" $rules
-      "trusted" $trusted
       "component" $c.name
       "subjects" (list $c.sa)) }}
 {{- end -}}

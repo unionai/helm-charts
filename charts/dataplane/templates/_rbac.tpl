@@ -52,7 +52,7 @@ release namespace, where union's own workloads run) and the work namespaces
   slot                   object        binding              low_privilege: true
   ---------------------  ------------  -------------------  -------------------
   comp-ns-read           Role          RoleBinding, rel ns  unchanged
-  comp-ns-write           Role          RoleBinding, rel ns  unchanged
+  comp-ns-write          Role          RoleBinding, rel ns  unchanged
   work-ns                ClusterRole   RoleBinding per ns   Role + RB, rel ns
   work-ns-read-unscoped  ClusterRole   ClusterRoleBinding   must be empty
   cluster-read           ClusterRole   ClusterRoleBinding   must be empty
@@ -207,31 +207,20 @@ Args: dict with ctx, slot, and component (empty string for pooled slots).
 {{- end -}}
 
 {{/*
-Emit one slot's role and its bindings. Emits nothing when rules and trusted are
-both empty.
+Emit one slot's role and its bindings. Emits nothing when rules is empty.
 
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
   rules       list of {apiGroups, resources} maps for pooled slots, or
-              {apiGroups, resources, verbs, resourceNames?} for cluster slots.
-              Component-supplied: validated against the allowlist below.
-  trusted     EMITTER-authored rules for cluster slots only, e.g.
-              dataplane.rbac.provisionerBindRule. Skips the verbs-key and
-              allowlist checks that apply to `rules` -- those checks exist to
-              catch a component declaring a verb (in particular `bind`) it
-              must never hold, and an emitter-authored rule is not a
-              declaration. Appended to the resolved rule list unvalidated, so
-              only this file may populate it. Default empty; ignored for
-              pooled slots.
+              {apiGroups, resources, verbs, resourceNames?} for cluster slots
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
 */}}
 {{- define "dataplane.rbac.emitSlot" -}}
 {{- $ctx := .ctx -}}
 {{- $rules := .rules | default list -}}
-{{- $trusted := .trusted | default list -}}
-{{- if or $rules $trusted -}}
+{{- if $rules -}}
 {{- $spec := index (fromYaml (include "dataplane.rbac.slotSpec" $ctx)) .slot -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
@@ -259,25 +248,30 @@ component's, validated against the allowlist.
 {{- end -}}
 {{- else -}}
 {{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
+{{/*
+The one rule shape allowed to carry `bind`: apiGroups/resources/resourceNames
+naming exactly the work-ns ClusterRole this chart authors, computed here
+rather than accepted as an argument. `bind is emitter-authored only` is
+enforced by this structural match, not by trusting the caller -- nothing a
+component declares can produce this exact resourceNames value, because it is
+this chart's own release-namespace-qualified role name, not an operator- or
+component-supplied string. See dataplane.rbac.provisionerBindRule, the only
+producer of a rule this shape.
+*/}}
+{{- $workNsRoleName := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" "work-ns" "component" "") -}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
 {{- fail (printf "RBAC slot %q requires an explicit verbs list on every rule (resources: %v)." $.slot $rule.resources) -}}
 {{- end -}}
+{{- $isBindRule := and (deepEqual ($rule.resources | default list) (list "clusterroles")) (deepEqual ($rule.resourceNames | default list) (list $workNsRoleName)) -}}
 {{- range $v := $rule.verbs -}}
-{{- if not (has $v $allow) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not in the allowlist %v. Wildcards, escalate and impersonate are never permitted; bind is emitter-authored only." $.slot $v $allow) -}}
+{{- if not (or (has $v $allow) (and (eq $v "bind") $isBindRule)) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not in the allowlist %v. Wildcards, escalate and impersonate are never permitted; bind is allowed only on a rule naming exactly resources: [clusterroles], resourceNames: [%s]." $.slot $v $allow $workNsRoleName) -}}
 {{- end -}}
 {{- end -}}
 {{- $resolved = append $resolved $rule -}}
 {{- end -}}
 {{- end -}}
-{{/*
-$trusted rules bypass the checks above entirely -- they are emitter-authored
-(see the `trusted` arg doc above), not a component's declaration, so there is
-nothing to validate them against. Appended after, so they sort last in the
-rendered rule list.
-*/}}
-{{- $resolved = concat $resolved $trusted -}}
 {{/*
 Object kind. `work` is a ClusterRole under full privilege purely so its rules
 are defined once instead of duplicated across N namespaces -- it is bound ONLY
