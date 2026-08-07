@@ -227,8 +227,7 @@ Args: dict with ctx, slot, and component (empty string for pooled slots).
 {{- end -}}
 
 {{/*
-Emit one slot's role and its bindings. Emits nothing when rules and extraRules
-are both empty.
+Emit one slot's role and its bindings. Emits nothing when rules is empty.
 
 Args: dict with
   ctx         root context
@@ -238,22 +237,25 @@ Args: dict with
               DECLARED rules -- chart-derived and operator-supplied are
               indistinguishable here by design, and both run the full
               validation below.
-  extraRules  list of rules in the same shape as rules, appended to the
-              resolved list AFTER validation runs and never validated
-              themselves. Exists for exactly one caller today: the emitter's
-              own `bind` rule (dataplane.rbac.provisionerBindRule). This is
-              not a bypass a caller can point arbitrary rules through --
-              nothing reads a values key into this argument, so the only
-              rules that ever arrive this way are the ones this chart's own
-              templates construct.
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
+
+Deliberately NOT an arg: anything for the emitter's own `bind` rule. An
+earlier round of this chart accepted one as `extraRules`, appended to the
+resolved list after validation and never itself validated -- structurally the
+same position a `trusted` parameter once occupied (removed in f59e7ae1 for
+exactly this reason). It was unreachable through the two call sites that
+existed, but the parameter itself was still a rule any future caller could
+point at any slot, including a pooled one where declared rules have their
+verbs REPLACED rather than checked -- an unvalidated rule slipped in that way
+would land in a role bound by RoleBinding to every enabled component sharing
+it. The bind rule is constructed inside this define instead (see below), so
+there is no parameter left for a future caller to misuse.
 */}}
 {{- define "dataplane.rbac.emitSlot" -}}
 {{- $ctx := .ctx -}}
 {{- $rules := .rules | default list -}}
-{{- $extraRules := .extraRules | default list -}}
-{{- if or $rules $extraRules -}}
+{{- if $rules -}}
 {{- $spec := index (fromYaml (include "dataplane.rbac.slotSpec" $ctx)) .slot -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
@@ -297,9 +299,10 @@ No `bind` exemption of any kind here. `bind` is never a valid verb on a
 DECLARED rule -- chart-derived and operator-supplied declarations are
 indistinguishable at this point and both run this exact check. The emitter's
 own bind rule (dataplane.rbac.provisionerBindRule) does not pass through
-$rules at all; it arrives via extraRules below, appended to $resolved after
-this validation has already finished, so there is no rule shape a declaration
-could take that reaches `bind` -- structurally true, not shape-checked.
+$rules at all; it is spliced into $resolved below, by this define itself,
+after this validation has already finished -- so there is no rule shape a
+declaration could take that reaches `bind`, and no parameter a caller could
+misuse to skip this loop for it either.
 */}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
@@ -313,7 +316,21 @@ could take that reaches `bind` -- structurally true, not shape-checked.
 {{- $resolved = append $resolved $rule -}}
 {{- end -}}
 {{- end -}}
-{{- $resolved = concat $resolved $extraRules -}}
+{{- if and (eq .slot "cluster-write") (eq (.component | default "") "clusterresourcesync") -}}
+{{/*
+The bind rule clusterresourcesync needs to create RoleBindings for the pooled
+work-ns ClusterRole in namespaces it provisions (see
+dataplane.rbac.provisionerBindRule) is constructed HERE, directly, rather than
+accepted as an argument from the caller in common/rbac.yaml -- this define
+already has $ctx, .slot and .component, everything provisionerBindRule needs.
+Gated on the exact slot and component it belongs to, so no other slot or
+component is affected; provisionerBindRule itself returns nothing outside the
+runtime posture, where $rules for this slot is never empty (clusterresourcesync
+always declares the namespaces/rolebindings rules there), so this stays inside
+the `if $rules` gate above without widening it.
+*/}}
+{{- $resolved = concat $resolved (fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list) -}}
+{{- end -}}
 {{/*
 Object kind. `work` is a ClusterRole under full privilege purely so its rules
 are defined once instead of duplicated across N namespaces -- it is bound ONLY

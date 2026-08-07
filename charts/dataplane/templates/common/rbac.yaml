@@ -46,28 +46,22 @@ role readable.
       "component" ""
       "subjects" (fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" $ctx "slot" $slot)))) }}
 {{- else -}}
+{{/*
+No special-casing here for clusterresourcesync's bind rule -- it used to be
+spliced into $rules at this call site (and, briefly, passed through as a
+separate argument). Both shapes gave a caller a way to hand emitSlot a rule
+that either skipped or only partly ran its own validation. emitSlot now
+constructs that one rule itself, internally, gated on slot and component; see
+dataplane.rbac.emitSlot for why. This branch just passes each component's own
+declared rules through unchanged.
+*/}}
 {{- range $c := $components -}}
 {{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
 {{- $rules := index $decl $slot | default list -}}
-{{- $extraRules := list -}}
-{{- if and (eq $slot "cluster-write") (eq $c.name "clusterresourcesync") -}}
-{{/*
-The bind rule is handed to emitSlot as extraRules, not concatenated into
-$rules, and only for clusterresourcesync's cluster-write role. See
-dataplane.rbac.provisionerBindRule. Declared rules -- chart-derived and, since
-Task 11, operator-supplied via clusterresourcesync.clusterRoleRules -- are
-validated with no `bind` exemption of any kind; extraRules is appended by
-emitSlot only after that validation has already run, so this is the ONLY
-place a `bind` rule can enter the slot, and nothing read from .Values can
-reach this variable.
-*/}}
-{{- $extraRules = fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list -}}
-{{- end -}}
 {{- include "dataplane.rbac.emitSlot" (dict
       "ctx" $ctx
       "slot" $slot
       "rules" $rules
-      "extraRules" $extraRules
       "component" $c.name
       "subjects" (list $c.sa)) }}
 {{- end -}}
