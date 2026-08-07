@@ -227,20 +227,33 @@ Args: dict with ctx, slot, and component (empty string for pooled slots).
 {{- end -}}
 
 {{/*
-Emit one slot's role and its bindings. Emits nothing when rules is empty.
+Emit one slot's role and its bindings. Emits nothing when rules and extraRules
+are both empty.
 
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
   rules       list of {apiGroups, resources} maps for pooled slots, or
-              {apiGroups, resources, verbs, resourceNames?} for cluster slots
+              {apiGroups, resources, verbs, resourceNames?} for cluster slots.
+              DECLARED rules -- chart-derived and operator-supplied are
+              indistinguishable here by design, and both run the full
+              validation below.
+  extraRules  list of rules in the same shape as rules, appended to the
+              resolved list AFTER validation runs and never validated
+              themselves. Exists for exactly one caller today: the emitter's
+              own `bind` rule (dataplane.rbac.provisionerBindRule). This is
+              not a bypass a caller can point arbitrary rules through --
+              nothing reads a values key into this argument, so the only
+              rules that ever arrive this way are the ones this chart's own
+              templates construct.
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
 */}}
 {{- define "dataplane.rbac.emitSlot" -}}
 {{- $ctx := .ctx -}}
 {{- $rules := .rules | default list -}}
-{{- if $rules -}}
+{{- $extraRules := .extraRules | default list -}}
+{{- if or $rules $extraRules -}}
 {{- $spec := index (fromYaml (include "dataplane.rbac.slotSpec" $ctx)) .slot -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
@@ -280,29 +293,27 @@ component's, validated against the allowlist.
 {{- else -}}
 {{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
 {{/*
-The one rule shape allowed to carry `bind`: apiGroups/resources/resourceNames
-naming exactly the work-ns ClusterRole this chart authors, computed here
-rather than accepted as an argument. `bind is emitter-authored only` is
-enforced by this structural match, not by trusting the caller -- nothing a
-component declares can produce this exact resourceNames value, because it is
-this chart's own release-namespace-qualified role name, not an operator- or
-component-supplied string. See dataplane.rbac.provisionerBindRule, the only
-producer of a rule this shape.
+No `bind` exemption of any kind here. `bind` is never a valid verb on a
+DECLARED rule -- chart-derived and operator-supplied declarations are
+indistinguishable at this point and both run this exact check. The emitter's
+own bind rule (dataplane.rbac.provisionerBindRule) does not pass through
+$rules at all; it arrives via extraRules below, appended to $resolved after
+this validation has already finished, so there is no rule shape a declaration
+could take that reaches `bind` -- structurally true, not shape-checked.
 */}}
-{{- $workNsRoleName := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" "work-ns" "component" "") -}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
 {{- fail (printf "RBAC slot %q requires an explicit verbs list on every rule (resources: %v)." $.slot $rule.resources) -}}
 {{- end -}}
-{{- $isBindRule := and (deepEqual ($rule.resources | default list) (list "clusterroles")) (deepEqual ($rule.resourceNames | default list) (list $workNsRoleName)) -}}
 {{- range $v := $rule.verbs -}}
-{{- if not (or (has $v $allow) (and (eq $v "bind") $isBindRule)) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not in the allowlist %v. Wildcards, escalate and impersonate are never permitted; bind is allowed only on a rule naming exactly resources: [clusterroles], resourceNames: [%s]." $.slot $v $allow $workNsRoleName) -}}
+{{- if not (has $v $allow) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not in the allowlist %v. Wildcards, escalate, impersonate and bind are never permitted on a declared rule; bind is emitter-authored only." $.slot $v $allow) -}}
 {{- end -}}
 {{- end -}}
 {{- $resolved = append $resolved $rule -}}
 {{- end -}}
 {{- end -}}
+{{- $resolved = concat $resolved $extraRules -}}
 {{/*
 Object kind. `work` is a ClusterRole under full privilege purely so its rules
 are defined once instead of duplicated across N namespaces -- it is bound ONLY
