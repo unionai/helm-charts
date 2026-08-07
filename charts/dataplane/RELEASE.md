@@ -349,11 +349,12 @@ called out separately below.
 
 | Component | Cluster-wide `list`, `watch` on | Emitted when |
 |---|---|---|
-| `executor` | `pods`, `podtemplates` | `executor.enabled` (default) |
+| `executor` | `pods`, `podtemplates`, `namespaces` | `executor.enabled` (default) |
 | `leaseworker` | `pods`, `podtemplates` | `leaseworker.enabled` (default) |
 | `operator` | `pods`, `resourcequotas` | `operator.serviceAccount.create` (default) |
 | `operator` | `podtemplates`, `serving.knative.dev/services`, `configurations`, `revisions` | also `apps.enabled` (default) |
 | `operator` | `namespaces` | also `imageBuilder.enabled` (default) |
+| `operator` | `metrics.k8s.io/pods` (`list` only) | `operator.serviceAccount.create` (default) |
 | `proxy` | `pods`, `resourcequotas`, `events.k8s.io/events`, `ray.io/rayjobs` | `proxy.serviceAccount.create` (default) |
 | `flytepropeller` | `pods`, `podtemplates`, `flyte.lyft.com/flyteworkflows` | `flytepropeller.enabled` (off by default) |
 | `webhook` | `secrets` | `flytepropellerwebhook.enabled` (default) **and** `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` (default) |
@@ -389,14 +390,75 @@ controller-runtime cache built with no namespace restriction. Three things follo
    the webhook then uses a direct client, the `ClusterRole` is not emitted, and the cost
    is that managed-image pull secrets are no longer mirrored.
 
-**Deliberately not granted:** cluster-wide `namespaces` for `executor`'s resource garbage
-collector and `flytepropeller`'s workflow garbage collector. Neither blocks startup;
-both simply stop collecting. The operator's `namespaces` read *is* granted because
-without it the image-builder config syncer panics at startup. Also not granted:
-cluster-wide `configmaps`, `metrics.k8s.io/pods` (usage telemetry), and the task-plugin
-CRDs.
+**`metrics.k8s.io/pods` is billing, not telemetry.** The usages aggregator feeds the
+resource-usage billing queue whenever `billing.model` is `ResourceUsage` (the chart
+default) or `Shadow`, or `collectUsages.enabled` is set, and its first act is a `List` of
+pod metrics with the namespace hard-coded to "all" — it honours no `limit-namespace`, so
+it is a cluster-scope read however the chart is configured. Without the grant it returns
+before producing anything and the retry loop gives up quietly: **no resource-usage billing
+data is collected, with no crash and no operator-visible signal.** The released chart
+conveyed this through `operator-system`'s `pods` at a wildcard apiGroup. The rule is
+ungated, because the binary's condition is a disjunction of two chart values and an
+under-gate is invisible while the over-grant is negligible — pod metrics are aggregate CPU
+and memory numbers with no object contents, and the rule is `list` with no `watch`.
+
+**Deliberately not granted:**
+
+- Cluster-wide `namespaces` for `flytepropeller`'s workflow garbage collector. It
+  enumerates namespaces through a **direct** client, so without the grant it logs an error
+  each cycle and collects nothing; startup is unaffected and the component is off by
+  default. The `executor`'s equivalent sweep *is* granted: its list is cache-backed, so
+  withholding it leaves a permanently blocked goroutine and a 403 reflector loop rather
+  than a clean per-round error — and at the default `commonServiceAccount.enabled: true`
+  the shared identity already holds cluster-wide `namespaces` reads from the FluentBit
+  subchart, so withholding bought no privilege reduction at defaults while costing the
+  sweep under the *more* hardened `commonServiceAccount.enabled: false`.
+- Cluster-wide `configmaps` for the `operator`. See "connector-runtime apps do not
+  reconcile" under Migration / action required — the read is release-namespace-targeted
+  and reaches cluster scope only because the manager's cache is unscoped, which is a defect
+  in the binary rather than a grant this chart should widen to accommodate.
+- The task-plugin CRDs (Spark, Dask, Kubeflow, and Ray beyond the proxy's dashboard
+  lookup). No enabled plugin watches them.
 
 ### Migration / action required
+
+- **KNOWN ISSUE — connector-runtime apps do not reconcile at `low_privilege: false`, and
+  nothing tells you.** The operator reads the connector `ConfigMap` — always a
+  release-namespace object — through its controller-runtime manager's **cache-backed**
+  client. That cache is unscoped at full privilege (no `limit-namespace`) and the client
+  disables caching for nothing, so a read of one object in one namespace lazily starts a
+  **cluster-wide ConfigMap informer**. Without cluster-wide `configmaps` `list`/`watch`
+  the informer never syncs and the read fails.
+
+  This is not confined to create and delete: the app reconciler performs the same read on
+  the steady-state reconcile and returns the error, so **the app requeues forever and
+  never reaches `ACTIVE`**. There is no `Forbidden` on the app object, no chart-time
+  warning, and no failed Helm release — it looks like a slow rollout.
+
+  **This chart deliberately does not grant cluster-wide `configmaps` to work around it.**
+  Doing so would hand union's ServiceAccount the contents of every ConfigMap on the
+  cluster in order to satisfy one release-namespace read; that is a much worse trade than
+  the bug. The fix belongs in the operator binary — scope the ConfigMap cache with
+  `ByObject`, or use `mgr.GetAPIReader()` for this read — and there is no chart-side
+  workaround that costs less than it buys.
+
+  **What to do:** if you use connector-runtime apps, do not move to `low_privilege: false`
+  until the operator image carries the fix. Deployments not using connector apps are
+  unaffected, and `low_privilege: true` is unaffected in every case (the cache is scoped to
+  the release namespace there, so the read is a namespaced one the `work-ns` Role covers).
+
+- **New: `endpoints` `get`/`list`/`watch` in the release-namespace `union-comp-ns-read`
+  Role, for `executor` and `leaseworker`.** Both register the `k8s:///` gRPC resolver
+  unconditionally, and the chart's default connector endpoint
+  (`k8s:///flyteconnector.<release-namespace>:8000`, with `connector-service` among the
+  enabled plugins) makes them watch that `Service`'s `Endpoints`. The resolver retries with
+  a **zero** backoff period, so a `Forbidden` is a hot loop against the API server plus
+  connector tasks that never resolve. This is a namespaced `Role` in the release namespace,
+  not a cluster grant. It is emitted in **both** privilege modes — under
+  `low_privilege: true` it is redundant, because `union-work-ns` binds in the release
+  namespace there and already conveys it, so **effective permissions in that mode are
+  unchanged**; it is declared unconditionally so the component's stated needs match what it
+  actually does. This is the only RBAC line that moves in a `low_privilege: true` render.
 
 - **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
 - **fluentbit `ServiceAccount` renamed** to `union-system` (from `fluentbit-system`). No action unless you bound external policy (e.g. a cloud IAM trust) to the old ServiceAccount name.

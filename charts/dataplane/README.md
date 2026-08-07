@@ -639,15 +639,25 @@ Each is a `ClusterRole` + `ClusterRoleBinding` named
 
 | Component | Cluster-wide `list`, `watch` on | Emitted when |
 |---|---|---|
-| `executor` | `pods`, `podtemplates` | `executor.enabled` (default) |
+| `executor` | `pods`, `podtemplates`, `namespaces` | `executor.enabled` (default) |
 | `leaseworker` | `pods`, `podtemplates` | `leaseworker.enabled` (default) |
 | `operator` | `pods`, `resourcequotas` | `operator.serviceAccount.create` (default) |
 | `operator` | `podtemplates`, `serving.knative.dev/services`, `configurations`, `revisions` | also `apps.enabled` (default) |
 | `operator` | `namespaces` | also `imageBuilder.enabled` (default) |
+| `operator` | `metrics.k8s.io/pods` (`list` only) | `operator.serviceAccount.create` (default) |
 | `proxy` | `pods`, `resourcequotas`, `events.k8s.io/events`, `ray.io/rayjobs` | `proxy.serviceAccount.create` (default) |
 | `flytepropeller` | `pods`, `podtemplates`, `flyte.lyft.com/flyteworkflows` | `flytepropeller.enabled` (**off** by default) |
 | `webhook` | `secrets` | `flytepropellerwebhook.enabled` (default) **and** `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` (default) |
 | `nodeobserver` | `pods` | `nodeobserver.enabled` (**off** by default) |
+
+`metrics.k8s.io/pods` is **resource-usage billing**, not optional telemetry. The usages
+aggregator's first act is a cluster-scoped `List` of pod metrics — the namespace is
+hard-coded to "all" in the binary and honours no `limit-namespace` — and it feeds the
+billing queue whenever `billing.model` is `ResourceUsage` (the chart default) or
+`Shadow`, or `collectUsages.enabled` is set. Without the grant it returns before producing
+anything, the retry loop gives up, and **no resource-usage billing data is collected**,
+with nothing in the cluster to say so. It returns aggregate CPU and memory numbers only —
+no pod spec, no environment, no object contents — and is `list` with no `watch`.
 
 Nothing in that table can create, modify or delete anything. There are no wildcards: no
 `apiGroups: ['*']`, no `resources: ['*']`, no `verbs: ['*']`. There is no cluster-wide
@@ -689,24 +699,32 @@ emitted at all. The cost is that managed-image pull secrets are no longer mirror
 
 #### What is deliberately *not* granted
 
-Two background loops need a cluster-wide `namespaces` `list` that this chart does **not**
-give them, because neither blocks startup and neither is worth a cluster-wide grant:
+- **Cluster-wide `namespaces` for `flytepropeller`'s workflow garbage collector.** It
+  deletes completed `FlyteWorkflow` objects past their retention period, and to do so it
+  enumerates namespaces through a **direct** client. Without the grant it logs an error
+  each cycle and collects nothing; nothing else degrades, and `flytepropeller` is off by
+  default. The `executor`'s equivalent sweep *is* granted — its namespace list is
+  cache-backed, so withholding it leaves a permanently blocked goroutine and a 403
+  reflector loop rather than a clean per-round error, and at the default
+  `commonServiceAccount.enabled: true` the identity already holds cluster-wide
+  `namespaces` reads from the FluentBit subchart, so withholding bought nothing.
 
-- **`executor`'s resource garbage collector** sweeps terminal task resources namespace by
-  namespace. Without the grant it cannot enumerate namespaces and the sweep never runs;
-  terminal task resources are then removed only by whatever else owns them (owner
-  references, your own retention policy), not by union.
-- **`flytepropeller`'s workflow garbage collector** deletes completed `FlyteWorkflow`
-  objects past their retention period. Without the grant it logs an error each cycle and
-  collects nothing. (`flytepropeller` is off by default.)
+- **Cluster-wide `configmaps` for the `operator`.** Its only cluster-scoped ConfigMap read
+  targets the release namespace and reaches cluster scope solely because the manager's
+  cache is unscoped — a defect in the binary. Granting cluster-wide ConfigMap reads to
+  work around it costs far more than it buys. **This has a user-visible consequence at
+  `low_privilege: false`, described under
+  [Migration / action required](RELEASE.md#migration--action-required) in RELEASE.md:
+  connector-runtime apps do not reconcile.**
 
-The operator's `namespaces` read *is* granted, because it is not a background loop: the
-image-builder config syncer panics at startup without it.
+- **The task-plugin CRDs** — Spark, Dask and Kubeflow, and Ray for anything beyond the
+  proxy's dashboard lookup. No enabled plugin watches them. The `executor`'s garbage
+  collector sweeps the whole *registry* rather than the enabled list, so on a cluster that
+  independently runs KubeRay or the Spark operator its sweep will block on that CRD; that
+  is an upstream defect, and granting cluster-wide reads on six CRDs to work around it
+  would restore exactly the breadth this model removes.
 
-Also not granted: cluster-wide `configmaps` (the operator's only cluster-scoped ConfigMap
-read targets the release namespace and is a caching defect in the binary), `metrics.k8s.io/pods`
-(usage telemetry, not startup), and the task-plugin CRDs — Spark, Dask, Kubeflow, and Ray
-for anything but the proxy's dashboard lookup.
+- **`nodes`**, except `nodeobserver`'s.
 
 ### Diagnosing a missing binding
 
