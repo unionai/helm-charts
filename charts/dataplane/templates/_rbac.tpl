@@ -49,14 +49,14 @@ names. Two destinations want different things: the components namespace (the
 release namespace, where union's own workloads run) and the work namespaces
 (per-project/domain, where user tasks, apps and builds run).
 
-  slot                   object        binding              low_privilege: true
-  ---------------------  ------------  -------------------  -------------------
-  comp-ns-read           Role          RoleBinding, rel ns  unchanged
-  comp-ns-write          Role          RoleBinding, rel ns  unchanged
-  work-ns                ClusterRole   RoleBinding per ns   Role + RB, rel ns
-  work-ns-read-unscoped  ClusterRole   ClusterRoleBinding   must be empty
-  cluster-read           ClusterRole   ClusterRoleBinding   must be empty
-  cluster-write          ClusterRole   ClusterRoleBinding   must be empty
+  slot                  object       binding              low_privilege: true
+  --------------------  -----------  -------------------  -------------------
+  comp-ns-read          Role         RoleBinding, rel ns  unchanged
+  comp-ns-write         Role         RoleBinding, rel ns  unchanged
+  work-ns               ClusterRole  RoleBinding per ns   Role + RB, rel ns
+  work-ns-cluster-read  ClusterRole  ClusterRoleBinding   empty, no fail
+  cluster-read          ClusterRole  ClusterRoleBinding   must be empty
+  cluster-write         ClusterRole  ClusterRoleBinding   must be empty
 
 work-ns is NEVER bound in the release namespace under full privilege. That is
 the entire split. Under low_privilege it is, because there the release
@@ -76,7 +76,7 @@ Emission order. Fixed so the rendered manifest is stable across renders.
 - comp-ns-read
 - comp-ns-write
 - work-ns
-- work-ns-read-unscoped
+- work-ns-cluster-read
 - cluster-read
 - cluster-write
 {{- end -}}
@@ -86,11 +86,31 @@ Per-slot behavior.
 
   pooled  true  -> one shared role, subjects are every SA that declared into it
           false -> one role per declaring component
-  kind    comp    -> Role in the release namespace, RoleBinding there
-          work    -> ClusterRole + RoleBinding per work namespace
-                     (Role + RoleBinding in the release namespace under
-                     low_privilege, where there are no separate work namespaces)
-          cluster -> ClusterRole + ClusterRoleBinding
+  kind    comp         -> Role in the release namespace, RoleBinding there
+          work         -> ClusterRole + RoleBinding per work namespace
+                          (Role + RoleBinding in the release namespace under
+                          low_privilege, where there are no separate work
+                          namespaces)
+          cluster      -> ClusterRole + ClusterRoleBinding; non-empty under
+                          low_privilege is a render-time fail (a namespaced
+                          Role cannot convey a cluster-scoped grant, so the
+                          component must be gated instead -- nodeobserver's
+                          own gate is the example)
+          work-cluster -> like cluster under full privilege: ClusterRole +
+                          ClusterRoleBinding. Under low_privilege it emits
+                          nothing at all, and does not fail even if declared
+                          into. This differs from plain `cluster` because,
+                          unlike cluster-read/cluster-write, every declarer
+                          into this slot is a component that low_privilege
+                          expects to run: under low_privilege the chart sets
+                          limit-namespace, so the caches this slot exists for
+                          are namespace-scoped and the cluster-scope problem
+                          this slot handles does not arise there. The release
+                          namespace also IS the work namespace in that
+                          posture, and the pooled work-ns Role already
+                          conveys these same reads in it -- so an object here
+                          would only grant a strict subset of a grant the
+                          declaring ServiceAccounts already hold.
   verbs   present -> emitter-owned; declarations must not carry a verbs key
           absent  -> component-supplied, checked against the allowlist
 */}}
@@ -107,9 +127,9 @@ work-ns:
   pooled: true
   kind: work
   verbs: write
-work-ns-read-unscoped:
+work-ns-cluster-read:
   pooled: false
-  kind: cluster
+  kind: work-cluster
 cluster-read:
   pooled: false
   kind: cluster
@@ -225,6 +245,17 @@ Args: dict with
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
 {{/*
+work-cluster goes quiet under low_privilege rather than failing: unlike
+cluster-read/cluster-write, its declarers are components low_privilege expects
+to run, and under low_privilege the chart's own limit-namespace setting means
+the cluster-scope problem this slot exists for does not arise -- the pooled
+work-ns Role already conveys the same reads in the release namespace, which
+IS the work namespace there. Stop here, before the role is rendered, and emit
+nothing at all.
+*/}}
+{{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
+{{- else -}}
+{{/*
 A cluster-bound slot cannot be conveyed by any namespaced Role, so under
 low_privilege the COMPONENT must be gated rather than its rules degraded. A
 namespaced Role naming a cluster-scoped resource is accepted by the API server
@@ -275,9 +306,12 @@ producer of a rule this shape.
 {{/*
 Object kind. `work` is a ClusterRole under full privilege purely so its rules
 are defined once instead of duplicated across N namespaces -- it is bound ONLY
-by per-namespace RoleBindings, so it grants nothing cluster-wide.
+by per-namespace RoleBindings, so it grants nothing cluster-wide. work-cluster
+is a ClusterRole here unconditionally: the quiet-under-low_privilege case
+already returned above, so reaching this point means either full privilege
+(kind cluster or work-cluster) or a kind that isn't cluster-scoped at all.
 */}}
-{{- $isCluster := eq $spec.kind "cluster" -}}
+{{- $isCluster := or (eq $spec.kind "cluster") (eq $spec.kind "work-cluster") -}}
 {{- $roleKind := "Role" -}}
 {{- if $isCluster -}}
 {{- $roleKind = "ClusterRole" -}}
@@ -366,6 +400,7 @@ subjects:
   {{- toYaml $subjects | nindent 2 }}
 {{- end }}
 {{- end }}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 
