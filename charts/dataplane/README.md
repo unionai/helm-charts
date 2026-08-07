@@ -318,12 +318,14 @@ but only so its rules are written once instead of copied into every namespace. E
 binding this chart emits for it is a namespaced `RoleBinding`, and a `RoleBinding` that
 references a `ClusterRole` confines that role's rules to the binding's own namespace.
 
-There is **one exception, and it is read-only**: `nodeobserver` lists pods with an empty
-namespace plus a field selector, which Kubernetes authorizes as a cluster-scope check that
-no number of per-namespace RoleBindings can satisfy. That one read is conveyed by
-`union-nodeobserver-work-ns-cluster-read`, a `ClusterRole` + `ClusterRoleBinding`.
-`nodeobserver.enabled` defaults to `false`, and the exception is described in full under
-[The one component that needs more](#the-one-component-that-needs-more).
+There are **exceptions, and every one of them is read-only.** Several components watch
+Kubernetes objects with an empty namespace, which the API server authorizes as a
+cluster-scope check that no number of per-namespace RoleBindings can satisfy — the call
+returns `403` rather than a filtered subset. Those reads are conveyed by
+`union-<component>-work-ns-cluster-read`, a `ClusterRole` + `ClusterRoleBinding` per
+component, emitted **only** under `low_privilege: false` and holding only `list` and
+`watch`. They are listed in full under
+[Cluster-scoped reads at `low_privilege: false`](#cluster-scoped-reads-at-low_privilege-false).
 
 The consequence is the decision you have to make: **something must create a `RoleBinding`
 for `union-work-ns` in each work namespace.** Which something does it is the posture.
@@ -532,8 +534,16 @@ runtime posture.
 `commonServiceAccount`, and FluentBit separately carries its own read-only cluster-wide
 grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping. That grant is
 independent of `namespaces.static`; hardening it is deliberately out of scope here.
-Within the union-authored RBAC this chart controls, the static posture does confine the
-shared identity to `namespaces.static` plus the release namespace, and nowhere else.
+
+**Nor does it eliminate cluster-scoped reads.** The static posture is a `low_privilege:
+false` posture, so union's components still hold the read-only
+`union-<component>-work-ns-cluster-read` `ClusterRole`s described under
+[Cluster-scoped reads at `low_privilege: false`](#cluster-scoped-reads-at-low_privilege-false).
+Those are `list`/`watch` only and are not affected by `namespaces.static` — the caches
+they serve watch with an empty namespace regardless of which namespaces exist. Within the
+union-authored RBAC this chart controls, what the static posture confines is every
+*write* and every namespaced read: to `namespaces.static` plus the release namespace, and
+nowhere else.
 
 ### The external-provisioner posture
 
@@ -592,16 +602,111 @@ deploy — the previous default was twelve resource types at `verbs: ['*']`, and
 that forward is a hard render failure reading
 `names verb "*", which is not in the allowlist`.
 
-### The one component that needs more
+### The component that needs cluster-scoped writes
 
-**`nodeobserver` holds cluster-scoped grants in every posture.** Its entire function is
-watching and updating `nodes`, a cluster-scoped resource that no namespaced Role can
-convey and that RBAC cannot narrow to "the node this pod runs on". It also lists pods
-with an empty namespace plus a `spec.nodeName` field selector, which Kubernetes
-authorizes as a cluster-scope check — per-namespace RoleBindings cannot satisfy it at any
-count, so that read is cluster-wide too. Both are `ClusterRole` + `ClusterRoleBinding`
-and are unaffected by `namespaces.static`. `nodeobserver.enabled` defaults to `false`;
-leave it there unless you need it, and note that it requires `low_privilege: false`.
+**`nodeobserver` holds cluster-scoped grants in every posture, and is the only component
+that holds a cluster-scoped *write*.** Its entire function is watching and updating
+`nodes`, a cluster-scoped resource that no namespaced Role can convey and that RBAC
+cannot narrow to "the node this pod runs on". It also lists pods with an empty namespace
+plus a `spec.nodeName` field selector, which Kubernetes authorizes as a cluster-scope
+check — per-namespace RoleBindings cannot satisfy it at any count, so that read is
+cluster-wide too. Both are `ClusterRole` + `ClusterRoleBinding` and are unaffected by
+`namespaces.static`. `nodeobserver.enabled` defaults to `false`; leave it there unless
+you need it, and note that it requires `low_privilege: false`.
+
+The only other cluster-scoped writes in the chart are `clusterresourcesync`'s
+(`namespaces` and `rolebindings`, in the runtime posture, so it can provision a project's
+namespace) and — when `flytepropellerwebhook.managedConfig: false` — the pod webhook's
+own `mutatingwebhookconfigurations`.
+
+### Cluster-scoped reads at `low_privilege: false`
+
+**Under `low_privilege: false` several components additionally hold a small, read-only,
+cluster-wide grant. They are `list` and `watch` only, and none of them exists under
+`low_privilege: true`.**
+
+The reason is not the resources — most of them are namespaced, and the same components
+already reach them per namespace through `union-work-ns`. The reason is *how the read is
+made*. At `low_privilege: false` the chart sets no `limit-namespace`, because work
+namespaces are created on demand and are not known when Helm renders. The components'
+controller caches therefore watch with an empty namespace, and Kubernetes evaluates a
+namespace-less `LIST`/`WATCH` as a **cluster-scope** authorization check: it answers for
+the whole cluster or not at all. Per-namespace `RoleBinding`s cannot answer it, so the
+call returns `403` rather than a filtered subset, and the component's cache never syncs.
+
+Each is a `ClusterRole` + `ClusterRoleBinding` named
+`union-<component>-work-ns-cluster-read`:
+
+| Component | Cluster-wide `list`, `watch` on | Emitted when |
+|---|---|---|
+| `executor` | `pods`, `podtemplates` | `executor.enabled` (default) |
+| `leaseworker` | `pods`, `podtemplates` | `leaseworker.enabled` (default) |
+| `operator` | `pods`, `resourcequotas` | `operator.serviceAccount.create` (default) |
+| `operator` | `podtemplates`, `serving.knative.dev/services`, `configurations`, `revisions` | also `apps.enabled` (default) |
+| `operator` | `namespaces` | also `imageBuilder.enabled` (default) |
+| `proxy` | `pods`, `resourcequotas`, `events.k8s.io/events`, `ray.io/rayjobs` | `proxy.serviceAccount.create` (default) |
+| `flytepropeller` | `pods`, `podtemplates`, `flyte.lyft.com/flyteworkflows` | `flytepropeller.enabled` (**off** by default) |
+| `webhook` | `secrets` | `flytepropellerwebhook.enabled` (default) **and** `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` (default) |
+| `nodeobserver` | `pods` | `nodeobserver.enabled` (**off** by default) |
+
+Nothing in that table can create, modify or delete anything. There are no wildcards: no
+`apiGroups: ['*']`, no `resources: ['*']`, no `verbs: ['*']`. There is no cluster-wide
+`configmaps` read and no cluster-wide `nodes` read except `nodeobserver`'s.
+
+**This is a narrowing relative to the released chart, not a widening.** Before this
+model, `low_privilege: false` bound `union-leaseworker` — `apiGroups: ['*']`,
+`resources: ['*']`, at `get,list,watch,create,update,delete,patch` — to union's
+ServiceAccount with a `ClusterRoleBinding`, along with `operator-system`, `proxy-system`
+and `union-webhook-role`. Everything above is a strict, read-only subset of what those
+already conveyed.
+
+#### The webhook's cluster-wide `secrets` read
+
+This is the grant to look at hardest, so here is the whole reasoning.
+
+The pod webhook mirrors image-pull secrets into each work namespace. To decide whether a
+mirror already exists it reads the Secret **in the admitted pod's namespace** through a
+controller-runtime cache, and that cache is built with no namespace restriction. There is
+no chart value that scopes it: the only knob is the propeller `limit-namespace`, which
+this chart does not set at full privilege because the work namespaces are not known then.
+
+Scoping the cache to the webhook's own namespace would not be a narrower version of this
+grant — it would be a broken one. controller-runtime returns `unknown namespace for the
+cache` for a lookup outside a scoped cache, and that is a plain error rather than
+`NotFound`, so the webhook would fail admission for every task pod outside the release
+namespace instead of creating the mirror.
+
+Withholding the grant does not produce a visible failure either. The cache sync retries a
+`Forbidden` `LIST` forever, so the webhook hangs *before* registering its handlers. The
+container has no readiness probe, so the pod reports `Ready` and is never restarted —
+while `failurePolicy: Fail` rejects every pod carrying the `inject-flyte-secrets` label.
+A green webhook and a data plane that admits no tasks.
+
+**If you do not want it, turn off the feature that needs it:** set
+`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: false`. The
+webhook then uses a direct client instead of a cache and this `ClusterRole` is not
+emitted at all. The cost is that managed-image pull secrets are no longer mirrored.
+
+#### What is deliberately *not* granted
+
+Two background loops need a cluster-wide `namespaces` `list` that this chart does **not**
+give them, because neither blocks startup and neither is worth a cluster-wide grant:
+
+- **`executor`'s resource garbage collector** sweeps terminal task resources namespace by
+  namespace. Without the grant it cannot enumerate namespaces and the sweep never runs;
+  terminal task resources are then removed only by whatever else owns them (owner
+  references, your own retention policy), not by union.
+- **`flytepropeller`'s workflow garbage collector** deletes completed `FlyteWorkflow`
+  objects past their retention period. Without the grant it logs an error each cycle and
+  collects nothing. (`flytepropeller` is off by default.)
+
+The operator's `namespaces` read *is* granted, because it is not a background loop: the
+image-builder config syncer panics at startup without it.
+
+Also not granted: cluster-wide `configmaps` (the operator's only cluster-scoped ConfigMap
+read targets the release namespace and is a caching defect in the binary), `metrics.k8s.io/pods`
+(usage telemetry, not startup), and the task-plugin CRDs — Spark, Dask, Kubeflow, and Ray
+for anything but the proxy's dashboard lookup.
 
 ### Diagnosing a missing binding
 
