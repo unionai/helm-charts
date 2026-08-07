@@ -1,0 +1,51 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# The static posture WITH a non-empty clusterresourcesync.clusterRoleRules.
+#
+# What this pins: the static posture's security argument is that
+# clusterresourcesync holds no cluster-scoped object at all -- the work
+# namespaces are enumerated in namespaces.static, this chart binds work-ns into
+# each of them directly, and the chart-derived cluster grants (namespaces,
+# rolebindings, the work-ns `bind`) are therefore not emitted. See
+# dataplane.static-ns-external.yaml and dataplane.task-namespaces.yaml, which
+# pin that render and show no union-clusterresourcesync-cluster-write.
+#
+# clusterRoleRules is never gated on which posture is active, so populating it
+# re-emits union-clusterresourcesync-cluster-write -- a ClusterRole AND a
+# ClusterRoleBinding -- in the one posture that otherwise has neither. The rules
+# in it are exactly what an operator asked for and nothing derived, because the
+# derived rules are absent here. That is the property to look at in this render:
+# an operator opting into a cluster-scoped grant in the posture whose whole
+# point is not having one, and doing so by setting a key whose documentation
+# does not otherwise mention postures.
+#
+# The rule below names a custom resource with explicit verbs -- the intended use
+# of the key: a clusterresourcesync.templates entry creating a resource type the
+# chart does not know about. `*` verbs are rejected by the chart's allowlist, so
+# they cannot be pinned here.
+host: test.example.com
+
+secrets:
+  admin:
+    clientId: test-client-id
+    clientSecret: test-client-secret
+
+low_privilege: false
+namespaces:
+  enabled: true
+  static:
+    - tenant-a-development
+    - tenant-a-production
+clusterresourcesync:
+  enabled: true
+  clusterRoleRules:
+    - apiGroups:
+        - example.com
+      resources:
+        - widgets
+      verbs:
+        - get
+        - list
+        - watch
+        - create
+        - patch
