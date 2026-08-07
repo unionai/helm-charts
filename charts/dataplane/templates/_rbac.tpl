@@ -1,15 +1,10 @@
 {{/*
-The single enumeration of which components are enabled and which ServiceAccount
-each runs as. Every other RBAC helper in this chart -- common/rbac.yaml's
-per-slot rule gathering, and dataplane.rbac.slotSubjects' naming below --
-ranges over THIS, not a copy of it. A component that appears in one
-enumeration and not the other is exactly the failure this enumeration exists
-to prevent: its ServiceAccount either gets rules with no name to bind, or a
-name with no rules, and either way the mismatch is invisible at render time --
-it shows up as a runtime Forbidden in a provisioner, not a template error.
+Single enumeration of enabled components and the ServiceAccount each runs as.
+Every other RBAC helper ranges over this, so rules and binding subjects cannot
+drift apart; a mismatch would surface only as a runtime Forbidden.
 
-Returns a YAML list of {name, sa} pairs, one per enabled component, in a fixed
-order (this fixes emission order downstream: first-seen-sa wins its position).
+Returns a YAML list of {name, sa} pairs; the fixed order also fixes emission
+order downstream.
 */}}
 {{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}
@@ -44,10 +39,9 @@ order (this fixes emission order downstream: first-seen-sa wins its position).
 =============================================================================
 SLOT MODEL
 
-RBAC is partitioned on WHERE a grant applies, not on what kind of resource it
-names. Two destinations want different things: the components namespace (the
-release namespace, where union's own workloads run) and the work namespaces
-(per-project/domain, where user tasks, apps and builds run).
+Grants are partitioned on where they apply: the components namespace (the
+release namespace, where union's own workloads run) versus the work namespaces
+(per project/domain, where user tasks run).
 
   slot                  object       binding              low_privilege: true
   --------------------  -----------  -------------------  -------------------
@@ -58,19 +52,17 @@ release namespace, where union's own workloads run) and the work namespaces
   cluster-read          ClusterRole  ClusterRoleBinding   must be empty
   cluster-write         ClusterRole  ClusterRoleBinding   must be empty
 
-work-ns is NEVER bound in the release namespace under full privilege. That is
-the entire split. Under low_privilege it is, because there the release
-namespace IS the work namespace.
+work-ns is never bound in the release namespace under full privilege; under
+low_privilege it is, because there the release namespace is the work namespace.
 
-POOLING RULE: pooled if conveyed by a RoleBinding, per-component if conveyed by
-a ClusterRoleBinding. Blast radius is bounded by a namespace in the first case
-and unbounded in the second. Precision buys nothing where grants merge and a
-lot where they are isolated and cluster-wide -- which is also why pooled slots
-have emitter-owned verbs and cluster slots let the component name its own.
+Pooling: pooled if conveyed by a RoleBinding, per-component if conveyed by a
+ClusterRoleBinding. Blast radius is namespace-bounded in the first case and
+unbounded in the second, hence pooled slots get emitter-owned verbs and cluster
+slots let the component name its own.
 */}}
 
 {{/*
-Emission order. Fixed so the rendered manifest is stable across renders.
+Emission order; fixed so the rendered manifest is stable.
 */}}
 {{- define "dataplane.rbac.slotOrder" -}}
 - comp-ns-read
@@ -82,35 +74,13 @@ Emission order. Fixed so the rendered manifest is stable across renders.
 {{- end -}}
 
 {{/*
-Per-slot behavior.
+Per-slot behavior; the objects and bindings each kind produces are tabled above.
 
-  pooled  true  -> one shared role, subjects are every SA that declared into it
+  pooled  true -> one shared role bound to every declaring SA
           false -> one role per declaring component
-  kind    comp         -> Role in the release namespace, RoleBinding there
-          work         -> ClusterRole + RoleBinding per work namespace
-                          (Role + RoleBinding in the release namespace under
-                          low_privilege, where there are no separate work
-                          namespaces)
-          cluster      -> ClusterRole + ClusterRoleBinding; non-empty under
-                          low_privilege is a render-time fail (a namespaced
-                          Role cannot convey a cluster-scoped grant, so the
-                          component must be gated instead -- nodeobserver's
-                          own gate is the example)
-          work-cluster -> like cluster under full privilege: ClusterRole +
-                          ClusterRoleBinding. Under low_privilege it emits
-                          nothing at all, and does not fail even if declared
-                          into. This differs from plain `cluster` because,
-                          unlike cluster-read/cluster-write, every declarer
-                          into this slot is a component that low_privilege
-                          expects to run: under low_privilege the chart sets
-                          limit-namespace, so the caches this slot exists for
-                          are namespace-scoped and the cluster-scope problem
-                          this slot handles does not arise there. The release
-                          namespace also IS the work namespace in that
-                          posture, and the pooled work-ns Role already
-                          conveys these same reads in it -- so an object here
-                          would only grant a strict subset of a grant the
-                          declaring ServiceAccounts already hold.
+  kind    comp, work, cluster, work-cluster. A non-empty `cluster` slot under
+          low_privilege fails the render (gate the component instead, as
+          nodeobserver does); `work-cluster` silently emits nothing there.
   verbs   present -> emitter-owned; declarations must not carry a verbs key
           absent  -> component-supplied, checked against the allowlist
 */}}
@@ -139,19 +109,10 @@ cluster-write:
 {{- end -}}
 
 {{/*
-Emitter-owned verb sets for pooled slots.
-
-Write is a SUPERSET of read: a controller that creates a Pod has to get it back
-to check status. That means a component naming a resource in a write slot need
-not also name it in the read slot, which deletes the near-duplicate declaration
-lists the old bucket model required. A read slot now means "reads this and
-never writes it".
-
-`*` appears nowhere. It was never chosen -- it arrived verbatim from upstream
-Flyte's flyteadmin ClusterRole in 18eb2ead and was carried forward unexamined.
-On `roles` it conveys `escalate`, which switches off RBAC's own
-escalation-prevention check; on `serviceaccounts` it conveys `impersonate`.
-Nothing here needs either.
+Emitter-owned verb sets for pooled slots. Write is a superset of read, so a
+resource in a write slot need not also appear in the read slot. Wildcard verbs
+are excluded: on `roles` a wildcard conveys `escalate`, disabling RBAC's
+escalation-prevention check, and on `serviceaccounts` it conveys `impersonate`.
 */}}
 {{- define "dataplane.rbac.verbs.read" -}}
 - get
@@ -171,9 +132,8 @@ Nothing here needs either.
 {{- end -}}
 
 {{/*
-Verbs a cluster-slot declaration may name. Excludes `*` (see above), `escalate`
-and `impersonate` (never needed), and `bind` (emitter-authored only, see
-dataplane.rbac.emitSlot).
+Verbs a cluster-slot declaration may name. Excludes wildcards, `escalate` and
+`impersonate`, and `bind` (emitter-authored only, see dataplane.rbac.emitSlot).
 */}}
 {{- define "dataplane.rbac.verbAllowlist" -}}
 - get
@@ -187,36 +147,24 @@ dataplane.rbac.emitSlot).
 {{- end -}}
 
 {{/*
-True when the work namespaces are known at render time, so this chart creates
-the bindings itself and clusterresourcesync needs no cluster-wide grant.
-
-THE organizing condition. Four things key off it and must move together:
-whether Helm emits the per-namespace RoleBindings, whether clusterresourcesync
-gets a cluster grant, whether `a_namespace` stays in its template set, and
-whether the generated RoleBinding template is emitted at all. They are read
-from this one define rather than spelled out separately, because three copies
-that happen to agree is how the old model grew its recursion.
-
-namespaces.create is deliberately NOT part of this. clusterresourcesync holds
-no `namespaces` permission in this posture regardless of who created the
-objects, so a pre-created namespace is no more reconcilable by it than a
-chart-created one.
-
-Returns "true" or "".
+True ("true" or "") when the work namespaces are known at render time, so the
+chart creates the bindings itself and clusterresourcesync needs no cluster-wide
+grant. Four things key off this single define and must move together: the
+per-namespace RoleBindings, clusterresourcesync's cluster grant, `a_namespace`
+in its template set, and the generated RoleBinding template. namespaces.create
+is not part of it; clusterresourcesync holds no `namespaces` permission here
+regardless of who created them.
 */}}
 {{- define "dataplane.rbac.staticPosture" -}}
 {{- if and .Values.namespaces.static .Values.namespaces.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
-Role name for a slot.
+Role name for a slot. Namespace-qualified even for the namespaced kinds, since
+cluster-scoped names must be qualified or two releases in different namespaces
+overwrite each other's roles.
 
-Namespace-qualified for EVERY slot, including the namespaced ones: a single
-naming rule is easier to check mechanically than "qualify these, not those",
-and cluster-scoped names MUST be qualified or two releases in different
-namespaces on one cluster silently overwrite each other's roles.
-
-Args: dict with ctx, slot, and component (empty string for pooled slots).
+Args: dict with ctx, slot, component ("" for pooled slots).
 */}}
 {{- define "dataplane.rbac.slotRoleName" -}}
 {{- if .component -}}
@@ -232,25 +180,15 @@ Emit one slot's role and its bindings. Emits nothing when rules is empty.
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
-  rules       list of {apiGroups, resources} maps for pooled slots, or
+  rules       {apiGroups, resources} maps for pooled slots, or
               {apiGroups, resources, verbs, resourceNames?} for cluster slots.
-              DECLARED rules -- chart-derived and operator-supplied are
-              indistinguishable here by design, and both run the full
-              validation below.
+              Chart-derived and operator-supplied declarations are
+              indistinguishable here by design; both run the validation below.
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
 
-Deliberately NOT an arg: anything for the emitter's own `bind` rule. An
-earlier round of this chart accepted one as `extraRules`, appended to the
-resolved list after validation and never itself validated -- structurally the
-same position a `trusted` parameter once occupied (removed in f59e7ae1 for
-exactly this reason). It was unreachable through the two call sites that
-existed, but the parameter itself was still a rule any future caller could
-point at any slot, including a pooled one where declared rules have their
-verbs REPLACED rather than checked -- an unvalidated rule slipped in that way
-would land in a role bound by RoleBinding to every enabled component sharing
-it. The bind rule is constructed inside this define instead (see below), so
-there is no parameter left for a future caller to misuse.
+There is deliberately no arg for the emitter's own `bind` rule, which would let
+a caller aim an unvalidated rule at any slot; it is constructed below instead.
 */}}
 {{- define "dataplane.rbac.emitSlot" -}}
 {{- $ctx := .ctx -}}
@@ -260,29 +198,19 @@ there is no parameter left for a future caller to misuse.
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
 {{/*
-work-cluster goes quiet under low_privilege rather than failing: unlike
-cluster-read/cluster-write, its declarers are components low_privilege expects
-to run, and under low_privilege the chart's own limit-namespace setting means
-the cluster-scope problem this slot exists for does not arise -- the pooled
-work-ns Role already conveys the same reads in the release namespace, which
-IS the work namespace there. Stop here, before the role is rendered, and emit
-nothing at all.
+work-cluster goes quiet under low_privilege instead of failing: limit-namespace
+makes its caches namespace-scoped and the pooled work-ns Role already conveys
+these reads in the release namespace.
 */}}
 {{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
 {{- else -}}
 {{/*
-A cluster-bound slot cannot be conveyed by any namespaced Role, so under
-low_privilege the COMPONENT must be gated rather than its rules degraded. A
-namespaced Role naming a cluster-scoped resource is accepted by the API server
-and simply never matches -- silent, which is why this fails loudly.
+A namespaced Role naming a cluster-scoped resource is accepted by the API server
+and never matches, so fail rather than degrade; gate the component instead.
 */}}
 {{- if and (eq $spec.kind "cluster") $lowPriv -}}
 {{- fail (printf "RBAC slot %q is non-empty under low_privilege: true. Cluster-scoped grants cannot be conveyed by a namespaced Role. Gate the component instead of degrading its rules." .slot) -}}
 {{- end -}}
-{{/*
-Resolve the verbs. Pooled slots take the emitter's set; cluster slots take the
-component's, validated against the allowlist.
-*/}}
 {{- $resolved := list -}}
 {{- if $spec.verbs -}}
 {{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
@@ -295,14 +223,8 @@ component's, validated against the allowlist.
 {{- else -}}
 {{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
 {{/*
-No `bind` exemption of any kind here. `bind` is never a valid verb on a
-DECLARED rule -- chart-derived and operator-supplied declarations are
-indistinguishable at this point and both run this exact check. The emitter's
-own bind rule (dataplane.rbac.provisionerBindRule) does not pass through
-$rules at all; it is spliced into $resolved below, by this define itself,
-after this validation has already finished -- so there is no rule shape a
-declaration could take that reaches `bind`, and no parameter a caller could
-misuse to skip this loop for it either.
+No `bind` exemption: it is never valid on a declared rule. The emitter's own
+bind rule never passes through $rules, and is spliced into $resolved below.
 */}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
@@ -318,26 +240,16 @@ misuse to skip this loop for it either.
 {{- end -}}
 {{- if and (eq .slot "cluster-write") (eq (.component | default "") "clusterresourcesync") -}}
 {{/*
-The bind rule clusterresourcesync needs to create RoleBindings for the pooled
-work-ns ClusterRole in namespaces it provisions (see
-dataplane.rbac.provisionerBindRule) is constructed HERE, directly, rather than
-accepted as an argument from the caller in common/rbac.yaml -- this define
-already has $ctx, .slot and .component, everything provisionerBindRule needs.
-Gated on the exact slot and component it belongs to, so no other slot or
-component is affected; provisionerBindRule itself returns nothing outside the
-runtime posture, where $rules for this slot is never empty (clusterresourcesync
-always declares the namespaces/rolebindings rules there), so this stays inside
-the `if $rules` gate above without widening it.
+Built here rather than passed in by the caller. provisionerBindRule returns
+nothing outside the runtime posture, where $rules is never empty for this slot,
+so this stays inside the `if $rules` gate above.
 */}}
 {{- $resolved = concat $resolved (fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list) -}}
 {{- end -}}
 {{/*
-Object kind. `work` is a ClusterRole under full privilege purely so its rules
-are defined once instead of duplicated across N namespaces -- it is bound ONLY
-by per-namespace RoleBindings, so it grants nothing cluster-wide. work-cluster
-is a ClusterRole here unconditionally: the quiet-under-low_privilege case
-already returned above, so reaching this point means either full privilege
-(kind cluster or work-cluster) or a kind that isn't cluster-scoped at all.
+`work` is a ClusterRole under full privilege only so its rules are defined once
+instead of per namespace; bound solely by per-namespace RoleBindings, it grants
+nothing cluster-wide.
 */}}
 {{- $isCluster := or (eq $spec.kind "cluster") (eq $spec.kind "work-cluster") -}}
 {{- $roleKind := "Role" -}}
@@ -386,10 +298,7 @@ roleRef:
 subjects:
   {{- toYaml $subjects | nindent 2 }}
 {{- else if $lowPriv }}
-{{/*
-Single-namespace mode: the release namespace IS the work namespace, so the
-work-ns Role binds here.
-*/}}
+{{/* The release namespace is the work namespace, so work-ns binds here. */}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -404,14 +313,9 @@ subjects:
   {{- toYaml $subjects | nindent 2 }}
 {{- else if include "dataplane.rbac.staticPosture" $ctx }}
 {{/*
-Static posture: one RoleBinding per known work namespace. A RoleBinding may
-reference a ClusterRole; the grant is then scoped to the RoleBinding's own
-namespace. That is the mechanism the whole model rests on -- rules defined
-once, no cluster-wide reach implied, every namespace named explicitly.
-
-In the runtime posture nothing is emitted here at all: clusterresourcesync
-creates the binding per namespace it provisions, from the template
-dataplane.rbac.provisionerBindingTemplate generates.
+One RoleBinding per known work namespace; referencing a ClusterRole from a
+RoleBinding scopes the grant to that namespace. In the runtime posture nothing
+is emitted here (see dataplane.rbac.provisionerBindingTemplate).
 */}}
 {{- range $ns := $ctx.Values.namespaces.static }}
 ---
@@ -433,14 +337,10 @@ subjects:
 {{- end -}}
 
 {{/*
-ServiceAccount names that declared into a slot, in first-seen component order.
+ServiceAccount names that declared into a slot, in first-seen component order;
+only enabled components contribute.
 
-A ServiceAccount is bound to a slot iff some ENABLED component running as it
-declared into that slot. nodeobserver declares only cluster slots, so it is not
-a subject of work-ns.
-
-Args: dict with ctx, slot.
-Returns a YAML list of ServiceAccount names.
+Args: dict with ctx, slot. Returns a YAML list of ServiceAccount names.
 */}}
 {{- define "dataplane.rbac.slotSubjects" -}}
 {{- $ctx := .ctx -}}
@@ -458,23 +358,13 @@ Returns a YAML list of ServiceAccount names.
 {{- end -}}
 
 {{/*
-The `bind` rule clusterresourcesync needs to create RoleBindings for the pooled
-work-ns ClusterRole in namespaces it provisions.
+Emitter-authored `bind` rule letting clusterresourcesync bind the pooled work-ns
+ClusterRole in namespaces it provisions. Creating a RoleBinding needs either
+every permission in the referenced role or `bind` on it; resourceNames confines
+this to the one chart-authored role, so the provisioner never holds that role's
+reach and cannot substitute a stronger one.
 
-EMITTER-AUTHORED, not declared. Creating a RoleBinding requires either every
-permission in the referenced role, or `bind` on that role. This is the second,
-confined by resourceNames to one role this chart authored -- so the provisioner
-can hand out work-ns without ever holding that role's own reach itself, and
-cannot invent a more
-powerful role and grant that instead. Its ceiling is what union components
-already have.
-
-Under pooled slots the target is a single constant, which is why this no longer
-needs deriving from the rendered role set -- and why the recursion break that
-derivation required is gone.
-
-Returns a YAML list with one rule, or nothing when the chart binds work-ns
-itself.
+Returns a one-rule YAML list, or nothing when the chart binds work-ns itself.
 */}}
 {{- define "dataplane.rbac.provisionerBindRule" -}}
 {{- if not (include "dataplane.rbac.staticPosture" .) -}}
@@ -490,22 +380,16 @@ itself.
 {{- end -}}
 
 {{/*
-The clusterresource-template entry that creates the work-ns RoleBinding in each
+The clusterresource-template entry creating the work-ns RoleBinding in each
 namespace clusterresourcesync provisions.
 
 Keyed `ab_` so it sorts between a_namespace and b_default_service_account (`_`
-is 0x5F, `b` is 0x62). The ORDER IS LOAD-BEARING and inverted from the old
-model: clusterresourcesync now reaches a new namespace THROUGH work-ns, so the
-binding must exist before the ServiceAccount and ResourceQuota it then creates.
-Applied last, every new project would stall until the following sync -- five
-minutes at the default refreshInterval.
+is 0x5F, `b` is 0x62). The order is load-bearing: clusterresourcesync reaches a
+new namespace through work-ns, so this binding must precede the ServiceAccount
+and ResourceQuota it then creates, or new projects stall until the next sync.
 
-The old d_ keys also carried 00/10 phase prefixes to stop pod-creators being
-bound before the webhook. With one pooled binding that window is
-unconstructible, not merely averted, and the prefixes are gone.
-
-`{{ namespace }}` is clusterresourcesync's own placeholder, substituted per
-project/domain at provision time, so it is passed through literally.
+`{{ namespace }}` is clusterresourcesync's own placeholder, substituted at
+provision time, so it is passed through literally.
 */}}
 {{- define "dataplane.rbac.provisionerBindingTemplate" -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" . "slot" "work-ns" "component" "") -}}

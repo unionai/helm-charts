@@ -1,19 +1,10 @@
 # helm-values: examples/values-test-certs.yaml
 #
-# Companion to dataplane.namespace-single.yaml: multi-namespace mode.
-#
-# With namespaces.enabled=true and low_privilege=false, singleNamespace is
-# false, so every run-to-namespace mapper must resolve namespace_mapping.template
-# verbatim instead of the release namespace. A deliberately distinctive template
-# (test- prefix) proves the shared "dataplane.namespaceTemplate" helper passes an
-# arbitrary template through unchanged -- not a coincidental match on {{ domain }}:
-#   - executor    -> namespace_mapping.template: 'test-{{ project }}-{{ domain }}'
-#   - leaseworker -> namespace-template: 'test-{{ project }}-{{ domain }}'
-#   - operator    -> org.namespaceTemplate: "test-{{ project }}-{{ domain }}"
-#
-# This guards the else-branch of the helper and proves the consolidation onto the
-# single top-level namespace_mapping input (config.namespace_config /
-# config.namespace_mapping removed) still drives the multi-namespace case.
+# Multi-namespace mode (namespaces.enabled: true, low_privilege: false), the
+# companion to dataplane.namespace-single.yaml. Every consumer of the shared
+# "dataplane.namespaceTemplate" helper (executor, leaseworker, operator) must
+# resolve the top-level namespace_mapping.template verbatim; the test- prefix
+# below makes a coincidental match impossible.
 host: union.us-west-2.union.ai
 clusterName: my-cluster
 orgName: union
@@ -23,23 +14,13 @@ namespaces:
   enabled: true
 namespace_mapping:
   template: "test-{{`{{ project }}`}}-{{`{{ domain }}`}}"
-# clusterresourcesync is enabled so its namespace_mapping.yaml -- also driven by
-# the single top-level namespace_mapping -- is snapshot-covered. It does NOT
-# provision namespaces in this render: namespaces.enabled: true above selects the
-# STATIC posture, so a_namespace.yaml is dropped from its template ConfigMap and
-# it holds no cluster-scoped grant at all (no union-clusterresourcesync-cluster-
-# write here). The chart emits the work-ns RoleBindings itself, one per name in
-# namespaces.static.
+# Enabled so its namespace_mapping.yaml is covered. This is the static posture,
+# so it provisions no namespaces and holds no cluster-scoped grant; the chart
+# emits the work-ns RoleBindings, one per namespaces.static name.
 #
-# NOT A WORKING MULTI-NAMESPACE CONFIGURATION, deliberately. namespaces.static is
-# left at its default six flytesnacks-* / union-health-monitoring-* names while
-# namespace_mapping.template is test-{{ project }}-{{ domain }}, so the work-ns
-# RoleBindings land in namespaces no task will ever use and every namespace a
-# task would actually use has no binding. Nothing here is meant to be copied into
-# a values file; the fixture exists to pin namespace-template propagation through
-# every consumer of the shared helper, and it does that whether or not the two
-# lists correspond. For a coherent static posture see
-# tests/values/dataplane.task-namespaces.yaml.
+# Not a config to copy: namespaces.static keeps its defaults while
+# namespace_mapping.template is test-prefixed, so the two do not correspond. For
+# a coherent static posture see tests/values/dataplane.task-namespaces.yaml.
 clusterresourcesync:
   enabled: true
 storage:

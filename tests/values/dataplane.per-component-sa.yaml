@@ -1,30 +1,11 @@
 # helm-values: examples/values-test-certs.yaml
 #
-# Coverage for commonServiceAccount.enabled: false at the chart default
-# low_privilege: true.
+# commonServiceAccount.enabled: false at the chart default low_privilege: true.
 #
-# Before the useCommonServiceAccount detangle this combination was
-# UNREACHABLE: the helper ORed in singleNamespace (exactly low_privilege), so
-# an explicit false was discarded and every component collapsed onto
-# union-system regardless. No fixture in the repo set commonServiceAccount at
-# all, so nothing caught it.
-#
-# What this render actually pins is that per-component identities are NOT an
-# RBAC narrowing. Pooled slots hold the union of every enabled declarer's rules
-# and bind that one object to every declaring ServiceAccount, and under
-# low_privilege: true work-ns binds in the release namespace -- so splitting the
-# identities splits nothing. Each of proxy-system, union-webhook-system and
-# operator-system holds */* at the full write set here, where the per-component
-# roles this chart replaced gave them a short named list (proxy's was read-only).
-# Read the summary in tests/rbac-summary/dataplane.per-component-sa.txt: five
-# ServiceAccounts, one identical work-ns rule set.
-#
-# So this is NOT the chart's most locked-down render, and it should not be read
-# as one. Per-component ServiceAccounts exist to give each component its own
-# cloud IAM identity (workload identity / IRSA annotations); in-cluster reach is
-# unchanged by them. The narrow-reach postures are the low_privilege: false ones
-# where work-ns is bound only into work namespaces -- see
-# tests/values/dataplane.task-namespaces.yaml.
+# Per-component identities are not an RBAC narrowing: the pooled slots bind one
+# role to every declaring ServiceAccount, so all five hold the same work-ns rule
+# set. They exist to give each component its own cloud IAM identity. For narrow
+# in-cluster reach see tests/values/dataplane.task-namespaces.yaml.
 global:
   CONTROLPLANE_HOST: "test-controlplane-host"
 commonServiceAccount:

@@ -1,35 +1,13 @@
 # helm-values: examples/values-test-certs.yaml
 #
-# Escape-hatch guard: nodeobserver.enabled=true AND low_privilege=false, with
-# namespaces.enabled left at its chart default of false.
-#
-# Design spec 3.4 lists nodeobserver as escape hatch #1: it needs write on
-# `nodes`, a cluster-scoped resource, so no namespaced Role can ever grant it
-# and no RBAC construct can scope it to "the node this pod runs on". That makes
-# its cluster-scoped, write-bearing form a grant we intend to keep and pin,
-# not one we intend to remove.
-#
-# dataplane.nodeobserver.yaml is now an expect-fail fixture: that combination
-# aborts the render rather than producing an inert namespaced Role. This is
-# therefore the ONLY fixture in which union-nodeobserver renders at all, and
-# the only place its cluster-scoped form is pinned.
-#
-# low_privilege=false on its own is the whole trigger, and that is the point of
-# this fixture. namespaces.enabled is deliberately left at its chart default of
-# false: it only pre-seeds the six flytesnacks/health-monitoring namespaces
-# (and gates the per-namespaces.static RoleBindings) and carries no privilege
-# meaning, so a low_privilege=false install must yield a ClusterRole and
-# ClusterRoleBinding here without it. Pinning the DEFAULT namespace setting is
-# what makes this fixture a regression guard: if privilege is ever re-coupled
-# to namespaces.enabled, this render silently degrades to a Role and the diff
-# shows it.
-#
-# Pinning this render makes the escape hatch a countable baseline entry that
-# phase 5 must formalise (or narrow to nodes/status) rather than a cluster-wide
-# write no test has ever seen.
+# nodeobserver.enabled at low_privilege: false, with namespaces.enabled at its
+# chart default of false. The only fixture in which union-nodeobserver renders:
+# it needs write on the cluster-scoped `nodes`, so its ClusterRole and
+# ClusterRoleBinding are a deliberate escape hatch. low_privilege alone is the
+# trigger, so a regression re-coupling privilege to namespaces.enabled degrades
+# this render to a Role. The default-privilege combination is expect-fail.
 global:
-  # Control-plane host so the dataplane->CP connection resolves. Without it the
-  # dataplane.cp.host template's required guard fails the render.
+  # Required by dataplane.cp.host's guard.
   CONTROLPLANE_HOST: "test-controlplane-host"
 low_privilege: false
 nodeobserver:
@@ -39,13 +17,7 @@ secrets:
   admin:
     create: false
 
-# clusterresourcesync.enabled: true is the reach route, not part of what this
-# fixture pins. The pooled work-ns role is never bound cluster-wide, so a
-# low_privilege: false data plane reaches its task namespaces only through
-# per-namespace RoleBindings -- and with namespaces.enabled at its default false,
-# the provisioner applying the generated ab_union_rolebinding.yaml template (from
-# dataplane.rbac.provisionerBindingTemplate) is the only thing creating them.
-# Without it the webhook's imagePullSecrets guard fails the render. See
-# tests/values/dataplane.namespaced-bindings-provisioner.yaml.
+# Enabled for the runtime work-ns binding route; the webhook's imagePullSecrets
+# guard fails the render without it. Not what this fixture pins.
 clusterresourcesync:
   enabled: true

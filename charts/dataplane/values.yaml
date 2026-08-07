@@ -123,14 +123,10 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service. Required whenever
-  # low_privilege=false, regardless of namespaces.enabled: it is what creates the
-  # per-project/per-domain namespaces + RBAC that task pods land in as new
-  # projects are registered. Its namespace_mapping.yaml is driven by the
-  # top-level namespace_mapping. It is gated off under low_privilege, where task
-  # pods run in the release namespace and no per-project namespaces are created.
-  # This defaults to false, so a low_privilege=false install must either enable
-  # it or pre-create the per-project namespaces by some other means.
+  # -- Enable or disable the syncresources service. Creates the per-project/domain
+  # namespaces and RBAC that task pods land in, driven by the top-level
+  # namespace_mapping. Required when low_privilege=false unless those namespaces
+  # are provisioned some other way; gated off entirely under low_privilege.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -138,35 +134,16 @@ clusterresourcesync:
     name: ""
     # -- Additional annotations for the syncresources service account
     annotations: {}
-  # -- Additional ClusterRole rules for the syncresources ServiceAccount.
-  #
-  # Empty by default, and that default is correct for every stock install: the
-  # grants clusterresourcesync needs to do its own job are derived from what the
-  # component actually does, and are emitted whether or not this list is set.
-  #
-  # Use this only when your own `clusterresourcesync.templates` entries create
-  # resource types the chart does not know about -- a custom resource, say --
-  # and the sync therefore needs permission the derived set does not cover.
-  #
-  # Rules here are checked against the same verb allowlist as every other
-  # cluster-scoped grant in this chart: get, list, watch, create, update, patch,
-  # delete, deletecollection. `*` is rejected. On `roles` a verb wildcard conveys
-  # `escalate`, which switches off RBAC's own escalation-prevention check, and on
-  # `serviceaccounts` it conveys `impersonate` -- both confirmed against a live
-  # API server, not inferred. Name the verbs you need instead.
-  #
-  # INERT UNDER low_privilege: true, WHICH IS THE CHART DEFAULT, AND NOTHING SAYS
-  # SO. clusterresourcesync is gated off in that mode, so it contributes no roles
-  # and these rules produce no object -- no error, no warning, no ClusterRole. No
-  # grant is lost (the component is not running); but setting this key on a
-  # default install does nothing at all. It takes effect only when
-  # low_privilege: false and clusterresourcesync.enabled: true.
-  #
-  # It is NOT gated on which work-namespace posture is active. In the static
-  # posture (namespaces.enabled: true) clusterresourcesync otherwise holds no
-  # cluster-scoped object at all; populating this key re-emits the
-  # <release-ns>-clusterresourcesync-cluster-write ClusterRole AND its
-  # ClusterRoleBinding there.
+  # -- Additional ClusterRole rules for the syncresources ServiceAccount. The rules
+  # clusterresourcesync needs for its own work are derived by the chart; use this
+  # only when your `clusterresourcesync.templates` entries create resource types
+  # the chart does not know about.
+  # Verbs are checked against the chart's cluster-scoped allowlist (get, list,
+  # watch, create, update, patch, delete, deletecollection); `*` is rejected.
+  # Takes effect only with low_privilege: false and clusterresourcesync.enabled:
+  # true, and is not gated on work-namespace posture: setting it in the static
+  # posture re-emits the <release-ns>-clusterresourcesync-cluster-write ClusterRole
+  # and its ClusterRoleBinding. See README: RBAC.
   clusterRoleRules: []
   # -- Additional pod labels for the syncresources service
   podLabels: { }
@@ -1974,33 +1951,17 @@ prometheus:
 # -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
 #  require additional permissions on the cluster. This limits the functionality though.
 #
-# This is the chart's single privilege axis, and it governs three things together:
-# - Namespace creation. low_privilege=true means NO namespaces are created by any
-#   route: the namespaces.enabled pre-seed is suppressed and clusterresourcesync
-#   is not rendered, so nothing provisions per-project namespaces.
-# - RBAC scope. Every component role renders as a namespaced Role + RoleBinding in
-#   the release namespace instead of a ClusterRole + ClusterRoleBinding.
-# - Cluster-scoped object creation (PriorityClasses, the mutating webhook
-#   configuration, cluster-scoped monitoring) is skipped.
-# Because no namespace outside the release namespace exists, workloads are pinned
-# to it (limit-namespace / namespace_mapping / limitNamespace are auto-injected).
+# This is the chart's privilege axis. When true, nothing creates namespaces (the
+# namespaces.enabled pre-seed is suppressed and clusterresourcesync is not
+# rendered), every component role renders as a namespaced Role + RoleBinding in the
+# release namespace rather than a ClusterRole, cluster-scoped objects
+# (PriorityClasses, the mutating webhook config, cluster-scoped monitoring) are
+# skipped, and workloads are pinned to the release namespace. Absent or null means
+# full privilege. namespaces.enabled is not a privilege flag. See README: RBAC.
 #
-# namespaces.enabled is a separate, non-privilege flag: it only pre-seeds the
-# six hardcoded flytesnacks + health-monitoring namespaces (and gates whether
-# union roles are bound into them -- see namespaces.enabled below). Setting it
-# false does not make an install low-privilege.
-#
-# MUST be a YAML boolean, and nothing enforces that -- write it unquoted.
-#
-# Every gate reads this for raw Go-template truthiness, and Go treats ANY
-# non-empty string as true. A quoted `low_privilege: "false"` therefore means
-# TRUE: the deployment is silently single-namespace while the values file reads
-# false. The same applies to every other boolean in this chart, including
-# namespaces.enabled, where the wrong reading silently creates every namespace in
-# namespaces.static and binds into them. If your values are generated, make sure
-# the generator emits real booleans rather than stringified ones.
-#
-# An absent or null value means low_privilege is OFF (full privilege).
+# Write this as an unquoted YAML boolean: gates test raw Go-template truthiness, so
+# `"false"` is a non-empty string and reads as true. The same applies to every other
+# boolean in this chart.
 #
 # Known tradeoffs when low_privilege is enabled:
 # - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
@@ -2016,62 +1977,27 @@ prometheus:
 low_privilege: true
 
 rbac:
-  # RBAC is partitioned on WHERE a grant applies, not on what kind of resource
-  # it names. Two destinations want different things:
+  # Grants are partitioned by where they apply: the components namespace (the
+  # release namespace, holding union's own Deployments, Secrets and ConfigMaps)
+  # via the pooled `<release-ns>-comp-ns-read`/`-comp-ns-write` Roles, and the work
+  # namespaces (per project/domain, holding user tasks, apps and builds) via the
+  # pooled `<release-ns>-work-ns` role. work-ns is not bound in the components
+  # namespace under low_privilege: false.
   #
-  #   - the COMPONENTS namespace (the release namespace, where union's own
-  #     Deployments, Secrets and ConfigMaps live) -- served by the pooled
-  #     `<release-ns>-comp-ns-read` / `-comp-ns-write` Roles;
-  #   - the WORK namespaces (per project/domain, where user tasks, apps and
-  #     builds run) -- served by the single pooled `<release-ns>-work-ns` role.
-  #
-  # work-ns is NEVER bound in the components namespace under low_privilege:
-  # false. That split is the point: a component that can create any Pod in a
-  # work namespace still cannot write union's own Deployments or read its
-  # Secrets.
-  #
-  # work-ns renders as a ClusterRole so its rules are defined once rather than
-  # duplicated per namespace, but every binding this chart emits for it is a
-  # per-namespace RoleBinding -- and a RoleBinding referencing a ClusterRole
-  # scopes that role to the binding's own namespace. So it never grants `get`
-  # on every Secret in the cluster.
-  #
-  # That means something has to bind work-ns into each work namespace. Three
-  # things can, and exactly one is active in any given render:
-  #
-  #   - This chart, once per namespace in `namespaces.static`, when
-  #     `namespaces.enabled: true` (the STATIC posture).
-  #   - clusterresourcesync at provision time, from the
-  #     ab_union_rolebinding.yaml template the chart generates for it, when the
-  #     namespaces are created at runtime (the RUNTIME posture). This is the
-  #     right posture when projects are registered at runtime.
-  #   - Something outside this chart, asserted via externalBindingProvisioner
-  #     below (the EXTERNAL posture).
-  #
-  # Under low_privilege: true none of this applies: the release namespace IS
-  # the work namespace, work-ns is a plain namespaced Role bound there, and
-  # namespaces.static is a no-op.
-  #
-  # THE CHART CANNOT VERIFY THAT ANY OF THEM ACTUALLY RAN. If none does, the
-  # install renders green and task pods fail with Forbidden at their first
-  # execution, not at deploy time -- see README, "Diagnosing a missing binding".
+  # work-ns renders as a ClusterRole so its rules are defined once, but the chart
+  # binds it only with per-namespace RoleBindings, which scope it to the binding's
+  # own namespace. Something must create those bindings in each work namespace:
+  # this chart (namespaces.enabled: true), clusterresourcesync at provision time,
+  # or an external system (externalBindingProvisioner). The chart cannot verify
+  # that one ran; if none does, task pods fail with Forbidden at their first
+  # execution rather than at deploy time. See README: RBAC.
 
-  # -- Assert that something OUTSIDE this chart creates the per-work-namespace
-  # RoleBindings.
-  #
-  # Only consulted when the work namespaces are not enumerated -- the posture
-  # where the chart emits no per-namespace RoleBindings of its own and
-  # clusterresourcesync is what normally creates them (from the template the
-  # chart generates for it). In that posture the deployment needs
-  # `clusterresourcesync.enabled: true`, because the alternative is a render
-  # that looks correct and leaves every work namespace with no union bindings
-  # until the first task execution fails.
-  #
-  # Set this true if some other system creates those RoleBindings. It disables
-  # that requirement and nothing else: no RBAC changes, no objects added or
-  # removed. It is an assertion by the operator, and THE CHART CANNOT VERIFY IT
-  # -- if it is not true, the failure mode is the delayed Forbidden the
-  # requirement exists to prevent.
+  # -- Assert that something outside this chart creates the per-work-namespace
+  # RoleBindings. Only consulted when the work namespaces are not enumerated, the
+  # posture where the chart otherwise requires `clusterresourcesync.enabled: true`
+  # to create them. Setting this true waives that requirement and changes nothing
+  # else; the chart cannot verify the claim, and if it is wrong the failure is the
+  # delayed Forbidden the requirement exists to prevent.
   externalBindingProvisioner: false
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
@@ -2088,28 +2014,18 @@ controlplaneNamespace: ""
 
 # -- Collapse every component onto one ServiceAccount (`name` below).
 #
-# Setting this false creates ONE KSA PER COMPONENT. Each new KSA name needs a
+# Setting this false creates one KSA per component, and each new KSA name needs a
 # matching workload-identity binding in the cloud repo before the workloads can
-# authenticate -- an IRSA trust-policy subject on AWS, a
-# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential.
-# additionalServiceAccountAnnotations is applied to every system-created
-# ServiceAccount and each cloud overlay points it at a single backend identity
-# (values.aws.yaml, values.gcp.yaml, values.azure.yaml), so the annotation alone
-# is not sufficient -- the cloud-side binding must name each KSA.
+# authenticate (an IRSA trust-policy subject on AWS, a
+# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential).
+# additionalServiceAccountAnnotations applies the same annotation to every
+# system-created ServiceAccount, so it is not sufficient on its own.
 #
-# That cost is why this defaults to true. It is independent of low_privilege:
-# a single-namespace install may still use per-component identities.
-#
-# THIS IS NOT AN RBAC NARROWING. The namespace-scoped roles are POOLED -- one
-# object per slot, holding the union of every enabled component's rules, bound to
-# every ServiceAccount that declared into that slot -- so splitting the identities
-# does not split the permissions. Each component ends up holding every other
-# declarer's rules in the slots it participates in, exactly as the shared identity
-# did. Under low_privilege: true, where work-ns binds in the release namespace,
-# that means components which previously held a short named list (the pod webhook,
-# proxy, the operator) now hold the pooled `*/*` write set on union's own objects.
-# What per-component ServiceAccounts buy is IDENTITY separation for cloud IAM, not
-# in-cluster authorization separation. See tests/values/dataplane.per-component-sa.yaml.
+# This is not an RBAC narrowing: the namespace-scoped roles are pooled, one object
+# per slot holding the union of every enabled component's rules, so splitting the
+# identities does not split the permissions. Per-component ServiceAccounts buy
+# identity separation for cloud IAM, not in-cluster authorization separation.
+# Independent of low_privilege. See README: RBAC.
 commonServiceAccount:
   enabled: true
   name: union-system
@@ -2518,52 +2434,23 @@ ingress-nginx:
 extraObjects: []
 
 namespaces:
-  # -- Use the static work-namespace posture.
-  #
-  # When true (with a non-empty `static`), this chart emits a RoleBinding for
-  # the pooled `work-ns` ClusterRole in every namespace listed in `static`, and
-  # clusterresourcesync is confined to that list -- by default it gets NO
-  # cluster-wide grant at all, and its `a_namespace` template is dropped.
-  # Setting `clusterresourcesync.clusterRoleRules` opts back into a
-  # cluster-scoped grant in this posture too, since that key is never gated on
-  # which posture is active.
-  #
-  # When false, work namespaces are created at runtime by clusterresourcesync,
-  # which holds a small cluster-wide grant to bootstrap each one. That is the
-  # default, and the right posture for a dataplane whose projects are
-  # registered at runtime.
-  #
-  # Uninstall does NOT delete namespaces this chart created: they carry
-  # `helm.sh/resource-policy: keep`, so `helm uninstall` leaves them and
-  # everything inside them (task pods, Secrets, PVCs, whatever
-  # clusterresourcesync added at runtime) in place. Clean them up with kubectl
-  # if you do want them gone.
+  # -- Use the static work-namespace posture: emit a RoleBinding for the pooled
+  # `work-ns` ClusterRole in every namespace listed in `static`, and confine
+  # clusterresourcesync to that list (no cluster-wide grant, `a_namespace`
+  # template dropped). When false, work namespaces are created at runtime by
+  # clusterresourcesync, which holds a small cluster-wide grant to bootstrap each
+  # one. Namespaces this chart creates carry `helm.sh/resource-policy: keep`, so
+  # `helm uninstall` leaves them and their contents behind. See README: RBAC.
   enabled: false
-  # -- Also create the Namespace objects listed in `static`.
-  #
-  # Only consulted when `enabled: true`. Set false when the namespaces are
-  # created outside this chart -- by Terraform, by a platform team, by
-  # anything. You still get the RoleBindings; Helm simply never touches the
-  # Namespace objects, so there is no ownership to negotiate.
-  #
-  # This is the supported path for externally-managed namespaces. Previously
-  # the only route was setting `enabled: true` with `create` unavailable, which
-  # meant handing Helm a Namespace it had not created -- and Helm refuses to
-  # adopt one without `meta.helm.sh/release-name`, `release-namespace` and the
-  # `app.kubernetes.io/managed-by` label being set by hand first.
-  #
-  # If the namespaces do not actually exist, the RoleBindings fail to apply
-  # with `namespaces "<name>" not found` at install or sync time. That is loud
-  # and immediate, which is what makes this safe to offer.
+  # -- Also create the Namespace objects listed in `static`. Only consulted when
+  # `enabled: true`. Set false when the namespaces are managed outside this chart:
+  # you still get the RoleBindings, and Helm never touches the Namespace objects.
+  # If they do not exist, the RoleBindings fail to apply with
+  # `namespaces "<name>" not found` at install or sync time.
   create: true
-  # -- Work namespaces known at render time.
-  #
-  # This is NOT the full set a dataplane will use when `enabled: false`:
-  # clusterresourcesync creates one per project/domain as projects are
+  # -- Work namespaces known at render time. Not the full set when `enabled:
+  # false`: clusterresourcesync creates one per project/domain as projects are
   # registered, and cannot know those names in advance.
-  #
-  # By itself this list is inert -- `enabled` defaults false, so a default
-  # install is unaffected by this default.
   static:
     - flytesnacks-development
     - flytesnacks-staging

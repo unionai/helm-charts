@@ -1,20 +1,13 @@
 {{/*
 Emits every union component's RBAC from the slots each component declares.
+Pooled slots produce one object holding the union of every enabled declarer's
+rules, bound to every declarer's ServiceAccount; per-component slots produce one
+object per declarer. See dataplane.rbac.slotSpec.
 
-Pooled slots produce ONE object holding the union of every enabled declarer's
-rules, bound to every declarer's ServiceAccount. Per-component slots produce
-one object per declarer. Which is which is decided in dataplane.rbac.slotSpec,
-by the pooling rule: pooled if conveyed by a RoleBinding, per-component if
-conveyed by a ClusterRoleBinding.
-
-Rule DEFINITIONS stay per-component (dataplane.rbac.slots.*) even where the
-OBJECT is shared, so "does this component need cluster scope" and "what did
-this component actually ask for" both stay answerable from the source.
-
-A pooled slot's contents are the union of only its ENABLED contributors, which
-is what lets a dataplane running operator + proxy + webhook -- without the
-executor or propeller and their resource wildcards -- get a genuinely narrow
-work-ns role rather than one covering every apiGroup and resource.
+Rule definitions stay per-component (dataplane.rbac.slots.*) even where the
+object is shared, so what each component asked for stays answerable from source.
+Pooling only enabled contributors is what lets a dataplane without the executor
+or propeller (and their resource wildcards) get a narrow work-ns role.
 */}}
 {{- $ctx := . -}}
 {{- if and .Values.namespaces.enabled (has .Release.Namespace (.Values.namespaces.static | default list)) -}}
@@ -30,9 +23,8 @@ work-ns role rather than one covering every apiGroup and resource.
 {{- if $slotSpec.pooled -}}
 {{/*
 `uniq` drops rules two components declare identically (executor's and
-leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so
-this changes nothing an API server would decide -- it only keeps the rendered
-role readable.
+leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so this
+changes nothing an API server would decide; it keeps the render readable.
 */}}
 {{- $rules := list -}}
 {{- range $c := $components -}}
@@ -47,13 +39,9 @@ role readable.
       "subjects" (fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" $ctx "slot" $slot)))) }}
 {{- else -}}
 {{/*
-No special-casing here for clusterresourcesync's bind rule -- it used to be
-spliced into $rules at this call site (and, briefly, passed through as a
-separate argument). Both shapes gave a caller a way to hand emitSlot a rule
-that either skipped or only partly ran its own validation. emitSlot now
-constructs that one rule itself, internally, gated on slot and component; see
-dataplane.rbac.emitSlot for why. This branch just passes each component's own
-declared rules through unchanged.
+No special-casing for clusterresourcesync's bind rule: emitSlot constructs it
+internally, gated on slot and component, so it cannot bypass that define's
+validation. This branch passes declared rules through unchanged.
 */}}
 {{- range $c := $components -}}
 {{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}

@@ -49,12 +49,9 @@ data:
 {{- $static := include "dataplane.rbac.staticPosture" . }}
 {{- range .Values.clusterresourcesync.templates }}
 {{- /*
-Drop a_namespace in the static posture. The namespaces are pre-created (by
-common/namespaces.yaml, or out of band under namespaces.create: false) and this
-ServiceAccount deliberately holds no `namespaces` permission there. Pre-creating
-the object does not make reconciling it authorized: the create is a
-cluster-scoped attribute check and returns Forbidden, on every project
-namespace, on every sync cycle, with a render and an apply that both look clean.
+Drop a_namespace in the static posture: namespaces are pre-created and this
+ServiceAccount has no `namespaces` permission, so the create is a cluster-scoped
+check that returns Forbidden on every sync cycle.
 */ -}}
 {{- if and (eq .key "a_namespace") $static }}
 {{- else }}
@@ -62,9 +59,9 @@ namespace, on every sync cycle, with a render and an apply that both look clean.
 {{- end }}
 {{- end }}
 {{- /*
-Add the work-ns RoleBinding when this chart is not binding it. Keyed `ab_` so it
-applies immediately after a_namespace and before the ServiceAccount and
-ResourceQuota, which now depend on the reach it grants.
+Add the work-ns RoleBinding when this chart is not binding it. Keyed `ab_` to
+sort after a_namespace and before the ServiceAccount and ResourceQuota, which
+need the reach it grants.
 */ -}}
 {{- if not $static }}
   ab_union_rolebinding.yaml: | {{ include "dataplane.rbac.provisionerBindingTemplate" . | nindent 4 }}

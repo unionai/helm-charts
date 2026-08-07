@@ -1,48 +1,15 @@
 #!/usr/bin/env python3
-"""Render each dataplane snapshot's RBAC down to something a human will actually read.
+"""Summarise each dataplane snapshot's RBAC to roughly fifty reviewable lines.
 
-The snapshots in tests/generated/ are 7,000-9,000 lines each, and a change that
-moves RBAC around produces a diff in the tens of thousands of lines. Nobody
-reviews that for a misplaced ClusterRoleBinding. This collapses each snapshot to
-roughly fifty lines: who holds what, where, and through which binding kind.
+The snapshots in tests/generated/ run to thousands of lines, so an RBAC change
+lands as a diff nobody reads. Each summary shows who holds what, where, and
+through which binding kind, so resolved reach, dead rules and wildcards are
+legible. Nothing is asserted: the review signal is the committed summary
+changing in a pull request.
 
-It is a GOLDEN ARTIFACT, not a checker. It asserts nothing and has no baseline of
-accepted violations -- there is no list of invariants to keep complete and no way
-for it to reject a configuration an operator legitimately wants. The review
-signal comes from the committed summary changing in a pull request, at a
-granularity where the change is legible.
-
-What it is built to surface, because these are the changes that hide well in a
-raw manifest diff:
-
-  binding kind      A namespaced RoleBinding becoming a cluster-wide
-                    ClusterRoleBinding is two characters in an 8,000-line file
-                    and is the difference between "reads Secrets in tenant-a"
-                    and "reads every Secret in the cluster". Here it is a column.
-
-  reach             Which namespaces a grant actually lands in, resolved through
-                    the bindings rather than left implicit in the role.
-
-  dead grants       A namespaced Role naming a cluster-scoped resource applies
-                    cleanly and never matches. Flagged inline as (dead) so it
-                    reads as wrong rather than as ordinary.
-
-  wildcards         resources: ['*'] and verbs: ['*'] are summarised as * so a
-                    narrowing or widening is visible without reading rules.
-
-  provisioned       Not every binding this chart ships is a Kubernetes object
-  bindings          Helm applies. In the runtime posture the work-namespace
-                    RoleBinding is carried as a STRING inside the
-                    clusterresource-template ConfigMap and applied by
-                    clusterresourcesync once per namespace it provisions. Read
-                    only top-level documents and the pooled work-ns role -- the
-                    broadest role the chart defines -- appears in no summary at
-                    all in exactly the configuration that is the default shape
-                    of a multi-namespace data plane. Those embedded bindings are
-                    parsed out of the ConfigMap and reported like any other, with
-                    their reach shown as *provisioned-at-runtime* because the
-                    namespace is a placeholder resolved per project/domain at
-                    provision time, not a namespace Helm rendered.
+RoleBindings the chart ships as strings inside the clusterresource-template
+ConfigMap are applied by clusterresourcesync, not Helm; they are parsed out and
+reported with reach *provisioned-at-runtime*.
 
 Usage:
   scripts/rbac_summary.py --write    regenerate tests/rbac-summary/
@@ -63,9 +30,8 @@ GENERATED = os.path.join(REPO_ROOT, "tests", "generated")
 SUMMARY_DIR = os.path.join(REPO_ROOT, "tests", "rbac-summary")
 PATTERN = os.path.join(GENERATED, "dataplane*.yaml")
 
-# Cluster-scoped resource types, used only to annotate a namespaced Role's rules
-# as dead. Incompleteness costs a missing annotation, never a false failure --
-# this file makes no assertions.
+# Used only to annotate a namespaced Role's rules as dead. Incompleteness costs a
+# missing annotation, never a failure.
 CLUSTER_SCOPED = frozenset(
     {
         "apiservices",
@@ -95,15 +61,12 @@ CLUSTER_SCOPED = frozenset(
 
 CLUSTER = "*cluster-wide*"
 
-# Reach of a binding the chart does not apply itself: clusterresourcesync
-# substitutes the namespace per project/domain as it provisions one. Deliberately
-# not a legal namespace name, like CLUSTER, so it cannot be mistaken for one.
+# Reach of a binding clusterresourcesync applies per project/domain namespace.
+# Not a legal namespace name, so it cannot be mistaken for one.
 PROVISIONED = "*provisioned-at-runtime*"
 
-# clusterresourcesync's own placeholder syntax, which is passed through the chart
-# literally and is therefore still present in the rendered ConfigMap. `{{ x }}`
-# is not valid YAML in a value position (it parses as a mapping with an
-# unhashable mapping key), so it is swapped for a plain scalar before parsing.
+# clusterresourcesync's placeholders, passed through literally by the chart.
+# `{{ x }}` is not valid YAML in a value position, so swap it for a scalar first.
 TEMPLATE_PLACEHOLDER = re.compile(r"\{\{\s*(.*?)\s*\}\}")
 NAMESPACE_TOKEN = "__union_rbac_summary_namespace__"
 OTHER_TOKEN = "__union_rbac_summary_placeholder__"
@@ -124,15 +87,7 @@ def _substitute_placeholders(text):
 
 
 def embedded_bindings(docs):
-    """RoleBindings carried as strings inside a ConfigMap, not applied by Helm.
-
-    The runtime posture's work-namespace RoleBinding lives in the
-    clusterresource-template ConfigMap and is applied by clusterresourcesync per
-    namespace it provisions, so a summary built only from top-level documents
-    cannot see the pooled work-ns role at all. `data` holds arbitrary strings --
-    fluent-bit config, TOML, shell -- so anything that does not parse to a
-    RoleBinding mapping is skipped rather than raised.
-    """
+    """RoleBindings carried as strings inside a ConfigMap, applied by clusterresourcesync rather than Helm."""
     out = []
     for d in docs:
         if d.get("kind") != "ConfigMap":
@@ -208,8 +163,8 @@ def collect(path):
             scope = CLUSTER
             rules = roles.get(("ClusterRole", ref_name, None))
         else:
-            # An unqualified RoleBinding lands in the release namespace; every
-            # fixture renders with --namespace union.
+            # An unqualified RoleBinding lands in the release namespace; fixtures
+            # render with --namespace union.
             scope = (meta.get("namespace") or "union").strip()
             if scope == NAMESPACE_TOKEN:
                 scope = PROVISIONED
@@ -230,8 +185,8 @@ def collect(path):
                 {"kind": "Role" if ref_kind == "Role" else "ClusterRole", "scopes": set(), "rules": None},
             )
             entry["scopes"].add(scope)
-            # A roleRef this chart does not define (system:auth-delegator) has no
-            # rules here; record the reference so the binding is still visible.
+            # roleRefs the chart does not define (system:auth-delegator) have no
+            # rules; record the binding anyway so it stays visible.
             if rules is not None and entry["rules"] is None:
                 entry["rules"] = sorted(
                     {rule_line(r, namespaced=(ref_kind == "Role")) for r in rules}
