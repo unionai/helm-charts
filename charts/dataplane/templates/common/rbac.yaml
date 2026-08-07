@@ -1,13 +1,13 @@
 {{/*
 Emits every union component's RBAC from the slots each component declares.
 Pooled slots produce one object holding the union of every enabled declarer's
-rules, bound to every declarer's ServiceAccount; per-component slots produce one
+rules, bound to every declarer's ServiceAccount. Per-component slots produce one
 object per declarer. See dataplane.rbac.slotSpec.
 
 Rule definitions stay per-component (dataplane.rbac.slots.*) even where the
-object is shared, so what each component asked for stays answerable from source.
-Pooling only enabled contributors is what lets a dataplane without the executor
-or propeller (and their resource wildcards) get a narrow work-ns role.
+object is shared, so it stays clear what each component asked for. Pooling only
+the enabled components is what lets a dataplane without the executor or
+propeller (and their resource wildcards) get a narrow work-ns role.
 */}}
 {{- $ctx := . -}}
 {{- if and .Values.namespaces.enabled (has .Release.Namespace (.Values.namespaces.static | default list)) -}}
@@ -23,8 +23,8 @@ or propeller (and their resource wildcards) get a narrow work-ns role.
 {{- if $slotSpec.pooled -}}
 {{/*
 `uniq` drops rules two components declare identically (executor's and
-leaseworker's wildcards are byte-identical). RBAC unions a role's rules, so this
-changes nothing an API server would decide; it keeps the render readable.
+leaseworker's wildcards match exactly). RBAC unions a role's rules, so this only
+makes the render readable; it changes no access decision.
 */}}
 {{- $rules := list -}}
 {{- range $c := $components -}}
@@ -39,9 +39,9 @@ changes nothing an API server would decide; it keeps the render readable.
       "subjects" (fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" $ctx "slot" $slot)))) }}
 {{- else -}}
 {{/*
-No special-casing for clusterresourcesync's bind rule: emitSlot constructs it
-internally, gated on slot and component, so it cannot bypass that define's
-validation. This branch passes declared rules through unchanged.
+This branch passes declared rules through unchanged. clusterresourcesync's bind
+rule is not special-cased here; emitSlot builds it internally, gated on slot and
+component, so it cannot bypass that define's validation.
 */}}
 {{- range $c := $components -}}
 {{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}

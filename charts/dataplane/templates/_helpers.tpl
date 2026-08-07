@@ -1434,14 +1434,11 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- end -}}
 {{- end -}}
 {{/*
-Returns "true" when a common service account should be used for all components.
+Returns "true" when all components share one service account.
 
-Keyed on commonServiceAccount.enabled alone: identity sharing and privilege
-scope are orthogonal, and per-component ServiceAccounts inside one namespace are
-better isolation at no structural cost. The IAM cost of per-component identities
-(each KSA needs a matching workload-identity binding in the cloud repo) is a
-reason for the default to be true, not for the chart to overrule an explicit
-false.
+Keyed on commonServiceAccount.enabled alone; sharing an identity is independent
+of privilege scope. It defaults to true because every per-component KSA needs a
+matching workload-identity binding in the cloud repo.
 */}}
 {{- define "useCommonServiceAccount" -}}
 {{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
@@ -1559,26 +1556,16 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns "true" when the install runs in single-namespace / low-privilege mode,
-and the empty string otherwise. This is the chart's one privilege axis.
+Returns "true" under low_privilege, the empty string otherwise.
 
-low_privilege: true means no namespaces are created by any route, so every
-workload lives in the release namespace. Templates key their namespace-scoping
-config (limitNamespace, limit-namespace, namespace_mapping) and their RBAC kind
-off this helper.
+low_privilege: true means no namespaces are created, so every workload runs in
+the release namespace. Templates key their namespace-scoping config
+(limitNamespace, limit-namespace, namespace_mapping) and their RBAC kind (Role
+instead of ClusterRole) off this helper.
 
-namespaces.enabled is not part of this: it only pre-seeds namespaces.static and
-gates whether union roles are bound into those namespaces, and says nothing
-about privilege, since with it off a fully-privileged install still creates
-namespaces for new projects via clusterresourcesync.
-
-The value is read for raw Go-template truthiness, matching the ten other
-low_privilege gates in the operator, propeller, leaseworker and prometheus
-templates. A string "false" is truthy in Go templates and so silently means
-true; normalizing only here would desync this helper from those raw gates and
-render ClusterRoles alongside disableClusterPermissions: true. The fix is a
-values.schema.json plus a sweep of every gate. Until then operators must pass a
-YAML boolean, as RELEASE.md notes under "Upgrade notes".
+low_privilege must be a YAML boolean. This helper and every other low_privilege
+gate read it for Go-template truthiness, where the string "false" is truthy and
+so silently means true.
 */}}
 {{- define "singleNamespace" -}}
 {{- if .Values.low_privilege -}}true{{- end -}}

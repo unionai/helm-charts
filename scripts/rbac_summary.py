@@ -2,14 +2,13 @@
 """Summarise each dataplane snapshot's RBAC to roughly fifty reviewable lines.
 
 The snapshots in tests/generated/ run to thousands of lines, so an RBAC change
-lands as a diff nobody reads. Each summary shows who holds what, where, and
-through which binding kind, so resolved reach, dead rules and wildcards are
-legible. Nothing is asserted: the review signal is the committed summary
-changing in a pull request.
+is easy to miss in review. Each summary shows who has what access, where, and
+through which binding kind. Nothing is asserted; the review signal is the
+committed summary changing in a pull request.
 
 RoleBindings the chart ships as strings inside the clusterresource-template
-ConfigMap are applied by clusterresourcesync, not Helm; they are parsed out and
-reported with reach *provisioned-at-runtime*.
+ConfigMap are applied by clusterresourcesync, not Helm. They are parsed out and
+reported as *provisioned-at-runtime*.
 
 Usage:
   scripts/rbac_summary.py --write    regenerate tests/rbac-summary/
@@ -30,8 +29,8 @@ GENERATED = os.path.join(REPO_ROOT, "tests", "generated")
 SUMMARY_DIR = os.path.join(REPO_ROOT, "tests", "rbac-summary")
 PATTERN = os.path.join(GENERATED, "dataplane*.yaml")
 
-# Used only to annotate a namespaced Role's rules as dead. Incompleteness costs a
-# missing annotation, never a failure.
+# Used only to mark a namespaced Role's rules as dead. If the list is incomplete
+# the mark is missed; nothing fails.
 CLUSTER_SCOPED = frozenset(
     {
         "apiservices",
@@ -61,8 +60,8 @@ CLUSTER_SCOPED = frozenset(
 
 CLUSTER = "*cluster-wide*"
 
-# Reach of a binding clusterresourcesync applies per project/domain namespace.
-# Not a legal namespace name, so it cannot be mistaken for one.
+# Marks a binding clusterresourcesync applies per project/domain namespace. Not a
+# legal namespace name, so it cannot be mistaken for one.
 PROVISIONED = "*provisioned-at-runtime*"
 
 # clusterresourcesync's placeholders, passed through literally by the chart.
