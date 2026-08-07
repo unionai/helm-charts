@@ -2003,33 +2003,55 @@ prometheus:
 low_privilege: true
 
 rbac:
-  # The union `ns-read` / `ns-write` roles are NEVER bound cluster-wide. Under
-  # low_privilege: false they render as ClusterRoles so their rules are defined
-  # once, but every binding is a per-namespace RoleBinding -- so `ns-read`, for
-  # example, never grants `get` on every Secret in the cluster.
+  # RBAC is partitioned on WHERE a grant applies, not on what kind of resource
+  # it names. Two destinations want different things:
   #
-  # That means something has to bind them into each task namespace. Two things
-  # can, and exactly one of them is active in any given render:
+  #   - the COMPONENTS namespace (the release namespace, where union's own
+  #     Deployments, Secrets and ConfigMaps live) -- served by the pooled
+  #     `<release-ns>-comp-ns-read` / `-comp-ns-write` Roles;
+  #   - the WORK namespaces (per project/domain, where user tasks, apps and
+  #     builds run) -- served by the single pooled `<release-ns>-work-ns` role.
   #
-  #   - This chart, for the namespaces in `namespaces.static`, when
-  #     `namespaces.enabled: true` (README Option 2).
-  #   - clusterresourcesync at provision time, from RoleBinding templates the
-  #     chart generates for it, when the namespaces are created at runtime
-  #     (README Option 1). This is the default.
+  # work-ns is NEVER bound in the components namespace under low_privilege:
+  # false. That split is the point: a component that can create any Pod in a
+  # work namespace still cannot write union's own Deployments or read its
+  # Secrets.
   #
-  # THE CHART CANNOT VERIFY THAT EITHER ACTUALLY RAN. If neither does, the
+  # work-ns renders as a ClusterRole so its rules are defined once rather than
+  # duplicated per namespace, but every binding this chart emits for it is a
+  # per-namespace RoleBinding -- and a RoleBinding referencing a ClusterRole
+  # scopes that role to the binding's own namespace. So it never grants `get`
+  # on every Secret in the cluster.
+  #
+  # That means something has to bind work-ns into each work namespace. Three
+  # things can, and exactly one is active in any given render:
+  #
+  #   - This chart, once per namespace in `namespaces.static`, when
+  #     `namespaces.enabled: true` (the STATIC posture).
+  #   - clusterresourcesync at provision time, from the
+  #     ab_union_rolebinding.yaml template the chart generates for it, when the
+  #     namespaces are created at runtime (the RUNTIME posture). This is the
+  #     right posture when projects are registered at runtime.
+  #   - Something outside this chart, asserted via externalBindingProvisioner
+  #     below (the EXTERNAL posture).
+  #
+  # Under low_privilege: true none of this applies: the release namespace IS
+  # the work namespace, work-ns is a plain namespaced Role bound there, and
+  # namespaces.static is a no-op.
+  #
+  # THE CHART CANNOT VERIFY THAT ANY OF THEM ACTUALLY RAN. If none does, the
   # install renders green and task pods fail with Forbidden at their first
   # execution, not at deploy time -- see README, "Diagnosing a missing binding".
 
-  # -- Assert that something OUTSIDE this chart creates the per-task-namespace
+  # -- Assert that something OUTSIDE this chart creates the per-work-namespace
   # RoleBindings.
   #
-  # Only consulted when the task namespaces are not enumerated -- the posture
+  # Only consulted when the work namespaces are not enumerated -- the posture
   # where the chart emits no per-namespace RoleBindings of its own and
-  # clusterresourcesync is what normally creates them (from the templates the
+  # clusterresourcesync is what normally creates them (from the template the
   # chart generates for it). In that posture the deployment needs
   # `clusterresourcesync.enabled: true`, because the alternative is a render
-  # that looks correct and leaves every task namespace with no union bindings
+  # that looks correct and leaves every work namespace with no union bindings
   # until the first task execution fails.
   #
   # Set this true if some other system creates those RoleBindings. It disables

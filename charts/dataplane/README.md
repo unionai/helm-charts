@@ -306,12 +306,19 @@ the work-namespace role is **never** bound in the components namespace. A compon
 can create any Pod in a work namespace therefore still cannot write union's own
 Deployments or read its Secrets.
 
-**No union role is ever bound cluster-wide in order to reach work namespaces.** Under
+**No union role carrying work-namespace *write* access is ever bound cluster-wide.** Under
 `low_privilege: false` the shared work-namespace role renders as a `ClusterRole` named
 `<release-namespace>-work-ns` — `union-work-ns` in the usual `union` release namespace —
 but only so its rules are written once instead of copied into every namespace. Every
 binding this chart emits for it is a namespaced `RoleBinding`, and a `RoleBinding` that
 references a `ClusterRole` confines that role's rules to the binding's own namespace.
+
+There is **one exception, and it is read-only**: `nodeobserver` lists pods with an empty
+namespace plus a field selector, which Kubernetes authorizes as a cluster-scope check that
+no number of per-namespace RoleBindings can satisfy. That one read is conveyed by
+`union-nodeobserver-work-ns-cluster-read`, a `ClusterRole` + `ClusterRoleBinding`.
+`nodeobserver.enabled` defaults to `false`, and the exception is described in full under
+[The one component that needs more](#the-one-component-that-needs-more).
 
 The consequence is the decision you have to make: **something must create a `RoleBinding`
 for `union-work-ns` in each work namespace.** Which something does it is the posture.
@@ -553,9 +560,10 @@ posture therefore gives `clusterresourcesync` a `ClusterRole` it would not other
 have, holding exactly the rules you named and nothing else.
 
 If you are upgrading and already set this key, read
-[the upgrade note in RELEASE.md](RELEASE.md) before you deploy — the previous default
-was twelve resource types at `verbs: ['*']`, and carrying that forward is a hard render
-failure.
+[the upgrade note in RELEASE.md](RELEASE.md#migration--action-required) before you
+deploy — the previous default was twelve resource types at `verbs: ['*']`, and carrying
+that forward is a hard render failure reading
+`names verb "*", which is not in the allowlist`.
 
 ### The one component that needs more
 
@@ -623,8 +631,18 @@ kubectl logs -n <release-ns> deploy/union-pod-webhook
 
 for an error creating the mirrored secret — that is the only trace.
 
-The render-time guard prevents the configuration that causes this, so you should only
-ever see it if the bindings were removed out-of-band after install.
+The render-time guard rules out only the configuration that names *no* route at all. It
+cannot tell you whether the route you named is working. Both of these pass the guard and
+still produce this failure:
+
+- `rbac.externalBindingProvisioner: true` when your provisioner is broken, not deployed,
+  or lagging behind namespace creation — the guard takes this key as an assertion and
+  verifies nothing.
+- `clusterresourcesync.enabled: true` when the component is rendered but crash-looping,
+  not yet past its first sync, or erroring on the binding template.
+
+So a green render is not evidence. Confirm the binding exists in the affected namespace
+with the `kubectl get rolebindings` check above before looking anywhere else.
 
 ---
 

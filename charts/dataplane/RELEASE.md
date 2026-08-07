@@ -240,14 +240,14 @@
   secrets is otherwise silent. **With mirroring disabled the render does not fail** — the
   chart has no way to detect a missing provisioner — and union workloads simply hold
   `union-work-ns` in the release namespace and nowhere else.
-- **`namespaces.static` now rejects duplicates and the release namespace** when
-  `namespaces.enabled: true`. A duplicate rendered the same Namespace and the same
-  RoleBinding twice in one release; naming the release namespace would bind
-  `union-work-ns` in the components namespace, silently collapsing the split this model
-  exists to create — union components would regain write access to union's own
-  Deployments and Secrets with nothing in the render to show it. Both now fail the
-  render. **Inert lists are unaffected** — the checks are gated on `namespaces.enabled`,
-  so an overlay carrying a harmless stale entry still upgrades.
+- **`namespaces.static` now rejects the release namespace** when `namespaces.enabled: true`.
+  Naming it would bind `union-work-ns` in the components namespace, silently collapsing the
+  split this model exists to create — union components would regain write access to union's
+  own Deployments and Secrets with nothing in the render to show it. That now fails the
+  render. **Inert lists are unaffected** — the check is gated on `namespaces.enabled`, so an
+  overlay carrying a harmless stale entry still upgrades. Duplicate entries are *not*
+  rejected: the render succeeds and emits the same `Namespace` and the same `RoleBinding`
+  twice. De-duplicate the list yourself.
 - **`nodeobserver`'s `pods: list` moves into a cluster-scoped role.** It lists pods
   with an empty namespace plus a `spec.nodeName` field selector, which Kubernetes
   authorizes as a cluster-scope check — no number of per-namespace RoleBindings can
@@ -281,7 +281,16 @@
 - **`clusterresourcesync.enabled` defaults to `false` — a `low_privilege: false` data plane must now enable it (or pre-create namespaces).** It was previously suppressed entirely in this mode by the `singleNamespace` gate, so leaving it off looked harmless. Now that the mode is genuinely multi-namespace, something has to create the per-project/per-domain namespaces and their RBAC as projects are registered. Either set `clusterresourcesync.enabled: true`, or pre-create every namespace your `namespace_mapping.template` can produce by some other means and enumerate them in `namespaces.static` with `namespaces.enabled: true`. Task pods land in `Forbidden`/`namespace not found` otherwise.
 
   **If you choose the static route, understand what it costs.** In that posture `clusterresourcesync` holds no cluster-wide grant, so it can only act in the namespaces listed in `namespaces.static`. A project registered after install lands in a namespace that is not on the list, and the component cannot provision it: its `b_default_service_account` and `c_project_resource_quota` templates return `Forbidden` on every sync cycle, indefinitely, with a render and an apply that both look clean. Concretely: **if `namespace_mapping.template` can produce namespace names that are not in `namespaces.static`, those projects will not work.** Nothing in the chart detects this. Use the static posture only when work namespaces really are provisioned ahead of time and adding a project is already a deploy step.
-- **BREAKING: RBAC scope in that mode is narrowed — the old cluster-wide `ClusterRoleBinding`s are gone.** Helm removes them as part of the upgrade, so union workloads lose cluster-wide reach the moment the release is applied and regain per-namespace reach as `clusterresourcesync` reconciles each project on its sync interval. Existing work namespaces converge without operator action, but **there is a window** between the upgrade and the next sync in which tasks in namespaces not yet reconciled see `Forbidden`. At the default `refreshInterval: 5m` that window is minutes, not hours. Schedule the upgrade accordingly, and confirm afterwards with `kubectl get clusterrolebindings | grep union-` that only the expected cluster-scoped ones survive (`union-<component>-cluster-*`, `union-<component>-work-ns-cluster-read`, and `system:auth-delegator` for `clusterresourcesync`). There is no manual cleanup beyond that.
+- **BREAKING: RBAC scope in that mode is narrowed — the old cluster-wide `ClusterRoleBinding`s are gone.** Helm removes them as part of the upgrade, so union workloads lose cluster-wide reach the moment the release is applied and regain per-namespace reach as `clusterresourcesync` reconciles each project on its sync interval. Existing work namespaces converge without operator action, but **there is a window** between the upgrade and the next sync in which tasks in namespaces not yet reconciled see `Forbidden`. At the default `refreshInterval: 5m` that window is minutes, not hours. Schedule the upgrade accordingly, and confirm afterwards with `kubectl get clusterrolebindings | grep union-` that only the expected cluster-scoped ones survive. **Do not delete anything on this list** — all of it is current:
+
+  | Surviving `ClusterRoleBinding` | Why it is there |
+  |---|---|
+  | `union-<component>-cluster-read` / `-cluster-write` | grants that are cluster-scoped by necessity; only `clusterresourcesync`, the pod webhook and `nodeobserver` have any |
+  | `union-<component>-work-ns-cluster-read` | `nodeobserver`'s pod `list`, which the API server authorizes as a cluster-scope check |
+  | `union-clustersync-auth-delegator` | **load-bearing** — binds `clusterresourcesync` to the built-in `system:auth-delegator` `ClusterRole` for apiserver auth delegation. Deleting it breaks the component. Note the object name does not match its `roleRef`. |
+  | `<release-name>-fluentbit` | FluentBit's read-only `namespaces`/`pods` grant for log shipping, from the subchart |
+
+  There is no manual cleanup beyond confirming the old per-component bindings are gone.
 - **BREAKING: if your overlay sets `clusterresourcesync.clusterRoleRules`, it will fail the render until you fix it.** The chart's previous default for this key was:
 
   ```yaml
@@ -294,10 +303,16 @@
         verbs: ['*']
   ```
 
-  An overlay that copied or extended that list now errors at template time with a message
-  naming the allowlist (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
-  `deletecollection`). **This is a loud failure, which is the point** — the alternative
-  was a silent narrowing discovered at the next sync cycle.
+  An overlay that copied or extended that list now errors at template time:
+
+  ```
+  RBAC slot "cluster-write" names verb "*", which is not in the allowlist
+  [get list watch create update patch delete deletecollection]. Wildcards, escalate,
+  impersonate and bind are never permitted on a declared rule; bind is emitter-authored only.
+  ```
+
+  **This is a loud failure, which is the point** — the alternative was a silent narrowing
+  discovered at the next sync cycle.
 
   **What to do, in order:**
 
