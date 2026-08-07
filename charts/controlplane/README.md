@@ -151,6 +151,40 @@ All pods should be `Running` and `flyteadmin` should be serving requests.
 
 ---
 
+## AWS Pod Identity Webhook Annotation Prefix
+
+The AWS pod identity webhook mutates pods by reading a service account annotation named `<annotation-prefix>/role-arn`. EKS uses `eks.amazonaws.com` by default, so the AWS values file defaults to `eks.amazonaws.com/role-arn`.
+
+If your cluster operator installed the webhook with a custom `--annotation-prefix`, override each control plane service account annotation key that uses AWS IAM:
+
+```yaml
+flyte:
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  datacatalog:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  cacheservice:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+
+services:
+  artifacts:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-artifacts"
+```
+
+When this is layered on top of an AWS preset values file, Helm may still render the default `eks.amazonaws.com/role-arn` annotation. That extra annotation is ignored by a webhook configured with a different prefix; the custom `<prefix>/role-arn` annotation is the one that controls mutation.
+
+The IAM role trust policies must still trust the Kubernetes service account subjects used by the rendered service accounts.
+
+---
+
 ## Installation
 
 ### Database Architecture
@@ -463,9 +497,7 @@ kubectl delete namespace union-cp
 
 For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the [Self-hosted deployment guide](https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/) on the Union documentation site.
 
-Reference guides are also available in this repository:
-- [AWS](SELFHOSTED_INTRA_CLUSTER_AWS.md)
-- [GCP](SELFHOSTED_INTRA_CLUSTER_GCP.md)
+For intra-cluster topologies, layer `examples/values.{cloud}.intracluster.yaml` on top of the canonical `values.{cloud}.yaml` overlay. See [`MIGRATION.md`](../MIGRATION.md) for details about the cloud overlay consolidation.
 
 ---
 
