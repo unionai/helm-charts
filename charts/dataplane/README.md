@@ -290,29 +290,99 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
-## How union workloads reach task namespaces
+## RBAC: how union workloads reach work namespaces
 
-**No union `ns-*` role is ever bound cluster-wide.** Under `low_privilege: false` the
-`<release-namespace>-union-ns-read` / `-ns-write` roles render as `ClusterRole`s so their
-rules are written once rather than duplicated per namespace, but every binding the chart
-emits is a namespaced `RoleBinding`. A `RoleBinding` referencing a `ClusterRole` scopes
-that role's rules to the binding's own namespace — so `ns-read` never grants `get` on
-every Secret in the cluster, in any configuration.
+Two kinds of namespace matter here, and this chart's RBAC is partitioned on the
+difference between them:
 
-The consequence is that **something has to bind those roles into each task namespace**,
-and there are exactly two candidates. Which one is active is decided by
-`namespaces.enabled`, and they are mutually exclusive:
+- the **components namespace** — the release namespace, where union's own Deployments,
+  Secrets and ConfigMaps live;
+- the **work namespaces** — one per project/domain, where user tasks, apps and image
+  builds run.
 
-| | Task namespaces | Who creates the RoleBindings |
-|---|---|---|
-| **Option 1** (default) | created at runtime, as projects are registered | `clusterresourcesync`, from templates the chart generates |
-| **Option 2** | known ahead of time | the chart, one per `namespaces.static` entry |
+Union components hold a narrow, explicitly named set of permissions in the components
+namespace, and a much broader set in the work namespaces. Those are separate roles, and
+the work-namespace role is **never** bound in the components namespace. A component that
+can create any Pod in a work namespace therefore still cannot write union's own
+Deployments or read its Secrets.
 
-Under `low_privilege: true` none of this applies: there are no task namespaces, the
-`ns-*` roles are plain namespaced `Role`s, and everything is confined to the release
-namespace. `namespaces.static` is a genuine no-op there.
+**No union role is ever bound cluster-wide in order to reach work namespaces.** Under
+`low_privilege: false` the shared work-namespace role renders as a `ClusterRole` named
+`<release-namespace>-work-ns` — `union-work-ns` in the usual `union` release namespace —
+but only so its rules are written once instead of copied into every namespace. Every
+binding this chart emits for it is a namespaced `RoleBinding`, and a `RoleBinding` that
+references a `ClusterRole` confines that role's rules to the binding's own namespace.
 
-### Option 1 — a provisioner creates the bindings (default)
+The consequence is the decision you have to make: **something must create a `RoleBinding`
+for `union-work-ns` in each work namespace.** Which something does it is the posture.
+
+### The four postures
+
+| Posture | How you select it | Work namespaces are | Who creates the `union-work-ns` RoleBinding | `clusterresourcesync`'s cluster-wide grant |
+|---|---|---|---|---|
+| **Runtime** | `low_privilege: false` + `clusterresourcesync.enabled: true` | created at runtime, as projects are registered | `clusterresourcesync`, from a template this chart generates | yes — three narrow rules, listed below |
+| **Static** | `low_privilege: false` + `namespaces.enabled: true` + a non-empty `namespaces.static` | listed by you, known at render time | this chart, one RoleBinding per listed namespace | **none at all** |
+| **External provisioner** | `low_privilege: false` + `rbac.externalBindingProvisioner: true` | created by your own tooling | your tooling | none (the component can stay off) |
+| **Single namespace** | `low_privilege: true` (the chart's base default) | not used — tasks run in the release namespace | this chart, in the release namespace | n/a — the component is not rendered |
+
+The first three are mutually exclusive answers to the same question, and
+`namespaces.enabled` is what selects the static one. Under `low_privilege: true` none of
+this applies: the release namespace *is* the work namespace, `work-ns` is a plain
+namespaced `Role` bound there, and `namespaces.static` is a genuine no-op.
+
+If nothing binds the role, **nothing tells you at deploy time.** The install renders
+green and ArgoCD reports healthy; the failure appears at the first task execution. The
+one case the chart does catch is described under
+[Diagnosing a missing binding](#diagnosing-a-missing-binding).
+
+### `clusterresourcesync`, in plain language
+
+**What clusterresourcesync is.** A background loop in the union namespace. Someone
+registers a project; that project needs Kubernetes namespaces; nobody re-runs Helm when
+that happens, so something in the cluster creates them.
+
+**Why it is privileged.** Creating namespaces is inherently cluster-wide — there is no
+way to say "may create namespaces, but only these". And Kubernetes will not let you hand
+out permissions you do not hold yourself, so for it to grant union components access to a
+new namespace it needs an explicit permission to hand out that one named role.
+
+**What it can do.** Cluster-wide: look up, create and patch Namespaces and RoleBindings,
+and hand out the `union-work-ns` role by name. Nothing else. It cannot invent a more
+powerful role and grant that instead — its ceiling is what union components already have.
+
+**How to confine it.** List your work namespaces in `namespaces.static` and set
+`namespaces.enabled: true`. It then holds no cluster-wide grant at all and keeps
+reconciling quotas and service accounts within that list. The cost is that a new project
+does not work until someone adds its namespaces and redeploys.
+
+**If your namespaces are created elsewhere**, add `namespaces.create: false`. You get the
+RoleBindings; Helm never touches the Namespace objects.
+
+That is the whole cluster-wide grant, and you can read it back off a live cluster:
+
+```bash
+kubectl get clusterrole union-clusterresourcesync-cluster-write -o yaml
+```
+
+```yaml
+rules:
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, create, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [rolebindings]
+    verbs: [get, create, patch]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    verbs: [bind]
+    resourceNames: [union-work-ns]
+```
+
+`delete` is added to the `namespaces` rule only if you set
+`clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace: true`,
+which deletes namespaces for archived projects. It defaults to false.
+
+### The runtime posture (default for a multi-namespace dataplane)
 
 ```yaml
 low_privilege: false
@@ -320,189 +390,229 @@ clusterresourcesync:
   enabled: true
 ```
 
-This is the shape a data plane takes when projects are registered at runtime, which is
-the normal case. Task namespaces do not exist at template time, so the chart cannot emit
-a `RoleBinding` for them; `clusterresourcesync` creates one per union `ns-*` role as it
-provisions each namespace, and holds `bind` on exactly those roles for the purpose —
-unconditionally, whether or not `commonServiceAccount` is enabled.
+This is the shape a dataplane takes when projects are registered at runtime, which is the
+normal case. Work namespaces do not exist at template time, so this chart cannot emit
+their RoleBindings; `clusterresourcesync` creates them as it provisions each namespace.
 
-Leave `namespaces.enabled` at its default `false`. It is what selects Option 2, and the
-chart's default `namespaces.static` is six non-empty names, so setting it true switches
-postures rather than adding to this one.
+Leave `namespaces.enabled` at its default `false`. It is what selects the static posture,
+and the chart's default `namespaces.static` is six non-empty names, so setting it true
+switches postures rather than adding to this one.
 
 Two separate things have to be true for this to work, and it is worth being explicit
-about which is which, because the failure mode if either is missing is identical and
-silent:
+about which is which, because the failure if either is missing is identical and silent:
 
-- **Authorization.** The `bind` grant is what stops the API server rejecting the
-  RoleBinding with *"attempting to grant RBAC permissions not currently held"*. Its
-  `resourceNames` are derived from the rendered identities, so it names every `ns-*`
-  role the chart emits.
+- **Authorization.** The `bind` grant on `union-work-ns` is what stops the API server
+  rejecting the RoleBinding with *"attempting to grant RBAC permissions not currently
+  held"*. It names exactly one role, by `resourceNames`.
 - **Desired state.** A grant only permits an attempt; something has to actually ask for
-  the object. The chart therefore also generates one `d_union_rolebinding_*` entry per
-  rendered `ns-*` role into `clusterresourcesync`'s template ConfigMap, alongside the
-  built-in `a_namespace` / `b_default_service_account` / `c_project_resource_quota`
-  templates. Those entries are what create the RoleBindings, once per task namespace,
-  at provision time.
+  the object. This chart therefore also generates an `ab_union_rolebinding.yaml` entry in
+  `clusterresourcesync`'s template ConfigMap, alongside the built-in `a_namespace`,
+  `b_default_service_account` and `c_project_resource_quota` templates. That entry is what
+  creates the RoleBinding, once per work namespace, at provision time.
 
 Both are generated — there is nothing to add to `clusterresourcesync.additionalTemplates`
-by hand, and doing so would duplicate them. The committed RBAC summaries
-(`tests/rbac-summary/`) list both sets per snapshot, so a drift between them shows up
-as a reviewable diff.
+by hand, and doing so would duplicate them. The `ab_` key is deliberate: the binding must
+be applied *before* the ServiceAccount and ResourceQuota templates, because
+`clusterresourcesync` itself reaches a new namespace through `union-work-ns`. The
+committed snapshots show both halves — the `bind` grant in `tests/rbac-summary/`, the
+generated template in `tests/generated/` — so a drift between them appears as a
+reviewable diff.
 
 **Image-pull secret mirroring works in this posture**, and is enabled by default
 (`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true`). The
-pod webhook mirrors pull secrets into each task namespace, which needs `secrets` write
-reach there — and the generated `d_union_rolebinding_*` templates give it exactly that,
-in every namespace `clusterresourcesync` provisions, before any task pod is admitted.
-The webhook's own binding carries a `00` phase prefix so it is applied ahead of every
-identity that can create a pod in that namespace.
+pod webhook mirrors pull secrets into each work namespace, which needs write reach there;
+it is a subject of the same `union-work-ns` binding, created before any task pod can be
+admitted into that namespace.
 
-If some other system creates these RoleBindings, set `rbac.externalBindingProvisioner:
-true` instead of enabling `clusterresourcesync`. That is an assertion the chart cannot
-verify; it suppresses the render-time requirement and changes nothing else. Your
-provisioner must honour the same webhook-first ordering.
-
-### Option 2 — namespaces are known ahead of time
+### The static posture — work namespaces known ahead of time
 
 ```yaml
 low_privilege: false
 namespaces:
   enabled: true
-  managed:
+  static:
     - tenant-a-production
     - tenant-b-production
 ```
 
-`namespaces.enabled: true` is required here, not optional: the per-namespace
-RoleBinding loop emits nothing unless it is set, regardless of `namespaces.static`.
-Set it even if you pre-create these namespaces by another route — it is the chart's
-only signal that the namespaces named by `namespaces.static` actually exist, which is
-also why it creates the `Namespace` objects listed there when `low_privilege: false`.
+`namespaces.enabled: true` is required here, not optional: the per-namespace RoleBinding
+loop emits nothing without it, regardless of `namespaces.static`. It is also what tells
+the chart those namespaces exist, which is why the same flag governs creating the
+`Namespace` objects. An empty `namespaces.static` with `namespaces.enabled: true` fails
+the render rather than producing a deployment that can reach nothing.
 
-Setting it is safe for namespaces managed by another system: the chart annotates every
-Namespace it creates with `helm.sh/resource-policy: keep`, so `helm uninstall` leaves
-them and their contents alone. Helm still owns them for install and upgrade, so a
-namespace that already exists and was not created by this release still has to be
-annotated for adoption before Helm will take it over.
+The chart emits exactly **one RoleBinding per listed namespace** — `union-work-ns` is a
+single pooled role, so the count does not grow with `commonServiceAccount.enabled: false`
+or with the number of components you run.
 
-The chart emits a RoleBinding per listed namespace. In this posture
-`clusterresourcesync` needs none of its *own* cluster-scoped RBAC — its provisioning
-rules move to a ClusterRole bound only by per-namespace RoleBindings, via
-`clusterresourcesync.namespacedRoleRules` instead of `clusterRoleRules`. One
-cluster-scoped object remains regardless of this posture: a `ClusterRoleBinding` to the
-built-in `system:auth-delegator` `ClusterRole`, required for its apiserver
-auth-delegation and emitted whenever `clusterresourcesync.enabled` is true. The chart
-does not define that `ClusterRole` itself, so it sits outside the bucket model this
-section otherwise describes and isn't affected by either option.
+In this posture `clusterresourcesync` holds **no cluster-wide grant at all**. Its
+provisioning rules reach the listed namespaces through the same `union-work-ns`
+RoleBindings every other component uses. Two caveats: one cluster-scoped object remains
+regardless of posture — a `ClusterRoleBinding` to the built-in `system:auth-delegator`
+`ClusterRole`, required for apiserver auth delegation and emitted whenever
+`clusterresourcesync.enabled` is true (this chart does not define that `ClusterRole`, so
+it sits outside the model this section describes) — and setting
+`clusterresourcesync.clusterRoleRules` yourself puts a cluster-scoped role back, holding
+exactly the rules you named. See
+[Extending `clusterresourcesync`](#extending-clusterresourcesync-for-your-own-templates).
 
-The `a_namespace` template is dropped from `clusterresourcesync`'s template set in this
-posture, because the namespaces are pre-created and this ServiceAccount deliberately
-holds no `namespaces` permission. Pre-creating the object does not make reconciling it
-authorized — the create is a cluster-scoped attribute check and returns `Forbidden` — so
-leaving the template in place would produce that error on every project namespace, on
-every sync cycle, forever. At flyteadmin's default `BatchSize: 10` other projects and
-the remaining templates still apply (`clusterresourcesync` logs the per-namespace error
-and continues), so this is persistent error noise and a climbing `ResourceAddErrors`
-metric rather than an outage — unless you have set `unionProjectSyncConfig.batchSize: 0`,
-which selects serial processing and aborts the remaining projects on the first error.
-No provisioner RoleBinding templates are generated either: the chart binds the
-enumerated namespaces directly, so there is nothing left for a provisioner to create.
+The `a_namespace` template is dropped from `clusterresourcesync`'s template set here,
+because the namespaces are pre-created and this ServiceAccount deliberately holds no
+`namespaces` permission. Pre-creating the object does not make reconciling it authorized
+— the create is a cluster-scoped attribute check and returns `Forbidden` — so leaving the
+template in place would produce that error on every project namespace, on every sync
+cycle, forever.
 
-Use this only when task namespaces really are provisioned ahead of time. A project
-registered later will get a namespace that is not in the list, and workloads will have
-no permissions there — and because `clusterresourcesync` cannot create namespaces in
-this posture, that namespace will not be created at all. Option 1 is the choice when
-projects are registered at runtime.
+#### If your namespaces are created elsewhere
+
+```yaml
+namespaces:
+  enabled: true
+  create: false
+  static:
+    - tenant-a-production
+```
+
+`namespaces.create: false` is the supported path when Terraform, a platform team or
+anything else owns the `Namespace` objects. You get the RoleBindings; Helm never touches
+the Namespace objects, so there is no ownership to negotiate. If a listed namespace does
+not actually exist, the RoleBinding fails to apply with `namespaces "<name>" not found`
+at install or sync time — loud and immediate, which is what makes this safe to offer.
+
+Leave `namespaces.create` at its default `true` and the chart creates each listed
+Namespace with `helm.sh/resource-policy: keep`, so `helm uninstall` leaves them and
+everything inside them alone. Helm still owns them for install and upgrade.
+
+#### What the static posture costs
+
+**A project registered after install will not work.** This is the posture's real cost,
+and it fails quietly rather than loudly. `clusterresourcesync` holds no cluster-wide
+grant here, so it can act only in the namespaces listed in `namespaces.static`. When a
+new project lands in a namespace that is not on that list, its
+`b_default_service_account` and `c_project_resource_quota` templates return `Forbidden`
+on every sync cycle, indefinitely — with a render and an apply that both look clean.
+
+Concretely: **if `namespace_mapping.template` can produce namespace names that are not in
+`namespaces.static`, those projects will not work.** The default mapping is
+`{{ project }}-{{ domain }}`, so every newly registered project produces new names.
+Choose this posture only when work namespaces really are provisioned ahead of time, and
+treat adding a project as a deploy step. If projects are registered at runtime, use the
+runtime posture.
 
 **This does not confine every workload sharing the identity.** `fluentbit.enabled: true`
 (the default) runs FluentBit as the same `union-system` ServiceAccount as the shared
 `commonServiceAccount`, and FluentBit separately carries its own read-only cluster-wide
 grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping. That grant is
 independent of `namespaces.static`; hardening it is deliberately out of scope here.
-Within the union-authored RBAC this chart controls, Option 2 does confine the shared
-identity to `namespaces.static` plus the release namespace, and nowhere else.
+Within the union-authored RBAC this chart controls, the static posture does confine the
+shared identity to `namespaces.static` plus the release namespace, and nowhere else.
 
-### What Option 2 costs
+### The external-provisioner posture
 
-Bindings are emitted per `(role × namespace)` — `roleRef` names exactly one role and is
-immutable, so there is no way to cover several roles with one binding. At the chart's
-default 6 `namespaces.static`, each `ns-*` role gets 7 RoleBindings (the 6 task
-namespaces plus one in the release namespace):
+If some other system creates the `union-work-ns` RoleBindings, set
+`rbac.externalBindingProvisioner: true` instead of enabling `clusterresourcesync`. That
+is an assertion this chart cannot verify; it suppresses the render-time requirement and
+changes nothing else. Your provisioner must create a `RoleBinding` named `union-work-ns`
+in each work namespace, referencing the `union-work-ns` `ClusterRole`, with the union
+ServiceAccounts as subjects — and it must do so before any task pod is admitted there.
+The exact subject set depends on which components you run; the reliable way to get it
+right is to render the chart once with `clusterresourcesync.enabled: true` and copy the
+`ab_union_rolebinding.yaml` entry out of the generated template ConfigMap.
 
-| Configuration | `ns-*` roles | Bindings at 6 task namespaces |
-|---|---|---|
-| Shared ServiceAccount (default) | 2 | 14 |
-| Shared, with flytepropeller enabled | 4 | 28 |
-| `commonServiceAccount.enabled: false` | 9 | 63 |
+### Extending `clusterresourcesync` for your own templates
 
-The count is linear in `roles × namespaces`, so 50 task namespaces with per-component
-ServiceAccounts is roughly 450 RoleBindings. They are tiny, inert objects, but they all
-land in the Helm release and therefore in every ArgoCD diff. (`clusterresourcesync`
-keeps its own dedicated ServiceAccount in every configuration above and, under Option 2,
-adds one RoleBinding per task namespace for its own `bind` grant — 6 more at the default
-namespace count, not shown in the table because it doesn't vary with the shared/split
-axis above.)
+`clusterresourcesync.clusterRoleRules` is empty by default, and that default is correct
+for every stock install: the grants `clusterresourcesync` needs to do its own job are
+derived from what the component actually does, and are emitted whether or not this list
+is set.
 
-**This cost is Option 2's alone.** Under Option 1 the chart renders none of the
-per-namespace `ns-*` bindings — the provisioner creates them at runtime, so they are
-cluster objects rather than release objects. If you have many task namespaces, that is a
-reason to prefer Option 1 even when the namespace set happens to be known.
+Use it only when your own `clusterresourcesync.templates` or `additionalTemplates`
+entries create a resource type the chart does not know about — a custom resource, say —
+so the sync needs a permission the derived set does not cover:
+
+```yaml
+clusterresourcesync:
+  clusterRoleRules:
+    - apiGroups: [example.com]
+      resources: [widgets]
+      verbs: [get, list, watch]
+```
+
+Rules here are checked against the same verb allowlist as every other cluster-scoped
+grant in this chart: `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
+`deletecollection`. Anything else — including `*` — **fails the render** with a message
+naming the allowlist.
+
+`*` is rejected because of what it silently conveys. On `roles` a verb wildcard conveys
+`escalate`, which switches off RBAC's own escalation-prevention check; on
+`serviceaccounts` it conveys `impersonate`. Both were confirmed against a live API
+server, not inferred from the documentation. Name the verbs you need instead.
+
+These rules are always cluster-scoped, in either posture. Setting this key in the static
+posture therefore gives `clusterresourcesync` a `ClusterRole` it would not otherwise
+have, holding exactly the rules you named and nothing else.
+
+If you are upgrading and already set this key, read
+[the upgrade note in RELEASE.md](RELEASE.md) before you deploy — the previous default
+was twelve resource types at `verbs: ['*']`, and carrying that forward is a hard render
+failure.
 
 ### The one component that needs more
 
-**`nodeobserver` holds cluster-scoped grants in both options.** Its entire function is
-watching and updating `nodes`, which is a cluster-scoped resource that no namespaced Role
-can convey and that RBAC cannot narrow to "the node this pod runs on". It also lists pods
+**`nodeobserver` holds cluster-scoped grants in every posture.** Its entire function is
+watching and updating `nodes`, a cluster-scoped resource that no namespaced Role can
+convey and that RBAC cannot narrow to "the node this pod runs on". It also lists pods
 with an empty namespace plus a `spec.nodeName` field selector, which Kubernetes
 authorizes as a cluster-scope check — per-namespace RoleBindings cannot satisfy it at any
-count, so that rule sits in its cluster-scoped bucket too and the pod list is
-cluster-wide. Both are `ClusterRole` + `ClusterRoleBinding` and are unaffected by
-`namespaces.static`. `nodeobserver.enabled` defaults to `false`; leave it there unless
-you need it, and note that it requires `low_privilege: false`.
-
-The pod webhook also needs reach into task namespaces when
-`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` is true (the
-default), because it creates the mirrored secret in each task namespace — but **both
-options provide it**, so this is not an exception, only something the render checks. The
-render fails when *neither* route is present: no enumerated namespaces and no
-provisioner.
+count, so that read is cluster-wide too. Both are `ClusterRole` + `ClusterRoleBinding`
+and are unaffected by `namespaces.static`. `nodeobserver.enabled` defaults to `false`;
+leave it there unless you need it, and note that it requires `low_privilege: false`.
 
 ### Diagnosing a missing binding
 
-**The chart cannot verify that anything creates the per-namespace RoleBindings.** If
-nothing does, the install renders green and ArgoCD reports healthy. The failure appears
-at the first task execution, not at deploy:
+**This chart cannot verify that anything creates the per-namespace RoleBindings.** It
+checks only that you selected *some* posture, and only when image-pull secret mirroring
+is on — because there the failure is doubly silent. With
+`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true` (the
+default) and none of the three routes configured, the render **fails** and names all
+three. With mirroring disabled the render succeeds and union workloads simply hold
+`work-ns` in the release namespace and nowhere else.
+
+Everything past that point is a runtime failure. It appears at the first task execution,
+not at deploy:
 
 ```
 pods is forbidden: User "system:serviceaccount:<release-ns>:union-system"
-cannot create resource "pods" in API group "" in the namespace "<task-namespace>"
+cannot create resource "pods" in API group "" in the namespace "<work-namespace>"
 ```
 
 Look in the propeller or operator logs, and in events on the failing task pod. To
 confirm:
 
 ```bash
-kubectl get rolebindings -n <task-namespace> \
+kubectl get rolebindings -n <work-namespace> \
   -o custom-columns=NAME:.metadata.name,ROLE:.roleRef.name
 
 kubectl auth can-i create pods \
-  -n <task-namespace> \
+  -n <work-namespace> \
   --as=system:serviceaccount:<release-ns>:union-system
 ```
 
-If the RoleBinding is missing, check which posture you are in. Under Option 1, confirm
-`clusterresourcesync` is running and look at its logs for errors applying the
-`d_union_rolebinding_*` templates. Under Option 2, add the namespace to
-`namespaces.static` and confirm `namespaces.enabled: true` is set — the loop emits
-nothing without it.
+If the RoleBinding is missing, check which posture you are in:
+
+- **Runtime:** confirm `clusterresourcesync` is running and look at its logs for errors
+  applying `ab_union_rolebinding.yaml`.
+- **Static:** add the namespace to `namespaces.static` and confirm
+  `namespaces.enabled: true` is set — the loop emits nothing without it. If new projects
+  keep landing outside the list, you want the runtime posture instead.
+- **External provisioner:** the chart asserted nothing; check your own tooling.
 
 ### One failure that does not look like RBAC
 
 If task pods fail with `ImagePullBackOff` or `ErrImagePull` on images from a private
 registry, suspect a missing binding before suspecting the registry.
 
-The pod webhook mirrors image-pull secrets into each task namespace. If it cannot, the
+The pod webhook mirrors image-pull secrets into each work namespace. If it cannot, the
 `Forbidden` is **swallowed** — the pod is admitted without its secret and the failure
 appears at image pull, with nothing in the pod's events pointing at RBAC. Check the
 webhook's own logs from around the time of admission:
