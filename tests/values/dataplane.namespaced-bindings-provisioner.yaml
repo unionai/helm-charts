@@ -1,41 +1,50 @@
 # helm-values: examples/values-test-certs.yaml
 #
-# Option 1 from README.md's "Restricting union workloads to task namespaces":
-# task namespaces NOT known ahead of time. This is the chart's default shape for
-# a multi-namespace data plane -- namespaces.enabled is left at its default
-# false, so nothing is enumerated at template time.
+# The RUNTIME posture from README.md's "RBAC: how union workloads reach work
+# namespaces": work namespaces NOT known ahead of time. This is the chart's
+# default shape for a multi-namespace data plane -- namespaces.enabled is left at
+# its default false, so nothing is enumerated at template time.
 #
 # This is the posture where the chart cannot emit the per-namespace RoleBindings
 # itself -- namespaces.static is empty, so there is nothing to enumerate -- and
 # clusterresourcesync creates them per project namespace instead, from the
-# d_union_rolebinding_* templates dataplane.rbac.provisionerBindingTemplates
+# ab_union_rolebinding.yaml entry dataplane.rbac.provisionerBindingTemplate
 # generates into the clusterresource template ConfigMap.
 #
-# The property to look at in this render is that those template entries name
-# EXACTLY the ns-* ClusterRoles the chart renders. The `bind` grant in
-# clusterresourcesync's rules only authorizes creating those RoleBindings; it is
-# these templates that cause one to be created. A missing entry is a task
-# namespace with no union grant, and a surplus entry is a RoleBinding with a
-# dangling roleRef -- both accepted by the API server, neither visible until a
-# task runs. scripts/check_rbac.py's provisioner_binding_template_mismatch
-# invariant enforces the equality mechanically, in both directions, across every
-# snapshot.
+# The property to look at in this render is that that entry names EXACTLY the
+# work-ns ClusterRole the chart renders, and carries exactly the ServiceAccounts
+# that declared into the work-ns slot. The `bind` grant in clusterresourcesync's
+# rules only authorizes creating that RoleBinding; it is this template that causes
+# one to be created. A missing entry is a task namespace with no union grant, and
+# a wrong roleRef is a RoleBinding pointing at nothing -- both accepted by the API
+# server, neither visible until a task runs. Since pooling collapsed the
+# per-component bindings to one, this is a single object rather than a set to keep
+# in step, and it is legible in tests/rbac-summary/: the summary parses the
+# ConfigMap-embedded binding and reports it with its reach shown as
+# *provisioned-at-runtime*.
+#
+# The ab_ key is load-bearing and inverted from the old d_ + 00/10 phase-prefix
+# scheme: it sorts between a_namespace and b_default_service_account, so the
+# binding is applied BEFORE the ServiceAccount and ResourceQuota that depend on
+# it. Applied last, every new project would stall until the following sync.
 #
 # namespaces.static is empty AND namespaces.enabled stays at its default false,
 # so clusterresourcesync is NOT in the constrained posture: it keeps its
 # cluster-scoped rules (including `namespaces`) and its a_namespace template,
 # because in this posture it is what creates the task namespaces. Contrast
-# dataplane.task-namespaces.yaml, which is Option 2 -- namespaces pre-created,
-# a_namespace dropped, and no provisioner templates because the chart binds the
-# enumerated namespaces directly.
+# dataplane.task-namespaces.yaml, which is the STATIC posture -- namespaces
+# pre-created, a_namespace dropped, and no provisioner binding template because
+# the chart binds the enumerated namespaces directly.
 #
 # Image-pull secret mirroring is left ENABLED (the chart default), because this
-# posture supports it: the generated d_union_rolebinding_* templates give the
-# webhook `secrets` write in every namespace clusterresourcesync provisions, and
-# the webhook's own binding is ordered first (the 00 phase prefix) so it lands
-# before any identity that can create a pod there. Earlier revisions of this
-# branch documented Option 1 as mutually exclusive with mirroring and this fixture
-# carried an override to match; both were wrong once the templates existed.
+# posture supports it: the generated ab_union_rolebinding.yaml gives the webhook
+# `secrets` write in every namespace clusterresourcesync provisions, and with one
+# pooled binding covering every subject there is no ordering window in which a
+# pod-creating identity is bound before the webhook -- that window is now
+# unconstructible rather than merely averted by phase prefixes. Earlier revisions
+# of this branch documented this posture as mutually exclusive with mirroring and
+# this fixture carried an override to match; both were wrong once the templates
+# existed.
 #
 # Committing the render with the default in place is the point -- it is the only
 # snapshot covering the route the webhook guard now accepts.

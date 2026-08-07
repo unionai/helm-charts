@@ -154,6 +154,19 @@ clusterresourcesync:
   # `escalate`, which switches off RBAC's own escalation-prevention check, and on
   # `serviceaccounts` it conveys `impersonate` -- both confirmed against a live
   # API server, not inferred. Name the verbs you need instead.
+  #
+  # INERT UNDER low_privilege: true, WHICH IS THE CHART DEFAULT, AND NOTHING SAYS
+  # SO. clusterresourcesync is gated off in that mode, so it contributes no roles
+  # and these rules produce no object -- no error, no warning, no ClusterRole. No
+  # grant is lost (the component is not running); but setting this key on a
+  # default install does nothing at all. It takes effect only when
+  # low_privilege: false and clusterresourcesync.enabled: true.
+  #
+  # It is NOT gated on which work-namespace posture is active. In the static
+  # posture (namespaces.enabled: true) clusterresourcesync otherwise holds no
+  # cluster-scoped object at all; populating this key re-emits the
+  # <release-ns>-clusterresourcesync-cluster-write ClusterRole AND its
+  # ClusterRoleBinding there.
   clusterRoleRules: []
   # -- Additional pod labels for the syncresources service
   podLabels: { }
@@ -2086,6 +2099,17 @@ controlplaneNamespace: ""
 #
 # That cost is why this defaults to true. It is independent of low_privilege:
 # a single-namespace install may still use per-component identities.
+#
+# THIS IS NOT AN RBAC NARROWING. The namespace-scoped roles are POOLED -- one
+# object per slot, holding the union of every enabled component's rules, bound to
+# every ServiceAccount that declared into that slot -- so splitting the identities
+# does not split the permissions. Each component ends up holding every other
+# declarer's rules in the slots it participates in, exactly as the shared identity
+# did. Under low_privilege: true, where work-ns binds in the release namespace,
+# that means components which previously held a short named list (the pod webhook,
+# proxy, the operator) now hold the pooled `*/*` write set on union's own objects.
+# What per-component ServiceAccounts buy is IDENTITY separation for cloud IAM, not
+# in-cluster authorization separation. See tests/values/dataplane.per-component-sa.yaml.
 commonServiceAccount:
   enabled: true
   name: union-system

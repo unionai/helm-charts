@@ -88,9 +88,48 @@
   **The split is the point.** Because `union-work-ns` is never bound in the release
   namespace under `low_privilege: false`, a component that can create any Pod in a work
   namespace can no longer write union's own Deployments or read its Secrets. **Under
-  `low_privilege: true` effective permissions per ServiceAccount are unchanged** — there
-  the release namespace *is* the work namespace, so `union-work-ns` binds there and the
-  change is one of packaging only.
+  `low_privilege: true` with the default `commonServiceAccount.enabled: true`, effective
+  permissions per ServiceAccount are unchanged** — there the release namespace *is* the
+  work namespace, so `union-work-ns` binds there; every component already ran as the one
+  shared `union-system` identity and so already held the union of every component's
+  rules; and the change is one of packaging only.
+
+  **Under `low_privilege: true` with `commonServiceAccount.enabled: false` it is not
+  packaging only — pooling widens each identity.** A pooled slot holds the union of every
+  enabled declarer's rules and is bound to every declaring ServiceAccount, so splitting
+  the identities does not split the permissions: each component now holds every other
+  declarer's rules in each slot it declares into. Under `low_privilege: true`
+  `union-work-ns` is bound in the release namespace, so that union lands on union's own
+  objects. Measured against the per-component roles this release replaces, in
+  `tests/rbac-summary/dataplane.per-component-sa.txt`:
+
+  | ServiceAccount | Held before | Holds now |
+  |---|---|---|
+  | `proxy-system` | `get`/`list`/`watch` on `events`, `flyteworkflows`, `pods`, `pods/log`, `rayjobs`, `resourcequotas` — read-only | `*/*` at the full eight-verb write set |
+  | `union-webhook-system` | read + `create`/`patch`/`update` on `pods`, `replicasets/finalizers`, `secrets` | `*/*` at the full eight-verb write set |
+  | `operator-system` | read + write on six named resource types, plus `flyteworkflows` and the knative serving types | `*/*` at the full eight-verb write set |
+
+  `executor` and `leaseworker` already held `*/*`, so for them this really is packaging
+  (plus `deletecollection`, below). **Per-component ServiceAccounts buy identity
+  separation for cloud IAM — one workload-identity / IRSA annotation per component — not
+  in-cluster RBAC separation.** Under `low_privilege: false` the components-namespace /
+  work-namespace split above is real regardless of how the identities are arranged, but
+  the pooling within each slot is the same: `commonServiceAccount.enabled: false` is not
+  a way to narrow what any one component can do inside a namespace it already reaches.
+  Pooling is a deliberate design decision — one object per destination is what makes the
+  destination axis reviewable — and this note exists so nobody reads split identities as
+  an RBAC narrowing they are not.
+
+  **One verb is new across the board: `deletecollection`.** A pooled slot has a single
+  emitter-owned verb set — `get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
+  `deletecollection` — where the old per-component write buckets each named a shorter
+  list of their own. Under `low_privilege` the shared identity's `*/*` rule was
+  `create`, `delete`, `patch`, `update`; only the operator's `flyteworkflows` rule carried
+  `deletecollection`. Every identity that writes in a namespace now holds
+  `deletecollection` there — the release namespace under `low_privilege: true`, the work
+  namespaces under `low_privilege: false`. It conveys nothing that `list` plus `delete`
+  does not already convey in combination, and it is called out only because it is the one
+  grant that is added everywhere rather than moved.
 
 - **BREAKING: no union role is bound cluster-wide to reach work namespaces any more,
   under `low_privilege: false`.** `union-work-ns` still renders as a `ClusterRole`, so its
@@ -272,6 +311,18 @@
   rejected, and so are `escalate`, `impersonate` and `bind`. **An overlay that carries the
   old default forward is a hard render failure, not a silent narrowing** — see "Migration
   / action required" below for what to do.
+
+  **The key is inert under `low_privilege: true`, which is the chart default, and nothing
+  says so at render time.** `clusterresourcesync` is gated off entirely in that mode —
+  task pods run in the release namespace and no per-project namespaces are created — so
+  it contributes no roles at all and the rules set here produce no object. No grant is
+  lost, because the component is not running; but an operator who sets the key on a
+  default install gets silence rather than an error. Set `low_privilege: false` (with
+  `clusterresourcesync.enabled: true`) if you need it. In the static posture
+  (`namespaces.enabled: true`) it is *not* inert: it re-emits the
+  `union-clusterresourcesync-cluster-write` `ClusterRole` and `ClusterRoleBinding` in the
+  one posture that otherwise has neither — pinned by
+  `tests/values/dataplane.static-ns-clusterrules.yaml`.
 
 ### Migration / action required
 

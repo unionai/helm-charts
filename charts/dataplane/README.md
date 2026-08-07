@@ -302,9 +302,14 @@ difference between them:
 
 Union components hold a narrow, explicitly named set of permissions in the components
 namespace, and a much broader set in the work namespaces. Those are separate roles, and
-the work-namespace role is **never** bound in the components namespace. A component that
-can create any Pod in a work namespace therefore still cannot write union's own
-Deployments or read its Secrets.
+under `low_privilege: false` the work-namespace role is **never** bound in the components
+namespace. A component that can create any Pod in a work namespace therefore still cannot
+write union's own Deployments or read its Secrets.
+
+Under `low_privilege: true` — the chart's base default — there is only one namespace: the
+release namespace *is* the work namespace, the work-namespace role is bound there, and
+this separation does not exist. That mode is described in [The four
+postures](#the-four-postures) below.
 
 **No union role carrying work-namespace *write* access is ever bound cluster-wide.** Under
 `low_privilege: false` the shared work-namespace role renders as a `ClusterRole` named
@@ -341,6 +346,22 @@ If nothing binds the role, **nothing tells you at deploy time.** The install ren
 green and ArgoCD reports healthy; the failure appears at the first task execution. The
 one case the chart does catch is described under
 [Diagnosing a missing binding](#diagnosing-a-missing-binding).
+
+### What `commonServiceAccount.enabled: false` does not do
+
+It does not narrow anyone's permissions. The namespace-scoped roles are **pooled**: one
+object per destination, holding the union of every enabled component's rules, bound to
+every ServiceAccount that contributed to it. Splitting the identities therefore does not
+split the authorization — each component ends up holding every other contributor's rules,
+exactly as the shared identity did. Under `low_privilege: true`, where the work-namespace
+role is bound in the release namespace, that means components which held a short named
+list before this release (the pod webhook, the proxy, the operator) now hold the pooled
+write set on union's own objects too.
+
+Per-component ServiceAccounts buy **identity separation for cloud IAM** — a distinct
+workload-identity / IRSA subject per component, so cloud-side policy can differ — and
+nothing else. If you want narrower in-cluster reach, the lever is the posture:
+`low_privilege: false`, where the work-namespace role is bound only into work namespaces.
 
 ### `clusterresourcesync`, in plain language
 
@@ -558,6 +579,12 @@ server, not inferred from the documentation. Name the verbs you need instead.
 These rules are always cluster-scoped, in either posture. Setting this key in the static
 posture therefore gives `clusterresourcesync` a `ClusterRole` it would not otherwise
 have, holding exactly the rules you named and nothing else.
+
+**Under `low_privilege: true` — the chart's base default — this key does nothing, and
+nothing tells you so.** `clusterresourcesync` is not rendered at all in that mode, so it
+contributes no roles and these rules produce no object: no `ClusterRole`, no error, no
+warning. Nothing is lost, because the component is not running; but if you set this on a
+default install and see no `ClusterRole`, this is why.
 
 If you are upgrading and already set this key, read
 [the upgrade note in RELEASE.md](RELEASE.md#migration--action-required) before you
