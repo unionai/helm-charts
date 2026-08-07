@@ -395,9 +395,15 @@ resource-usage billing queue whenever `billing.model` is `ResourceUsage` (the ch
 default) or `Shadow`, or `collectUsages.enabled` is set, and its first act is a `List` of
 pod metrics with the namespace hard-coded to "all" — it honours no `limit-namespace`, so
 it is a cluster-scope read however the chart is configured. Without the grant it returns
-before producing anything and the retry loop gives up quietly: **no resource-usage billing
-data is collected, with no crash and no operator-visible signal.** The released chart
-conveyed this through `operator-system`'s `pods` at a wildcard apiGroup. The rule is
+before producing anything and retries **every 15 seconds indefinitely** — the loop stops
+only when `dependenciesStatus.requiredForHealth` is set, which this chart never sets and
+which defaults to false — so **no resource-usage billing data is collected, for as long as
+the grant is missing**. It is not silent: each failing round logs a warning and increments
+the operator's `run_errors` Prometheus counter under the `usages_aggregator` subscope,
+which this chart already scrapes and which you can alert on. But there is no crash, no
+`CrashLoopBackOff` and no failed release, so without that alert nothing surfaces. The
+released chart conveyed this through `operator-system`'s `pods` at a wildcard apiGroup.
+The rule is
 ungated, because the binary's condition is a disjunction of two chart values and an
 under-gate is invisible while the over-grant is negligible — pod metrics are aggregate CPU
 and memory numbers with no object contents, and the rule is `list` with no `watch`.
@@ -413,27 +419,33 @@ and memory numbers with no object contents, and the rule is `list` with no `watc
   the shared identity already holds cluster-wide `namespaces` reads from the FluentBit
   subchart, so withholding bought no privilege reduction at defaults while costing the
   sweep under the *more* hardened `commonServiceAccount.enabled: false`.
-- Cluster-wide `configmaps` for the `operator`. See "connector-runtime apps do not
-  reconcile" under Migration / action required — the read is release-namespace-targeted
-  and reaches cluster scope only because the manager's cache is unscoped, which is a defect
-  in the binary rather than a grant this chart should widen to accommodate.
+- Cluster-wide `configmaps` for the `operator`. See the connector-runtime app known issue
+  under Migration / action required — the read is release-namespace-targeted and reaches
+  cluster scope only because the manager's cache is unscoped, which is a defect in the
+  binary rather than a grant this chart should widen to accommodate.
 - The task-plugin CRDs (Spark, Dask, Kubeflow, and Ray beyond the proxy's dashboard
   lookup). No enabled plugin watches them.
 
 ### Migration / action required
 
-- **KNOWN ISSUE — connector-runtime apps do not reconcile at `low_privilege: false`, and
-  nothing tells you.** The operator reads the connector `ConfigMap` — always a
-  release-namespace object — through its controller-runtime manager's **cache-backed**
-  client. That cache is unscoped at full privilege (no `limit-namespace`) and the client
-  disables caching for nothing, so a read of one object in one namespace lazily starts a
-  **cluster-wide ConfigMap informer**. Without cluster-wide `configmaps` `list`/`watch`
-  the informer never syncs and the read fails.
+- **KNOWN ISSUE — connector-runtime apps report `ACTIVE` but their connector endpoint is
+  never registered, at `low_privilege: false`.** The operator reads the connector
+  `ConfigMap` — always a release-namespace object — through its controller-runtime
+  manager's **cache-backed** client. That cache is unscoped at full privilege (no
+  `limit-namespace`) and the client disables caching for nothing, so a read of one object
+  in one namespace lazily starts a **cluster-wide ConfigMap informer**. Without
+  cluster-wide `configmaps` `list`/`watch` the informer never syncs and the read fails.
 
   This is not confined to create and delete: the app reconciler performs the same read on
-  the steady-state reconcile and returns the error, so **the app requeues forever and
-  never reaches `ACTIVE`**. There is no `Forbidden` on the app object, no chart-time
-  warning, and no failed Helm release — it looks like a slow rollout.
+  the steady-state reconcile and returns the error, so the reconcile requeues and fails
+  again, indefinitely. **Note the order, because it determines what you see.** The
+  reconciler marks the app `ACTIVE`/`RUNNING` and writes that through to the control plane
+  *before* it touches the connector `ConfigMap`. So the app does reach `ACTIVE` and stays
+  there: **what you get is an app that looks healthy while its connector endpoint is
+  absent from the ConfigMap and connector traffic does not route**, with an endless failing
+  reconcile behind it. There is no `Forbidden` on the app object, no chart-time warning and
+  no failed Helm release. If you are debugging routing for a connector app that the UI
+  reports as running, this is the first thing to rule out.
 
   **This chart deliberately does not grant cluster-wide `configmaps` to work around it.**
   Doing so would hand union's ServiceAccount the contents of every ConfigMap on the

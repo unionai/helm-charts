@@ -655,9 +655,18 @@ aggregator's first act is a cluster-scoped `List` of pod metrics — the namespa
 hard-coded to "all" in the binary and honours no `limit-namespace` — and it feeds the
 billing queue whenever `billing.model` is `ResourceUsage` (the chart default) or
 `Shadow`, or `collectUsages.enabled` is set. Without the grant it returns before producing
-anything, the retry loop gives up, and **no resource-usage billing data is collected**,
-with nothing in the cluster to say so. It returns aggregate CPU and memory numbers only —
-no pod spec, no environment, no object contents — and is `list` with no `watch`.
+anything and retries **every 15 seconds indefinitely** — the retry loop only stops when
+`dependenciesStatus.requiredForHealth` is set, which this chart never sets and which
+defaults to false — so **no resource-usage billing data is collected, for as long as the
+grant is missing**.
+
+**It is detectable, if you are looking.** Each failing round logs a warning and increments
+the operator's `run_errors` Prometheus counter under the `usages_aggregator` subscope — a
+counter this chart already scrapes, so you can alert on it. There is no crash, no
+`CrashLoopBackOff` and no failed Helm release, so nothing surfaces without that alert.
+
+The read itself returns aggregate CPU and memory numbers only — no pod spec, no
+environment, no object contents — and is `list` with no `watch`.
 
 Nothing in that table can create, modify or delete anything. There are no wildcards: no
 `apiGroups: ['*']`, no `resources: ['*']`, no `verbs: ['*']`. There is no cluster-wide
@@ -714,8 +723,9 @@ emitted at all. The cost is that managed-image pull secrets are no longer mirror
   cache is unscoped — a defect in the binary. Granting cluster-wide ConfigMap reads to
   work around it costs far more than it buys. **This has a user-visible consequence at
   `low_privilege: false`, described under
-  [Migration / action required](RELEASE.md#migration--action-required) in RELEASE.md:
-  connector-runtime apps do not reconcile.**
+  [Migration / action required](RELEASE.md#migration--action-required) in RELEASE.md: a
+  connector-runtime app reports `ACTIVE` while its connector endpoint is never registered,
+  so its traffic does not route.**
 
 - **The task-plugin CRDs** — Spark, Dask and Kubeflow, and Ray for anything beyond the
   proxy's dashboard lookup. No enabled plugin watches them. The `executor`'s garbage
