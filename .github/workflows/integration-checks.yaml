@@ -4,10 +4,9 @@
 name: Integration Checks
 
 on:
-  # Run on every PR to main. The classify job now runs the integration matrix on
-  # every PR (we have idle canary compute); it still flags release PRs for the
-  # discipline guardrails. `labeled` + force dispatch stay for the revert-to-
-  # release-only path documented in classify.
+  # Run on every PR to main. classify builds the matrix: the self-contained k3d leg
+  # runs on every PR; the contract-dependent cloud legs run only on release PRs (or a
+  # `run-integration-tests` label / force dispatch). See classify for the rationale.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled]
@@ -22,12 +21,12 @@ permissions:
   contents: read
 
 jobs:
-  # ── Classify: runs the integration matrix on every PR (see should_run); flags release PRs for guardrails ──
+  # ── Classify: builds the matrix (k3d every PR; cloud legs on release PRs) + flags release PRs for guardrails ──
   classify:
     name: Classify PR (release vs non-release)
     runs-on: ubuntu-latest
     outputs:
-      should_run: ${{ steps.detect.outputs.should_run }}
+      matrix: ${{ steps.detect.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -54,16 +53,32 @@ jobs:
           is_release=false
           [[ "$chart_bump" == true || "$title_release" == true ]] && is_release=true
 
-          # Run the integration matrix on EVERY PR — we have idle canary compute and
-          # catching deploy/config regressions early is worth it. External PRs are still
-          # gated by GitHub's native "require approval for all external contributors"
-          # before any workflow runs; Union-member PRs run automatically.
-          should_run=true
-          # To restrict back to release PRs only, replace the line above with:
-          #   should_run=false
-          #   [[ "$is_release" == true || "$label_run" == true || "$FORCE" == "true" ]] && should_run=true
-          echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
-          echo "chart_bump=$chart_bump title_release=$title_release label=$label_run force=${FORCE:-} is_release=$is_release -> should_run=$should_run"
+          # Build the matrix. k3d is self-contained (installs the PR's own
+          # values.k3d.yaml), so it runs on EVERY PR. The cloud legs install the S3
+          # config contract, which is only refreshed post-merge by the
+          # selfmanaged-tf-canary-fanout — so they run only on release PRs (clean
+          # version/appVersion bumps that don't touch overlays). This keeps overlay
+          # changes flowing through normal PRs (k3d-validated) into main, where the
+          # contract refreshes, and keeps release PRs minimal.
+          run_cloud=false
+          [[ "$is_release" == true || "$label_run" == true || "$FORCE" == "true" ]] && run_cloud=true
+
+          k3d_leg='{"topology":"selfmanaged-dp","cloud":"k3d","charts":"dataplane","crd_dirs":"dataplane","namespaces":"dataplane","kctx":"k3d-ci-dataplane"}'
+          cloud_legs='[
+            {"topology":"selfmanaged-dp","cloud":"aws","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-aws-dp-1"},
+            {"topology":"selfmanaged-dp","cloud":"gcp","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-gcp-dp-1"},
+            {"topology":"selfmanaged-dp","cloud":"azure","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-azure-dp-1"},
+            {"topology":"selfhosted","cloud":"aws","charts":"controlplane dataplane","crd_dirs":"dataplane kube-prometheus-stack scylla-operator envoy-gateway","kctx":"self-cp-helm-charts-ci-cp-aws"},
+            {"topology":"selfhosted","cloud":"gcp","charts":"controlplane dataplane","crd_dirs":"dataplane kube-prometheus-stack scylla-operator envoy-gateway","kctx":"self-cp-helm-charts-ci-cp-gcp"}
+          ]'
+          if [[ "$run_cloud" == true ]]; then
+            include=$(jq -c -n --argjson k "$k3d_leg" --argjson c "$cloud_legs" '[$k] + $c')
+          else
+            include=$(jq -c -n --argjson k "$k3d_leg" '[$k]')
+          fi
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "chart_bump=$chart_bump title_release=$title_release label=$label_run force=${FORCE:-} is_release=$is_release run_cloud=$run_cloud"
+          echo "matrix include: $include"
 
           # Soft guardrails: nudge release PRs toward clean version bumps.
           if [[ "$is_release" == true ]]; then
@@ -81,7 +96,6 @@ jobs:
   integration:
     name: ${{ matrix.topology }}/${{ matrix.cloud }}
     needs: classify
-    if: needs.classify.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     environment: helm-charts-ci   # pins the OIDC subject; no required reviewers (see ci_github.tf)
@@ -93,17 +107,9 @@ jobs:
       contents: read
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          # One leg per standing cluster; each chart installs into its own namespace
-          # (= chart name). crd_dirs = CRDs to apply; kctx = kubectl context to inspect it.
-          - { topology: selfmanaged-dp, cloud: aws,   charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-aws-dp-1 }
-          - { topology: selfmanaged-dp, cloud: gcp,   charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-gcp-dp-1 }
-          - { topology: selfmanaged-dp, cloud: azure, charts: "dataplane",              crd_dirs: "dataplane kube-prometheus-stack",                            kctx: self-dp-helm-charts-ci-sm-azure-dp-1 }
-          - { topology: selfhosted,     cloud: aws,   charts: "controlplane dataplane", crd_dirs: "dataplane kube-prometheus-stack scylla-operator envoy-gateway", kctx: self-cp-helm-charts-ci-cp-aws }
-          - { topology: selfhosted,     cloud: gcp,   charts: "controlplane dataplane", crd_dirs: "dataplane kube-prometheus-stack scylla-operator envoy-gateway", kctx: self-cp-helm-charts-ci-cp-gcp }
-          # k3d: an ephemeral DP created on the runner.
-          - { topology: selfmanaged-dp, cloud: k3d,   charts: "dataplane",              crd_dirs: "dataplane",                                                  namespaces: "dataplane", kctx: k3d-ci-dataplane }
+      # Legs are computed by the classify job: k3d always (self-contained), the
+      # contract-dependent cloud legs only on release PRs. One job per include entry.
+      matrix: ${{ fromJSON(needs.classify.outputs.matrix) }}
     env:
       HELM_VERSION: "v4.2.3"
       CONTRACT_BUCKET: ${{ vars.HELM_CHARTS_CI_CONTRACT_BUCKET }}
