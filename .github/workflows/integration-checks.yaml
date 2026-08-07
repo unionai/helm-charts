@@ -1,11 +1,13 @@
-# Install a release PR's candidate charts onto standing canary clusters and gate on
-# health. Auth, clusters, and config are provisioned by the ci_deployer terraform in
+# Install a PR's candidate charts onto standing canary clusters and gate on health.
+# Auth, clusters, and config are provisioned by the ci_deployer terraform in
 # cloud (infra/terraform/envs/canary/helm-charts-ci).
 name: Integration Checks
 
 on:
-  # Run on every PR to main, and when a label is added (so a maintainer can add
-  # `run-integration-tests` to any PR); the cheap classify job gates the matrix.
+  # Run on every PR to main. The classify job now runs the integration matrix on
+  # every PR (we have idle canary compute); it still flags release PRs for the
+  # discipline guardrails. `labeled` + force dispatch stay for the revert-to-
+  # release-only path documented in classify.
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, labeled]
@@ -20,7 +22,7 @@ permissions:
   contents: read
 
 jobs:
-  # ── Classify: a release PR / run-integration-tests label / force dispatch → real-cluster integration ──
+  # ── Classify: runs the integration matrix on every PR (see should_run); flags release PRs for guardrails ──
   classify:
     name: Classify PR (release vs non-release)
     runs-on: ubuntu-latest
@@ -48,11 +50,18 @@ jobs:
           # A maintainer can add the run-integration-tests label to any PR to run the suite.
           label_run=false
           case ",${LABELS:-}," in *,run-integration-tests,*) label_run=true ;; esac
-          # is_release = a genuine release PR; should_run = release PR, label, or forced dispatch.
+          # is_release = a genuine release PR (kept for the guardrail warnings below).
           is_release=false
           [[ "$chart_bump" == true || "$title_release" == true ]] && is_release=true
-          should_run=false
-          [[ "$is_release" == true || "$label_run" == true || "$FORCE" == "true" ]] && should_run=true
+
+          # Run the integration matrix on EVERY PR — we have idle canary compute and
+          # catching deploy/config regressions early is worth it. External PRs are still
+          # gated by GitHub's native "require approval for all external contributors"
+          # before any workflow runs; Union-member PRs run automatically.
+          should_run=true
+          # To restrict back to release PRs only, replace the line above with:
+          #   should_run=false
+          #   [[ "$is_release" == true || "$label_run" == true || "$FORCE" == "true" ]] && should_run=true
           echo "should_run=$should_run" >> "$GITHUB_OUTPUT"
           echo "chart_bump=$chart_bump title_release=$title_release label=$label_run force=${FORCE:-} is_release=$is_release -> should_run=$should_run"
 
@@ -324,6 +333,20 @@ jobs:
       #    per leg on the shared tenant). ──
       - name: Setup Routing
         run: python .github/ci-scripts/integration_ops.py setup-routing
+
+      # ── Console links to inspect this leg's runs + apps (handy when a run fails).
+      #    Emitted as an annotation + in the job summary. project == cluster name;
+      #    the smoke suite runs in the development domain. ──
+      - name: Inspect links (runs + apps)
+        if: always() && env.CONTROL_PLANE_URL != '' && env.CLUSTER_NAME != ''
+        run: |
+          base="${CONTROL_PLANE_URL}/v2/domain/development/project/${CLUSTER_NAME}"
+          echo "::notice title=Inspect ${{ matrix.topology }}/${{ matrix.cloud }}::runs: $base/runs | apps: $base/apps"
+          {
+            echo "### 🔎 Inspect \`${{ matrix.topology }}/${{ matrix.cloud }}\` (project \`${CLUSTER_NAME}\`)"
+            echo "- [Runs]($base/runs)"
+            echo "- [Apps]($base/apps)"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # ── Selfhosted only: register the build-image task and route the system project
       #    to this DP so the remote image builder works. The managed tenant (selfmanaged
