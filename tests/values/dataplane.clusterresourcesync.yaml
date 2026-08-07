@@ -2,17 +2,17 @@
 
 # Exercises the clusterresourcesync ClusterRole template, which is only rendered
 # when low_privilege=false (i.e. not singleNamespace mode) -- singleNamespace is
-# exactly low_privilege, independent of namespaces.enabled. Locks in the default
-# clusterRoleRules (including limitranges) and verifies that custom rules render
-# through to the cluster-write ClusterRole.
+# exactly low_privilege, independent of namespaces.enabled. Verifies that custom
+# clusterRoleRules render through to the cluster-write ClusterRole, appended
+# after the chart-derived rules. The default rule set (namespaces, rolebindings)
+# is pinned by other fixtures and is no longer part of what this key carries --
+# those grants are derived from the slot model, not from clusterRoleRules.
 #
-# namespaces.enabled MUST stay at its default false here. Setting it true (with
-# the default non-empty namespaces.static) selects the constrained posture, in
-# which clusterresourcesync's rules come from namespacedRoleRules and
-# clusterRoleRules is not consulted at all -- so the custom example.com/widgets
-# rule below would silently vanish and this fixture would pin the opposite of
-# what its name says. Namespace object creation and the constrained posture are
-# covered by dataplane.namespace-multi.yaml and dataplane.task-namespaces.yaml.
+# namespaces.enabled MUST stay at its default false here so this fixture pins
+# the runtime posture (chart-derived rules + this fixture's custom rule, both
+# present). The static posture -- where the chart-derived rules are absent but
+# a non-empty clusterRoleRules still must render as one valid list -- is
+# exercised by hand, not by a committed fixture; see the Task 11 report.
 host: test.example.com
 
 low_privilege: false
@@ -29,24 +29,6 @@ clusterresourcesync:
       auth:
         enable: false
   clusterRoleRules:
-    - apiGroups:
-        - ""
-        - rbac.authorization.k8s.io
-      resources:
-        - clusterrolebindings
-        - configmaps
-        - limitranges
-        - namespaces
-        - podtemplates
-        - pods
-        - resourcequotas
-        - rolebindings
-        - roles
-        - secrets
-        - serviceaccounts
-        - services
-      verbs:
-        - '*'
     - apiGroups:
         - example.com
       resources:
