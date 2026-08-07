@@ -238,7 +238,7 @@ def main():
 
     current = summaries()
     if not current:
-        print("no dataplane snapshots found -- run `make generate-expected` first")
+        print("no dataplane snapshots in tests/generated/ -- run `make generate-expected` first")
         return 1
 
     os.makedirs(SUMMARY_DIR, exist_ok=True)
@@ -272,14 +272,14 @@ def main():
         ):
             print(line)
     for stem in orphaned:
-        print(f"orphaned summary with no snapshot: {stem}")
+        print(f"tests/rbac-summary/{stem}.txt has no matching snapshot in tests/generated/")
 
     if stale or orphaned:
         print(
             f"\n{len(stale)} RBAC summary/summaries stale, {len(orphaned)} orphaned.\n"
-            "The rendered RBAC changed. Read the diff above -- it is the whole point of\n"
-            "this artifact -- then run `make rbac-summary` IN THE SAME COMMIT so the\n"
-            "change is reviewable."
+            "The rendered RBAC changed. Read the diff above -- seeing it is the point of\n"
+            "this artifact -- then run `make rbac-summary` and commit the updated summaries\n"
+            "together with the change that moved them, so the change is reviewable."
         )
         return 1
 

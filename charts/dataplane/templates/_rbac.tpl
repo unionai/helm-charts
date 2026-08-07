@@ -208,14 +208,14 @@ A namespaced Role naming a cluster-scoped resource is accepted by the API server
 and never matches, so fail rather than degrade; gate the component instead.
 */}}
 {{- if and (eq $spec.kind "cluster") $lowPriv -}}
-{{- fail (printf "RBAC slot %q is non-empty under low_privilege: true. Cluster-scoped grants cannot be conveyed by a namespaced Role. Gate the component instead of degrading its rules." .slot) -}}
+{{- fail (printf "RBAC slot %q has rules under low_privilege: true. This slot is emitted as a namespaced Role there, and a namespaced Role cannot grant cluster-scoped access. Disable the component that declared these rules instead of trimming them." .slot) -}}
 {{- end -}}
 {{- $resolved := list -}}
 {{- if $spec.verbs -}}
 {{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
 {{- range $rule := $rules -}}
 {{- if $rule.verbs -}}
-{{- fail (printf "RBAC slot %q is emitter-owned: its declarations must not carry a verbs key (found %v). Remove it; the slot supplies %v." $.slot $rule.verbs $verbs) -}}
+{{- fail (printf "RBAC slot %q sets the verbs itself, so its rules must not carry a verbs key, and this one has %v. Drop the key: the slot grants %v." $.slot $rule.verbs $verbs) -}}
 {{- end -}}
 {{- $resolved = append $resolved (merge (dict "verbs" $verbs) $rule) -}}
 {{- end -}}
@@ -227,11 +227,11 @@ bind rule never passes through $rules, and is spliced into $resolved below.
 */}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
-{{- fail (printf "RBAC slot %q requires an explicit verbs list on every rule (resources: %v)." $.slot $rule.resources) -}}
+{{- fail (printf "RBAC slot %q needs a verbs key on every rule, and the rule for resources %v has none. Add the verbs that rule needs." $.slot $rule.resources) -}}
 {{- end -}}
 {{- range $v := $rule.verbs -}}
 {{- if not (has $v $allow) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not in the allowlist %v. Wildcards, escalate, impersonate and bind are never permitted on a declared rule; bind is emitter-authored only." $.slot $v $allow) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. Use one of %v. Wildcards, escalate and impersonate are never allowed on a declared rule, and the chart writes its own bind rule." $.slot $v $allow) -}}
 {{- end -}}
 {{- end -}}
 {{- $resolved = append $resolved $rule -}}
