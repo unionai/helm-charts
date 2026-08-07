@@ -30,6 +30,20 @@ raw manifest diff:
   wildcards         resources: ['*'] and verbs: ['*'] are summarised as * so a
                     narrowing or widening is visible without reading rules.
 
+  provisioned       Not every binding this chart ships is a Kubernetes object
+  bindings          Helm applies. In the runtime posture the work-namespace
+                    RoleBinding is carried as a STRING inside the
+                    clusterresource-template ConfigMap and applied by
+                    clusterresourcesync once per namespace it provisions. Read
+                    only top-level documents and the pooled work-ns role -- the
+                    broadest role the chart defines -- appears in no summary at
+                    all in exactly the configuration that is the default shape
+                    of a multi-namespace data plane. Those embedded bindings are
+                    parsed out of the ConfigMap and reported like any other, with
+                    their reach shown as *provisioned-at-runtime* because the
+                    namespace is a placeholder resolved per project/domain at
+                    provision time, not a namespace Helm rendered.
+
 Usage:
   scripts/rbac_summary.py --write    regenerate tests/rbac-summary/
   scripts/rbac_summary.py --check    fail if the committed summaries are stale
@@ -39,6 +53,7 @@ import argparse
 import difflib
 import glob
 import os
+import re
 import sys
 
 import yaml
@@ -80,10 +95,59 @@ CLUSTER_SCOPED = frozenset(
 
 CLUSTER = "*cluster-wide*"
 
+# Reach of a binding the chart does not apply itself: clusterresourcesync
+# substitutes the namespace per project/domain as it provisions one. Deliberately
+# not a legal namespace name, like CLUSTER, so it cannot be mistaken for one.
+PROVISIONED = "*provisioned-at-runtime*"
+
+# clusterresourcesync's own placeholder syntax, which is passed through the chart
+# literally and is therefore still present in the rendered ConfigMap. `{{ x }}`
+# is not valid YAML in a value position (it parses as a mapping with an
+# unhashable mapping key), so it is swapped for a plain scalar before parsing.
+TEMPLATE_PLACEHOLDER = re.compile(r"\{\{\s*(.*?)\s*\}\}")
+NAMESPACE_TOKEN = "__union_rbac_summary_namespace__"
+OTHER_TOKEN = "__union_rbac_summary_placeholder__"
+
 
 def load(path):
     with open(path) as handle:
         return [d for d in yaml.safe_load_all(handle) if isinstance(d, dict)]
+
+
+def _substitute_placeholders(text):
+    """Make a clusterresource-template entry parseable, keeping `{{ namespace }}` findable."""
+
+    def swap(match):
+        return NAMESPACE_TOKEN if match.group(1) == "namespace" else OTHER_TOKEN
+
+    return TEMPLATE_PLACEHOLDER.sub(swap, text)
+
+
+def embedded_bindings(docs):
+    """RoleBindings carried as strings inside a ConfigMap, not applied by Helm.
+
+    The runtime posture's work-namespace RoleBinding lives in the
+    clusterresource-template ConfigMap and is applied by clusterresourcesync per
+    namespace it provisions, so a summary built only from top-level documents
+    cannot see the pooled work-ns role at all. `data` holds arbitrary strings --
+    fluent-bit config, TOML, shell -- so anything that does not parse to a
+    RoleBinding mapping is skipped rather than raised.
+    """
+    out = []
+    for d in docs:
+        if d.get("kind") != "ConfigMap":
+            continue
+        for value in (d.get("data") or {}).values():
+            if not isinstance(value, str) or "RoleBinding" not in value:
+                continue
+            try:
+                parsed = yaml.safe_load(_substitute_placeholders(value))
+            except Exception:
+                continue
+            if not isinstance(parsed, dict) or parsed.get("kind") != "RoleBinding":
+                continue
+            out.append(parsed)
+    return out
 
 
 def rule_line(rule, namespaced):
@@ -127,11 +191,13 @@ def collect(path):
         meta = d.get("metadata") or {}
         roles[(kind, meta.get("name"), meta.get("namespace"))] = d.get("rules") or []
 
+    bindings = [
+        d for d in docs if d.get("kind") in ("RoleBinding", "ClusterRoleBinding")
+    ] + embedded_bindings(docs)
+
     out = {}
-    for d in docs:
+    for d in bindings:
         kind = d.get("kind")
-        if kind not in ("RoleBinding", "ClusterRoleBinding"):
-            continue
         meta = d.get("metadata") or {}
         ref = d.get("roleRef") or {}
         ref_kind, ref_name = ref.get("kind"), ref.get("name")
@@ -145,6 +211,8 @@ def collect(path):
             # An unqualified RoleBinding lands in the release namespace; every
             # fixture renders with --namespace union.
             scope = (meta.get("namespace") or "union").strip()
+            if scope == NAMESPACE_TOKEN:
+                scope = PROVISIONED
             if ref_kind == "Role":
                 rules = roles.get(("Role", ref_name, scope))
             else:
@@ -153,7 +221,10 @@ def collect(path):
         for subject in d.get("subjects") or []:
             if subject.get("kind") != "ServiceAccount":
                 continue
-            who = f"{(subject.get('namespace') or 'union').strip()}/{subject['name']}"
+            sa_ns = (subject.get("namespace") or "union").strip()
+            if sa_ns == NAMESPACE_TOKEN:
+                sa_ns = PROVISIONED
+            who = f"{sa_ns}/{subject['name']}"
             entry = out.setdefault(who, {}).setdefault(
                 ref_name,
                 {"kind": "Role" if ref_kind == "Role" else "ClusterRole", "scopes": set(), "rules": None},
