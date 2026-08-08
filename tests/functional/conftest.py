@@ -108,9 +108,14 @@ def flyte_ctx(ci_env) -> dict:
     return ci_env
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def hello_run(ci_env) -> str:
-    """Submit the gating `hello` run once; test_io and test_logs consume its name."""
+    """Submit a fresh `hello` run and return its name.
+
+    Function-scoped: test_io and test_logs each get their own run, so the two are
+    independent and free to distribute across xdist workers (no shared gating run).
+    hello's TaskEnvironment sets cache="disable", so every submission really runs.
+    """
     import uuid
 
     async def _run() -> str:

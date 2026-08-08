@@ -388,12 +388,11 @@ jobs:
           echo "127.0.0.1 rustfs.rustfs.svc.cluster.local" | sudo tee -a /etc/hosts
           for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live && break; sleep 2; done
 
-      # ── Run the functional tests. Scenarios are independent submit→wait-for-terminal
-      #    runs (mostly idle waiting on the cluster), so pytest-xdist parallelises them.
-      #    --dist loadscope groups by module, keeping test_io + test_logs on one worker
-      #    so the gating hello run is submitted once. FUNCTIONAL_PARALLELISM is set per
-      #    leg (default 2 for the capacity-bound single k3d node; "auto" on the
-      #    autoscaling standing clusters).
+      # ── Run the functional tests. Every scenario is an independent submit→wait-for-
+      #    terminal run (mostly idle waiting on the cluster), so pytest-xdist distributes
+      #    them across workers (default --dist load — each test is self-contained; no
+      #    shared gating run). FUNCTIONAL_PARALLELISM is set per leg (default 2 for the
+      #    capacity-bound single k3d node; "auto" on the autoscaling standing clusters).
       - name: Functional tests
         env:
           # Bust the built-image cache per run ONLY on k3d: its ephemeral RustFS is
@@ -405,7 +404,7 @@ jobs:
           # operator pins app pods under low_privilege). verify_app's endpoint poll
           # resolves here.
           APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
-        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" --dist loadscope ${FUNCTIONAL_ARGS:-}
+        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
       # may appear (secrets stay in external-secrets, never printed).
