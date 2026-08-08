@@ -4,7 +4,7 @@ Runs the same flyte v2 scenarios the release-integration workflow's "Functional
 tests" step drives, now as standard pytest. Reads the leg's contract from the
 environment (set by the workflow's creds-resolution step): CONTROL_PLANE_URL,
 FLYTE_API_KEY, CLUSTER_NAME, ORG_NAME. Task definitions live in tasks/ (one module
-per scenario: hello, imgbuild, imgcache, reusable, trigger, app); shared
+per scenario: simple, imgbuild, imgcache, reusable, trigger, app); shared
 client/retry helpers in flyte_ops.py. Transient reruns via pytest-rerunfailures
 (--only-rerun patterns in pyproject.toml).
 """
@@ -26,10 +26,10 @@ import flyte_ops  # noqa: E402
 
 # Import the task modules once, up front: their module-level TaskEnvironment()s must
 # register before the first flyte.init so a later import can't reset client routing.
-import hello  # noqa: E402,F401
 import imgbuild  # noqa: E402,F401
 import imgcache  # noqa: E402,F401
 import reusable  # noqa: E402,F401
+import simple  # noqa: E402,F401
 import trigger  # noqa: E402,F401
 
 
@@ -55,13 +55,14 @@ def pytest_configure(config):
 # image builds + Knative cold-start) is much slower — and flaked past the 600s
 # wait — when it runs first on a cold cluster, before buildkit/operator warm up.
 _ORDER = {
-    "test_image_builder": 0,
-    "test_image_cache": 1,
-    "test_io": 2,
-    "test_logs": 3,
-    "test_trigger": 4,
-    "test_reusable": 5,
-    "test_app": 6,
+    "test_simple": 0,
+    "test_image_builder": 1,
+    "test_image_cache": 2,
+    "test_io": 3,
+    "test_logs": 4,
+    "test_trigger": 5,
+    "test_reusable": 6,
+    "test_app": 7,
 }
 
 
@@ -108,35 +109,9 @@ def flyte_ctx(ci_env) -> dict:
     return ci_env
 
 
-@pytest.fixture
-def hello_run(ci_env) -> str:
-    """Submit a fresh `hello` run and return its name.
-
-    Function-scoped: test_io and test_logs each get their own run, so the two are
-    independent and free to distribute across xdist workers (no shared gating run).
-    hello's TaskEnvironment sets cache="disable", so every submission really runs.
-    """
-    import uuid
-
-    async def _run() -> str:
-        await flyte_ops.init_client(
-            ci_env["control_plane_url"],
-            ci_env["api_key"],
-            project=ci_env["cluster_name"],
-            org=ci_env["org"],
-        )
-        nonce = str(uuid.uuid4())
-        print(f"[ci] hello: submitting (nonce={nonce})", flush=True)
-        run = await flyte_ops.submit_with_retry(hello.hello, "hello", nonce=nonce)
-        print(f"[ci] hello: run={run.name}  url={run.url}", flush=True)
-        await flyte_ops.assert_succeeded(run, "hello")
-        return run.name
-
-    return asyncio.run(_run())
-
-
 # ── GitHub job-summary results table ──────────────────────────────────────────
 _SCENARIO = {  # test function name → scenario label shown in the summary
+    "test_simple": "verify_simple",
     "test_io": "verify_io",
     "test_logs": "verify_logs",
     "test_image_builder": "verify_image_builder",
