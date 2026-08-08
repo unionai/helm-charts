@@ -153,13 +153,14 @@
     posture when projects are registered at runtime.
   - **Static** — `namespaces.enabled: true` with a non-empty `namespaces.static`. This
     chart emits one `RoleBinding` per listed namespace.
-  - **External** — `rbac.externalBindingProvisioner: true`, asserting that your own
-    tooling creates them.
+  There is also a third arrangement the chart does not model: if your own tooling
+  provisions work namespaces, it must create the binding alongside them. Leave both keys
+  above at their defaults; there is nothing to set.
 
-  **The chart cannot verify that anything actually creates them**; if nothing does, the
-  install renders green and task pods fail with `Forbidden` at their first execution
-  rather than at deploy. The one configuration it does reject is described under the pod
-  webhook entry below. See "Migration / action required", and the README's
+  **The chart cannot verify that anything actually creates them, and does not check.**
+  If nothing does, the install renders green and task pods fail with `Forbidden` at their
+  first execution rather than at deploy. See "Migration / action required", and the
+  README's
   "RBAC: how union workloads reach work namespaces" for the full posture comparison.
 
 - **`namespaces.static` (new) enumerates the work namespaces to pre-create and to bind
@@ -277,14 +278,20 @@
   (Both the failure and this procedure verified on k3s 1.35, including that a ConfigMap
   in the namespace survives the transfer.)
 - **A `low_privilege: false` data plane now needs a route into its work namespaces.**
-  With `union-work-ns` no longer bound cluster-wide, pick one of the three postures above:
+  With `union-work-ns` no longer bound cluster-wide, arrange one of:
   `clusterresourcesync.enabled: true`, or `namespaces.enabled: true` with a non-empty
-  `namespaces.static`, or `rbac.externalBindingProvisioner: true`. At the default
-  `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true` the
-  render **fails** when none is present, because the webhook's failure to mirror pull
-  secrets is otherwise silent. **With mirroring disabled the render does not fail** — the
-  chart has no way to detect a missing provisioner — and union workloads simply hold
-  `union-work-ns` in the release namespace and nowhere else.
+  `namespaces.static`, or your own tooling creating the `union-work-ns` RoleBinding in
+  each work namespace as it provisions them.
+
+  **The render does not fail if you arrange none of them.** The chart cannot detect
+  tooling outside itself, so it does not try to police this; union workloads simply hold
+  `union-work-ns` in the release namespace and nowhere else, and task pods fail with
+  `Forbidden` at their first execution. Watch for a second symptom too: at the default
+  `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true` the pod
+  webhook mirrors image-pull secrets into each work namespace, and without the binding
+  that copy fails silently — the pod is admitted without its credential and then fails
+  with `ImagePullBackOff`, which reads as a registry problem. See the README's
+  "Provisioning the binding yourself" and "Diagnosing a missing binding".
 - **`namespaces.static` now rejects the release namespace** when `namespaces.enabled: true`.
   Naming it would bind `union-work-ns` in the components namespace, silently collapsing the
   split this model exists to create — union components would regain write access to union's

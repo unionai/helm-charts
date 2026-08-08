@@ -330,23 +330,26 @@ component, emitted **only** under `low_privilege: false` and holding only `list`
 The consequence is the decision you have to make: **something must create a `RoleBinding`
 for `union-work-ns` in each work namespace.** Which something does it is the posture.
 
-### The four postures
+### The three postures
 
 | Posture | How you select it | Work namespaces are | Who creates the `union-work-ns` RoleBinding | `clusterresourcesync`'s cluster-wide grant |
 |---|---|---|---|---|
 | **Runtime** | `low_privilege: false` + `clusterresourcesync.enabled: true` | created at runtime, as projects are registered | `clusterresourcesync`, from a template this chart generates | yes — three narrow rules, listed below |
 | **Static** | `low_privilege: false` + `namespaces.enabled: true` + a non-empty `namespaces.static` | listed by you, known at render time | this chart, one RoleBinding per listed namespace | **none at all** |
-| **External provisioner** | `low_privilege: false` + `rbac.externalBindingProvisioner: true` | created by your own tooling | your tooling | none (the component can stay off) |
 | **Single namespace** | `low_privilege: true` (the chart's base default) | not used — tasks run in the release namespace | this chart, in the release namespace | n/a — the component is not rendered |
 
-The first three are mutually exclusive answers to the same question, and
+The first two are mutually exclusive answers to the same question, and
 `namespaces.enabled` is what selects the static one. Under `low_privilege: true` none of
 this applies: the release namespace *is* the work namespace, `work-ns` is a plain
 namespaced `Role` bound there, and `namespaces.static` is a genuine no-op.
 
+**There is a fourth arrangement the chart does not model.** If you provision work
+namespaces with your own tooling, that tooling creates the RoleBinding too. Nothing here
+selects it and nothing here checks it — see
+[Provisioning the binding yourself](#provisioning-the-binding-yourself).
+
 If nothing binds the role, **nothing tells you at deploy time.** The install renders
-green and ArgoCD reports healthy; the failure appears at the first task execution. The
-one case the chart does catch is described under
+green and ArgoCD reports healthy; the failure appears at the first task execution. See
 [Diagnosing a missing binding](#diagnosing-a-missing-binding).
 
 ### What `commonServiceAccount.enabled: false` does not do
@@ -545,17 +548,34 @@ union-authored RBAC this chart controls, what the static posture confines is eve
 *write* and every namespaced read: to `namespaces.static` plus the release namespace, and
 nowhere else.
 
-### The external-provisioner posture
+### Provisioning the binding yourself
 
-If some other system creates the `union-work-ns` RoleBindings, set
-`rbac.externalBindingProvisioner: true` instead of enabling `clusterresourcesync`. That
-is an assertion this chart cannot verify; it suppresses the render-time requirement and
-changes nothing else. Your provisioner must create a `RoleBinding` named `union-work-ns`
-in each work namespace, referencing the `union-work-ns` `ClusterRole`, with the union
-ServiceAccounts as subjects — and it must do so before any task pod is admitted there.
-The exact subject set depends on which components you run; the reliable way to get it
-right is to render the chart once with `clusterresourcesync.enabled: true` and copy the
-`ab_union_rolebinding.yaml` entry out of the generated template ConfigMap.
+If your own tooling creates work namespaces, it must create the `union-work-ns`
+RoleBinding alongside them. Leave `clusterresourcesync.enabled: false` and
+`namespaces.enabled: false`; there is no key to set, and the chart makes no attempt to
+detect this arrangement or to verify it. **It is entirely your responsibility, and a
+mistake surfaces only at the first task execution.**
+
+Create a `RoleBinding` named `union-work-ns` in each work namespace, referencing the
+`union-work-ns` `ClusterRole`, with the union ServiceAccounts as subjects — **before any
+task pod is admitted there**. Creating the namespace and the binding in the same step is
+the safest ordering; a namespace that exists without its binding is the failure case.
+
+The exact subject set depends on which components you run, so do not transcribe it from
+this document. Render the chart once with `clusterresourcesync.enabled: true` and copy
+the `ab_union_rolebinding.yaml` entry out of the generated template ConfigMap — that is
+the binding the chart would have produced for your configuration. Re-check it whenever
+you enable or disable a component, or upgrade the chart.
+
+Two failure modes are worth knowing in advance, because neither reports the real cause:
+
+- **A missing binding** surfaces as `Forbidden` on the first task execution in that
+  namespace. See [Diagnosing a missing binding](#diagnosing-a-missing-binding).
+- **A binding created too late** surfaces as `ImagePullBackOff` on task pods, if
+  `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` is on (the
+  default). The webhook mirrors image-pull secrets into the work namespace; without the
+  binding that copy fails silently, the pod is admitted without its credential, and the
+  image pull fails afterwards looking like a registry problem.
 
 ### Extending `clusterresourcesync` for your own templates
 
@@ -738,13 +758,15 @@ emitted at all. The cost is that managed-image pull secrets are no longer mirror
 
 ### Diagnosing a missing binding
 
-**This chart cannot verify that anything creates the per-namespace RoleBindings.** It
-checks only that you selected *some* posture, and only when image-pull secret mirroring
-is on — because there the failure is doubly silent. With
-`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true` (the
-default) and none of the three routes configured, the render **fails** and names all
-three. With mirroring disabled the render succeeds and union workloads simply hold
-`work-ns` in the release namespace and nowhere else.
+**This chart cannot verify that anything creates the per-namespace RoleBindings, and it
+does not check.** A render that succeeds tells you nothing about whether the bindings
+exist. There is no deploy-time signal at all: the install renders green, ArgoCD reports
+healthy, and the first sign of trouble is a task execution failing.
+
+The chart used to fail the render when it could not see a configured route, but it could
+only ever see two of the three — it cannot detect tooling outside the chart — so the
+check rejected valid configurations while still not proving anything about the ones it
+passed. Verifying the binding directly, as below, is the only reliable answer.
 
 Everything past that point is a runtime failure. It appears at the first task execution,
 not at deploy:
@@ -791,15 +813,15 @@ kubectl logs -n <release-ns> deploy/union-pod-webhook
 
 for an error creating the mirrored secret — that is the only trace.
 
-The render-time guard rules out only the configuration that names *no* route at all. It
-cannot tell you whether the route you named is working. Both of these pass the guard and
-still produce this failure:
+Selecting a posture is not the same as that posture working. All of these render green
+and still produce this failure:
 
-- `rbac.externalBindingProvisioner: true` when your provisioner is broken, not deployed,
-  or lagging behind namespace creation — the guard takes this key as an assertion and
-  verifies nothing.
 - `clusterresourcesync.enabled: true` when the component is rendered but crash-looping,
   not yet past its first sync, or erroring on the binding template.
+- Your own tooling, when it is broken, not deployed, or lagging behind namespace
+  creation.
+- `namespaces.enabled: true` with a `namespaces.static` list that does not include the
+  namespace the task actually landed in — check it against `namespace_mapping.template`.
 
 So a green render is not evidence. Confirm the binding exists in the affected namespace
 with the `kubectl get rolebindings` check above before looking anywhere else.

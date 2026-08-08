@@ -1972,28 +1972,26 @@ prometheus:
 #   identified.
 low_privilege: true
 
-rbac:
-  # Permissions are split by where they apply. The release namespace, holding
-  # Union's own Deployments, Secrets and ConfigMaps, uses the shared
-  # `<release-ns>-comp-ns-read` and `-comp-ns-write` Roles. The work namespaces,
-  # one per project/domain, holding user tasks, apps and builds, use the shared
-  # `<release-ns>-work-ns` role.
-  #
-  # `work-ns` is a ClusterRole only so its rules are written once; the chart binds
-  # it with per-namespace RoleBindings, so it grants nothing in namespaces where no
-  # binding exists. Something must create those bindings in each work namespace:
-  # this chart (namespaces.enabled: true), clusterresourcesync as it provisions
-  # each namespace, or your own tooling (externalBindingProvisioner). If nothing
-  # does, task pods fail with Forbidden the first time they run, not at deploy
-  # time. See README: RBAC.
-
-  # -- Assert that tooling outside this chart creates the per-work-namespace
-  # RoleBindings. Only consulted when the chart is not creating them itself
-  # (namespaces.enabled false, or namespaces.static empty), where the chart
-  # otherwise requires clusterresourcesync.enabled: true to create them. Setting
-  # this true waives that requirement and changes nothing else. The chart cannot
-  # check the claim; if it is wrong, task pods fail with Forbidden when they run.
-  externalBindingProvisioner: false
+# RBAC layout, and the one thing this chart cannot do for you.
+#
+# Permissions are split by where they apply. The release namespace, holding Union's
+# own Deployments, Secrets and ConfigMaps, uses the shared `<release-ns>-comp-ns-read`
+# and `-comp-ns-write` Roles. The work namespaces, one per project/domain, holding
+# user tasks, apps and builds, use the shared `<release-ns>-work-ns` role.
+#
+# `work-ns` is a ClusterRole only so its rules are written once; the chart binds it
+# with per-namespace RoleBindings, so it grants nothing in namespaces where no binding
+# exists. Something must create those bindings in each work namespace:
+#
+#   - this chart, when `namespaces.enabled: true` and `namespaces.static` is non-empty
+#   - clusterresourcesync, as it provisions each namespace
+#   - your own tooling, if you provision work namespaces yourself
+#
+# The chart cannot verify that any of these actually happened, and does not try. If
+# nothing creates the binding, task pods fail with Forbidden the first time they run,
+# not at deploy time. If you provision work namespaces yourself, creating the
+# RoleBinding alongside them is your responsibility — see README: RBAC for the exact
+# object required.
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
