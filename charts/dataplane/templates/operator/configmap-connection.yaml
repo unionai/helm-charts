@@ -18,10 +18,20 @@ metadata:
   labels:
     {{- include "operator.labels" . | nindent 4 }}
 data:
+  {{- /*
+  Build the JSON as a dict so the optional apps.publicUrlPattern (connection_config
+  v2) is emitted only when set, with correct comma handling. protojson lowerCamel
+  field names: insecureSkipVerify, apps.publicUrlPattern.
+  */}}
+  {{- $cc := dict
+      "host" (include "dataplane.dp.host" .)
+      "insecure" .Values.updateStatus.connectionConfig.insecure
+      "insecureSkipVerify" .Values.updateStatus.connectionConfig.insecureSkipVerify }}
+  {{- with .Values.updateStatus.connectionConfig.apps }}
+  {{- with tpl (default "" .publicURLPattern) $ }}
+  {{- $_ := set $cc "apps" (dict "publicUrlPattern" .) }}
+  {{- end }}
+  {{- end }}
   connection_config.json: |
-    {
-      "host": "{{ include "dataplane.dp.host" . }}",
-      "insecure": {{ .Values.updateStatus.connectionConfig.insecure }},
-      "insecureSkipVerify": {{ .Values.updateStatus.connectionConfig.insecureSkipVerify }}
-    }
+    {{ $cc | toJson }}
 {{- end }}
