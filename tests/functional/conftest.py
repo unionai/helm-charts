@@ -124,6 +124,11 @@ _SCENARIO = {  # test function name → scenario label shown in the summary
 
 def pytest_terminal_summary(terminalreporter):
     """Render a Markdown results table to the GitHub job-summary page."""
+    # Under pytest-xdist this hook fires in every worker too, but only the
+    # controller holds the aggregated stats — skip workers so they don't append
+    # duplicate partial tables to the step summary.
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
