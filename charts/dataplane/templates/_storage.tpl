@@ -85,8 +85,13 @@ the stow based options to provide additional configuration flexibility.
 {{- end }}
 
 {{- define "storage" -}}
+{{- /* A custom provider block may carry its own container key; rendering the default alongside it would emit a
+       duplicate mapping key, which strict YAML parsers reject. The custom value wins. */}}
+{{- $customHasContainer := and (eq .Values.storage.provider "custom") (hasKey (default dict .Values.storage.custom) "container") -}}
 storage:
+{{- if not $customHasContainer }}
   container: {{ tpl .Values.storage.bucketName . | quote }}
+{{- end }}
 {{- include "storage.base" . }}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
@@ -97,8 +102,11 @@ storage:
 {{- end }}
 
 {{- define "fast-registration-storage" -}}
+{{- $customHasContainer := and (eq .Values.storage.provider "custom") (hasKey (default dict .Values.storage.custom) "container") -}}
 fastRegistrationStorage:
+{{- if not $customHasContainer }}
   container: {{ .Values.storage.fastRegistrationBucketName | quote}}
+{{- end }}
 {{- include "storage.base" .}}
 {{- end }}
 
