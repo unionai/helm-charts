@@ -1,7 +1,7 @@
 """
 FastAPI app functional-test task for the dataplane integration CI.
 
-Its own module (like each scenario task) so the basic-task pods (hello, imgbuild,
+Its own module (like each scenario task) so the basic-task pods (simple, imgbuild,
 etc.) never import fastapi — only the app-tester pod, which has fastapi in its
 image, loads this module.
 """

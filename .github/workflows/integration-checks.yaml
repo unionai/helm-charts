@@ -232,6 +232,9 @@ jobs:
             echo "FLYTE_API_KEY=$api_key"
             # verify_logs is best-effort now (WARNs, never fails), so run it on k3d too.
             echo "FUNCTIONAL_ARGS="
+            # Single k3d node: cap xdist so concurrent image builds don't overwhelm it
+            # (buildkit serialises the builds anyway; the light scenarios still overlap).
+            echo "FUNCTIONAL_PARALLELISM=2"
           } >> "$GITHUB_ENV"
       - name: Bootstrap k3d
         if: matrix.cloud == 'k3d'
@@ -310,7 +313,7 @@ jobs:
           curl -LsSf https://astral.sh/uv/install.sh | sh
           "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/flyte-venv"
           "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/flyte-venv/bin/python" \
-            --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx kubernetes pytest pytest-rerunfailures
+            --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx kubernetes pytest pytest-rerunfailures pytest-xdist
           echo "$RUNNER_TEMP/flyte-venv/bin" >> "$GITHUB_PATH"
 
       # ── Resolve this leg's CI credentials for the shared routing + functional steps. CI
@@ -385,7 +388,11 @@ jobs:
           echo "127.0.0.1 rustfs.rustfs.svc.cluster.local" | sudo tee -a /etc/hosts
           for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live && break; sleep 2; done
 
-      # ── Run the functional tests.
+      # ── Run the functional tests. Every scenario is an independent submit→wait-for-
+      #    terminal run (mostly idle waiting on the cluster), so pytest-xdist distributes
+      #    them across workers (default --dist load — each test is self-contained; no
+      #    shared gating run). FUNCTIONAL_PARALLELISM is set per leg (default 2 for the
+      #    capacity-bound single k3d node; "auto" on the autoscaling standing clusters).
       - name: Functional tests
         env:
           # Bust the built-image cache per run ONLY on k3d: its ephemeral RustFS is
@@ -397,7 +404,7 @@ jobs:
           # operator pins app pods under low_privilege). verify_app's endpoint poll
           # resolves here.
           APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
-        run: pytest tests/functional ${FUNCTIONAL_ARGS:-}
+        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
       # may appear (secrets stay in external-secrets, never printed).
