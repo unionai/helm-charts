@@ -1,0 +1,38 @@
+{{- if and (include "apps.enabled" .) .Values.gateway.enabled .Values.gateway.publicLoadBalancer.enabled }}
+{{/*
+Public internet-facing LoadBalancer in front of the gateway Envoy, for
+separate-cluster dataplanes that serve apps but have no shared control-plane
+ingress LB to borrow. DNS `*.apps.<dp>.<domain>` (published by the per-DP public
+external-dns) resolves to this LB; Envoy terminates TLS on 8444 with the
+letsencrypt wildcard cert (443) and serves plain http on 8081 (80, for
+ACME/redirect). Intracluster dataplanes route apps through the shared CP
+ingress-nginx (ingress.serving.class) and leave this disabled.
+
+Annotations (LB scheme + external-dns hostname) come from the union_extension.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gateway.fullname" . }}-public
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" . | nindent 4 }}
+  {{- with .Values.gateway.publicLoadBalancer.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  selector:
+    app: gateway
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 8444
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+{{- end }}

@@ -18,10 +18,21 @@ metadata:
   labels:
     {{- include "operator.labels" . | nindent 4 }}
 data:
+  {{- /*
+  Build the JSON as a dict so the optional apps block (connection_config v2) is
+  emitted only when a domain is set, with correct comma handling. protojson
+  lowerCamel field names: insecureSkipVerify, apps.domain, apps.insecure.
+  */}}
+  {{- $cc := dict
+      "host" (include "dataplane.dp.host" .)
+      "insecure" .Values.updateStatus.connectionConfig.insecure
+      "insecureSkipVerify" .Values.updateStatus.connectionConfig.insecureSkipVerify }}
+  {{- with .Values.updateStatus.connectionConfig.apps }}
+  {{- $domain := tpl (default "" .domain) $ }}
+  {{- if $domain }}
+  {{- $_ := set $cc "apps" (dict "domain" $domain "insecure" (default false .insecure)) }}
+  {{- end }}
+  {{- end }}
   connection_config.json: |
-    {
-      "host": "{{ include "dataplane.dp.host" . }}",
-      "insecure": {{ .Values.updateStatus.connectionConfig.insecure }},
-      "insecureSkipVerify": {{ .Values.updateStatus.connectionConfig.insecureSkipVerify }}
-    }
+    {{ $cc | toJson }}
 {{- end }}
