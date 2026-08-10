@@ -49,5 +49,8 @@ functional_args=""
   echo "CLUSTER_NAME=$cluster"
   echo "FLYTE_API_KEY=$api_key"
   echo "FUNCTIONAL_ARGS=$functional_args"
+  # Standing clusters autoscale, so parallelise the functional scenarios across
+  # workers (pytest-xdist -n auto). k3d overrides this to a low count in-workflow.
+  echo "FUNCTIONAL_PARALLELISM=auto"
 } >> "$GITHUB_ENV"
 echo "resolved CI creds for $leg (CI identity: ${client_id:-cicd})"

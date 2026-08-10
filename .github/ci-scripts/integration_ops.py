@@ -15,7 +15,7 @@ register-build-image  (selfhosted) Register the build-image task in
                       system/production and route the system project to this DP.
 teardown              Deregister the cluster (SDK, best-effort).
 
-The functional tests (hello + verify_*) live in tests/functional/ as pytest; this
+The functional tests (verify_simple + verify_*) live in tests/functional/ as pytest; this
 module provides the cluster operations they run against.
 
 Environment
