@@ -72,9 +72,20 @@ updateStatus:
     apps:
       # -- Bare apps domain (no scheme, no subdomain) the dataplane serves apps
       # under, with the dataplane name baked in so the URL routes to the DP
-      # running the app, e.g. "apps.dp-1.mycompany.com". Empty disables (CP falls
-      # back to its global executions.apps.publicURLPattern).
-      domain: ""
+      # running the app. Defaults to `apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>`
+      # (e.g. "apps.dp-1.mycompany.com") when CLUSTER_NAME is set.
+      #
+      # Why a subdomain of the control-plane host by default: browser session /
+      # SSO cookies set at the control-plane host propagate to its subdomains, so
+      # serving apps beneath it gives app SSO out of the box — no extra identity
+      # provider or cookie-domain setup. The per-dataplane label (CLUSTER_NAME)
+      # also routes each app URL to the dataplane running it, for multi-dataplane
+      # deployments.
+      #
+      # Override to serve apps under a different domain (you then own its DNS/TLS
+      # and forgo SSO-by-default); set to "" to disable self-reporting, in which
+      # case the control plane falls back to its own global apps URL pattern.
+      domain: '{{ if .Values.global.CLUSTER_NAME }}apps.{{ .Values.global.CLUSTER_NAME }}.{{ include "dataplane.cp.host" . }}{{ end }}'
       # -- Serve app URLs over http:// instead of https:// when true. Default https.
       insecure: false
 
@@ -1655,9 +1666,9 @@ ingress:
     # -- Emit the app-serving nginx Ingress (fronts the gateway via ingressClass).
     # Default true: intracluster routes apps through the shared control-plane
     # nginx. Set false on separate-cluster dataplanes, which have no shared nginx
-    # and instead expose the gateway Envoy via gateway.publicLoadBalancer — the
-    # union_extension disables it there so the `<dp>-apps` Ingress isn't left
-    # dangling with no controller.
+    # and instead expose the gateway Envoy via gateway.publicLoadBalancer —
+    # disable it there so the `<dp>-apps` Ingress isn't left dangling with no
+    # controller.
     enabled: true
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
@@ -2620,22 +2631,35 @@ gateway:
   # dataplanes (not co-located with the control plane) have no shared CP ingress
   # LB to borrow, so they expose the gateway Envoy directly: DNS
   # `*.apps.<dp>.<domain>` -> this LB -> Envoy, with TLS terminated at Envoy
-  # (8444) using the letsencrypt wildcard cert. Off by default; the terraform
-  # union_extension enables + annotates it (external-dns hostname, internet-facing
-  # scheme) for separate-cluster DPs. Intracluster apps route through the shared
-  # CP ingress-nginx instead (`ingress.serving.class`), so this stays off there.
+  # (8444) using the letsencrypt wildcard cert. Off by default; enable and
+  # annotate it (external-dns hostname, internet-facing scheme) for
+  # separate-cluster dataplanes. Intracluster apps route through the shared CP
+  # ingress-nginx instead (`ingress.serving.class`), so this stays off there.
   publicLoadBalancer:
     enabled: false
     # -- Annotations for the LoadBalancer Service — cloud LB scheme
-    # (internet-facing) + external-dns hostname. Set by the union_extension.
+    # (internet-facing) + external-dns hostname. Set these for separate-cluster
+    # dataplanes; e.g. on AWS:
+    #   service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    #   service.beta.kubernetes.io/aws-load-balancer-type: external
+    #   external-dns.alpha.kubernetes.io/hostname: "*.apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>"
     annotations: {}
 
-  # -- Enables Union's auth integration across the kourier-gateway.
+  # -- Union auth integration for the kourier gateway. The gateway Envoy calls the
+  # control plane to authenticate app requests (/me) and authorize them. All
+  # three URLs default off the control-plane host (global.CONTROLPLANE_HOST) when
+  # left empty, so apps get SSO out of the box — an app subdomain of the CP host
+  # shares its auth cookies. Override only to point app auth at a different
+  # tenant URL.
   auth:
     enable: true
+    # -- App auth (identity) endpoint. Empty -> https://<CONTROLPLANE_HOST>/me
     tenantAuthURL: ""
+    # -- App sign-in redirect target. Empty -> https://<CONTROLPLANE_HOST>/login
     tenantAuthSignInURL: ""
+    # -- Tenant control-plane base URL. Empty -> https://<CONTROLPLANE_HOST>
     tenantControlPlaneURL: ""
+    # -- Org override for auth. Empty -> orgName (global.ORG_NAME).
     organization: ""
 
   components:
