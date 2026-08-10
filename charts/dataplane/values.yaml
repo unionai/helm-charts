@@ -738,9 +738,6 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
-  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
-  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
-  namespace: "kube-system"
 
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
@@ -1745,6 +1742,26 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
+  # Replaces the subchart's default scrape_configs, which are nine cluster-wide
+  # discovery jobs — kubernetes-apiservers, kubernetes-nodes,
+  # kubernetes-nodes-cadvisor, kubernetes-service-endpoints(-slow),
+  # kubernetes-services, kubernetes-pods(-slow) and prometheus-pushgateway. None of
+  # them produces a series the control plane's metrics gateway admits, and no
+  # dashboard in this repo or the control plane reads their output, so all they would
+  # cost is scrape load and cardinality against every pod, service and node in the
+  # cluster. Everything this deployment actually scrapes is in extraScrapeConfigs
+  # below. Only the self-scrape is kept.
+  #
+  # Helm replaces lists wholesale rather than merging them, so this key is the whole
+  # scrape_configs list. Re-check it against the subchart's values.yaml on bumps.
+  serverFiles:
+    prometheus.yml:
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
+
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
   extraScrapeConfigs: |
@@ -1896,12 +1913,16 @@ prometheus:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    #
+    # Discovery is pinned to the release namespace, which is where the dcgm-exporter
+    # subchart deploys. A dcgm-exporter someone else manages — the NVIDIA GPU operator
+    # installs one in its own namespace, for example — is not picked up: reaching it
+    # would need cross-namespace pod discovery, which nothing else here asks for.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
           namespaces:
-            names:
-              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
+            own_namespace: true
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
