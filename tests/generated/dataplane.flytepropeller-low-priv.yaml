@@ -4965,6 +4965,58 @@ rules:
 
 
 ---
+# Source: dataplane/charts/prometheus/templates/clusterrole.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: v2.55.1
+    helm.sh/chart: prometheus-25.30.2
+    app.kubernetes.io/part-of: prometheus
+  name: union-operator-prometheus
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - services
+      - endpoints
+      - pods
+      - ingresses
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - "extensions"
+      - "networking.k8s.io"
+    resources:
+      - ingresses/status
+      - ingresses
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - "discovery.k8s.io"
+    resources:
+      - endpointslices
+    verbs:
+      - get
+      - list
+      - watch
+  - nonResourceURLs:
+      - "/metrics"
+    verbs:
+      - get
+
+---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -5135,6 +5187,28 @@ subjects:
 - kind: ServiceAccount
   name: release-name-kube-state-metrics
   namespace: union
+---
+# Source: dataplane/charts/prometheus/templates/clusterrolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/component: server
+    app.kubernetes.io/name: prometheus
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: v2.55.1
+    helm.sh/chart: prometheus-25.30.2
+    app.kubernetes.io/part-of: prometheus
+  name: union-operator-prometheus
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-prometheus
+
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -5356,46 +5430,6 @@ rules:
       - update
       - delete
 ---
-# Source: dataplane/templates/prometheus/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
-  labels:
-    release: release-name
-rules:
-  # Prometheus server scrape permissions
-  - apiGroups: [""]
-    resources:
-      - nodes
-      - nodes/proxy
-      - nodes/metrics
-      - services
-      - endpoints
-      - pods
-      - ingresses
-      - configmaps
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources:
-      - ingresses/status
-      - ingresses
-    verbs:
-      - get
-      - list
-      - watch
-  - apiGroups: ["discovery.k8s.io"]
-    resources:
-      - endpointslices
-    verbs:
-      - get
-      - list
-      - watch
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5495,24 +5529,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
-
----
-# Source: dataplane/templates/prometheus/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-operator-prometheus-rbac
-  namespace: union
-  labels:
-    release: release-name
-subjects:
-  - kind: ServiceAccount
-    name: union-operator-prometheus
-    namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-prometheus-rbac
 
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml

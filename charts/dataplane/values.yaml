@@ -1674,19 +1674,35 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
-  # Disable the chart's own RBAC (which creates ClusterRoles).
-  # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
+  # The subchart's own ClusterRole: read-only get/list/watch on nodes, nodes/proxy,
+  # nodes/metrics, services, endpoints, pods, ingresses, configmaps, endpointslices,
+  # and get on the /metrics nonResourceURL. No secrets, no writes.
+  #
+  # Cluster scope is not optional here. The kubernetes-cadvisor job discovers with
+  # `role: node` and fetches through /api/v1/nodes/<name>/proxy/metrics/cadvisor —
+  # both cluster-scoped operations, and it is the only source of
+  # container_cpu_usage_seconds_total and container_memory_working_set_bytes, which
+  # dataplane and control plane dashboards both read. A namespaced Role cannot
+  # authorize it at any privilege level.
   rbac:
-    create: false
-  
-  # Match the same service name as kube-prometheus-stack mode so that
-  # health checks, opencost, and ingress work without changes.
-  # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
-  # In low-privilege mode, set rbac.create=false and useExistingClusterRoleName to skip
-  # ClusterRole/ClusterRoleBinding creation; a namespace-scoped Role is created instead.
+    create: true
+
   server:
+    # Matches the kube-prometheus-stack service name so health checks, opencost and
+    # ingress work in either mode.
     fullnameOverride: "union-operator-prometheus"
+    # A fixed, cluster-scoped name, so one dataplane per cluster is the supported
+    # model: a second install in another namespace errors on ownership rather than
+    # taking over the first one's ClusterRoleBinding, because Helm refuses to adopt an
+    # object stamped with a different release. The subchart emits this value literally
+    # — it is not run through tpl — so the namespace cannot be worked into it from
+    # here. If a cluster ever needs two, the GitOps layer knows the target namespace
+    # and can set a distinct name per install.
     clusterRoleNameOverride: "union-operator-prometheus"
+    # Setting this skips both the ClusterRole and the ClusterRoleBinding, leaving only
+    # rolebinding.yaml, which ranges over server.namespaces. Empty means no binding at
+    # all; non-empty means namespaced RoleBindings, which cannot authorize cadvisor.
+    # Neither is a working configuration for this chart.
     useExistingClusterRoleName: ""
 
     configMapOverrideName: "prometheus"
