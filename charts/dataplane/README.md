@@ -168,13 +168,7 @@ This preset enables OpenShift-specific SCC/RBAC for buildkit and Kourier, runs b
 
 Namespace-specific OpenShift UID, GID, and SELinux category values are not included in the preset. Set those in the environment-specific values file only when your cluster requires them.
 
-After deployment, validate the BuildKit security context, SCC access, service endpoint, and worker readiness:
-
-```bash
-KUBECTL_BIN=oc NAMESPACE=union ../../scripts/validate_rootless_buildkit.sh
-```
-
-Set `TARGET_IMAGE` to an approved registry path to also run the build-and-push smoke test.
+For rootless BuildKit runtime prerequisites and validation commands, see `../controlplane/SELFHOSTED_INTRA_CLUSTER_OPENSHIFT.md` and `../../scripts/validate_rootless_buildkit.sh`.
 
 ---
 
