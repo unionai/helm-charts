@@ -97,6 +97,55 @@ Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion`
 a patch because it removes the legacy executor and retires several globals — see
 Migration below.
 
+### App serving: vendored gateway is now the default
+
+App serving is now delivered by this chart's vendored Knative Serving + Kourier +
+Envoy gateway (`gateway.enabled: true`), and the `knative-operator` subchart
+defaults to `enabled: false`. Fresh installs need no action. An existing data
+plane that still runs the `knative-operator` `KnativeServing` CR must migrate off
+it before (or as) it adopts this release, or the upgrade deadlocks: the
+operator's `KnativeServing` CR and its two CRDs are left behind, and the vendored
+gateway's Serving CRDs collide with the operator-installed ones on ownership.
+
+The `knative-operator` subchart is still available for the legacy delivery path
+during the transition — set `knative-operator.enabled: true` and
+`gateway.enabled: false`.
+
+#### Migrating off the knative-operator subchart
+
+The migration is a one-shot cleanup that, with the operator **still healthy**,
+runs three idempotent steps:
+
+1. Delete the `KnativeServing` CR. The operator's finalizer tears down every
+   Deployment, Service, ConfigMap, HPA, PDB, ClusterRole/Binding, and
+   WebhookConfiguration it installed.
+2. (Helm-install paths only) Stamp Helm ownership metadata (`meta.helm.sh/*`
+   annotations + `app.kubernetes.io/managed-by=Helm`) onto the 12 Knative
+   Serving CRDs the operator installed imperatively, so the data plane release
+   can adopt them.
+3. Delete the operator's two CRDs (`knativeservings.operator.knative.dev`,
+   `knativeeventings.operator.knative.dev`).
+
+Run the steps once, before the upgrade that flips `knative-operator` off.
+Re-running on an already-migrated cluster is a no-op. Three ways to run them:
+
+- **Use the `knative-migration` chart** (same repo) — a one-shot Job that runs
+  the three steps. It ships **without** hook annotations, so you choose when it
+  runs (Helm hook, below, or install it as plain resources and run it yourself).
+  See `charts/knative-migration/README.md`.
+- **Run the steps manually.** Execute the three `kubectl` steps yourself against
+  the target cluster while the operator is healthy.
+- **Configure your own Job with Helm hook annotations.** Wire the
+  `knative-migration` Job (or your own equivalent) into your release lifecycle
+  with Helm hooks so the cleanup runs at upgrade time, e.g.:
+
+  ```yaml
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+    helm.sh/hook-weight: "10"
+  ```
+
 ### Removed: executor
 
 The legacy executor Deployment has been removed ([#501](https://github.com/unionai/helm-charts/pull/501)),
