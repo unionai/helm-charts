@@ -534,9 +534,11 @@ runtime posture.
 
 **This does not confine every workload sharing the identity.** `fluentbit.enabled: true`
 (the default) runs FluentBit as the same `union-system` ServiceAccount as the shared
-`commonServiceAccount`, and FluentBit separately carries its own read-only cluster-wide
-grant (`get`/`list`/`watch` on `namespaces`/`pods`) for log shipping. That grant is
-independent of `namespaces.static`; hardening it is deliberately out of scope here.
+`commonServiceAccount`. Anything else granted to that ServiceAccount reaches FluentBit
+too, and `namespaces.static` has no say in it. FluentBit itself no longer adds to the
+pool — `fluentbit.rbac.create` is `false` by default, because this chart configures no
+`kubernetes` filter and so FluentBit never calls the API server; see
+[Third-party subchart RBAC](#third-party-subchart-rbac).
 
 **Nor does it eliminate cluster-scoped reads.** The static posture is a `low_privilege:
 false` posture, so union's components still hold the read-only

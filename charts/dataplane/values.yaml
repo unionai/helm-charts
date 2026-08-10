@@ -888,6 +888,21 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # No Kubernetes API access. The subchart's ClusterRole (cluster-wide get/list/watch
+  # on namespaces and pods) exists to serve a `[FILTER] Name kubernetes` stanza, which
+  # enriches records by calling the API server. This chart has never configured one:
+  # existingConfigMap above replaces the subchart's config with the union-authored one,
+  # whose filter section renders only fluentbit.additionalFilters (empty by default) and
+  # nothing else. Pod, namespace and container names come from the log file path via the
+  # tail input's Tag_Regex, and the resulting tag *is* the object key through
+  # s3_key_format — the metadata is in the path, not in the record.
+  #
+  # Three keys reverse this. Setting any of them means rbac.create must go back to true:
+  #   fluentbit.additionalFilters  — a `kubernetes` filter pasted here needs the grant
+  #   fluentbit.rbac.nodeAccess    — adds nodes, nodes/metrics, nodes/proxy
+  #   fluentbit.rbac.eventsAccess  — adds events
+  rbac:
+    create: false
   # Allow fluentbit to run on all nodes to be able to push all logs.
   tolerations:
     - operator: Exists
