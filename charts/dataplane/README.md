@@ -190,20 +190,31 @@ For full setup instructions including IAM policy examples, see [Persistent logs]
 
 ## Monitoring & Observability
 
-The dataplane ships with two separate [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack) instances, each with a distinct responsibility:
+The dataplane has two Prometheus paths, with distinct responsibilities:
 
-| Instance       | Helm key     | Purpose                                                               | User-configurable           |
-| -------------- | ------------ | --------------------------------------------------------------------- | --------------------------- |
-| Union features | `prometheus` | Powers Task Level Monitoring (TLM), cost tracking, and app metrics.   | No — managed automatically. |
-| Monitoring     | `monitoring` | General cluster and service observability.                            | Yes — see below.            |
-
-The two instances are isolated through Prometheus Operator CRD label selectors using the `platform.union.ai/prometheus-group` label. The Union features instance only scrapes CRDs labeled `union-features`, while the monitoring instance scrapes everything *except* `union-features`.
+| Instance       | Helm key     | Chart                    | Purpose                                                             | User-configurable           |
+| -------------- | ------------ | ------------------------ | ------------------------------------------------------------------- | --------------------------- |
+| Union features | `prometheus` | standalone `prometheus`  | Powers Task Level Monitoring (TLM), cost tracking, and app metrics. | No — managed automatically. |
+| Monitoring     | `monitoring` | `kube-prometheus-stack`  | General cluster and service observability.                          | Yes — see below.            |
 
 > **Note:** The Union features Prometheus is required for platform functionality and cannot be disabled. It is fully self-contained and requires no user configuration.
 
+**`monitoring` is off by default and on a deprecation path.** It is `false` in the base
+values and in all three cloud overlays. The supported path is the standalone `prometheus`
+subchart, which is deliberately CRD-free — it delivers recording rules by ConfigMap
+instead of `PrometheusRule` CRDs and uses static scrape configs instead of
+`ServiceMonitor`s — so it does not need the Prometheus Operator at all. Where the two
+coexist they are isolated by the `platform.union.ai/prometheus-group` label selector.
+
+**This chart does not alert in practice.** `templates/monitoring/prometheusrule.yaml`
+carries 13 recording rules and 3 alerts, and requires the Prometheus Operator CRDs, which
+are opt-in through the separate `dataplane-crds` chart. Alerting lives centrally,
+downstream of the metrics gateway, so retiring `kube-prometheus-stack` costs this chart no
+alerting.
+
 ### Default configuration
 
-The monitoring stack is enabled by default (`monitoring.enabled: true`) and deploys:
+When `monitoring.enabled: true`, the stack deploys:
 
 - **Prometheus** — scrapes Kubernetes component metrics and Union service health metrics (7-day retention)
 - **Grafana** — pre-configured with kube-prometheus-stack dashboards
@@ -827,6 +838,82 @@ and still produce this failure:
 
 So a green render is not evidence. Confirm the binding exists in the affected namespace
 with the `kubectl get rolebindings` check above before looking anywhere else.
+
+### Third-party subchart RBAC
+
+Everything above is about union-authored RBAC. The dependency subcharts have their own,
+and it follows a different rule.
+
+**`low_privilege: true` constrains union's components, not the whole chart.** It means
+union-authored components hold namespaced Roles in a single namespace. It has never meant
+the chart emits zero `ClusterRole`s, and it cannot: `kube_node_*`, `kube_namespace_labels`
+and the cAdvisor `container_*` families are cluster-scoped by nature, and they are among
+the metrics this chart exists to ship. Third-party observability components are therefore
+allowed cluster-scoped **read**. They are not allowed writes, `secrets`, or any rule that
+does not trace to a metric or feature actually in use.
+
+**None of it is authored here.** Every disposition is a values key on the subchart itself,
+so the grant tracks the subchart across version bumps. That is deliberate: the two
+production bugs this area has produced — prometheus holding no permissions at all under
+`low_privilege: false`, and kube-state-metrics bound to a ServiceAccount that did not
+exist — both came from hand-written RBAC duplicating something a subchart already did
+correctly.
+
+| Subchart | Default | What it holds | How |
+|---|---|---|---|
+| `prometheus` | on | cluster-scoped read: 11 resources + `get` on `/metrics`. No secrets, no writes | `prometheus.rbac.create: true` |
+| `kube-state-metrics` | on | cluster-scoped `list`/`watch` on 6 collectors, of 28 available | `prometheus.kube-state-metrics.rbac.useClusterRole`, `.collectors` |
+| `fluent-bit` | on (off on GCP) | nothing | `fluentbit.rbac.create: false` |
+| `dcgm-exporter` | off | nothing | no key needed |
+| `ingress-nginx` | off | a namespaced Role, plus a cluster-scoped `IngressClass` | `ingress-nginx.rbac.scope`, `.controller.scope.enabled` |
+| `opencost` | off | cluster-scoped read-only | accepted — no key exists |
+| `metrics-server` | off | cluster-scoped read, plus a write into `kube-system` | accepted — no key helps |
+| `kube-prometheus-stack` | off | cluster-wide `secrets: '*'` | accepted risk; deprecating |
+
+Four of these are worth knowing in more detail.
+
+**prometheus's cluster scope is forced by cAdvisor.** The `kubernetes-cadvisor` scrape job
+discovers with `role: node` and fetches through `/api/v1/nodes/<name>/proxy/metrics/cadvisor`
+— both cluster-scoped operations. It is the only source of
+`container_cpu_usage_seconds_total` and `container_memory_working_set_bytes`. No namespaced
+Role can authorize it at any privilege level. The `ClusterRole`'s name is fixed and
+unqualified, which makes **one dataplane per cluster** the supported model; a second
+install fails on Helm ownership rather than silently taking over the first one's binding.
+
+**kube-state-metrics has no useful namespaced mode.** Setting `useClusterRole: false` drops
+it to four collectors and loses `kube_node_*` and `kube_namespace_labels` — and the latter
+is the join key for most pod-level aggregates. That is a broken configuration, not a
+degraded one, so no toggle is offered. Separately, `releaseNamespace: true` scopes
+*collection* to the release namespace; under `low_privilege: false`, where task pods live
+elsewhere, those pods are not collected.
+
+**opencost's off switch is not clean.** `rbac.enabled: false` gates only
+`clusterrolebinding.yaml`. The `ClusterRole` has no guard, so it is created regardless and
+left orphaned — inert, but present, and surprising if you go looking.
+
+**metrics-server writes into `kube-system`.** It creates a `RoleBinding` there whose
+namespace is a hardcoded literal with no override, so an operator confined to the release
+namespace gets a hard `403` from `helm upgrade`. `rbac.create: false` is not an escape:
+it leaves the component unable to authenticate. The chart also grants `configmaps` and
+`namespaces` beyond upstream's own manifest, which ships `nodes/metrics: [get]` and
+`pods, nodes: [get,list,watch]` and works with the `kube-system` RoleBinding alone;
+narrowing that would mean forking the subchart.
+
+Two components have widening hooks that are easy to trip:
+
+- **`fluent-bit`** needs its `ClusterRole` back if you configure a `kubernetes` filter
+  through `fluentbit.additionalFilters`, or set `fluentbit.rbac.nodeAccess` /
+  `fluentbit.rbac.eventsAccess`. Without one it never calls the Kubernetes API — pod,
+  namespace and container names come from the log file path, and the resulting tag is the
+  object key.
+- **`dcgm-exporter`** creates a cluster-wide `pods` + `resourceslices` `ClusterRole`, and
+  switches its ServiceAccount token on, if any of `kubernetes.enablePodLabels`,
+  `kubernetes.enablePodUID` or `kubernetesDRA.enabled` is set. Note that
+  `kubernetes.rbac.create: false` gates only the first two — `kubernetesDRA.enabled` grants
+  the `ClusterRole` on its own, so it is not a mitigation.
+
+Rendered RBAC is snapshotted per fixture in `tests/rbac-summary/` and checked in CI. A
+subchart bump that widens a grant shows up there as a reviewable diff.
 
 ---
 

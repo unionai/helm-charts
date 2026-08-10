@@ -721,10 +721,113 @@ databricks:
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
+# =============================================================================
+# thirdPartyRbac — what each dependency subchart may hold, and why
+# =============================================================================
+#
+# A record, not a setting. Nothing reads this block. It exists because the thing
+# missing from this area was a *stated* disposition: with none written down,
+# every reader re-derived one and got it wrong differently — which is how the
+# README came to carry a justification for FluentBit's ClusterRole that had never
+# been true.
+#
+# `low_privilege: true` means union-authored components hold namespaced Roles in
+# a single namespace. It has never meant the chart emits zero ClusterRoles.
+# Third-party observability components are allowed cluster-scoped *read*, because
+# some of the metrics this chart exists to ship cannot be produced any other way:
+# kube_node_*, kube_namespace_labels and the cadvisor container_* families are
+# cluster-scoped by nature.
+#
+# What every entry below is checked against: no writes, no secrets, and no rule
+# that fails to trace either to a series the control plane's metrics gateway
+# admits or to a feature this chart uses.
+#
+# No third-party RBAC is authored in this chart. Every disposition is a values key
+# on the subchart itself, so the grant tracks the subchart across bumps. The two
+# production bugs this area produced — prometheus holding nothing at
+# low_privilege: false, and kube-state-metrics bound to a ServiceAccount that did
+# not exist — both came from hand-written RBAC duplicating what a subchart
+# already did correctly.
+#
+#   prometheus                on by default
+#     cluster-scoped, read-only         prometheus.rbac.create: true
+#     The subchart's own ClusterRole: 11 resources plus get on the /metrics
+#     nonResourceURL. No secrets, no writes. Cluster scope is forced by
+#     kubernetes-cadvisor, which discovers with `role: node` and fetches through
+#     the API server's node proxy.
+#
+#   kube-state-metrics        on by default
+#     cluster-scoped, read-only         prometheus.kube-state-metrics.rbac.useClusterRole
+#                                       prometheus.kube-state-metrics.collectors
+#     Six of 28 collectors, list/watch only. There is no useful namespaced
+#     variant to offer: useClusterRole: false drops to four collectors and loses
+#     kube_node_* and kube_namespace_labels, and the latter is the join key for
+#     most pod-level aggregates — a broken mode, not a degraded one.
+#
+#   fluent-bit                on by default (off on GCP)
+#     nothing                           fluentbit.rbac.create: false
+#     Never calls the Kubernetes API. Reasoning is on that key.
+#
+#   dcgm-exporter             off by default
+#     nothing needed                    no key
+#     GPU-to-pod mapping reads the kubelet podresources socket and the metrics
+#     CSV is a volume mount, so the pod renders
+#     automountServiceAccountToken: false and the namespaced Role it emits is
+#     inert twice over. Three keys change that — see the dcgm-exporter block.
+#
+#   ingress-nginx             off by default
+#     namespaced Role                   ingress-nginx.rbac.scope: true
+#                                       ingress-nginx.controller.scope.enabled: true
+#     The IngressClass stays cluster-scoped; it has no namespaced form.
+#
+#   opencost                  off by default
+#     cluster-scoped, read-only         accepted — no key exists
+#     OpenCost prices the whole cluster, and nodes and persistentvolumes are
+#     cluster-scoped. Read-only throughout. Note rbac.enabled: false is not a
+#     clean off switch: it gates clusterrolebinding.yaml only, so the ClusterRole
+#     is still created and left orphaned (inert, but present).
+#
+#   metrics-server            off by default
+#     cluster read + kube-system write  accepted — no key helps
+#     Structural: the APIService, the system:auth-delegator ClusterRoleBinding,
+#     and a RoleBinding whose namespace is the hardcoded literal `kube-system`,
+#     with no override — so an operator confined to the release namespace gets a
+#     hard 403 from `helm upgrade`. rbac.create: false leaves the component unable
+#     to authenticate at all. The chart also grants `configmaps` and `namespaces`
+#     beyond upstream's own v0.7.2 manifest, which ships nodes/metrics: [get] and
+#     pods, nodes: [get,list,watch] and works with the kube-system RoleBinding
+#     alone; narrowing that would mean forking the subchart.
+#
+#   kube-prometheus-stack     off everywhere (see the monitoring block)
+#     accepted risk                     no key helps
+#     Its operator holds cluster-wide secrets '*', delete and deletecollection
+#     included. global.rbac.create: false produces a failing install with two of
+#     three cluster-wide Secret readers still standing, and
+#     prometheusOperator.enabled: false removes the operator while leaving its
+#     Prometheus CR, PrometheusRules and ServiceMonitors unreconciled. Accepted
+#     because the component is off in every layer and on the way out.
+#
+# Out of scope here: the vendored Knative Serving / Kourier gateway under
+# templates/gateway/, which is union-authored manifests rather than subchart
+# configuration, and knative-operator, which is deprecated.
+
 # -- Dcgm exporter configuration
 dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
+
+  # No Kubernetes API access at these defaults: GPU-to-pod mapping comes from the
+  # kubelet podresources socket, the metrics CSV is a volume mount, and the pod
+  # renders automountServiceAccountToken: false.
+  #
+  # Three keys reverse that, each creating a cluster-wide ClusterRole over
+  # pods and resourceslices and switching the ServiceAccount token back on:
+  #   kubernetes.enablePodLabels
+  #   kubernetes.enablePodUID
+  #   kubernetesDRA.enabled
+  # kubernetes.rbac.create: false is only a partial opt-out and must not be
+  # treated as a mitigation: it gates the first two, but kubernetesDRA.enabled
+  # sits outside that conjunct and grants the ClusterRole on its own.
 
   # -- It's common practice to taint and label  to not run dcgm exporter on all nodes, so we can use node selectors and
   #    tolerations to ensure it only runs on GPU nodes.
@@ -2528,9 +2631,23 @@ namespaces:
     - union-health-monitoring-production
 
 monitoring:
-  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
-  # is commonly managed outside this chart. Enable as needed.
-  # TODO: consider defaulting to true.
+  # kube-prometheus-stack subchart. Off in this file and in all three cloud
+  # overlays, and on a deprecation path: the supported monitoring path is the
+  # standalone `prometheus` subchart above, which is deliberately CRD-free and
+  # carries the union scrape config, the cost recording rules (by ConfigMap, not
+  # PrometheusRule) and the remote_write to the control plane. Only the
+  # monitoring* test fixtures turn this on.
+  #
+  # Retiring it costs this chart no alerting, because this chart does not alert in
+  # practice. templates/monitoring/prometheusrule.yaml holds 13 recording rules
+  # and 3 alerts that render in none of the committed snapshots — it needs the
+  # Prometheus Operator CRDs, which are opt-in through the separate dataplane-crds
+  # chart. Every PrometheusRule that does appear in a snapshot comes from
+  # kube-prometheus-stack's own rules-1.14/ defaults. Alerting lives centrally,
+  # downstream of the metrics gateway.
+  #
+  # Its operator's RBAC is accepted risk rather than something to harden; see the
+  # thirdPartyRbac block above for why no values key helps.
   enabled: false
 
   # The following flags control Union monitoring resources independently
