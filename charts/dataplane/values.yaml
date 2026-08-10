@@ -1913,33 +1913,34 @@ prometheus:
   alertmanager:
     enabled: false
   # kube-state-metrics subchart of the community prometheus chart.
-  # Uses namespace-scoped Role (not ClusterRole) and only watches the release namespace.
-  # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
-  # (kube_node_*) since nodes are cluster-scoped resources.
   # When monitoring.enabled=true, the kube-prometheus-stack deploys its own KSM instance
-  # (monitoring-kube-state-metrics) with cluster-wide scope — both can coexist.
+  # (monitoring-kube-state-metrics) — both can coexist.
   kube-state-metrics:
     enabled: true
+    # RBAC is the subchart's own. useClusterRole is required, not optional: the
+    # `nodes` and `namespaces` collectors below are cluster-scoped resources, and
+    # a namespaced Role that names them is accepted by the API server but never
+    # matches, so KSM would emit no kube_node_* or kube_namespace_labels at all.
     rbac:
-      create: false
+      create: true
+      useClusterRole: true
+    # Exactly the collectors that feed series the control plane's metrics gateway
+    # admits. The subchart's default is 28 collectors, including `secrets`.
+    collectors:
+      - pods            # kube_pod_status_phase, kube_pod_container_resource_*, kube_pod_container_status_*
+      - nodes           # kube_node_labels, kube_node_status_condition
+      - namespaces      # kube_namespace_labels — the join key for the pod aggregates
+      - deployments     # kube_deployment_status_replicas_unavailable
+      - daemonsets      # kube_daemonset_status_number_unavailable
+      - resourcequotas  # kube_resourcequota
+    # Scopes collection to the release namespace (--namespaces=<release-ns>). At
+    # low_privilege: true that is the work namespace, so this is the whole story;
+    # at low_privilege: false task pods live elsewhere and are not collected.
     releaseNamespace: true
-    metricRelabelings:
-      - sourceLabels: [ "__name__" ]
-        separator: ";"
-        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
-        action: keep
-      - sourceLabels: [ "__name__", "phase" ]
-        separator: ";"
-        regex: "kube_pod_status_phase;(Succeeded|Failed)"
-        action: drop
-      - sourceLabels: [ "node" ]
-        targetLabel: "nodename"
-        regex: "(.*)"
-        action: replace
-      - sourceLabels: [ "label_node_group_name" ]
-        action: replace
-        regex: "(.+)"
-        targetLabel: "label_node_pool_name"
+    # NOTE: do not add `metricRelabelings` here. It is not a key this subchart, the
+    # parent prometheus chart, or any other vendored chart reads. The filter that
+    # actually runs is the kube-state-metrics scrape job's metric_relabel_configs in
+    # prometheus.extraScrapeConfigs above.
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
