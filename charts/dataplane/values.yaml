@@ -2447,7 +2447,30 @@ ingress-nginx:
   enabled: false
   fullnameOverride: "dataplane-nginx"
 
+  # Confine the controller to the release namespace. Unscoped, it runs behind a
+  # ClusterRoleBinding granting cluster-wide read on secrets, configmaps, pods,
+  # endpoints and nodes — secrets because TLS certificates are referenced from
+  # Ingress objects anywhere in the cluster. Scoped, that becomes a namespaced Role,
+  # and the only cluster-scoped object left is the IngressClass, which has no
+  # namespaced form.
+  #
+  # The cost: an Ingress created outside the release namespace is never reconciled,
+  # with no error and no warning anywhere — the controller simply does not see it.
+  # Both Ingresses this chart creates are release-namespace-pinned, so nothing here
+  # trips over it. If you need to serve an Ingress from another namespace, set both
+  # of these back to false; setting only one is caught below.
+  #
+  # rbac.scope and controller.scope.enabled must always move together. The subchart
+  # errors on rbac.scope without controller.scope.enabled, but not on the reverse:
+  # controller.scope.enabled alone gives a controller confined by --watch-namespace
+  # that still holds the full cluster-wide grant, silently. templates/ingress-nginx/
+  # validate.yaml closes that side.
+  rbac:
+    scope: true
+
   controller:
+    scope:
+      enabled: true
     service:
       # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
       # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
