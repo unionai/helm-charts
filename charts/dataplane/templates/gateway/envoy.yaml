@@ -175,6 +175,11 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /tmp/config
+            {{- if .Values.gateway.publicLoadBalancer.enabled }}
+            - name: apps-tls
+              mountPath: /etc/apps-tls
+              readOnly: true
+            {{- end }}
       {{- with (merge (dict) ($comp.nodeSelector | default dict) (($.Values.scheduling | default dict).nodeSelector | default dict)) }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
@@ -193,6 +198,13 @@ spec:
         - name: config-volume
           configMap:
             name: {{ include "gateway.fullname" . }}-envoy-bootstrap
+        {{- if .Values.gateway.publicLoadBalancer.enabled }}
+        # Apps wildcard TLS cert (issued by the DP letsencrypt ClusterIssuer),
+        # served by the apps_https:8443 static listener in the bootstrap.
+        - name: apps-tls
+          secret:
+            secretName: dataplane-apps-letsencrypt-tls
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service
