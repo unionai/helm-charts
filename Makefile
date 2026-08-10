@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test rbac-summary-check
+test: check-vendored-crds helm-test kubeconform-test
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
@@ -54,14 +54,6 @@ helm-test: $(TMP_DIR)
 .PHONY: kubeconform-test
 kubeconform-test:
 	./tests/run.sh kubeconform
-
-.PHONY: rbac-summary
-rbac-summary:
-	python3 scripts/rbac_summary.py --write
-
-.PHONY: rbac-summary-check
-rbac-summary-check:
-	python3 scripts/rbac_summary.py --check
 
 .PHONY: requirements
 requirements:

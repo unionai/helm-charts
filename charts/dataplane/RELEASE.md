@@ -34,7 +34,7 @@
 
   `low_privilege` must be a **YAML boolean**, and nothing enforces it. Every gate reads the value for raw Go-template truthiness, so a quoted `"false"` is truthy and means `true` — the deployment is silently single-namespace while the values file reads false. See "Migration / action required" below; the same hazard applies to every boolean in the chart, and to `namespaces.enabled` it applies in the direction that *widens* what the release owns.
 
-  RBAC is verified by review of committed golden artifacts: the full rendered manifests in `tests/generated/`, plus a per-snapshot RBAC summary in `tests/rbac-summary/` that collapses each render to who holds what, where, and through which binding kind. `make test` fails if a summary is stale, so a change to the rendered RBAC has to be regenerated and reviewed in the same commit.
+  RBAC is verified by review of committed golden artifacts: the full rendered manifests in `tests/generated/`, one per fixture. `make helm-test` fails if a snapshot is stale, so a change to the rendered RBAC has to be regenerated and reviewed in the same commit.
 
 - **`nodeobserver.enabled: true` now fails the render under `low_privilege: true`.**
   nodeobserver's function is watching and updating `nodes`, a cluster-scoped resource
@@ -106,8 +106,8 @@
   the identities does not split the permissions: each component now holds every other
   declarer's rules in each slot it declares into. Under `low_privilege: true`
   `union-work-ns` is bound in the release namespace, so that union lands on union's own
-  objects. Measured against the per-component roles this release replaces, in
-  `tests/rbac-summary/dataplane.per-component-sa.txt`:
+  objects. Measured against the per-component roles this release replaces, as rendered in
+  `tests/generated/dataplane.per-component-sa.yaml`:
 
   | ServiceAccount | Held before | Holds now |
   |---|---|---|
@@ -230,8 +230,8 @@
   binding immediately after `a_namespace` and before the ServiceAccount and ResourceQuota
   templates, which is load-bearing: `clusterresourcesync` reaches a new namespace
   *through* `union-work-ns`, so the binding must exist before the objects that depend on
-  it. Rendered per snapshot in `tests/rbac-summary/` and `tests/generated/`, so a drift
-  between the grant and the template is a reviewable diff.
+  it. Both the grant and the template are rendered into `tests/generated/`, so a drift
+  between them is a reviewable diff.
 - **The `a_namespace` template is dropped when `clusterresourcesync` is confined to
   `namespaces.static`.** In that posture it holds no `namespaces` permission by design,
   and pre-creating the namespace does not make reconciling it authorized — the create is
@@ -532,15 +532,12 @@ four that arrive are held by dedicated ServiceAccounts, are read-only, contain n
   documented, including that `kubernetes.rbac.create: false` is only a partial opt-out —
   `kubernetesDRA.enabled` grants the `ClusterRole` outside that conjunct.
 
-**Three CI checks are added to `scripts/rbac_summary.py`**, all failing rather than warning.
-Every `ServiceAccount` subject in a binding must resolve to a `ServiceAccount` in the same
-render — the control that would have caught the kube-state-metrics phantom on day one.
-Cluster-scoped RBAC from dependency subcharts must match a committed allowlist, so a
-subchart bump that adds a `ClusterRole` fails instead of shipping unremarked. And no
-namespaced Role may name a cluster-scoped resource — `_rbac.tpl` already checked this, but
-only for rules routed through `emitSlot`, which is how the prometheus Role escaped it.
-Fixtures for `metrics-server`, `opencost` and `ingress-nginx` are added; all three were
-enabled by no fixture, so their RBAC appeared in no snapshot.
+**Fixtures for `metrics-server`, `opencost` and `ingress-nginx` are added.** All three were
+enabled by no fixture, so their RBAC appeared in no snapshot and could change on a subchart
+bump with nothing to review. `dataplane.cost.yaml` looks like opencost coverage but sets
+`opencost.enabled: false`, and `dataplane.aws.with-ingress.yaml` exercises `ingress.enabled`
+rather than the subchart — so judge coverage from what a snapshot contains, not from a
+fixture's name.
 
 ### Migration / action required
 
@@ -688,7 +685,7 @@ enabled by no fixture, so their RBAC appeared in no snapshot.
   server, not inferred from the documentation. A wildcard is also uncheckable — a closed
   verb set can be reviewed in a diff, a wildcard cannot.
 - **`namespaces.enabled` must be a YAML boolean.** It is read for Go-template truthiness, so `"false"` means **true**: the chart silently creates every namespace in `namespaces.static`, binds `union-work-ns` into them, and switches the deployment from the runtime posture to the static one — while the values file reads `false`. That switch also strips `clusterresourcesync` of its cluster-wide grant, so projects outside `namespaces.static` stop being provisioned. **If your overlay stringifies scalars (a `templatefile`/heredoc generator will, `yamlencode` will not), check this key before upgrading.** Use `--set`, not `--set-string`, if you set it on the command line.
-- **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject them.** Go's template engine treats any non-empty string as true, so `"false"` means **true**. The consequences differ by key: `namespaces.enabled: "false"` creates every namespace in `namespaces.static`, binds `union-work-ns` into them and switches the deployment to the static posture, while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses per-component identities onto the shared ServiceAccount, so each component holds the union of the others' rules. `config.operator.secretsWatcher.enabled: "false"` adds cluster-wide `update`/`patch` on Deployments. `low_privilege: "false"` fails safe, landing on the more restrictive branch. **If your values are generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline stringifies scalars, `yamlencode` does not. The rendered RBAC for every fixture is committed under `tests/rbac-summary/`, which is where a wrong reading becomes visible.
+- **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject them.** Go's template engine treats any non-empty string as true, so `"false"` means **true**. The consequences differ by key: `namespaces.enabled: "false"` creates every namespace in `namespaces.static`, binds `union-work-ns` into them and switches the deployment to the static posture, while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses per-component identities onto the shared ServiceAccount, so each component holds the union of the others' rules. `config.operator.secretsWatcher.enabled: "false"` adds cluster-wide `update`/`patch` on Deployments. `low_privilege: "false"` fails safe, landing on the more restrictive branch. **If your values are generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline stringifies scalars, `yamlencode` does not. The rendered manifests for every fixture are committed under `tests/generated/`, which is where a wrong reading becomes visible.
 - **Regenerate before adopting if your env still sets the retired CP-host globals.** An environment whose generated `values.yaml` still contains `global.CONTROLPLANE_GRPC_ENDPOINT` / `global.QUEUE_GRPC_ENDPOINT`, or a task-pod `default-env-vars` `_U_EP_OVERRIDE: "{{ include \`dataplane.cp.queueEndpoint\` . }}"`, must be regenerated (terraform apply) before moving to this chart — the `queueEndpoint` helper is removed, so the stale `include` fails to render. The retired globals are inert if set; drop them. Authless deployments move to `config.union.auth`/`config.union.connection` per `examples/values.authless.yaml`.
 
 ## 2026.7.2

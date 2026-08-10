@@ -458,9 +458,8 @@ Both are generated — there is nothing to add to `clusterresourcesync.additiona
 by hand, and doing so would duplicate them. The `ab_` key is deliberate: the binding must
 be applied *before* the ServiceAccount and ResourceQuota templates, because
 `clusterresourcesync` itself reaches a new namespace through `union-work-ns`. The
-committed snapshots show both halves — the `bind` grant in `tests/rbac-summary/`, the
-generated template in `tests/generated/` — so a drift between them appears as a
-reviewable diff.
+committed snapshots in `tests/generated/` show both halves — the `bind` grant and the
+generated template — so a drift between them appears as a reviewable diff.
 
 **Image-pull secret mirroring works in this posture**, and is enabled by default
 (`config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: true`). The
@@ -912,8 +911,10 @@ Two components have widening hooks that are easy to trip:
   `kubernetes.rbac.create: false` gates only the first two — `kubernetesDRA.enabled` grants
   the `ClusterRole` on its own, so it is not a mitigation.
 
-Rendered RBAC is snapshotted per fixture in `tests/rbac-summary/` and checked in CI. A
-subchart bump that widens a grant shows up there as a reviewable diff.
+Rendered RBAC is snapshotted per fixture in `tests/generated/`, and `make helm-test` fails
+if a snapshot is stale. A subchart bump that widens a grant shows up there as a reviewable
+diff — but nothing asserts that the grants match the dispositions above, so the table is
+kept honest by review rather than by a check.
 
 ---
 
