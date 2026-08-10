@@ -422,10 +422,11 @@ and memory numbers with no object contents, and the rule is `list` with no `watc
   each cycle and collects nothing; startup is unaffected and the component is off by
   default. The `executor`'s equivalent sweep *is* granted: its list is cache-backed, so
   withholding it leaves a permanently blocked goroutine and a 403 reflector loop rather
-  than a clean per-round error — and at the default `commonServiceAccount.enabled: true`
-  the shared identity already holds cluster-wide `namespaces` reads from the FluentBit
-  subchart, so withholding bought no privilege reduction at defaults while costing the
-  sweep under the *more* hardened `commonServiceAccount.enabled: false`.
+  than a clean per-round error. (When that trade was made, the shared identity already
+  held cluster-wide `namespaces` reads from the FluentBit subchart, so granting the
+  executor's sweep cost nothing at defaults. FluentBit's `ClusterRole` is removed in this
+  release — see "Third-party subchart RBAC" below — so the grant now stands on the
+  cache-vs-direct-client difference alone, which is still the reason for it.)
 - Cluster-wide `configmaps` for the `operator`. See the connector-runtime app known issue
   under Migration / action required — the read is release-namespace-targeted and reaches
   cluster scope only because the manager's cache is unscoped, which is a defect in the
@@ -433,7 +434,144 @@ and memory numbers with no object contents, and the rule is `list` with no `watc
 - The task-plugin CRDs (Spark, Dask, Kubeflow, and Ray beyond the proxy's dashboard
   lookup). No enabled plugin watches them.
 
+### Third-party subchart RBAC
+
+Everything above concerns union-authored RBAC. This release settles the dependency
+subcharts too, and writes the intended disposition of each one into `values.yaml` and
+`README.md` — the artifact that was missing, and the reason the same questions kept being
+re-derived and answered differently.
+
+**The rule, stated so it stops being re-derived:** `low_privilege: true` means
+union-authored components hold namespaced Roles in a single namespace. It has never meant
+the chart emits zero `ClusterRole`s, and it cannot — `kube_node_*`, `kube_namespace_labels`
+and the cAdvisor `container_*` families are cluster-scoped by nature and are among the
+metrics this chart exists to ship. Third-party observability components are allowed
+cluster-scoped **read**; they are not allowed writes, `secrets`, or any rule that does not
+trace to a metric or feature in use.
+
+**This increases cluster-scoped RBAC objects, from 2 to 4 on AWS/Azure and from 0 to 4 on
+GCP, and that is the point.** The metrics in question do not work in *any* posture today:
+
+- **kube-state-metrics has held zero permissions since 2026-05-02.** Its RoleBinding named
+  `<release>-prometheus-kube-state-metrics`; the ServiceAccount is
+  `<release>-kube-state-metrics`. The `-prometheus-` infix is release-name-independent, so
+  it was wrong for every install. No `kube_*` series have been produced by this instance in
+  three months.
+- **prometheus's scrape permissions were a `ClusterRole` copied verbatim into a `Role`.**
+  `nodes`, `nodes/proxy` and `nodes/metrics` are cluster-scoped, so the API server accepted
+  the rule and never matched it: `kubernetes-cadvisor` has been getting `403`s, and
+  `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes` were never
+  collected, though the dashboards reading them shipped. At `low_privilege: false` the
+  template did not render at all (UN-29), so prometheus held nothing by a second,
+  independent mechanism.
+
+What changes is the character of the grants rather than their number. The two that go away
+were held by `union-system`, shared with six other workloads, and justified by nothing. The
+four that arrive are held by dedicated ServiceAccounts, are read-only, contain no
+`secrets`, and are written by the subcharts rather than by us.
+
+- **prometheus: `rbac.create: true`, and `templates/prometheus/rbac.yaml` is deleted.** The
+  hand-written Role was a copy of the upstream `ClusterRole` with the kind changed, so
+  reverting is strictly narrower than what the chart *intended*: 4 rules over 11 resources,
+  all read-only, replacing 31 rules over 32 resources that included `secrets`. This also
+  restores `nonResourceURLs: ["/metrics"]`, which a namespaced Role cannot carry, and fixes
+  UN-29 by construction.
+
+  **The `ClusterRole` name is a fixed string, so one dataplane per cluster is the supported
+  model.** A second install in another namespace fails on Helm ownership rather than
+  silently adopting the first release's binding. The subchart emits
+  `clusterRoleNameOverride` literally, so the namespace cannot be worked into it from the
+  chart; the GitOps layer can override it if a cluster ever needs two.
+
+- **Nine upstream scrape jobs are removed** — `kubernetes-apiservers`, `kubernetes-nodes`,
+  `kubernetes-nodes-cadvisor`, `kubernetes-service-endpoints`(`-slow`),
+  `kubernetes-services`, `kubernetes-pods`(`-slow`) and `prometheus-pushgateway`. They
+  scrape every pod, service, endpoint and node in the cluster and produce nothing the
+  metrics gateway admits or any dashboard reads. They were inert only because prometheus
+  held no cluster-scoped read; restoring the `ClusterRole` without removing them would have
+  switched cluster-wide scraping on.
+
+- **`gpu-metrics` now discovers in the release namespace.** Its selector read
+  `dcgm-exporter.namespace`, defaulting to `kube-system`, but the subchart deploys into the
+  release namespace and reads `namespaceOverride` — so the job has been pointed where its
+  target never was. The now-inert `dcgm-exporter.namespace` key is removed. A
+  separately-managed dcgm-exporter elsewhere in the cluster is not scraped.
+
+- **kube-state-metrics uses its own RBAC**, with `rbac.useClusterRole: true` and **6 of 28
+  collectors** — `pods`, `nodes`, `namespaces`, `deployments`, `daemonsets`,
+  `resourcequotas`, exactly those feeding gateway-admitted series, all `list`/`watch`.
+  `useClusterRole` is required, not a preference: `nodes` and `namespaces` are
+  cluster-scoped. Dropping the other 22 removes `secrets` from the pooled Role, which the
+  prometheus server had been inheriting because both ServiceAccounts were bound to it. The
+  dead `prometheus.kube-state-metrics.metricRelabelings` key is removed — no chart in the
+  dependency tree reads it; the filter that runs is the scrape job's
+  `metric_relabel_configs`.
+
+- **FluentBit: `rbac.create: false`.** The subchart's cluster-wide `get`/`list`/`watch` on
+  `namespaces` and `pods` serves a `[FILTER] Name kubernetes` stanza, and this chart has
+  never configured one — `existingConfigMap` replaces the subchart's config, and the union
+  config's filter section renders `fluentbit.additionalFilters` and nothing else. Metadata
+  comes from the log file path and the resulting tag is the object key. `git log -S'FILTER'`
+  over the whole history of the FluentBit templates returns nothing, so this has held since
+  persisted logging shipped in April 2025. This removes the only third-party cluster-scoped
+  RBAC in a default AWS/Azure install.
+
+- **ingress-nginx is scoped to the release namespace by default** (`rbac.scope: true` +
+  `controller.scope.enabled: true`), replacing a cluster-wide reader of `secrets`,
+  `configmaps`, `pods`, `endpoints` and `nodes` with a namespaced Role. See Migration below.
+
+- **`opencost`, `metrics-server` and `kube-prometheus-stack` are accepted as they are**, and
+  documented rather than changed. None has a values lever that helps: opencost prices the
+  whole cluster; metrics-server is structurally cluster-scoped and additionally writes a
+  RoleBinding into `kube-system` (a hardcoded literal — so a namespace-confined operator
+  gets a `403` from `helm upgrade`); kube-prometheus-stack's operator holds cluster-wide
+  `secrets: '*'` and is off in every values layer and deprecating.
+
+- **`dcgm-exporter` needs nothing** and gets nothing. Its three widening flags
+  (`kubernetes.enablePodLabels`, `kubernetes.enablePodUID`, `kubernetesDRA.enabled`) are
+  documented, including that `kubernetes.rbac.create: false` is only a partial opt-out —
+  `kubernetesDRA.enabled` grants the `ClusterRole` outside that conjunct.
+
+**Three CI checks are added to `scripts/rbac_summary.py`**, all failing rather than warning.
+Every `ServiceAccount` subject in a binding must resolve to a `ServiceAccount` in the same
+render — the control that would have caught the kube-state-metrics phantom on day one.
+Cluster-scoped RBAC from dependency subcharts must match a committed allowlist, so a
+subchart bump that adds a `ClusterRole` fails instead of shipping unremarked. And no
+namespaced Role may name a cluster-scoped resource — `_rbac.tpl` already checked this, but
+only for rules routed through `emitSlot`, which is how the prometheus Role escaped it.
+Fixtures for `metrics-server`, `opencost` and `ingress-nginx` are added; all three were
+enabled by no fixture, so their RBAC appeared in no snapshot.
+
 ### Migration / action required
+
+- **`ingress-nginx` now watches only the release namespace, and an Ingress outside it stops
+  being reconciled — with no error and no warning.** The controller simply does not see it.
+  Both Ingresses this chart creates are release-namespace-pinned, so a default install is
+  unaffected; if you serve an Ingress from another namespace through this controller, set
+  both `ingress-nginx.rbac.scope: false` and `ingress-nginx.controller.scope.enabled: false`
+  before upgrading. The two keys must always move together: the subchart already errors on
+  `rbac.scope` without `controller.scope.enabled`, and the chart now errors on the reverse,
+  which was the silent one — a controller confined by `--watch-namespace` while still
+  holding the full cluster-wide grant.
+
+- **One dataplane per cluster, if you were not already.** prometheus's `ClusterRole` and
+  `ClusterRoleBinding` are named `union-operator-prometheus`, a fixed string with no
+  namespace in it. Installing a second dataplane release into another namespace of the same
+  cluster now fails on Helm ownership — loudly, at install, rather than by one release
+  quietly taking over the other's binding. If you need two, override
+  `prometheus.server.clusterRoleNameOverride` per install.
+
+- **Removed values keys.** `prometheus.kube-state-metrics.metricRelabelings` and
+  `dcgm-exporter.namespace`. Neither had a consumer; setting them changed nothing, and they
+  are now ignored rather than silently ignored. If an overlay in your environment sets
+  `dcgm-exporter.namespace` to scrape a dcgm-exporter outside the release namespace, that
+  job no longer matches — it now discovers in the release namespace only.
+
+- **Metrics that start flowing.** `kube_*` from kube-state-metrics and `container_*` from
+  cAdvisor have not been collected on a selfhosted dataplane. They will be after this
+  upgrade, so expect the dataplane's remote_write volume to rise to what the dashboards
+  reading them always assumed. Nine cluster-wide scrape jobs go away in the same release,
+  which cuts the other way.
 
 - **KNOWN ISSUE — connector-runtime apps report `ACTIVE` but their connector endpoint is
   never registered, at `low_privilege: false`.** The operator reads the connector
