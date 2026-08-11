@@ -31,6 +31,13 @@ emission order downstream.
 {{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
 {{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
 {{- end -}}
+{{- if include "appServing.enabled" . -}}
+{{- $components = append $components (dict "name" "knative-controller" "sa" (include "knative.controller.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-webhook" "sa" (include "knative.webhook.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-autoscaler" "sa" (include "knative.autoscaler.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-activator" "sa" (include "knative.activator.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-kourier" "sa" (include "knative.kourier.serviceAccountName" .)) -}}
+{{- end -}}
 {{- toYaml $components -}}
 {{- end -}}
 
