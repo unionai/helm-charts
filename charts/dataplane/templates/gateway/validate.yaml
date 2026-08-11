@@ -1,0 +1,23 @@
+{{- if include "appServing.enabled" . }}
+{{/*
+This chart does not support Knative's TLS certificate provisioning: the
+cert-manager reconciler and its RBAC are removed. Knative registers that
+reconciler when any of these six network settings is on -- four distinct
+knobs (external-domain-tls, cluster-local-domain-tls, system-internal-tls,
+namespace-wildcard-cert-selector) plus two legacy aliases (auto-tls,
+internal-encryption) that map onto them -- and then hard-fails at startup
+if the cert-manager CRDs are absent. Setting one here would otherwise be
+silently inert, so fail the render naming the key. TLS terminates at the
+Envoy gateway in this chart.
+*/}}
+{{- $tlsKeys := list "external-domain-tls" "cluster-local-domain-tls" "system-internal-tls" "namespace-wildcard-cert-selector" "auto-tls" "internal-encryption" -}}
+{{- $network := ((.Values.gateway).config).network | default dict -}}
+{{- range $key := $tlsKeys }}
+{{- $v := index $network $key }}
+{{- if $v }}
+{{- if not (or (eq (toString $v) "Disabled") (eq (toString $v) "false")) }}
+{{- fail (printf "gateway.config.network.%s is set to %q, but this chart does not ship Knative TLS certificate provisioning: the cert-manager reconciler's RBAC and the config-certmanager ConfigMap are removed. TLS terminates at the Envoy gateway instead. Remove this setting." $key (toString $v)) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}
