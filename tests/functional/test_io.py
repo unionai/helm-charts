@@ -1,36 +1,51 @@
-"""Outputs + log-persistence checks against the gating `hello` run."""
+"""Outputs + log-persistence checks, each against its own `simple` run."""
 
 from __future__ import annotations
 
 import asyncio
 import os
 import subprocess
+import uuid
 
+import flyte_ops
 import pytest
 
 
-def test_io(flyte_ctx, hello_run):
-    """Run.outputs is non-None after the hello run completes."""
+def test_io(flyte_ctx):
+    """Run.outputs is non-None after a simple run completes."""
 
     async def _check() -> None:
         from flyte.remote import Run
+        from simple import simple
 
-        run = await Run.get.aio(name=hello_run)  # type: ignore
-        assert run.outputs is not None, f"no outputs for {hello_run}"
+        nonce = str(uuid.uuid4())
+        run = await flyte_ops.submit_with_retry(simple, "verify_io", nonce=nonce)
+        await flyte_ops.assert_succeeded(run, "verify_io")
+        got = await Run.get.aio(name=run.name)  # type: ignore
+        assert got.outputs is not None, f"no outputs for {run.name}"
 
     asyncio.run(_check())
 
 
 @pytest.mark.logs
-def test_logs(flyte_ctx, hello_run):
-    """Best-effort: the run's logs persist and survive pod deletion.
+def test_logs(flyte_ctx):
+    """Best-effort: a run's logs persist and survive pod deletion.
 
     Logs reach the backend via an async, batched sync whose latency is variable
     and can exceed our wait, so a hard timing gate only flakes CI. Best-effort:
     poll up to _LOG_SYNC_TIMEOUT, WARN (not fail) on timeout. Task pods live in the
     RELEASE namespace (low_privilege), not "{project}-development".
     """
-    asyncio.run(_verify_logs(hello_run))
+
+    async def _run() -> None:
+        from simple import simple
+
+        nonce = str(uuid.uuid4())
+        run = await flyte_ops.submit_with_retry(simple, "verify_logs", nonce=nonce)
+        await flyte_ops.assert_succeeded(run, "verify_logs")
+        await _verify_logs(run.name)
+
+    asyncio.run(_run())
 
 
 async def _verify_logs(run_name: str) -> None:

@@ -65,7 +65,7 @@ kubeconform-test:
 
 .PHONY: requirements
 requirements:
-	@pip-sync
+	uv sync
 
 # Bump all lockstep charts to the next version. For a pre-release of the next
 # version, pass PRERELEASE=alpha or PRERELEASE=beta, e.g.
@@ -76,27 +76,27 @@ _PRERELEASE_FLAG = $(if $(PRERELEASE),--prerelease $(PRERELEASE),)
 
 .PHONY: gen_version_bump
 gen_version_bump: requirements
-	invoke builder.version-bumper --file charts/controlplane/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/dataplane/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/controlplane/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/dataplane/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
-	invoke builder.release --chart dataplane
+	uv run invoke builder.release --chart dataplane
 
 .PHONY: gen_dataplane_crds_release
 gen_dataplane_crds_release: requirements
-	invoke builder.release --chart dataplane-crds
+	uv run invoke builder.release --chart dataplane-crds
 
 .PHONY: gen_knative_migration_release
 gen_knative_migration_release: requirements
-	invoke builder.release --chart knative-migration
+	uv run invoke builder.release --chart knative-migration
 
 .PHONY: gen_sandbox_release
 gen_sandbox_release: requirements
-	invoke builder.release --chart sandbox
+	uv run invoke builder.release --chart sandbox
 
 .PHONY: release-notes-dry-run
 release-notes-dry-run:
