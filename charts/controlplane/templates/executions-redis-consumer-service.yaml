@@ -1,0 +1,24 @@
+{{- if (index .Values "controlplane" | default dict).enabled }}
+{{- $executionsConfig := index .Values.services "executions" | default dict }}
+{{- $consumerConfig := $executionsConfig.redisConsumer | default dict }}
+{{- if and $executionsConfig $consumerConfig.enabled (not $executionsConfig.disabled) }}
+{{- $executionsService := dict "config" $executionsConfig "key" "executions" "name" "executions" "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+{{- $consumerService := dict "config" $consumerConfig "key" "redis-consumer" "name" "redis-consumer" "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "unionai.fullname" $consumerService }}
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    {{- include "unionai.labels" $consumerService | nindent 4 }}
+spec:
+  type: {{ (include "unionai.service" $consumerService | fromYaml).type | default "ClusterIP" }}
+  ports:
+    - name: debug
+      port: {{ (include "unionai.service" $consumerService | fromYaml).debugport | default 10254 }}
+      protocol: TCP
+      targetPort: debug
+  selector:
+    {{- include "unionai.selectorLabels" $consumerService | nindent 4 }}
+{{- end }}
+{{- end }}
