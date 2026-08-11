@@ -130,7 +130,7 @@ gateway:
       replicas: 2
     kourier-controller:
       affinity: {}
-    # activator, autoscaler, autoscaler-hpa, controller, webhook
+    # activator, autoscaler, controller, webhook
 ```
 
 ---
