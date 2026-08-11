@@ -1,12 +1,18 @@
 # dataplane — Release Notes
 
-## 2026.7.3 WIP
+## 2026.8.0
+
+Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays
+`2026.7.2`, so the data-plane images are unchanged. This is a **minor** bump rather than
+a patch because it removes the legacy executor and retires several globals — see
+Migration below.
 
 ### Removed: executor
 
-The legacy executor Deployment has been removed, completing the deprecation announced 2026-06-30.
+The legacy executor Deployment has been removed ([#501](https://github.com/unionai/helm-charts/pull/501)),
+completing the deprecation announced 2026-06-30.
 Leaseworker is the only execution path; the control-plane chart drops the matching queue service in its
-own `2026.7.xxx`.
+own `2026.8.0`.
 
 - `templates/nodeexecutor/` deleted (Deployment/ConfigMap/Service/ServiceAccount)
   along with the `executor.*` helpers and the operator's executor heartbeat entry.
@@ -40,10 +46,60 @@ own `2026.7.xxx`.
 
   **Overlay (`values.{aws,gcp,azure}.yaml`) defaults removed:** the admin `clientId` restatements; the monitoring + `enableMultiContainer` defaults; `config.union.auth.enable`, `clusterresourcesync.…auth`, and catalog-cache `use-admin-auth` (the cross-cloud conflict above); `secrets.admin`; `serving.auth.enabled`; `dcgm-exporter.enabled` (the overlays keep only their cloud-specific node affinity); `controlplaneNamespace`; `ingress` / `ingress-nginx` enablement; the task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker and executor already inject these from `config.union.connection`); and the dead `billableUsageCollector` / `singleTenantOrgID` keys.
 
-- **Control-plane host: one global instead of four.** The DP→CP destination is now a single host global, `global.CONTROLPLANE_HOST` (moved to the top of the globals — it's the first thing to configure). Everything derives from it: the gRPC endpoint and the app-callback URL. Removed:
+- **Control-plane host: one global instead of four** ([#499](https://github.com/unionai/helm-charts/pull/499)). The DP→CP destination is now a single host global, `global.CONTROLPLANE_HOST` (moved to the top of the globals — it's the first thing to configure). Everything derives from it: the gRPC endpoint and the app-callback URL. Removed:
   - **`global.CONTROLPLANE_GRPC_ENDPOINT`** — `dataplane.cp.endpoint` derives `dns:///<host>` from `CONTROLPLANE_HOST`. The `:443` port is omitted; grpc-go's DNS resolver and Connect/HTTPS both default to 443.
   - **`global.QUEUE_GRPC_ENDPOINT`** and the **`dataplane.cp.queueEndpoint`** helper — the task-pod endpoint is injected by the leaseworker/executor from `config.union.connection`; there is no separate queue global. Authless / direct-service routing (skip nginx + OAuth, dial the in-cluster Service on `:80`) is configured explicitly via `config.union.auth` + `config.union.connection`, documented in the new **`examples/values.authless.yaml`**.
   - **`global.UNION_CONTROL_PLANE_HOST`** and the top-level **`.Values.host`** are now **DEPRECATED** — both are still honored as fallbacks (precedence `CONTROLPLANE_HOST` > `.Values.host` > `UNION_CONTROL_PLANE_HOST`) but should be migrated to `CONTROLPLANE_HOST`; they will be removed in a future release. `.Values.host` is the pre-globals top-level knob; no terraform-generated env sets it. The intracluster examples are simplified to just set `CONTROLPLANE_HOST`.
+
+### Fully qualified image repository paths
+
+([#509](https://github.com/unionai/helm-charts/pull/509), FAB-438.)
+Every image the chart renders now spells out its registry host. An unqualified
+repository (`bitnami/kubectl`) resolves against the implicit `docker.io/`
+default — and one with no slash at all (`busybox`) against `docker.io/library/`.
+Clusters that run an allowed-registry admission policy, or that cannot reach
+Docker Hub, reject those pulls with `ErrImagePull`.
+
+- **`image.kubectl`** — now `docker.io/alpine/k8s:1.32.3`, was `bitnami/kubectl:latest`.
+  Two changes in one: the registry host is explicit, and the image moves off
+  `bitnami/kubectl`, from which upstream has pruned every version tag — only
+  `latest` remains, so it could not be pinned. `alpine/k8s` is what
+  `flytepropellerwebhook.legacyWebhookCleanup` already used, so both Helm hooks
+  now share one image. Override as usual if you mirror internally.
+- **`flytepropellerwebhook.legacyWebhookCleanup.image.repository`** — now
+  `docker.io/alpine/k8s`.
+- **`fluentbit.testFramework.image.repository`** — new override, pinning the
+  subchart's bare `busybox` default to `docker.io/library/busybox`. Rendered
+  only by `helm test`. The `library/` namespace is spelled out because that is
+  where official images actually live on Docker Hub; a bare `busybox` relies on
+  the client to infer it.
+
+A `make check-image-paths` gate (wired into `make test` and the `image-paths` CI
+job) now fails the build on any unqualified reference, in chart values or in
+rendered subchart output.
+
+### New / improved
+
+- **`apps.enabled` toggle for app serving components** ([#506](https://github.com/unionai/helm-charts/pull/506)).
+  `apps.enabled` supersedes `serving.enabled`; a single helper resolves both with
+  precedence `apps.enabled` > `serving.enabled` > `true`. Under zero trust,
+  `apps.enabled: false` now also drops the vendored knative components (activator,
+  autoscaler, …), which `serving.enabled: false` left rendered. `serving.enabled`
+  keeps working and renders a deprecation notice at the top of the operator ConfigMap
+  only when explicitly set. **No rendered-output change at default values** — migrate
+  overlays at your convenience.
+- **Configurable kubectl image for the Helm hook Jobs** ([#467](https://github.com/unionai/helm-charts/pull/467)).
+  The pre-upgrade and pre-delete hook jobs now honor `image.kubectl` (repository, tag,
+  pull policy, imagePullSecrets) instead of hardcoding the image — required for
+  air-gapped clusters that mirror images internally.
+- **`taskPodTemplate.workingDir`** ([#468](https://github.com/unionai/helm-charts/pull/468)).
+  Sets the working directory for task pods (e.g. `/tmp`, for read-only-root-filesystem
+  images) directly, instead of overriding the whole pod template to change one field.
+- **Documented the embedded-secret init container image override** ([#507](https://github.com/unionai/helm-charts/pull/507)).
+  A commented example under `config.core.webhook.embeddedSecretManagerConfig` shows how
+  to override `fileMountInitContainer.image`, whose upstream default
+  (`public.ecr.aws/docker/library/busybox:latest`) air-gapped clusters cannot reach.
+  Comment-only; no rendered-output change.
 
 ### Migration / action required
 

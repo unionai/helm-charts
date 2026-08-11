@@ -1,4 +1,4 @@
-name: helm
+name: Static Checks
 on:
   pull_request:
   push:
@@ -6,6 +6,22 @@ on:
       - main
 
 jobs:
+  format:
+    # Gate: every Python file is ruff-formatted and imports are sorted (ruff
+    # replaces black + isort). Mirrors the .pre-commit-config.yaml ruff hooks.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Check formatting and imports
+        run: |
+          uv sync --only-group dev
+          uv run --no-sync ruff format --check .
+          uv run --no-sync ruff check .
   release-notes:
     # Gate: a chart `version:` bump must ship a matching `## <version>` section
     # in that chart's RELEASE.md. Only meaningful on PRs (needs a base ref).
@@ -57,6 +73,20 @@ jobs:
         uses: yokawasa/action-setup-kube-tools@v0.11.2
       - name: Run kubeconform
         run: make kubeconform-test
+  image-paths:
+    # Gate on fully qualified image references (registry host spelled out).
+    # An unqualified repository resolves against the implicit docker.io
+    # default, which clusters running an allowed-registry admission policy
+    # reject with ErrImagePull. Reads tests/generated/, so no helm or network
+    # is needed; the `validate` job is what keeps that corpus honest.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check image paths
+        run: make check-image-paths
   vendored-crds:
     # Drift gate for the vendored CRDs under crds/<name>/. Each
     # scripts/check.sh re-pulls its upstream chart and diffs the rendered

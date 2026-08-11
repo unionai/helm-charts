@@ -39,9 +39,7 @@ class VersionFetcher(object):
 
     def get_calver(self, version: str, next: bool, prerelease: str = None) -> str:
         if prerelease is not None and prerelease not in _CHANNELS:
-            raise Exception(
-                f"prerelease must be 'alpha' or 'beta', got {prerelease!r}"
-            )
+            raise Exception(f"prerelease must be 'alpha' or 'beta', got {prerelease!r}")
 
         base, channel, num = self.parse(version)
 
@@ -67,9 +65,7 @@ class VersionFetcher(object):
         if _CHANNELS[prerelease] > _CHANNELS[channel]:
             # Promote forward (alpha -> beta) on the same base; reset the counter.
             return f"{base}-{prerelease}.0"
-        raise Exception(
-            f"cannot move from {channel} back to {prerelease} on {base}"
-        )
+        raise Exception(f"cannot move from {channel} back to {prerelease} on {base}")
 
     def parse(self, version: str):
         """Split a version into (base, channel, num).

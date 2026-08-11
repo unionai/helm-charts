@@ -2,6 +2,19 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.8.0
+
+Lockstep `version` bump with the `controlplane` / `dataplane` charts (`2026.7.2` →
+`2026.8.0`); `appVersion` stays at the migration tool's own `0.1.0`. One values change.
+
+### Configuration changes
+
+- **Fully qualified image repository path** ([#509](https://github.com/unionai/helm-charts/pull/509), FAB-438). `image.repository` is now
+  `docker.io/alpine/kubectl` (was `alpine/kubectl`). An unqualified repository
+  resolves against the implicit `docker.io/` default, which clusters running an
+  allowed-registry admission policy reject with `ErrImagePull`. Same image, same
+  tag — only the name is now explicit.
+
 ## 2026.7.2
 
 Lockstep `version` bump only. No migration-tool or template changes.

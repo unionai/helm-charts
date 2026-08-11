@@ -1474,7 +1474,7 @@ services:
 #   2026-07-31 — complete switch-over. Chart default flips to `enabled: true`;
 #                every deployment routes CreateRun through the v2 actions
 #                service and rejects sub-2.0.4 SDK CreateRun.
-#   2026-07-28 — queue service templates removed from this chart (2026.7.3);
+#   2026-07-28 — queue service templates removed from this chart (2026.8.0);
 #                this knob became a no-op. SDK <2.0.4 CreateRun hard-fails.
 #                Deployments that need the legacy path must pin chart <= 2026.7.2.
 actionsLeasor:
@@ -1505,7 +1505,7 @@ actions:
   # in air-gapped/customer-mirrored installs where docker.io isn't reachable.
   coordination:
     image:
-      repository: alpine/k8s
+      repository: docker.io/alpine/k8s
       tag: "1.32.3"
 
   serviceAccount:
@@ -2379,9 +2379,15 @@ scylla:
         nodeAffinity: {}
         tolerations: []
 
-  # ScyllaDB version
+  # ScyllaDB version. Upstream defaults both repositories to a bare
+  # `scylladb/...`, which resolves against the implicit docker.io default and
+  # fails on clusters that pin an allowed-registry policy. These land in the
+  # ScyllaCluster CR, so the operator — not the kubelet — does the pull.
   scyllaImage:
+    repository: docker.io/scylladb/scylla
     tag: 2025.1.5
+  agentImage:
+    repository: docker.io/scylladb/scylla-manager-agent
 
   # Developer mode (disable for production)
   developerMode: true
@@ -2398,6 +2404,12 @@ scylla:
 scylla-operator:
 
   fullnameOverride: scylla-operator
+
+  # Upstream sets this to a bare `scylladb` (org only — the chart appends
+  # `/scylla-operator`), which resolves against the implicit docker.io default
+  # and fails on clusters that pin an allowed-registry policy.
+  image:
+    repository: docker.io/scylladb
 
   # Webhook configuration
   webhook:

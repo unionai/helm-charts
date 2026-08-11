@@ -1,12 +1,16 @@
 # controlplane — Release Notes
 
-## 2026.7.3 WIP
+## 2026.8.0
+
+Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays
+`2026.7.2`, so the control-plane images are unchanged. This is a **minor** bump rather
+than a patch because it removes the legacy queue service — see Migration below.
 
 ### Removed: legacy queue service
 
-The legacy queue service and corresponding executor has been removed from the chart,
-completing the deprecation announced 2026-06-30. The actions + leasor stack is
-the only execution path.
+The legacy queue service and corresponding executor has been removed from the chart
+([#501](https://github.com/unionai/helm-charts/pull/501)), completing the deprecation
+announced 2026-06-30. The actions + leasor stack is the only execution path.
 
 - `services.queue` deleted — the queue Deployment/Service/ConfigMap (and its
   ScyllaDB `migrate` initContainer) are no longer rendered.
@@ -36,9 +40,11 @@ the only execution path.
 
 ### Configuration changes (helm-charts)
 
-- **`connection.rootTenantURLPattern` default now the publicly-resolvable control-plane host.** It defaulted to the cluster-local ingress svc FQDN (`controlPlaneLibrary.ingressFqdn`), which only resolves intracluster — but this endpoint is minted into eager api-keys and dialed by **dataplane task pods** (and CP↔CP services), so a separate-cluster data plane couldn't reach it. It now defaults to `dns:///{{ .Values.global.UNION_HOST }}`. The union shared-services config and flyteadmin's config are converged on the same `global.UNION_HOST`. **Action:** none for cloud-managed envs (the generated overlay sets the topology-aware host); a standalone chart install that relied on the svc-FQDN default and runs an intracluster data plane may set `configMap.connection.rootTenantURLPattern` (and `flyte…connection.rootTenantURLPattern`) back to `dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}` via overlay.
+- **`connection.rootTenantURLPattern` default now the publicly-resolvable control-plane host** ([#505](https://github.com/unionai/helm-charts/pull/505)). It defaulted to the cluster-local ingress svc FQDN (`controlPlaneLibrary.ingressFqdn`), which only resolves intracluster — but this endpoint is minted into eager api-keys and dialed by **dataplane task pods** (and CP↔CP services), so a separate-cluster data plane couldn't reach it. It now defaults to `dns:///{{ .Values.global.UNION_HOST }}`. The union shared-services config and flyteadmin's config are converged on the same `global.UNION_HOST`. **Action:** none for cloud-managed envs (the generated overlay sets the topology-aware host); a standalone chart install that relied on the svc-FQDN default and runs an intracluster data plane may set `configMap.connection.rootTenantURLPattern` (and `flyte…connection.rootTenantURLPattern`) back to `dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}` via overlay.
 - **Render-time guard on `connection.rootTenantURLPattern`.** The chart now fails render if the value is not a `dns:///` gRPC target or carries a trailing `:port` (control-plane services strip the `dns:///` prefix and dial the bare host, and a port corrupts the eager-api-key codec's decoded fields). No effect on valid configs.
-- **Render-time consistency guard on `rootTenantURLPattern`.** The endpoint lives in two independent values paths — the top-level `configMap.connection` (control-plane services + the EAGER_API_KEY the operator mints and data-plane task pods dial) and `flyte.configmap.adminServer.connection` (flyteadmin-private's admin clientset cache, which the flyte subchart owns and can't share via a helm `include`). The chart now fails render if they resolve to different values, so an overlay that overrides one but not the other can't silently leave flyteadmin dialing a different control-plane host than every other service. Both still default to `dns:///{{ .Values.global.UNION_HOST }}`; override them together.
+- **Fully qualified image repository paths** ([#509](https://github.com/unionai/helm-charts/pull/509), FAB-438). Every image the chart renders now spells out its registry host. An unqualified repository resolves against the implicit `docker.io/` default, which clusters running an allowed-registry admission policy reject with `ErrImagePull`. Changed: **`services.actions.coordination.image.repository`** → `docker.io/alpine/k8s`; **`scylla-operator.image.repository`** → `docker.io/scylladb` (new override — upstream ships the bare org, and the subchart appends `/scylla-operator`); **`scylla.scyllaImage.repository`** → `docker.io/scylladb/scylla` and **`scylla.agentImage.repository`** → `docker.io/scylladb/scylla-manager-agent` (new overrides; these land in the `ScyllaCluster` CR, so the operator rather than the kubelet does the pull). No image contents change — same digests, qualified names. A `make check-image-paths` gate (wired into `make test` and the `image-paths` CI job) now fails the build on any unqualified reference.
+- **Render-time consistency guard on `rootTenantURLPattern`** ([#505](https://github.com/unionai/helm-charts/pull/505)). The endpoint lives in two independent values paths — the top-level `configMap.connection` (control-plane services + the EAGER_API_KEY the operator mints and data-plane task pods dial) and `flyte.configmap.adminServer.connection` (flyteadmin-private's admin clientset cache, which the flyte subchart owns and can't share via a helm `include`). The chart now fails render if they resolve to different values, so an overlay that overrides one but not the other can't silently leave flyteadmin dialing a different control-plane host than every other service. Both still default to `dns:///{{ .Values.global.UNION_HOST }}`; override them together.
+- **Cloud overlays carry only cloud-specific config** ([#498](https://github.com/unionai/helm-charts/pull/498)). The `flyte.configmap.adminServer.auth` OIDC block (appAuth/userAuth placeholders) was duplicated identically in `values.aws.yaml` and `values.gcp.yaml` and is a strict subset of the richer block base `values.yaml` already provides. OIDC auth is IdP-specific, not cloud-specific, so it belongs in base; the overlay copies are replaced with a pointer comment. Render-neutral — zero snapshot drift, no action required. (The monitoring kube-disable block stays in the overlays: base defaults those enabled for bare-k8s, and the overlays legitimately disable them.)
 
 ## 2026.7.2
 

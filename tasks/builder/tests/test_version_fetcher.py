@@ -25,7 +25,7 @@ def test_get_calver():
         assert "2025.3.0" == fetcher.get_calver("2025.2.9", next=True)
         assert "2025.2.9" == fetcher.get_calver("2025.2.9", next=False)
 
-        with pytest.raises(Exception) as exc_info:
+        with pytest.raises(Exception):
             fetcher.get_calver("1.2.3", next=True)
 
 
@@ -35,12 +35,8 @@ def test_get_calver_prerelease():
         current_ymm_mock.return_value = "2026.6"
 
         # First pre-release targets the NEXT base.
-        assert "2026.6.10-alpha.0" == fetcher.get_calver(
-            "2026.6.9", next=True, prerelease="alpha"
-        )
-        assert "2026.6.10-beta.0" == fetcher.get_calver(
-            "2026.6.9", next=True, prerelease="beta"
-        )
+        assert "2026.6.10-alpha.0" == fetcher.get_calver("2026.6.9", next=True, prerelease="alpha")
+        assert "2026.6.10-beta.0" == fetcher.get_calver("2026.6.9", next=True, prerelease="beta")
 
         # Same channel increments its counter.
         assert "2026.6.10-alpha.1" == fetcher.get_calver(

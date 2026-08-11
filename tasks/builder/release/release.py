@@ -1,15 +1,11 @@
-import pprint
 import shutil
-import subprocess
 import sys
 import tempfile
-from os import listdir
 from pathlib import Path
 
 import github.Auth
-import yaml
 from git import Repo
-from github import Github, GithubException
+from github import Github
 
 from tasks.builder.version.bumper import VersionBumper
 from tasks.builder.version.fetcher import VersionFetcher
@@ -21,18 +17,14 @@ class Release:
         pass
 
     def run(self, chart: str, dryRun: bool = False):
-        tmp_root = repo_dir = tempfile.mkdtemp()
+        tmp_root = tempfile.mkdtemp()
         tmp_chart_path = Path(tmp_root) / "charts" / chart
 
         try:
-            repo = Repo.clone_from(
-                "git@github.com:unionai/helm-charts.git", to_path=tmp_root
-            )
+            repo = Repo.clone_from("git@github.com:unionai/helm-charts.git", to_path=tmp_root)
 
             fetcher = VersionFetcher()
-            version = fetcher.run(
-                str(tmp_chart_path / "Chart.yaml"), key="version", next=True
-            )
+            version = fetcher.run(str(tmp_chart_path / "Chart.yaml"), key="version", next=True)
 
             # TODO(rob): We should add/expect release notes as part of a changelog that we can
             #  add to the description.
@@ -48,9 +40,7 @@ class Release:
 
             # Version bump
             bumper = VersionBumper()
-            bumper.run(
-                file=str(tmp_chart_path / "Chart.yaml"), key="version", next=True
-            )
+            bumper.run(file=str(tmp_chart_path / "Chart.yaml"), key="version", next=True)
 
             # Output a diff
             self.diff(repo)
