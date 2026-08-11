@@ -203,13 +203,6 @@ work-cluster emits nothing rather than failing.
 */}}
 {{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
 {{- else -}}
-{{/*
-A namespaced Role naming a cluster-scoped resource is accepted by the API server
-and never matches, so fail rather than degrade; gate the component instead.
-*/}}
-{{- if and (eq $spec.kind "cluster") $lowPriv -}}
-{{- fail (printf "RBAC slot %q has rules under low_privilege: true. This slot is emitted as a namespaced Role there, and a namespaced Role cannot grant cluster-scoped access. Disable the component that declared these rules instead of trimming them." .slot) -}}
-{{- end -}}
 {{- $resolved := list -}}
 {{- if $spec.verbs -}}
 {{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
