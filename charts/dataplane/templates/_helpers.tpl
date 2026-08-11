@@ -1165,6 +1165,36 @@ defined once here rather than repeated per template.
 {{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
 {{- end -}}
 
+{{- define "knative.controller.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}knative-controller{{- end -}}
+{{- end -}}
+
+{{- define "knative.webhook.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}knative-webhook{{- end -}}
+{{- end -}}
+
+{{- define "knative.autoscaler.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}knative-autoscaler{{- end -}}
+{{- end -}}
+
+{{- define "knative.activator.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}knative-activator{{- end -}}
+{{- end -}}
+
+{{- define "knative.kourier.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}net-kourier{{- end -}}
+{{- end -}}
+
 {{/*
 Name of the serving-envoy-bootstrap ConfigMap
 */}}
