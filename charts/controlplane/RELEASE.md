@@ -1,5 +1,9 @@
 # controlplane — Release Notes
 
+## 2026.8.1
+
+Adding redis-consumer service to control plane ([#525](https://github.com/unionai/helm-charts/pull/525)).
+
 ## 2026.8.0
 
 Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays
