@@ -43,19 +43,17 @@
   DaemonSet plus a Role whose `nodes` rule the API server silently ignores. The fix is
   the grant, not a refusal: cluster slots are emitted as `ClusterRole` +
   `ClusterRoleBinding` in **every** privilege mode, so `union-nodeobserver-cluster-read`
-  (`nodes: [get]`) and `union-nodeobserver-cluster-write` (`nodes: [update]`) are now
-  correct under `low_privilege: true` too. Pinned by
+  (`nodes: [get]`, and the `pods: [list]` below) and `union-nodeobserver-cluster-write`
+  (`nodes: [update]`) are now correct under `low_privilege: true` too. Pinned by
   `tests/generated/dataplane.nodeobserver-low-priv.yaml`.
 
-  **This does not make the component fully functional at `low_privilege: true`, and you
-  should still run it at `low_privilege: false`.** Its other grant — a cluster-wide
-  `pods: list`, needed because it lists with an empty namespace and a `spec.nodeName`
-  field selector — is declared in the `work-ns-cluster-read` slot, which renders empty
-  under single-namespace. Compare the low-priv golden above, which has only the two
-  `nodes` roles, with `dataplane.nodeobserver-full-priv.yaml`, which also has
-  `union-nodeobserver-work-ns-cluster-read`. What changed here is that the render
-  succeeds and the `nodes` access is real; the pod list still returns `Forbidden` at
-  `low_privilege: true`. `nodeobserver.enabled` still defaults to `false`.
+  **Its other grant reaches it in both modes as well.** The cluster-wide `pods: list` —
+  needed because nodeobserver lists with an empty namespace plus a `spec.nodeName` field
+  selector, which Kubernetes authorizes as a cluster-scope check — is declared in the
+  `cluster-read` slot next to `nodes: [get]`, so it too is emitted whatever the privilege
+  mode. `union-nodeobserver-cluster-read` carries both rules in
+  `dataplane.nodeobserver-low-priv.yaml` and in `dataplane.nodeobserver-full-priv.yaml`
+  alike. `nodeobserver.enabled` still defaults to `false`.
 
 - **`flytepropellerwebhook.managedConfig: false` now installs under
   `low_privilege: true`, where it previously could not,** and its
@@ -107,8 +105,8 @@
   the five app-serving components hold one each, covered in "App-serving (Knative) RBAC"
   below. Unlike `-work-ns-cluster-read`, these are emitted in **both** privilege modes.
   `-work-ns-cluster-read` is broader — under `low_privilege: false`
-  it is held by `executor`, `leaseworker`, `operator`, `proxy`, the pod webhook,
-  `nodeobserver`, and `flytepropeller` when enabled — but it is **read-only in every
+  it is held by `executor`, `leaseworker`, `operator`, `proxy`, the pod webhook, and
+  `flytepropeller` when enabled — but it is **read-only in every
   case**, and it is not emitted at all under `low_privilege: true`. See "Cluster-scoped
   reads at `low_privilege: false`" below.
 
@@ -325,9 +323,10 @@
   with an empty namespace plus a `spec.nodeName` field selector, which Kubernetes
   authorizes as a cluster-scope check — no number of per-namespace RoleBindings can
   satisfy it, so once work-namespace grants were bound only per namespace the rule had to
-  move. It is emitted as `union-nodeobserver-work-ns-cluster-read`, a `ClusterRole` +
-  `ClusterRoleBinding`, which is the only shape that works. **No net privilege change**:
-  it reached the same pods through the cluster-wide binding before.
+  move. It is emitted as part of `union-nodeobserver-cluster-read`, a `ClusterRole` +
+  `ClusterRoleBinding` present in both privilege modes, which is the only shape that
+  works. **No net privilege change**: it reached the same pods through the cluster-wide
+  binding before.
 - **The pod webhook now requires reach into work namespaces when image-pull secret
   mirroring is enabled.** With none of the three postures configured, the webhook cannot
   create the mirrored secret, and the resulting `Forbidden` is swallowed rather than
@@ -360,10 +359,12 @@
 
 ### Cluster-scoped reads at `low_privilege: false`
 
-`nodeobserver` is not the only component whose caches read with an empty namespace, and
-this release grants each of the others the same shape of role: a per-component,
+`nodeobserver` is not the only component that reads with an empty namespace, and this
+release grants each of the others a role of the same shape — a per-component,
 **read-only** `ClusterRole` + `ClusterRoleBinding` named
-`union-<component>-work-ns-cluster-read`, holding `list` and `watch` and nothing else.
+`union-<component>-work-ns-cluster-read`, holding `list` and `watch` and nothing else —
+differing only in that theirs is confined to `low_privilege: false`, where
+`nodeobserver`'s pod read is in a plain `cluster-read` role emitted in both modes.
 **None of them is emitted under `low_privilege: true`, which is the chart default.**
 
 **Why they are needed.** At `low_privilege: false` the chart writes no `limit-namespace`,
@@ -386,7 +387,9 @@ called out separately below.
 | `proxy` | `pods`, `resourcequotas`, `events.k8s.io/events`, `ray.io/rayjobs` | `proxy.serviceAccount.create` (default) |
 | `flytepropeller` | `pods`, `podtemplates`, `flyte.lyft.com/flyteworkflows` | `flytepropeller.enabled` (off by default) |
 | `webhook` | `secrets` | `flytepropellerwebhook.enabled` (default) **and** `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` (default) |
-| `nodeobserver` | `pods` | `nodeobserver.enabled` (off by default) |
+
+(`nodeobserver`'s cluster-wide `pods: list` is not in this table: it lives in
+`union-nodeobserver-cluster-read`, which is emitted in both privilege modes.)
 
 **This is a narrowing, not a widening.** The released chart bound `union-leaseworker` —
 `apiGroups: ['*']`, `resources: ['*']`, at `get,list,watch,create,update,delete,patch` —
@@ -809,7 +812,7 @@ consuming code paths. **No part of it has been verified against a running cluste
   | Surviving `ClusterRoleBinding` | Why it is there |
   |---|---|
   | `union-<component>-cluster-read` / `-cluster-write` | grants that are cluster-scoped by necessity; among union's non-app-serving components only `clusterresourcesync`, the pod webhook and `nodeobserver` have any |
-  | `union-<component>-work-ns-cluster-read` | **read-only** (`list`, `watch`) cache reads the API server authorizes as cluster-scope checks because the caller passes an empty namespace. One per enabled declarer — `executor`, `leaseworker`, `operator`, `proxy`, `webhook`, plus `flytepropeller` and `nodeobserver` when enabled. See "Cluster-scoped reads at `low_privilege: false`" above for exactly what each holds. |
+  | `union-<component>-work-ns-cluster-read` | **read-only** (`list`, `watch`) cache reads the API server authorizes as cluster-scope checks because the caller passes an empty namespace. One per enabled declarer — `executor`, `leaseworker`, `operator`, `proxy`, `webhook`, plus `flytepropeller` when enabled. See "Cluster-scoped reads at `low_privilege: false`" above for exactly what each holds. |
   | `union-clustersync-auth-delegator` | **load-bearing** — binds `clusterresourcesync` to the built-in `system:auth-delegator` `ClusterRole` for apiserver auth delegation. Deleting it breaks the component. Note the object name does not match its `roleRef`. |
   | `union-knative-<component>-cluster-read` / `union-knative-webhook-cluster-write` | app-serving informer reads and the webhook's two `resourceNames`-scoped writes; only in zero-trust mode with `apps.enabled`. See "App-serving (Knative) RBAC" above |
   | `union-operator-prometheus`, `<release-name>-kube-state-metrics` | third-party observability reads, from the subcharts — see "Third-party subchart RBAC" above |

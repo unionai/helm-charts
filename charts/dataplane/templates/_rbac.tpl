@@ -55,8 +55,8 @@ project/domain, where user tasks run).
   comp-ns-write         Role         RoleBinding, rel ns  unchanged
   work-ns               ClusterRole  RoleBinding per ns   Role + RB, rel ns
   work-ns-cluster-read  ClusterRole  ClusterRoleBinding   empty, no fail
-  cluster-read          ClusterRole  ClusterRoleBinding   must be empty
-  cluster-write         ClusterRole  ClusterRoleBinding   must be empty
+  cluster-read          ClusterRole  ClusterRoleBinding   unchanged
+  cluster-write         ClusterRole  ClusterRoleBinding   unchanged
 
 Under full privilege, work-ns is never bound in the release namespace. Under
 low_privilege it is, because there the release namespace is the work namespace.
@@ -85,9 +85,11 @@ above.
 
   pooled  true -> one shared role bound to every declaring SA
           false -> one role per declaring component
-  kind    comp, work, cluster, work-cluster. A non-empty `cluster` slot under
-          low_privilege fails the render (gate the component instead, as
-          nodeobserver does). `work-cluster` emits nothing there.
+  kind    comp, work, cluster, work-cluster. A `cluster` slot is emitted as a
+          ClusterRole plus ClusterRoleBinding in both privilege modes: what it
+          carries is cluster-scoped in both, so low_privilege cannot narrow it
+          and refusing to render it only moves the failure to runtime.
+          `work-cluster` emits nothing under low_privilege.
   verbs   present -> emitter-owned; declarations must not carry a verbs key
           absent  -> component-supplied, checked against the allowlist
 */}}

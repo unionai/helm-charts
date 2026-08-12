@@ -648,18 +648,17 @@ cluster-wide too. Both are `ClusterRole` + `ClusterRoleBinding` and are unaffect
 `namespaces.static`. `nodeobserver.enabled` defaults to `false`; leave it there unless
 you need it.
 
-**It renders in either privilege mode, but only the `nodes` grants follow it there.**
-Cluster slots are emitted as `ClusterRole`s regardless of `low_privilege`, so
-`union-nodeobserver-cluster-read` (`nodes: [get]`) and `union-nodeobserver-cluster-write`
-(`nodes: [update]`) are correct in both postures — the render no longer fails, as it did
-before this release. The cluster-wide `pods: list` is a different matter: it is declared
-in the `work-ns-cluster-read` slot, and that slot renders **empty** under
-`low_privilege: true`. So at the chart default the pod list described above — empty
-namespace, `spec.nodeName` field selector, authorized as a cluster-scope check — returns
-`Forbidden`. **Run `nodeobserver` at `low_privilege: false`.** Compare
-`tests/generated/dataplane.nodeobserver-low-priv.yaml`, which has the two `nodes` roles
-and nothing else, against `dataplane.nodeobserver-full-priv.yaml`, which adds
-`union-nodeobserver-work-ns-cluster-read`.
+**It renders in either privilege mode, and all three grants follow it there.** Cluster
+slots are emitted as `ClusterRole`s regardless of `low_privilege`, so
+`union-nodeobserver-cluster-read` (`nodes: [get]` and `pods: [list]`) and
+`union-nodeobserver-cluster-write` (`nodes: [update]`) are correct in both postures — the
+render no longer fails, as it did before this release. The `pods: list` sits in that
+cluster slot rather than a work-namespace one precisely because the read described above
+— empty namespace, `spec.nodeName` field selector — is authorized as a cluster-scope
+check, which no per-namespace `RoleBinding` can answer at any count. Compare
+`tests/generated/dataplane.nodeobserver-low-priv.yaml` with
+`dataplane.nodeobserver-full-priv.yaml`: `union-nodeobserver-cluster-read` carries the
+same two rules in both.
 
 The other cluster-scoped writes in the chart are `clusterresourcesync`'s (`namespaces`
 and `rolebindings`, in the runtime posture, so it can provision a project's namespace);
@@ -697,7 +696,10 @@ Each is a `ClusterRole` + `ClusterRoleBinding` named
 | `proxy` | `pods`, `resourcequotas`, `events.k8s.io/events`, `ray.io/rayjobs` | `proxy.serviceAccount.create` (default) |
 | `flytepropeller` | `pods`, `podtemplates`, `flyte.lyft.com/flyteworkflows` | `flytepropeller.enabled` (**off** by default) |
 | `webhook` | `secrets` | `flytepropellerwebhook.enabled` (default) **and** `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled` (default) |
-| `nodeobserver` | `pods` | `nodeobserver.enabled` (**off** by default) |
+
+`nodeobserver` is deliberately absent from that table: its cluster-wide `pods: list` is in
+`union-nodeobserver-cluster-read`, which is emitted in **both** privilege modes, because
+nodeobserver needs that read at `low_privilege: true` as much as at `false`.
 
 `metrics.k8s.io/pods` is **resource-usage billing**, not optional telemetry. The usages
 aggregator's first act is a cluster-scoped `List` of pod metrics — the namespace is
