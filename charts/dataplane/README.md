@@ -1065,7 +1065,9 @@ Setting `commonServiceAccount.enabled: false` is what makes the per-component ta
 describe reality in the cluster dimension — five subjects, five different sets of
 cluster-scoped rules,
 `tests/generated/dataplane.zero-trust-per-component-sa.yaml` being where that is
-observable. That differentiation is real, and it is the point of the split.
+observable (and `dataplane.zero-trust-full-priv-per-component-sa.yaml` where it is
+observable at `low_privilege: false`, the one render in which no pooled slot supplies a
+component a grant it did not declare). That differentiation is real, and it is the point of the split.
 
 **The namespaced slots are not per-component, in either arrangement.** `comp-ns-read`,
 `comp-ns-write` and
@@ -1157,8 +1159,9 @@ writes](#the-component-that-needs-cluster-scoped-writes) and [Cluster-scoped rea
 
 The evidence for all of this is the rendered manifests in `tests/generated/` —
 `dataplane.aws.zero-trust.yaml` for the default posture,
-`dataplane.zero-trust-full-priv.yaml` for `low_privilege: false`, and
-`dataplane.zero-trust-per-component-sa.yaml` for the split identities. **None of it has
+`dataplane.zero-trust-full-priv.yaml` for `low_privilege: false`,
+`dataplane.zero-trust-per-component-sa.yaml` for the split identities, and
+`dataplane.zero-trust-full-priv-per-component-sa.yaml` for both together. **None of it has
 been verified against a live cluster.**
 
 ---

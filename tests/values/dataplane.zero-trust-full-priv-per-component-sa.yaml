@@ -1,0 +1,47 @@
+# helm-values: examples/values-test-certs.yaml,values.aws.yaml
+#
+# zero_trust at low_privilege: false *and* commonServiceAccount.enabled: false
+# -- the posture the release notes recommend to operators who want the
+# per-binary split to mean something, and the only one in which no pooled slot
+# masks a missing namespaced grant.
+#
+# Why it exists as a separate fixture: the other two zero-trust goldens each
+# supply, by accident of pooling, grants a component does not declare.
+# dataplane.zero-trust-per-component-sa.yaml is single-namespace, where
+# knative-controller contributes serviceaccounts and secrets to the shared
+# comp-ns-read Role; dataplane.zero-trust-full-priv.yaml keeps the common
+# ServiceAccount, so every app-serving pod is also a comp-ns-write subject.
+# Here neither applies, so union-comp-ns-read carries only what its declarers
+# actually asked for and each app-serving ServiceAccount holds only the slots
+# it is a subject of.
+#
+# It pins that; it does not pin a namespaced *split*. comp-ns-read,
+# comp-ns-write and work-ns are pooled slots -- one shared Role each, bound to
+# every declaring ServiceAccount -- so namespaced grants are still the union of
+# all declarers' rules. See
+# charts/dataplane/templates/gateway/serviceaccounts.yaml for that pooling.
+
+host: "test-controlplane-host"
+# Required only because gateway.auth.enable defaults true and the envoy
+# template hard-requires orgName once zero_trust.enabled is set. Not what
+# this fixture pins.
+global:
+  ORG_NAME: "test-org-name"
+secrets:
+  admin:
+    clientSecret: "test-not-real-secret"
+
+low_privilege: false
+
+zero_trust:
+  enabled: true
+knative-operator:
+  enabled: false
+commonServiceAccount:
+  enabled: false
+
+# Enabled only because the pod webhook's imagePullSecrets guard fails the
+# render at low_privilege: false without a route into work namespaces. Not what
+# this fixture pins.
+clusterresourcesync:
+  enabled: true
