@@ -43,9 +43,19 @@
   DaemonSet plus a Role whose `nodes` rule the API server silently ignores. The fix is
   the grant, not a refusal: cluster slots are emitted as `ClusterRole` +
   `ClusterRoleBinding` in **every** privilege mode, so `union-nodeobserver-cluster-read`
-  and `union-nodeobserver-cluster-write` are now correct under `low_privilege: true`
-  too, and the component works there. `nodeobserver.enabled` still defaults to `false`.
-  Pinned by `tests/generated/dataplane.nodeobserver-low-priv.yaml`.
+  (`nodes: [get]`) and `union-nodeobserver-cluster-write` (`nodes: [update]`) are now
+  correct under `low_privilege: true` too. Pinned by
+  `tests/generated/dataplane.nodeobserver-low-priv.yaml`.
+
+  **This does not make the component fully functional at `low_privilege: true`, and you
+  should still run it at `low_privilege: false`.** Its other grant — a cluster-wide
+  `pods: list`, needed because it lists with an empty namespace and a `spec.nodeName`
+  field selector — is declared in the `work-ns-cluster-read` slot, which renders empty
+  under single-namespace. Compare the low-priv golden above, which has only the two
+  `nodes` roles, with `dataplane.nodeobserver-full-priv.yaml`, which also has
+  `union-nodeobserver-work-ns-cluster-read`. What changed here is that the render
+  succeeds and the `nodes` access is real; the pod list still returns `Forbidden` at
+  `low_privilege: true`. `nodeobserver.enabled` still defaults to `false`.
 
 - **`flytepropellerwebhook.managedConfig: false` now installs under
   `low_privilege: true`, where it previously could not,** and its
@@ -572,8 +582,10 @@ by all of it. The full per-component breakdown is in the README under
   | `knative-serving-namespaced-admin` / `-edit` / `-view` | Knative Serving objects to anyone holding the built-in `admin`, `edit` or `view` role in a namespace, by aggregation |
 
   **What replaces them** is five per-component `union-knative-<component>-cluster-read`
-  `ClusterRole`s of `list`/`watch` informer reads, plus exactly one cluster-scoped write
-  role — `union-knative-webhook-cluster-write`, whose two rules are both
+  `ClusterRole`s — `list`/`watch` informer reads, plus one `get`-only rule on
+  `serviceaccounts`/`secrets` that the controller's role carries at `low_privilege: false`
+  (see below) — plus exactly one cluster-scoped write
+  role: `union-knative-webhook-cluster-write`, whose two rules are both
   `resourceNames`-scoped (to the three knative webhook configurations, and to the release
   namespace's `namespaces/finalizers`). There is no cluster-scoped `create` anywhere in
   the set, no aggregation, and no cert-manager, CRD or HPA grant at all. The one
@@ -635,7 +647,7 @@ by all of it. The full per-component breakdown is in the README under
   re-add it. **If your overlay sets `gateway.components.autoscaler-hpa.*`, the key is now
   inert** — remove it.
 
-- **BREAKING: Knative TLS certificate provisioning is removed, and setting it now fails
+- **BREAKING: Knative TLS certificate provisioning is removed, and enabling it now fails
   the render.** The `config-certmanager` ConfigMap and the `routing-serving-certs`
   `Certificate` are deleted, along with the cert-manager RBAC. TLS terminates at the
   Envoy gateway. Knative registers its cert reconciler when any of six
@@ -643,10 +655,12 @@ by all of it. The full per-component breakdown is in the README under
   `cluster-local-domain-tls`, `system-internal-tls`,
   `namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
   `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
-  absent, so the chart errors at template time naming the key you set rather than
-  leaving it silently inert. All six default off, so on any install that left them there
-  the `routing-serving-certs` `Certificate` was never reconciled. The now-dead
-  `gateway.config.certmanager` values key is removed.
+  absent, so the chart errors at template time naming the key you enabled rather than
+  leaving it silently inert. The guard fires on any truthy value other than `"Disabled"`
+  or `"false"`, so an overlay that pins one of these keys *off* still renders. All six
+  default off, so on any install that left them there the `routing-serving-certs`
+  `Certificate` was never reconciled. The now-dead `gateway.config.certmanager` values
+  key is removed.
 
   This also removes the `matchConditions` bootstrap exemption from both fail-closed
   knative webhooks in `webhookconfigurations.yaml`. It existed solely to let the
@@ -711,10 +725,12 @@ consuming code paths. **No part of it has been verified against a running cluste
   1. **ServiceAccount rename.** The knative workloads move from `controller` / `activator`
      / `net-kourier` to `union-system` at the chart default. No action unless you bound
      external policy (e.g. a cloud IAM trust) to the old ServiceAccount names.
-  2. **`gateway.config.network` TLS keys now fail the render.** If your overlay sets
-     `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
-     `namespace-wildcard-cert-selector`, `auto-tls` or `internal-encryption`, remove it —
-     Knative certificate provisioning is not shipped and those settings were inert.
+  2. **Enabling a `gateway.config.network` TLS key now fails the render.** If your
+     overlay *enables* `external-domain-tls`, `cluster-local-domain-tls`,
+     `system-internal-tls`, `namespace-wildcard-cert-selector`, `auto-tls` or
+     `internal-encryption`, remove it — Knative certificate provisioning is not shipped
+     and those settings were inert. An overlay that pins one of them to `"Disabled"` or
+     `"false"` still renders; only a truthy value errors.
   3. **Out-of-chart Knative consumers.** If anything else in the cluster relied on this
      chart providing `knative-serving-addressable-resolver` / `-podspecable-binding`, or
      on Knative Serving objects reaching users through the built-in `admin`/`edit`/`view`
