@@ -957,6 +957,44 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Render RBAC that grants one service account use of an OpenShift SCC.
+*/}}
+{{- define "openshift.sccRbac" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ .name }}
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccountName }}
+    namespace: {{ .root.Release.Namespace }}
+{{- end -}}
+
+{{/*
 Name of the fluentbit configMap
 */}}
 {{- define "fluentbit.configMapName" -}}
@@ -1106,6 +1144,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ include "unionai-dataplane.labels" . }}
 app.kubernetes.io/component: serving
 {{- end -}}
+
+{{- define "serving.kourierGateway.openShiftSccName" -}}
+{{- default (printf "%s-kourier-gateway" (include "serving.fullname" .)) .Values.serving.openShift.kourierGatewayScc.name | trunc 63 | trimSuffix "-" }}
+{{- end }}
 
 {{- define "3scale-kourier-gateway.selectorLabels" -}}
 app.kubernetes.io/name: 3scale-kourier-gateway
@@ -1393,10 +1435,37 @@ Returns the fluentbit service account name, using the common SA when enabled.
 Returns the buildkit service account name, using the common SA when enabled.
 */}}
 {{- define "buildkit.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
+{{- if .Values.imageBuilder.buildkit.serviceAccount.forceDedicated -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- else if and .Values.imageBuilder.buildkit.openShift.enabled (include "useCommonServiceAccount" .) -}}
+{{- fail "imageBuilder.buildkit.serviceAccount.forceDedicated must be true when imageBuilder.buildkit.openShift.enabled is true so the BuildKit SCC is not bound to the common service account" -}}
+{{- else if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Return true when the chart should create the BuildKit OpenShift SCC.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftCreateScc" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- if and (include "imagebuilder.buildkit.enabled" .) .Values.imageBuilder.buildkit.openShift.enabled $scc.create (not $scc.existingName) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Create the name of OpenShift SecurityContextConstraints to use for buildkit.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftSccName" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- $defaultName := printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .) -}}
+{{- if $scc.existingName -}}
+{{- $scc.existingName | trunc 63 | trimSuffix "-" -}}
+{{- else if and (not $scc.create) $scc.name -}}
+{{- $scc.name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- default $defaultName $scc.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
