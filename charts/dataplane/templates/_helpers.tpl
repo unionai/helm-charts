@@ -1384,11 +1384,14 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- end -}}
 {{- end -}}
 {{/*
-Returns "true" when a common service account should be used for all components.
-Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
+Returns "true" when all components share one service account.
+
+Keyed on commonServiceAccount.enabled alone; sharing an identity is independent
+of privilege scope. It defaults to true because every per-component KSA needs a
+matching workload-identity binding in the cloud repo.
 */}}
 {{- define "useCommonServiceAccount" -}}
-{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1519,9 +1522,19 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
-In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
-namespace_mapping) so users only need to set namespaces.enabled: false.
+Returns "true" when every object this chart owns must live in the release
+namespace: namespaced Roles instead of ClusterRoles, no PriorityClasses, no
+mutating webhook configuration, and workloads pinned to the release namespace.
+Templates also auto-inject the namespace-scoping config (limitNamespace,
+limit-namespace, namespace_mapping) in this mode.
+
+namespaces.enabled is the axis. low_privilege is deprecated and defaults to
+null; when an overlay still sets it truthy it forces single-namespace regardless
+of namespaces.enabled, which is why it stays in the disjunction.
+
+Every template that needs this answer must call this define rather than reading
+.Values.low_privilege directly — a raw read is falsey on a default install and
+would emit cluster-scoped RBAC for an install that asked for one namespace.
 */}}
 {{- define "singleNamespace" -}}
 {{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
@@ -1558,7 +1571,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
-{{- else if and (eq $key "prometheus") $.Values.low_privilege }}
+{{- else if and (eq $key "prometheus") (include "singleNamespace" $) }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}
@@ -1581,7 +1594,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
-{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
+{{- if or (include "singleNamespace" .) (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
 {{- if include "singleNamespace" . }}

@@ -1,0 +1,31 @@
+Union dataplane {{ .Chart.Version }} installed into namespace {{ .Release.Namespace }}.
+
+{{ if include "singleNamespace" . -}}
+Namespace posture: single. Everything this release owns lives in {{ .Release.Namespace }}.
+{{- else -}}
+Namespace posture: multi. Task pods run in work namespaces outside {{ .Release.Namespace }}.
+{{- end }}
+{{ if not (kindIs "invalid" .Values.low_privilege) }}
+WARNING: low_privilege is deprecated. It is still honored, and a truthy value still
+forces the single-namespace posture regardless of namespaces.enabled, but
+namespaces.enabled is now the namespace posture axis. Remove low_privilege and set
+namespaces.enabled: {{ if include "singleNamespace" . }}false{{ else }}true{{ end }} instead — that matches what this release
+resolved to, so nothing changes.
+{{ end -}}
+
+{{- if and .Values.namespaces.enabled (not .Values.namespaces.static) (not .Values.clusterresourcesync.enabled) }}
+NOTICE: namespaces.enabled is true with an empty namespaces.static and
+clusterresourcesync disabled, so this chart binds the work-ns role in no namespace at
+all. That is a supported posture only if your own tooling creates the work namespaces
+and their RoleBindings. If nothing does, tasks fail at first execution with a
+forbidden error and the render will not tell you — list your work namespaces in
+namespaces.static, or set clusterresourcesync.enabled: true.
+{{ end -}}
+
+{{- if and .Values.clusterresourcesync.enabled (not .Values.clusterresourcesync.createNamespaces) (not .Values.namespaces.static) }}
+NOTICE: clusterresourcesync is enabled with createNamespaces: false and an empty
+namespaces.static, so nothing creates the work namespaces it syncs into. It will log
+NotFound on every sync cycle while the render looks clean. Either list the namespaces
+in namespaces.static, create them with your own tooling, or set
+clusterresourcesync.createNamespaces: true.
+{{ end -}}

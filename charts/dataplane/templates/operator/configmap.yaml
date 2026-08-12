@@ -60,7 +60,7 @@ data:
       {{- end }}
       {{- if .Values.config.operator.disableClusterPermissions }}
       disableClusterPermissions: {{ tpl (toYaml .Values.config.operator.disableClusterPermissions) $ }}
-      {{- else if .Values.low_privilege }}
+      {{- else if include "singleNamespace" . }}
       disableClusterPermissions: true
       {{- end }}
     {{- with .Values.config.operator.apps }}
@@ -77,7 +77,7 @@ data:
     {{- end }}
       {{- tpl (include "operator.clusterData" .) $ | nindent 6 }}
     {{- $collectUsages := deepCopy (.Values.config.operator.collectUsages | default dict) }}
-    {{- if $.Values.low_privilege }}
+    {{- if include "singleNamespace" $ }}
     {{- $_ := set $collectUsages "enabled" false }}
     {{- end }}
     {{- with $collectUsages }}
@@ -110,7 +110,7 @@ data:
     {{- with .Values.config.operator.secretsWatcher }}
       secretsWatcher:
         {{- tpl (toYaml .) $ | nindent 8 }}
-        {{- if and $.Values.low_privilege (not .namespaces) }}
+        {{- if and (include "singleNamespace" $) (not .namespaces) }}
         namespaces:
           - {{ $.Release.Namespace }}
           {{- if $.Values.controlplaneNamespace }}

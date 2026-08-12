@@ -24,6 +24,12 @@ test: check-vendored-crds helm-test kubeconform-test check-image-paths
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
 
+# Must-fail tests. tests/run.sh only compares successful renders against golden
+# files, so a `fail` guard that stops firing leaves no trace there.
+.PHONY: render-guards-test
+render-guards-test:
+	bash ./tests/test-render-guards.sh
+
 # Gate on fully qualified image references. Reads the checked-in
 # tests/generated/ corpus, so it needs neither network nor helm — but that
 # means it is only as fresh as `make generate-expected`. helm-test is what
@@ -60,7 +66,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test
+helm-test: $(TMP_DIR) snapshot-generator-test render-guards-test
 	./tests/run.sh helm
 
 .PHONY: kubeconform-test

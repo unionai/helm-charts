@@ -128,13 +128,25 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service. Required in multi-namespace
-  # mode (namespaces.enabled=true and low_privilege=false) to provision the
-  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
-  # is driven by the top-level namespace_mapping. Its configmap is gated off under
-  # singleNamespace, where task pods run in the release namespace and no per-domain
-  # namespaces are needed.
+  # -- Enable or disable the syncresources service. It syncs the per-project/domain
+  # resources task pods need (default ServiceAccount, ResourceQuota) and, unless
+  # `createNamespaces` is false, creates the namespaces themselves. Driven by the
+  # top-level namespace_mapping.
+  #
+  # Requires `namespaces.enabled: true`. Enabling it in single-namespace mode
+  # fails the render: task pods run in the release namespace there and no
+  # per-domain namespaces exist to sync into.
   enabled: false
+  # -- Let syncresources create the work namespaces, not just sync resources into
+  # them. Set false to run it against namespaces this chart (`namespaces.static`
+  # with `namespaces.create: true`) or your own tooling already created — the
+  # least-privilege multi-namespace posture.
+  #
+  # Incomplete narrowing for now: `clusterRoleRules` below is user-overridable and
+  # still grants `namespaces` with `verbs: ['*']`, so setting this false stops
+  # syncresources creating namespaces without yet removing its permission to. The
+  # grant narrows when syncresources moves onto the shared RBAC emitter.
+  createNamespaces: true
   # -- Override service account values for the syncresources service
   serviceAccount:
     # -- Override the service account name for the syncresources service
@@ -1934,21 +1946,25 @@ prometheus:
   prometheus-pushgateway:
     enabled: false
 
-# -- Scopes the deployment, permissions and actions created into a single namespace and avoids any deployments that would
-#  require additional permissions on the cluster. This limits the functionality though.
+# -- DEPRECATED. Replaced by `namespaces.enabled`, which is now the namespace
+# posture axis. This key never set a privilege level — it declared whether the
+# chart may own objects outside the release namespace — and the name misled.
 #
-# Known tradeoffs when low_privilege is enabled:
-# - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
-#   cluster-scoped node discovery, and kube-state-metrics is limited to the release
-#   namespace (no cross-namespace pod resource metrics for task execution pods).
-#   Console CPU/memory charts for task executions will show "no data."
-# - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
-#   kube-state-metrics instance.
-# - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
-# - There are likely additional features that require cluster-scoped permissions and
-#   will not function in low_privilege mode. This list will be expanded as they are
-#   identified.
-low_privilege: true
+# It is still honored and still wins when set: a truthy value forces
+# single-namespace regardless of `namespaces.enabled`. Unset (the default) means
+# `namespaces.enabled` decides on its own. Nothing changes on upgrade; drop the
+# key when convenient and set `namespaces.enabled` instead.
+#
+# Write this as an unquoted YAML boolean. A quoted `"false"` is a non-empty
+# string and reads as true, here and for every other boolean in this chart.
+#
+# One caveat survives from the old tradeoff list: `prometheus.kube-state-metrics`
+# runs with `releaseNamespace: true`, so it collects only from the release
+# namespace. In single-namespace mode that is where task pods run, so it is the
+# whole story; in multi-namespace mode task pods live elsewhere and are not
+# collected. Set `prometheus.kube-state-metrics.releaseNamespace: false` to
+# collect cluster-wide.
+low_privilege: null
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
@@ -2410,9 +2426,49 @@ ingress-nginx:
 ## -- Extra Kubernetes objects to deploy with the helm chart
 extraObjects: []
 
-## -- Automatically create namespaces to deploy into
 namespaces:
+  # -- The namespace posture axis: whether this chart may own objects outside the
+  # release namespace. The key name does not advertise how much rides on it, so:
+  #
+  # false (the default) — everything this chart owns lives in the release
+  # namespace. Each component's grant is a namespaced Role + RoleBinding instead
+  # of a ClusterRole, no PriorityClasses are created, the mutating webhook
+  # configuration is skipped, clusterresourcesync is not rendered at all, and
+  # every workload (including task pods) is pinned to the release namespace —
+  # `namespace_mapping.template` and `config.operator.org.namespaceTemplate` are
+  # ignored.
+  #
+  # true — task pods run in work namespaces outside the release namespace. The
+  # chart binds the shared work-ns role in each namespace listed in `static`, and
+  # clusterresourcesync (if enabled) provisions the rest at runtime as projects
+  # are registered.
+  #
+  # This does not control third-party subchart RBAC: prometheus and
+  # kube-state-metrics hold read-only ClusterRoles in both postures.
   enabled: false
+  # -- Work namespaces known at render time. The chart binds the shared work-ns
+  # role in each of these. Not the full set when clusterresourcesync is enabled:
+  # it creates one namespace per project/domain as projects are registered, and
+  # those names are not known in advance.
+  #
+  # An empty list means the chart binds none, and something else must —
+  # clusterresourcesync, or your own tooling.
+  static:
+    - flytesnacks-development
+    - flytesnacks-staging
+    - flytesnacks-production
+    - union-health-monitoring-development
+    - union-health-monitoring-staging
+    - union-health-monitoring-production
+  # -- Also author the Namespace objects for `static`. Set false when they are
+  # managed outside this chart: you still get the RoleBindings, and Helm never
+  # touches the Namespace objects. If they do not exist, the RoleBindings fail to
+  # apply with `namespaces "<name>" not found` at install or sync time, not at
+  # render time.
+  #
+  # Namespaces this chart creates carry `helm.sh/resource-policy: keep`, so
+  # `helm uninstall` leaves them and their contents in place.
+  create: true
 
 monitoring:
   # kube-prometheus-stack subchart; disabled by default, as the monitoring stack

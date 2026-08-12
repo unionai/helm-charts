@@ -1,5 +1,74 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Namespace posture
+
+**`namespaces.enabled` is now the namespace posture axis, and `low_privilege` is
+deprecated.** `low_privilege` never set a privilege level — it declared whether the
+chart may own objects outside the release namespace — and the name misled operators
+into reading it as "this install emits no cluster-scoped RBAC at all", which was never
+true.
+
+**No existing overlay changes behavior on upgrade.** `low_privilege` is still honored
+and still wins when set: a truthy value forces single namespace regardless of
+`namespaces.enabled`. Its default moves from `true` to `null`, so an install that sets
+neither key resolves from `namespaces.enabled` alone — which defaults to `false`, the
+same single-namespace posture as before.
+
+One combination does change, and it is one no generated overlay produces:
+`low_privilege: false` with `namespaces.enabled: false`. On previous releases that
+rendered half single-namespace and half multi-namespace — cluster-scoped RBAC and
+PriorityClasses, but workloads pinned to the release namespace and
+`clusterresourcesync` silently suppressed. It now resolves coherently to single
+namespace. If you set that pair, you almost certainly meant multi-namespace: set
+`namespaces.enabled: true` and `clusterresourcesync.enabled: true`.
+
+- **`namespaces.static`** (new, defaults to the six `flytesnacks-*` and
+  `union-health-monitoring-*` namespaces) — the work namespaces known at render time.
+  Previously this list was hardcoded in the template; moving it into a value with the
+  same default changes nothing by default and makes the set configurable.
+- **`namespaces.create`** (new, default `true`) — whether the chart authors the
+  Namespace objects for `static`. Set `false` when they are managed outside this
+  chart. If they do not exist, dependent objects fail to apply with
+  `namespaces "<name>" not found` at install or sync time, not at render time.
+- **Namespaces this chart creates now carry `helm.sh/resource-policy: keep`.** Without
+  it, `helm uninstall` deletes each work namespace and everything inside it: task
+  pods, Secrets, PVCs, ResourceQuotas, and whatever `clusterresourcesync` created at
+  runtime. The cost is leftover namespaces, which one `kubectl delete` recovers; the
+  reverse does not. Reinstalling under the same release name adopts them cleanly;
+  reinstalling under a *different* release name fails with "invalid ownership
+  metadata" and requires transferring ownership first.
+- **`clusterresourcesync.createNamespaces`** (new, default `true`) — whether
+  `clusterresourcesync` creates the work namespaces or only syncs resources into
+  namespaces something else created. Setting it `false` drops the `a_namespace`
+  template from its ConfigMap.
+
+  This is an incomplete narrowing, not a security boundary yet:
+  `clusterresourcesync.clusterRoleRules` is user-overridable and still grants
+  `namespaces` with `verbs: ['*']`, so `createNamespaces: false` stops
+  `clusterresourcesync` creating namespaces without yet removing its permission to.
+  The grant narrows in a follow-up, when `clusterresourcesync` moves onto the shared
+  RBAC emitter.
+- **New render-time guard:** `clusterresourcesync.enabled: true` with a
+  single-namespace posture now fails the render instead of silently rendering nothing.
+- **`commonServiceAccount.enabled: false` is now honored in single-namespace mode.**
+  It was previously ignored there — the shared ServiceAccount was forced whenever the
+  posture was single namespace. Sharing an identity is independent of namespace scope.
+  This only affects installs that explicitly set it to `false`; the default is `true`.
+
+#### Migration
+
+| If your values say | Do this |
+|---|---|
+| nothing (defaults) | nothing, now or ever |
+| `low_privilege: true` | drop it; `namespaces.enabled: false` is already the default |
+| `low_privilege: false` + `namespaces.enabled: true` | drop `low_privilege`; add `clusterresourcesync.enabled: true` if not already set |
+| `low_privilege: false` + `namespaces.enabled: false` | set `namespaces.enabled: true` + `clusterresourcesync.enabled: true` — see above |
+
+Migration is optional and can proceed at your own pace. `low_privilege` keeps working
+until a future release removes it.
+
 ## 2026.8.1
 
 Lockstep `version` bump with the `controlplane` chart (`2026.8.0` -> `2026.8.1`).

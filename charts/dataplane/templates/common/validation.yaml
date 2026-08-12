@@ -1,1 +1,7 @@
 {{/* Validation checks - rendered as empty output */}}
+{{- if and .Values.namespaces.enabled (has .Release.Namespace (.Values.namespaces.static | default list)) -}}
+{{- fail (printf "namespaces.static must not contain the release namespace (%q). The chart would bind the work-ns role in the release namespace, where union's own components run, so those components would get write access to union's own Deployments and Secrets, with nothing in the render to show it. Remove the release namespace from namespaces.static and list only work namespaces." .Release.Namespace) -}}
+{{- end -}}
+{{- if and .Values.clusterresourcesync.enabled (include "singleNamespace" .) -}}
+{{- fail "clusterresourcesync.enabled: true requires a multi-namespace posture. It provisions work namespaces at runtime, but this install resolves to single namespace, so it may only own the release namespace and every sync cycle would be Forbidden. Set namespaces.enabled: true to keep it, or clusterresourcesync.enabled: false to drop it. Note that a truthy deprecated low_privilege forces single namespace even with namespaces.enabled: true — if that is where this came from, remove low_privilege." -}}
+{{- end -}}
