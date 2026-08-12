@@ -2,8 +2,22 @@
 #
 # zero_trust with commonServiceAccount.enabled: false, which is the only posture
 # where the five app-serving ServiceAccounts are distinct. Pins that each
-# knative component's cluster roles bind to its own identity, so the per-binary
-# permission split is real rather than nominal.
+# knative component's *cluster* roles (cluster-read / cluster-write) bind to
+# its own identity, differing materially from one component to the next --
+# that differentiation is real, and this is the only golden that makes it
+# observable.
+#
+# It does not pin a namespaced split: comp-ns-read, comp-ns-write and work-ns
+# are pooled slots, each backed by one shared Role bound to every declaring
+# ServiceAccount, so namespaced grants remain the union of all declarers'
+# rules regardless of which component asks for what. See
+# charts/dataplane/templates/gateway/serviceaccounts.yaml:52-58 for the full
+# explanation of that pooling.
+#
+# Also pins net-kourier's cluster-wide `secrets: [list, watch]` read -- a
+# deliberate, temporary exception (not an oversight) documented at
+# charts/dataplane/templates/gateway/serviceaccounts.yaml:224-236, pending
+# UN-39.
 
 host: "test-controlplane-host"
 # Required only because gateway.auth.enable defaults true and the envoy
