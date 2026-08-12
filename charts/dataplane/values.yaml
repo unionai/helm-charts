@@ -751,6 +751,10 @@ dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
 
+  # No Kubernetes API access at these defaults. Three keys change that
+  # (kubernetes.enablePodLabels, kubernetes.enablePodUID, kubernetesDRA.enabled)
+  # — see docs/rbac.md.
+
   # -- It's common practice to taint and label  to not run dcgm exporter on all nodes, so we can use node selectors and
   #    tolerations to ensure it only runs on GPU nodes.
   # affinity: {}
@@ -763,9 +767,6 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
-  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
-  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
-  namespace: "kube-system"
 
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
@@ -913,6 +914,12 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # FluentBit never calls the Kubernetes API here: existingConfigMap above replaces the
+  # subchart's config, and the union config configures no `kubernetes` filter. Setting
+  # additionalFilters, rbac.nodeAccess or rbac.eventsAccess means create goes back to
+  # true — see docs/rbac.md.
+  rbac:
+    create: false
   # Upstream defaults this to a bare `busybox`, which resolves against the
   # implicit docker.io/library/ default and fails on clusters that pin an
   # allowed-registry policy. Only rendered by `helm test`, but the policy
@@ -1651,17 +1658,17 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
-  # Disable the chart's own RBAC (which creates ClusterRoles).
-  # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
+  # Leave this false. RBAC for prometheus and kube-state-metrics is authored by
+  # templates/prometheus/rbac.yaml, which branches on low_privilege — a subchart value
+  # cannot. Setting it true renders a second, redundant ClusterRole. See docs/rbac.md.
   rbac:
     create: false
-  
-  # Match the same service name as kube-prometheus-stack mode so that
-  # health checks, opencost, and ingress work without changes.
-  # clusterRoleNameOverride avoids naming collisions with the kube-prometheus-stack ClusterRole.
-  # In low-privilege mode, set rbac.create=false and useExistingClusterRoleName to skip
-  # ClusterRole/ClusterRoleBinding creation; a namespace-scoped Role is created instead.
+
   server:
+    # Match the same service name as kube-prometheus-stack mode so that health checks,
+    # opencost, and ingress work without changes. clusterRoleNameOverride avoids naming
+    # collisions with the kube-prometheus-stack ClusterRole; it is a fixed string, so
+    # one dataplane per cluster is the supported model (docs/rbac.md).
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
@@ -1718,6 +1725,23 @@ prometheus:
       requests:
         cpu: "1"
         memory: "1Gi"
+
+  # Required: templates/prometheus/configmap.yaml (the configMapOverrideName ConfigMap)
+  # mirrors upstream and renders scrape_configs from this key, so without it the
+  # subchart's nine cluster-wide discovery jobs — kubernetes-apiservers, -nodes,
+  # -nodes-cadvisor, -service-endpoints(-slow), -services, -pods(-slow) and
+  # prometheus-pushgateway — end up in our ConfigMap. Nothing reads their output, and
+  # they scrape every pod, service and node in the cluster.
+  #
+  # Helm replaces lists wholesale, so this is the whole scrape_configs list: just the
+  # self-scrape, plus extraScrapeConfigs below. Re-check on subchart bumps.
+  serverFiles:
+    prometheus.yml:
+      scrape_configs:
+        - job_name: prometheus
+          static_configs:
+            - targets:
+                - localhost:9090
 
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
@@ -1797,6 +1821,12 @@ prometheus:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
+    #
+    # Omitted under low_privilege: node discovery and the node proxy are both
+    # cluster-scoped, so this job can only 403 there. That is the Task-Level Monitoring
+    # tradeoff the low_privilege comment describes — dropping the job leaves it
+    # uncollected rather than permanently failing.
+    {{- if not .Values.low_privilege }}
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
       scheme: https
@@ -1819,6 +1849,7 @@ prometheus:
           regex: (.+)
           target_label: __metrics_path__
           replacement: /api/v1/nodes/${1}/proxy/metrics/cadvisor
+    {{- end }}
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -1870,12 +1901,14 @@ prometheus:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
+    # Discovery is pinned to the release namespace, where the dcgm-exporter subchart
+    # deploys. A dcgm-exporter managed elsewhere (e.g. by the NVIDIA GPU operator) is
+    # not picked up.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
           namespaces:
-            names:
-              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
+            own_namespace: true
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
@@ -1902,33 +1935,35 @@ prometheus:
   alertmanager:
     enabled: false
   # kube-state-metrics subchart of the community prometheus chart.
-  # Uses namespace-scoped Role (not ClusterRole) and only watches the release namespace.
-  # This provides pod-level metrics (kube_pod_*, kube_pod_container_*) but NOT node-level metrics
-  # (kube_node_*) since nodes are cluster-scoped resources.
   # When monitoring.enabled=true, the kube-prometheus-stack deploys its own KSM instance
-  # (monitoring-kube-state-metrics) with cluster-wide scope — both can coexist.
+  # (monitoring-kube-state-metrics) — both can coexist.
   kube-state-metrics:
     enabled: true
+    # Leave this false, as above: templates/prometheus/rbac.yaml authors KSM's Role or
+    # ClusterRole so that low_privilege decides it. See docs/rbac.md.
     rbac:
       create: false
+    # Exactly the collectors that feed series the metrics gateway admits; the subchart's
+    # default is 28, including `secrets`. This list is the same in both privilege modes —
+    # it becomes --resources on the KSM Deployment, which no template can branch on.
+    #
+    # Under low_privilege the last two are not granted, because a namespaced Role cannot
+    # authorize a cluster-scoped resource. KSM keeps running and keeps serving the other
+    # four; the denied pair is reported in its logs and counted in
+    # kube_state_metrics_list_total{result="error"}. Verified on a live cluster: ready,
+    # no restarts, /metrics 200.
+    collectors:
+      - pods            # kube_pod_status_phase, kube_pod_container_resource_*, kube_pod_container_status_*
+      - deployments     # kube_deployment_status_replicas_unavailable
+      - daemonsets      # kube_daemonset_status_number_unavailable
+      - resourcequotas  # kube_resourcequota
+      - nodes           # kube_node_labels, kube_node_status_condition — cluster-scoped
+      - namespaces      # kube_namespace_labels, the join key for pod aggregates — cluster-scoped
+    # Scopes collection to the release namespace (--namespaces=<release-ns>).
     releaseNamespace: true
-    metricRelabelings:
-      - sourceLabels: [ "__name__" ]
-        separator: ";"
-        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
-        action: keep
-      - sourceLabels: [ "__name__", "phase" ]
-        separator: ";"
-        regex: "kube_pod_status_phase;(Succeeded|Failed)"
-        action: drop
-      - sourceLabels: [ "node" ]
-        targetLabel: "nodename"
-        regex: "(.*)"
-        action: replace
-      - sourceLabels: [ "label_node_group_name" ]
-        action: replace
-        regex: "(.+)"
-        targetLabel: "label_node_pool_name"
+    # NOTE: do not add `metricRelabelings` here — no chart in the dependency tree reads
+    # it. The filter that runs is the kube-state-metrics scrape job's
+    # metric_relabel_configs in prometheus.extraScrapeConfigs above.
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
@@ -1948,6 +1983,10 @@ prometheus:
 # - There are likely additional features that require cluster-scoped permissions and
 #   will not function in low_privilege mode. This list will be expanded as they are
 #   identified.
+#
+# This flag is the only thing to set. RBAC for every component follows it, including the
+# prometheus and kube-state-metrics subcharts — see charts/dataplane/docs/rbac.md for how,
+# and for the one thing that cannot follow it (the kube-state-metrics collector list).
 low_privilege: true
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
@@ -2379,7 +2418,17 @@ ingress-nginx:
   enabled: false
   fullnameOverride: "dataplane-nginx"
 
+  # Confine the controller to the release namespace, turning a cluster-wide reader of
+  # secrets, configmaps, pods, endpoints and nodes into a namespaced Role. The cost: an
+  # Ingress outside the release namespace is never reconciled, silently. To serve one
+  # from another namespace, set both of these back to false — they must always move
+  # together (templates/ingress-nginx/validate.yaml enforces it). See docs/rbac.md.
+  rbac:
+    scope: true
+
   controller:
+    scope:
+      enabled: true
     service:
       # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
       # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
@@ -2415,9 +2464,10 @@ namespaces:
   enabled: false
 
 monitoring:
-  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
-  # is commonly managed outside this chart. Enable as needed.
-  # TODO: consider defaulting to true.
+  # kube-prometheus-stack subchart. Off here and in all three cloud overlays, and on a
+  # deprecation path — the supported monitoring path is the standalone CRD-free
+  # `prometheus` subchart above. Its operator holds cluster-wide secrets; no values key
+  # narrows that, so it is accepted risk while the component is off (docs/rbac.md).
   enabled: false
 
   # The following flags control Union monitoring resources independently

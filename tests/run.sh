@@ -12,6 +12,27 @@ CHARTS_DIR=${SCRIPT_DIR}/../charts
 
 source "${SCRIPT_DIR}/lib/atomic-render.sh"
 
+# Echo the --values flags a fixture needs, from its `# helm-values:` header.
+function layered_values_flags {
+  local file=$1
+  local chart=$2
+  local flags=""
+  local line
+  line=$(head -n 10 "${file}" | grep "^# helm-values:" || true)
+  if [[ -n "${line}" ]]; then
+    local names
+    names=$(echo "${line}" | sed 's/^# helm-values: *//')
+    IFS=',' read -ra arr <<< "${names}"
+    for name in "${arr[@]}"; do
+      name=$(echo "${name}" | xargs)
+      if [[ -f "${CHARTS_DIR}/${chart}/${name}" ]]; then
+        flags="${flags} --values ${CHARTS_DIR}/${chart}/${name}"
+      fi
+    done
+  fi
+  echo "${flags}"
+}
+
 function generate {
   TARGET_DIR=$1
   echo "Generating test files..."
@@ -44,24 +65,7 @@ function generate {
       processed_charts="${processed_charts} ${CHART}"
     fi
 
-    # Check for additional values files specified in comments
-    ADDITIONAL_VALUES=""
-    HELM_VALUES_LINE=$(head -n 10 ${file} | grep "^# helm-values:" || true)
-    if [[ -n "${HELM_VALUES_LINE}" ]]; then
-      # Extract the values file names from the comment
-      VALUES_FILES=$(echo "${HELM_VALUES_LINE}" | sed 's/^# helm-values: *//')
-      # Split by comma and build --values flags
-      IFS=',' read -ra VALUES_ARRAY <<< "${VALUES_FILES}"
-      for val_file in "${VALUES_ARRAY[@]}"; do
-        val_file=$(echo "${val_file}" | xargs) # trim whitespace
-        if [[ -f "${CHARTS_DIR}/${CHART}/${val_file}" ]]; then
-          ADDITIONAL_VALUES="${ADDITIONAL_VALUES} --values ${CHARTS_DIR}/${CHART}/${val_file}"
-          echo "  - Including additional values file: ${val_file}"
-        else
-          echo "  - WARNING: Additional values file not found: ${val_file}"
-        fi
-      done
-    fi
+    ADDITIONAL_VALUES=$(layered_values_flags "${file}" "${CHART}")
 
     EXTRA_HELM_ARGS=""
     HELM_ARGS_LINE=$(head -n 10 ${file} | grep "^# helm-args:" || true)

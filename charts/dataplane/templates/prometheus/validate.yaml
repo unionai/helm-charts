@@ -1,0 +1,18 @@
+{{- /*
+templates/prometheus/rbac.yaml owns RBAC for prometheus and kube-state-metrics, because a
+template can branch on low_privilege and a subchart value cannot. Turning either
+subchart's rbac.create back on adds a second, parallel grant that low_privilege no longer
+governs -- cluster-scoped even in a namespace-confined install, and reported by nothing.
+*/ -}}
+{{- if .Values.prometheus.enabled }}
+{{- $ksm := index .Values.prometheus "kube-state-metrics" }}
+
+{{- if .Values.prometheus.rbac.create }}
+{{- fail "prometheus.rbac.create must stay false. RBAC for prometheus is authored by templates/prometheus/rbac.yaml, which follows low_privilege; the subchart's own ClusterRole does not, so enabling it grants cluster-wide read even under low_privilege: true, alongside the grant this chart already renders." }}
+{{- end }}
+
+{{- if ($ksm.rbac).create }}
+{{- fail "prometheus.kube-state-metrics.rbac.create must stay false. RBAC for kube-state-metrics is authored by templates/prometheus/rbac.yaml, which follows low_privilege; the subchart's own does not, so enabling it adds a second grant that low_privilege no longer governs." }}
+{{- end }}
+
+{{- end }}

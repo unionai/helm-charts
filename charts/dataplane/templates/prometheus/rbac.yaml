@@ -1,22 +1,85 @@
-{{- if and .Values.prometheus.enabled .Values.low_privilege -}}
+{{- /*
+RBAC for prometheus and kube-state-metrics, authored here rather than by the subcharts.
+
+Both subcharts are set to rbac.create: false permanently. Their RBAC is driven by values,
+and Helm cannot derive a subchart value from .Values.low_privilege -- so leaving it to
+them would mean a second values file that has to be layered in lockstep with the flag.
+Authoring it here is the only way one flag can decide the whole posture: a template can
+branch, a value cannot.
+
+  low_privilege: true   namespaced Role + RoleBinding in the release namespace
+  low_privilege: false  ClusterRole + ClusterRoleBinding
+
+The rules are the subcharts' own, with one filter: anything cluster-scoped is dropped from
+the namespaced variant. A Role naming nodes or namespaces is accepted by the API server
+and never matches, which is how kubernetes-cadvisor spent three months on 403s. Dropping
+them instead means kube-state-metrics is denied outright -- loudly, in its logs and in its
+kube_state_metrics_list_total{result="error"} counter.
+
+kube-state-metrics rules are derived from the collectors list rather than hardcoded, so
+adding a collector cannot silently leave it unauthorized. An unmapped collector fails the
+render.
+*/ -}}
+{{- if .Values.prometheus.enabled }}
+
+{{- $prom := .Values.prometheus }}
+{{- $ksm := index $prom "kube-state-metrics" }}
+{{- $lowPriv := .Values.low_privilege }}
+
+{{- /* ServiceAccount names, mirroring each subchart's own helper. */ -}}
+{{- $promSA := default $prom.server.fullnameOverride ((($prom.serviceAccounts).server).name) }}
+{{- $ksmName := "" }}
+{{- if $ksm.fullnameOverride }}
+{{- $ksmName = $ksm.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $n := default "kube-state-metrics" $ksm.nameOverride }}
+{{- $ksmName = ternary (.Release.Name | trunc 63 | trimSuffix "-") (printf "%s-%s" .Release.Name $n | trunc 63 | trimSuffix "-") (contains $n .Release.Name) }}
+{{- end }}
+{{- $ksmSA := default $ksmName (($ksm.serviceAccount).name) }}
+
+{{- /* One entry per collector this chart supports. Cluster-scoped ones are listed
+       separately and dropped from the namespaced Role. */ -}}
+{{- $ksmRules := dict
+  "pods"            (dict "apiGroups" (list "") "resources" (list "pods"))
+  "nodes"           (dict "apiGroups" (list "") "resources" (list "nodes"))
+  "namespaces"      (dict "apiGroups" (list "") "resources" (list "namespaces"))
+  "resourcequotas"  (dict "apiGroups" (list "") "resources" (list "resourcequotas"))
+  "deployments"     (dict "apiGroups" (list "extensions" "apps") "resources" (list "deployments"))
+  "daemonsets"      (dict "apiGroups" (list "extensions" "apps") "resources" (list "daemonsets"))
+}}
+{{- $ksmClusterScoped := list "nodes" "namespaces" }}
+
+{{- $ksmSelected := list }}
+{{- range $c := ($ksm.collectors | default list) }}
+{{- if not (hasKey $ksmRules $c) }}
+{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which templates/prometheus/rbac.yaml has no rule for -- it would run unauthorized. Add it to the $ksmRules map there (and to $ksmClusterScoped if it is a cluster-scoped resource). Mapped collectors: %s." $c (join ", " (keys $ksmRules | sortAlpha))) }}
+{{- end }}
+{{- if not (and $lowPriv (has $c $ksmClusterScoped)) }}
+{{- $ksmSelected = append $ksmSelected $c }}
+{{- end }}
+{{- end }}
+---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
 metadata:
   name: union-operator-prometheus-rbac
+  {{- if $lowPriv }}
   namespace: {{ .Release.Namespace }}
+  {{- end }}
   labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
 rules:
-  # Prometheus server scrape permissions
   - apiGroups: [""]
     resources:
+      {{- if not $lowPriv }}
       - nodes
       - nodes/proxy
       - nodes/metrics
+      {{- end }}
       - services
       - endpoints
       - pods
-      - ingresses
       - configmaps
     verbs:
       - get
@@ -37,122 +100,67 @@ rules:
       - get
       - list
       - watch
-  # kube-state-metrics permissions (rbac.create=false on the subchart; managed here instead)
-  - apiGroups: ["certificates.k8s.io"]
-    resources: ["certificatesigningrequests"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["daemonsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["deployments"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["endpoints"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["autoscaling"]
-    resources: ["horizontalpodautoscalers"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "networking.k8s.io"]
-    resources: ["ingresses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["limitranges"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["mutatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["persistentvolumes"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["policy"]
-    resources: ["poddisruptionbudgets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["extensions", "apps"]
-    resources: ["replicasets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["replicationcontrollers"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["resourcequotas"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list", "watch"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["storageclasses"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["admissionregistration.k8s.io"]
-    resources: ["validatingwebhookconfigurations"]
-    verbs: ["list", "watch"]
-  - apiGroups: ["storage.k8s.io"]
-    resources: ["volumeattachments"]
-    verbs: ["list", "watch"]
+  {{- if not $lowPriv }}
+  {{- /* No namespaced form exists for a nonResourceURL. */}}
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $lowPriv }}
 metadata:
   name: union-operator-prometheus-rbac
+  {{- if $lowPriv }}
   namespace: {{ .Release.Namespace }}
+  {{- end }}
   labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
 subjects:
   - kind: ServiceAccount
-    name: union-operator-prometheus
+    name: {{ $promSA }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
   name: union-operator-prometheus-rbac
+{{- if $ksm.enabled }}
 ---
-# kube-state-metrics service account RoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
 metadata:
-  name: {{ .Release.Name }}-prometheus-kube-state-metrics
+  name: {{ $ksmName }}
+  {{- if $lowPriv }}
   namespace: {{ .Release.Namespace }}
+  {{- end }}
   labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+rules:
+{{- range $c := $ksmSelected }}
+{{- $rule := index $ksmRules $c }}
+  - apiGroups: [{{ range $i, $g := $rule.apiGroups }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
+    resources: [{{ range $i, $r := $rule.resources }}{{ if $i }}, {{ end }}{{ $r | quote }}{{ end }}]
+    verbs: ["list", "watch"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $lowPriv }}
+metadata:
+  name: {{ $ksmName }}
+  {{- if $lowPriv }}
+  namespace: {{ .Release.Namespace }}
+  {{- end }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Release.Name }}-prometheus-kube-state-metrics
+    name: {{ $ksmSA }}
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-operator-prometheus-rbac
+  kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
+  name: {{ $ksmName }}
+{{- end }}
 {{- end }}

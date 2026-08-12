@@ -333,6 +333,20 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
+## RBAC
+
+`low_privilege: true` (the default) scopes the deployment to a single namespace: every
+component, including the prometheus and kube-state-metrics subcharts, holds a namespaced
+Role. The cost is the reduced functionality listed on the `low_privilege` key in
+`values.yaml` — no Task-Level Monitoring, no node-level metrics, reduced cost accuracy.
+
+To trade that back, set `low_privilege: false`. That is the whole change — RBAC for every
+component, including the prometheus and kube-state-metrics subcharts, follows the flag, and
+nothing has to be layered alongside it. See [docs/rbac.md](docs/rbac.md) for what each
+subchart holds in each mode, and why.
+
+---
+
 ## Requirements
 
 Kubernetes: `>= 1.28.0-0`
