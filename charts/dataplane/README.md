@@ -135,6 +135,23 @@ gateway:
 
 ---
 
+## AWS Pod Identity Webhook Annotation Prefix
+
+The AWS pod identity webhook mutates pods by reading a service account annotation named `<annotation-prefix>/role-arn`. EKS uses `eks.amazonaws.com` by default, so the AWS values files default to `eks.amazonaws.com/role-arn`.
+
+If your cluster operator installed the webhook with a custom `--annotation-prefix`, set the shared prefix value:
+
+```yaml
+global:
+  AWS_POD_IDENTITY_ANNOTATION_PREFIX: customer.example.com
+```
+
+The AWS values files derive both Union system service account annotations and workflow service account annotations from this prefix.
+
+The IAM role trust policies must still trust the Kubernetes service account subjects used by the rendered service accounts.
+
+---
+
 ## Logging (FluentBit)
 
 The data plane deploys [FluentBit](https://fluentbit.io/) as a DaemonSet to collect container logs from every node and write them to the `persisted-logs/` path in the configured object store. FluentBit runs under the `fluentbit-system` Kubernetes service account, which must have write access to the storage bucket.
