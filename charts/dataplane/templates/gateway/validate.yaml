@@ -15,7 +15,13 @@ Envoy gateway in this chart.
 {{- range $key := $tlsKeys }}
 {{- $v := index $network $key }}
 {{- if $v }}
-{{- if not (or (eq (toString $v) "Disabled") (eq (toString $v) "false")) }}
+{{/*
+Knative parses these values case-insensitively, so "disabled" is as legitimately
+off as "Disabled"; compare lowercased or the guard rejects a value that turns
+the feature off.
+*/}}
+{{- $off := lower (toString $v) }}
+{{- if not (or (eq $off "disabled") (eq $off "false")) }}
 {{- fail (printf "gateway.config.network.%s is set to %q, but this chart does not ship Knative TLS certificate provisioning: the cert-manager reconciler's RBAC and the config-certmanager ConfigMap are removed. TLS terminates at the Envoy gateway instead. Remove this setting." $key (toString $v)) }}
 {{- end }}
 {{- end }}

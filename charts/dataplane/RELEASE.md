@@ -669,8 +669,9 @@ by all of it. The full per-component breakdown is in the README under
   `namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
   `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
   absent, so the chart errors at template time naming the key you enabled rather than
-  leaving it silently inert. The guard fires on any truthy value other than `"Disabled"`
-  or `"false"`, so an overlay that pins one of these keys *off* still renders. All six
+  leaving it silently inert. The guard fires on any truthy value other than `disabled` or
+  `false`, compared case-insensitively as Knative's own parser does, so an overlay that
+  pins one of these keys *off* still renders. All six
   default off, so on any install that left them there the `routing-serving-certs`
   `Certificate` was never reconciled. The now-dead `gateway.config.certmanager` values
   key is removed.

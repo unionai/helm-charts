@@ -1126,8 +1126,9 @@ Knative registers that reconciler when any of six `gateway.config.network` setti
 `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
 absent. Enabling one here would otherwise be silently inert, so **the chart fails the
 render naming the key you enabled.** Precisely: the guard fires on any truthy value other
-than `"Disabled"` or `"false"`, so an overlay that pins one of these keys *off*
-(`external-domain-tls: "Disabled"`) still renders. Remove or disable it; there is no
+than `disabled` or `false`, compared case-insensitively as Knative's own parser does, so
+an overlay that pins one of these keys *off* (`external-domain-tls: "Disabled"`, or
+`"disabled"`) still renders. Remove or disable it; there is no
 supported way to turn Knative certificate provisioning on from this chart.
 
 #### What is no longer installed
