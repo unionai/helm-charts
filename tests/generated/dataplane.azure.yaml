@@ -225,42 +225,6 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
 data: {}
 ---
-# Source: dataplane/templates/fluent-bit/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fluentbit-system
-  namespace: union
-  labels:
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  custom_parsers.conf: |
-    [PARSER]
-        Name docker_no_time
-        Format json
-        Time_Keep Off
-        Time_Key time
-        Time_Format %Y-%m-%dT%H:%M:%S.%L
-  fluent-bit.conf: |
-    [SERVICE]
-        Parsers_File /fluent-bit/etc/parsers.conf
-        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
-        HTTP_Server On
-        HTTP_Listen 0.0.0.0
-        Health_Check On
-    [INPUT]
-        Name                tail
-        Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
-        Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
-        Path                /var/log/containers/*.log
-        DB                  /var/log/flb_kube.db
-        multiline.parser    docker, cri
-        Mem_Buf_Limit       5MB
-        Skip_Long_Lines     On
-        Refresh_Interval    10
-
----
 # Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -274,7 +238,6 @@ metadata:
 data:
   storage.yaml: | 
     storage:
-      container: ""
       container: 'test-metadata-container'
       stow:
         config:
@@ -541,7 +504,6 @@ data:
           key: kubernetes.azure.com/scalesetpriority
           operator: DoesNotExist
     storage:
-      container: ""
       container: 'test-metadata-container'
       stow:
         config:
@@ -622,7 +584,7 @@ data:
           },
           "gridPos": {
             "h": 4,
-            "w": 6,
+            "w": 12,
             "x": 0,
             "y": 1
           },
@@ -679,8 +641,8 @@ data:
           },
           "gridPos": {
             "h": 4,
-            "w": 6,
-            "x": 6,
+            "w": 12,
+            "x": 12,
             "y": 1
           },
           "id": 3,
@@ -768,59 +730,6 @@ data:
           "description": "Current count of active workflow, node, and task executions tracked by FlyteAdmin."
         },
         {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 1
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 12,
-            "y": 1
-          },
-          "id": 11,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value_and_name"
-          },
-          "title": "Handler Panics",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "sum(executor:handler_panic{namespace=\"$namespace\"})",
-              "legendFormat": "Total",
-              "refId": "A"
-            }
-          ],
-          "description": "Total handler panics in DP services. Any non-zero value indicates a service caught a panic during request handling."
-        },
-        {
           "collapsed": false,
           "gridPos": {
             "h": 1,
@@ -864,7 +773,7 @@ data:
           },
           "gridPos": {
             "h": 6,
-            "w": 6,
+            "w": 8,
             "x": 0,
             "y": 10
           },
@@ -927,8 +836,8 @@ data:
           },
           "gridPos": {
             "h": 6,
-            "w": 6,
-            "x": 6,
+            "w": 8,
+            "x": 8,
             "y": 10
           },
           "id": 1202,
@@ -990,8 +899,8 @@ data:
           },
           "gridPos": {
             "h": 6,
-            "w": 6,
-            "x": 12,
+            "w": 8,
+            "x": 16,
             "y": 10
           },
           "id": 1203,
@@ -1009,73 +918,11 @@ data:
           },
           "targets": [
             {
-              "expr": "union:dp:slo:execution_success_rate or (union:dp:slo:propeller_success_rate + union:dp:slo:executor_success_rate) / 2 or union:dp:slo:propeller_success_rate or vector(1)",
+              "expr": "union:dp:slo:execution_success_rate or union:dp:slo:propeller_success_rate or vector(1)",
               "refId": "A"
             }
           ],
-          "description": "Combined V1 (propeller) and V2 (executor) task success rate. Falls back to propeller-only or 100% when idle."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 2
-                  },
-                  {
-                    "color": "red",
-                    "value": 5
-                  }
-                ]
-              },
-              "unit": "s",
-              "decimals": 2
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 6,
-            "x": 18,
-            "y": 10
-          },
-          "id": 1204,
-          "title": "Executor Evaluate Duration p99",
-          "type": "stat",
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value"
-          },
-          "targets": [
-            {
-              "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-              "legendFormat": "p99",
-              "refId": "A",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            }
-          ],
-          "description": "Propeller round p99 latency in seconds. Falls back to raw metric if SLO rules not enabled."
+          "description": "Propeller round success rate. Reads the union:dp:slo:execution_success_rate recording rule and falls back to the raw propeller rate or 100% when SLO rules are not loaded."
         },
         {
           "datasource": {
@@ -1539,298 +1386,6 @@ data:
                 }
               ],
               "description": "1 when operator paused due to resource limits (FlyteWorkflow count or storage exceeded)."
-            }
-          ]
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 32
-          },
-          "id": 300,
-          "title": "Executor (V2)",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 11
-              },
-              "id": 301,
-              "title": "Active Actions & Capacity",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "executor::v2:active_actions_count{namespace=\"$namespace\"}",
-                  "legendFormat": "Active actions",
-                  "refId": "A"
-                },
-                {
-                  "expr": "executor::v2:available_capacity{namespace=\"$namespace\"}",
-                  "legendFormat": "Available capacity",
-                  "refId": "B"
-                }
-              ],
-              "description": "V2 executor active actions vs available capacity. Capacity=0 means executor is saturated.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 11
-              },
-              "id": 302,
-              "title": "Cache Discovery",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(executor::v2:discovery_miss_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Miss",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(executor::v2:discovery_put_success_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Put success",
-                  "refId": "B"
-                }
-              ],
-              "description": "V2 executor cache discovery miss/put rates for task output caching.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never",
-                    "stacking": {
-                      "mode": "normal"
-                    }
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 19
-              },
-              "id": 303,
-              "title": "Actions Terminated by Phase",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (phase) (rate(executor::v2:actions_terminated{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "{{ phase }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "Task completion rate by outcome: succeeded, failed, aborted. Key V2 SLI for task health. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 19
-              },
-              "id": 304,
-              "title": "Evaluator Duration (pod creation)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
-                  "legendFormat": "Evaluate p50",
-                  "refId": "A"
-                },
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "Evaluate p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-                  "legendFormat": "Evaluate p99",
-                  "refId": "C"
-                }
-              ],
-              "description": "Time spent in RecursiveNodeHandler (pod creation). Dominant component of V2 task latency. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 19
-              },
-              "id": 305,
-              "title": "System Failures & Invalid Leases",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(executor::v2:system_failures{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "System failures",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(executor::v2:system_failures_exhausted{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Exhausted retries",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(executor::v2:invalid_leases{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Invalid leases",
-                  "refId": "C"
-                },
-                {
-                  "expr": "rate(executor::v2:evaluator:evaluate_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Evaluate errors",
-                  "refId": "D"
-                }
-              ],
-              "description": "Executor error rates. System failures retry; exhausted means task permanently failed. Invalid leases = malformed from queue service. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
             }
           ]
         },
@@ -2548,206 +2103,7 @@ data:
       "uid": "union-dataplane-overview",
       "version": 1
     }
-
----
-# Source: dataplane/templates/nodeexecutor/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-data:
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            linkType: ide
-            templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
-        - wandb-execution-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .podName }}'
-        - wandb-custom-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .taskConfig.id }}'
-        - comet-ml-execution-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
-              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
-        - comet-ml-custom-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
-        - neptune-scale-run:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .podName }}
-        - neptune-scale-custom-id:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .taskConfig.id }}
-        kubernetes-enabled: false
-  enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-  config.yaml: |
-    executor:
-      cluster: 'test-azure-cluster'
-      evaluatorCount: 64
-      maxActions: 2000
-      organization: 'test-org'
-      unionAuth:
-        injectSecret: true
-        secretName: EAGER_API_KEY
-      workerName: worker1
-      task_resources:
-        defaults:
-          cpu: 100m
-          memory: 500Mi
-        limits:
-          cpu: 4096
-          gpu: 256
-          memory: 2Ti
-    namespace_mapping:
-      template: union
-    union:
-      connection:
-        host: 'dns:///test.dataplane.union.ai'
-        insecureSkipVerify: false
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'test-client-id'
-        clientSecretLocation: /etc/union/secret/client_secret
-        enable: true
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-    admin:
-      clientId: 'test-client-id'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///test.dataplane.union.ai'
-      insecure: false
-      insecureSkipVerify: false
-    authorizer:
-      authorizerClient:
-        credentials: ServiceCredentials
-        grpcConfig:
-          host: 'dns:///test.dataplane.union.ai'
-          insecure: false
-          insecureSkipVerify: false
-      type: Authorizer
-    catalog-cache:
-      cache-endpoint: 'dns:///test.dataplane.union.ai'
-      endpoint: 'dns:///test.dataplane.union.ai'
-      insecure: false
-      insecure-skip-verify: false
-      type: cacheservicev2
-      use-admin-auth: true
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-    sharedService:
-      metrics:
-        scope: 'executor:'
-      security:
-        allowCors: true
-        allowLocalhostAccess: true
-        allowedHeaders:
-        - Content-Type
-        allowedOrigins:
-        - '*'
-        secure: false
-        useAuth: false
-    propeller:
-      limit-namespace: union
-      node-config:
-        disable-input-file-writes: true
-    plugins:
-      fasttask:
-        additional-worker-args:
-        - --last-ack-grace-period-seconds
-        - "120"
-        callback-uri: http://union-operator-executor.union.svc.cluster.local:15605
-        grace-period-status-not-found: 2m
-      ioutils:
-        remoteFileOutputPaths:
-          deckFilename: report.html
-      k8s:
-        disable-inject-owner-references: true
-        default-cpus: 100m
-        default-env-vars:
-        - AZURE_STORAGE_ACCOUNT_NAME: test-storage-account
-        default-labels:
-        - azure.workload.identity/use: "true"
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-        interruptible-node-selector-requirement:
-          key: kubernetes.azure.com/scalesetpriority
-          operator: In
-          values:
-          - spot
-        interruptible-tolerations:
-        - effect: NoSchedule
-          key: kubernetes.azure.com/scalesetpriority
-          operator: Equal
-          value: spot
-        non-interruptible-node-selector-requirement:
-          key: kubernetes.azure.com/scalesetpriority
-          operator: DoesNotExist
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
-          name: flyte-copilot-
-          start-timeout: 30s
-    storage:
-      container: ""
-      container: 'test-metadata-container'
-      stow:
-        config:
-          account: 'test-storage-account'
-        kind: azure
-      type: stow
-      enable-multicontainer: true
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
+    
 
 ---
 # Source: dataplane/templates/operator/configmap.yaml
@@ -2849,8 +2205,6 @@ data:
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
-        executor:
-          endpoint: 'http://union-operator-executor:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
@@ -2896,7 +2250,6 @@ data:
       rootTenantURLPattern: 'dns:///test.dataplane.union.ai'
   storage.yaml: | 
     storage:
-      container: ""
       container: 'test-metadata-container'
       stow:
         config:
@@ -2911,7 +2264,6 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: ""
       container: 'test-metadata-container'
       stow:
         config:
@@ -2930,10 +2282,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.7.2
+    helm.sh/chart: dataplane-2026.8.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.7.2"
+    app.kubernetes.io/version: "2026.8.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -5134,7 +4486,7 @@ rules:
   - apiGroups:
     - ""
     resources:
-    - podtemplates
+    - endpoints
     verbs:
     - get
     - list
@@ -5142,7 +4494,7 @@ rules:
   - apiGroups:
     - ""
     resources:
-    - endpoints
+    - podtemplates
     verbs:
     - get
     - list
@@ -5356,30 +4708,6 @@ subjects:
     namespace: union
 
 ---
-# Source: dataplane/charts/fluentbit/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: release-name-fluentbit
-  namespace: union
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - port: 2020
-      targetPort: http
-      protocol: TCP
-      name: http
-  selector:
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
 #
@@ -5568,30 +4896,6 @@ spec:
 
 
 ---
-# Source: dataplane/templates/nodeexecutor/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-executor
-  labels:
-    platform.union.ai/prometheus-group: "union-services"
-    app: executor
-spec:
-  type: ClusterIP
-  ports:
-    - port: 15605
-      targetPort: 15605
-      protocol: TCP
-      name: fasttask
-    - port: 10254
-      targetPort: debug
-      protocol: TCP
-      name: debug
-  selector:
-    app: executor
-
-
----
 # Source: dataplane/templates/operator/service-proxy.yaml
 apiVersion: v1
 kind: Service
@@ -5692,84 +4996,6 @@ spec:
       protocol: TCP
       port: 9443
       targetPort: 9443
-
----
-# Source: dataplane/charts/fluentbit/templates/daemonset.yaml
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: release-name-fluentbit
-  namespace: union
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/name: fluentbit
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: fluentbit
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: fluentbit
-        app.kubernetes.io/instance: release-name
-      annotations:
-        checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-    spec:
-      serviceAccountName: fluentbit-system
-      hostNetwork: false
-      dnsPolicy: ClusterFirst
-      containers:
-        - name: fluentbit
-          image: "cr.fluentbit.io/fluent/fluent-bit:3.2.8"
-          imagePullPolicy: IfNotPresent
-          command:
-            - /fluent-bit/bin/fluent-bit
-          args:
-            - --workdir=/fluent-bit/etc
-            - --config=/fluent-bit/etc/conf/fluent-bit.conf
-          ports:
-            - name: http
-              containerPort: 2020
-              protocol: TCP
-          livenessProbe:
-            httpGet:
-              path: /
-              port: http
-          readinessProbe:
-            httpGet:
-              path: /api/v1/health
-              port: http
-          volumeMounts:
-            - name: config
-              mountPath: /fluent-bit/etc/conf
-            - mountPath: /var/log
-              name: varlog
-            - mountPath: /var/lib/docker/containers
-              name: varlibdockercontainers
-              readOnly: true
-            - mountPath: /etc/machine-id
-              name: etcmachineid
-              readOnly: true
-      volumes:
-        - name: config
-          configMap:
-            name: fluentbit-system
-        - hostPath:
-            path: /var/log
-          name: varlog
-        - hostPath:
-            path: /var/lib/docker/containers
-          name: varlibdockercontainers
-        - hostPath:
-            path: /etc/machine-id
-            type: File
-          name: etcmachineid
-      tolerations:
-        - operator: Exists
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -6395,7 +5621,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "61b499b3eacd98749e1bbc89502de624c0ce2814deef653689a83e8013bc710"
+        configChecksum: "8672ad834305df393a5971e86f62ed9e24288f2e3199c1ac3057e47581f218e"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6421,7 +5647,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -6482,110 +5708,6 @@ spec:
       
 
 ---
-# Source: dataplane/templates/nodeexecutor/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: executor
-  template:
-    metadata:
-      annotations:
-        configChecksum: "225a72f12791b15d667020be8422bc0e694289d2e15b4866bfd450d7148ae67"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        azure.workload.identity/use: "true"
-        app: executor
-        app.kubernetes.io/instance: 'release-name'
-        app.kubernetes.io/name: executor
-    spec:
-      securityContext:
-        fsGroup: 1337
-      serviceAccountName: union-system
-      volumes:
-        - name: config-volume
-          configMap:
-            name: executor
-        - name: secret-volume
-          secret:
-            secretName: union-secret-auth
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      containers:
-        - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
-          imagePullPolicy: IfNotPresent
-          command:
-            - executorv2
-            - serve
-            - --config
-            - /etc/config/*.yaml
-          ports:
-            - name: http
-              containerPort: 8089
-              protocol: TCP
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.cpu
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: operator-cluster-name
-                  key: cluster_name
-            - name: DEPLOYMENT_NAME
-              value: operator
-            - name: PROXY_SERVICE_URL
-              value: http://union-operator-proxy:8080
-            - name: PROMETHEUS_SERVICE_URL
-              value: http://union-operator-prometheus:80
-            - name: KNATIVE_PROXY_SERVICE_URL
-              value: http://kourier-internal
-          resources:
-            limits:
-              cpu:    "4"
-              memory: "8Gi"
-            requests:
-              cpu:    "1"
-              memory: "1Gi"
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/config
-            - name: secret-volume
-              mountPath: /etc/union/secret
-            - name: auth
-              mountPath: /etc/secrets/
-      
-
----
 # Source: dataplane/templates/operator/deployment-proxy.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -6606,7 +5728,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "423746d10a0f1b6442c017f85edb5ed225e18f3a2d8a5b4dd1bb5b9e131d8ea"
+        configChecksum: "af8f5257fb21b05f0bc307f864f03fcd847bfb823a42e2ac04cc0d3244e86b4"
         
       labels:
         
@@ -6632,7 +5754,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6700,7 +5822,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -6745,7 +5867,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "423746d10a0f1b6442c017f85edb5ed225e18f3a2d8a5b4dd1bb5b9e131d8ea"
+        configChecksum: "af8f5257fb21b05f0bc307f864f03fcd847bfb823a42e2ac04cc0d3244e86b4"
         
       labels:
         
@@ -6769,7 +5891,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6786,9 +5908,9 @@ spec:
               name: secret-volume
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.7.2"
+              value: "2026.8.1"
             - name: HELM_APP_VERSION
-              value: "2026.7.2"
+              value: "2026.8.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6873,7 +5995,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "61b499b3eacd98749e1bbc89502de624c0ce2814deef653689a83e8013bc710"
+        configChecksum: "8672ad834305df393a5971e86f62ed9e24288f2e3199c1ac3057e47581f218e"
         
     spec:
       securityContext:
@@ -6884,7 +6006,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.7.2"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -7137,29 +6259,6 @@ subjects:
     name: flyte-webhook-cleanup
     namespace: union
 ---
-# Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: "release-name-fluentbit-test-connection"
-  namespace: union
-  labels:
-    helm.sh/chart: fluentbit-0.48.9
-    app.kubernetes.io/version: "3.2.8"
-    app.kubernetes.io/managed-by: Helm
-  annotations:
-    helm.sh/hook: test
-    helm.sh/hook-delete-policy: hook-succeeded
-spec:
-  containers:
-    - name: wget
-      image: "busybox:latest"
-      imagePullPolicy: Always
-      command: ["sh"]
-      args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
-  restartPolicy: Never
-
----
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: batch/v1
 kind: Job
@@ -7177,7 +6276,7 @@ spec:
       serviceAccountName: flyte-webhook-cleanup
       containers:
         - name: cleanup
-          image: "alpine/k8s:1.32.3"
+          image: "docker.io/alpine/k8s:1.32.3"
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -7201,10 +6300,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.7.2
+    helm.sh/chart: dataplane-2026.8.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.7.2"
+    app.kubernetes.io/version: "2026.8.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -7255,10 +6354,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.7.2
+      helm.sh/chart: dataplane-2026.8.1
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.7.2"
+      app.kubernetes.io/version: "2026.8.0"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:

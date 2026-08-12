@@ -7,9 +7,6 @@ emission order downstream.
 */}}
 {{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}
-{{- if .Values.executor.enabled -}}
-{{- $components = append $components (dict "name" "executor" "sa" (include "executor.serviceAccountName" .)) -}}
-{{- end -}}
 {{- if .Values.leaseworker.enabled -}}
 {{- $components = append $components (dict "name" "leaseworker" "sa" (include "leaseworker.serviceAccountName" .)) -}}
 {{- end -}}

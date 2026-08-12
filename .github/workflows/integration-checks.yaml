@@ -1,0 +1,446 @@
+# Install a PR's candidate charts onto standing canary clusters and gate on health.
+# Auth, clusters, and config are provisioned by the ci_deployer terraform in
+# cloud (infra/terraform/envs/canary/helm-charts-ci).
+name: Integration Checks
+
+on:
+  # Run on every PR to main. classify builds the matrix: the self-contained k3d leg
+  # runs on every PR; the contract-dependent cloud legs run only on release PRs (or a
+  # `run-integration-tests` label / force dispatch). See classify for the rationale.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force the full integration matrix even if the PR isn't classified as a release."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Classify: builds the matrix (k3d every PR; cloud legs on release PRs) + flags release PRs for guardrails ──
+  classify:
+    name: Classify PR (release vs non-release)
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.detect.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Detect release PR + discipline guardrails
+        id: detect
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          FORCE: ${{ github.event.inputs.force }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          chart_bump=false
+          if git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' \
+               | grep -qE '^\+version:'; then chart_bump=true; fi
+          title_release=false
+          [[ "$PR_TITLE" =~ ^Release\ [0-9] ]] && title_release=true
+          # A maintainer can add the run-integration-tests label to any PR to run the suite.
+          label_run=false
+          case ",${LABELS:-}," in *,run-integration-tests,*) label_run=true ;; esac
+          # is_release = a genuine release PR (kept for the guardrail warnings below).
+          is_release=false
+          [[ "$chart_bump" == true || "$title_release" == true ]] && is_release=true
+
+          # Build the matrix. k3d is self-contained (installs the PR's own
+          # values.k3d.yaml), so it runs on EVERY PR. The cloud legs install the S3
+          # config contract, which is only refreshed post-merge by the
+          # selfmanaged-tf-canary-fanout — so they run only on release PRs (clean
+          # version/appVersion bumps that don't touch overlays). This keeps overlay
+          # changes flowing through normal PRs (k3d-validated) into main, where the
+          # contract refreshes, and keeps release PRs minimal.
+          run_cloud=false
+          [[ "$is_release" == true || "$label_run" == true || "$FORCE" == "true" ]] && run_cloud=true
+
+          k3d_leg='{"topology":"selfmanaged-dp","cloud":"k3d","charts":"dataplane","crd_dirs":"dataplane","namespaces":"dataplane","kctx":"k3d-ci-dataplane"}'
+          cloud_legs='[
+            {"topology":"selfmanaged-dp","cloud":"aws","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-aws-dp-1"},
+            {"topology":"selfmanaged-dp","cloud":"gcp","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-gcp-dp-1"},
+            {"topology":"selfmanaged-dp","cloud":"azure","charts":"dataplane","crd_dirs":"dataplane kube-prometheus-stack","kctx":"self-dp-helm-charts-ci-sm-azure-dp-1"},
+            {"topology":"selfhosted","cloud":"aws","charts":"controlplane dataplane","crd_dirs":"dataplane kube-prometheus-stack scylla-operator envoy-gateway","kctx":"self-cp-helm-charts-ci-cp-aws"},
+            {"topology":"selfhosted","cloud":"gcp","charts":"controlplane dataplane","crd_dirs":"dataplane kube-prometheus-stack scylla-operator envoy-gateway","kctx":"self-cp-helm-charts-ci-cp-gcp"}
+          ]'
+          if [[ "$run_cloud" == true ]]; then
+            include=$(jq -c -n --argjson k "$k3d_leg" --argjson c "$cloud_legs" '[$k] + $c')
+          else
+            include=$(jq -c -n --argjson k "$k3d_leg" '[$k]')
+          fi
+          echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "chart_bump=$chart_bump title_release=$title_release label=$label_run force=${FORCE:-} is_release=$is_release run_cloud=$run_cloud"
+          echo "matrix include: $include"
+
+          # Soft guardrails: nudge release PRs toward clean version bumps.
+          if [[ "$is_release" == true ]]; then
+            if git diff --name-only "$BASE_SHA".."$HEAD_SHA" -- 'charts/**' \
+                 | grep -vE '/(Chart\.yaml|RELEASE\.md)$' | grep -q .; then
+              echo "::warning::Release PR also changes chart templates/values — releases should be clean version bumps; move feature changes to a prior non-release PR."
+            fi
+          fi
+          if [[ "$is_release" == false ]] \
+             && git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' | grep -qE '^\+appVersion:'; then
+            echo "::warning::appVersion changed on a non-release PR — appVersion bumps belong in a dedicated release PR."
+          fi
+
+  # ── Integration: one run per environment (dedicated cluster), gated + serial ──
+  integration:
+    name: ${{ matrix.topology }}/${{ matrix.cloud }}
+    needs: classify
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: helm-charts-ci   # pins the OIDC subject; no required reviewers (see ci_github.tf)
+    concurrency:
+      group: integration-checks-${{ matrix.topology }}-${{ matrix.cloud }}
+      cancel-in-progress: false   # queue; never cancel mid-deploy on a shared cluster
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      fail-fast: false
+      # Legs are computed by the classify job: k3d always (self-contained), the
+      # contract-dependent cloud legs only on release PRs. One job per include entry.
+      matrix: ${{ fromJSON(needs.classify.outputs.matrix) }}
+    env:
+      HELM_VERSION: "v4.2.3"
+      CONTRACT_BUCKET: ${{ vars.HELM_CHARTS_CI_CONTRACT_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4              # candidate charts @ PR HEAD
+      - uses: azure/setup-helm@v4.3.1
+        with:
+          version: "${{ env.HELM_VERSION }}"
+      - uses: azure/setup-kubectl@v4
+
+      - name: Resolve target cluster
+        id: cluster
+        env:
+          CLUSTERS: ${{ vars.HELM_CHARTS_CI_CLUSTERS }}
+        run: |
+          set -euo pipefail
+          key="${{ matrix.topology }}/${{ matrix.cloud }}"
+          for f in kind name region location resource_group; do
+            echo "$f=$(jq -r --arg k "$key" --arg f "$f" '.[$k][$f] // empty' <<<"$CLUSTERS")" >> "$GITHUB_OUTPUT"
+          done
+
+      # Surface a kubectl command so an engineer can inspect this leg.
+      - name: Inspect this cluster
+        run: |
+          { echo "### Inspect \`${{ matrix.topology }}/${{ matrix.cloud }}\`"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          for chart in ${{ matrix.charts }}; do
+            cmd="kubectl --context ${{ matrix.kctx }} -n $chart get pods"
+            echo "::notice title=Inspect ${{ matrix.topology }}/${{ matrix.cloud }} ($chart)::$cmd"
+            echo "$cmd" >> "$GITHUB_STEP_SUMMARY"
+          done
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Config contract: pulled FIRST with a narrow read-only credential ──
+      - name: Auth contract bucket (read-only)
+        if: matrix.cloud != 'k3d'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_CONTRACT_READ_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Pull contracts + provenance (no raw values in public logs)
+        if: matrix.cloud != 'k3d'
+        run: |
+          set -euo pipefail
+          for chart in ${{ matrix.charts }}; do
+            key="helm-charts-ci/${{ matrix.topology }}/${{ matrix.cloud }}/$chart/values.yaml"
+            aws s3api head-object --bucket "$CONTRACT_BUCKET" --key "$key" --query 'Metadata' || true
+            aws s3 cp "s3://$CONTRACT_BUCKET/$key" "$chart-contract.yaml"
+            echo "$chart contract sha256: $(sha256sum "$chart-contract.yaml" | cut -d' ' -f1)"
+          done
+          # Also pull cluster-pool.yaml here (under the contract-read role — other
+          # clouds can't read this bucket) for the func-v2 configure_routing step.
+          mkdir -p funcv2-ws/dp/dataplane
+          aws s3 cp "s3://$CONTRACT_BUCKET/helm-charts-ci/${{ matrix.topology }}/${{ matrix.cloud }}/cluster-pool.yaml" \
+            funcv2-ws/dp/dataplane/cluster-pool.yaml
+          # Don't print the contract — it carries sensitive values.
+
+      # ── Cluster auth (keyless GitHub OIDC -> per-cloud deployer identity) ──
+      - name: Auth + kubeconfig (AWS/EKS)
+        if: matrix.cloud == 'aws'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: ${{ steps.cluster.outputs.region }}
+      - name: Kubeconfig (EKS)
+        if: matrix.cloud == 'aws'
+        run: aws eks update-kubeconfig --name "${{ steps.cluster.outputs.name }}" --region "${{ steps.cluster.outputs.region }}"
+
+      - name: Auth (GCP)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.HELM_CHARTS_CI_GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.HELM_CHARTS_CI_GCP_SA }}
+      - name: Kubeconfig (GKE)
+        if: matrix.cloud == 'gcp'
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ steps.cluster.outputs.name }}
+          location: ${{ steps.cluster.outputs.location }}
+
+      - name: Auth (Azure)
+        if: matrix.cloud == 'azure'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.HELM_CHARTS_CI_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.HELM_CHARTS_CI_AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.HELM_CHARTS_CI_AZURE_SUB_ID }}
+      - name: Kubeconfig (AKS)
+        if: matrix.cloud == 'azure'
+        run: az aks get-credentials --admin --overwrite-existing -g "${{ steps.cluster.outputs.resource_group }}" -n "${{ steps.cluster.outputs.name }}"
+
+      # ── k3d: bootstrap an ephemeral cluster instead of using a standing kubeconfig ──
+      - name: Auth (AWS ci_deployer, for k3d creds)
+        if: matrix.cloud == 'k3d'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Resolve k3d tenant + credentials
+        if: matrix.cloud == 'k3d'
+        env:
+          K3D: ${{ vars.HELM_CHARTS_CI_K3D }}
+        run: |
+          set -euo pipefail
+          host=$(jq -r '.endpoint' <<<"$K3D"); org=$(jq -r '.org' <<<"$K3D"); cluster=$(jq -r '.cluster_name' <<<"$K3D")
+          op=$(aws secretsmanager get-secret-value --region us-east-2 \
+            --secret-id "$(jq -r '.secret_ref' <<<"$K3D")" --query SecretString --output text)
+          op_id=$(jq -r '.client_id' <<<"$op"); op_secret=$(jq -r '.client_secret' <<<"$op")
+          echo "::add-mask::$op_secret"
+          ci_id=$(jq -r '.ci_client_id' <<<"$K3D")
+          ci_secret=$(aws secretsmanager get-secret-value --region us-east-2 \
+            --secret-id "$(jq -r '.ci_secret_ref' <<<"$K3D")" --query SecretString --output text)
+          echo "::add-mask::$ci_secret"
+          api_key=$(.github/ci-scripts/build-api-key.sh "$host" "$ci_id" "$ci_secret" "$org")
+          echo "::add-mask::$api_key"
+          {
+            echo "CONTROL_PLANE_URL=https://$host"; echo "CP_HOST=$host"
+            echo "ORG_NAME=$org"; echo "CLUSTER_NAME=$cluster"
+            echo "OPERATOR_CLIENT_ID=$op_id"; echo "OPERATOR_CLIENT_SECRET=$op_secret"
+            echo "FLYTE_API_KEY=$api_key"
+            # verify_logs is best-effort now (WARNs, never fails), so run it on k3d too.
+            echo "FUNCTIONAL_ARGS="
+            # Single k3d node: cap xdist so concurrent image builds don't overwhelm it
+            # (buildkit serialises the builds anyway; the light scenarios still overlap).
+            echo "FUNCTIONAL_PARALLELISM=2"
+          } >> "$GITHUB_ENV"
+      - name: Bootstrap k3d
+        if: matrix.cloud == 'k3d'
+        run: tools/dataplane/k3d/up.sh bootstrap
+
+      # ── Ensure each chart's namespace exists and upgrade in place — deliberately no
+      #    delete+recreate (finalizers hang namespace deletion and cold installs are
+      #    flaky; real releases upgrade in place anyway). One run per cluster. ──
+      - name: Pre-clean (ensure namespaces)
+        run: |
+          set -euo pipefail
+          for ns in ${{ matrix.charts }}; do
+            kubectl get ns "$ns" >/dev/null 2>&1 || kubectl create ns "$ns"
+            echo ">> $ns: persisting namespace — helm upgrade in place"
+          done
+          # Clear cluster-scoped admission webhooks left by a failed install — they can
+          # deadlock the next helm upgrade (failurePolicy=Fail with no backend).
+          kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \
+            monitoring-admission controlplane-nginx-admission --ignore-not-found
+
+      # ── helm only installs crds/ on first install, never upgrades — apply explicitly ──
+      - name: Apply CRDs
+        run: |
+          set -euo pipefail
+          dirs=(); for d in ${{ matrix.crd_dirs }}; do dirs+=("crds/$d"); done
+          tools/dataplane/install.sh crds "${dirs[@]}"
+
+      - name: Fetch chart dependencies
+        run: |
+          set -euo pipefail
+          charts=(); for c in ${{ matrix.charts }}; do charts+=("charts/$c"); done
+          tools/dataplane/install.sh deps "${charts[@]}"
+
+      # ── Install each candidate chart into its own namespace with the contract; pin
+      #    the flyte-core service image tags to the PR's appVersion (no gitops layer
+      #    supplies one here). ──
+      - name: Helm upgrade --install
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.cloud }}" = "k3d" ]; then
+            # k3d has no pulled contract: install the dataplane chart with the k3d
+            # overlay and the ephemeral operator creds from bootstrap.
+            tools/dataplane/install.sh chart union charts/dataplane -n dataplane --create-namespace \
+              -f charts/dataplane/values.k3d.yaml -f values-provision.yaml
+            exit 0
+          fi
+          for chart in ${{ matrix.charts }}; do
+            # executor + monitoring are disabled in the generated contract — no --set needed.
+            extra=()
+            if [ "$chart" = "controlplane" ]; then
+              appver="$(awk '/^appVersion:/{print $2}' "charts/$chart/Chart.yaml" | tr -d '"')"
+              for svc in flyteadmin cacheservice datacatalog flyteconsole flytescheduler; do
+                extra+=(--set-string "flyte.$svc.image.tag=$appver")
+              done
+              echo ">> controlplane: pinning flyte-core image tags to $appver"
+              # Disable the ingress-nginx admission webhook: a flat helm install can't
+              # honor the contract's sync-wave cert ordering, so the webhook would hang
+              # the install (ArgoCD, which honors sync-waves, doesn't need this).
+              extra+=(--set "ingress-nginx.controller.admissionWebhooks.enabled=false")
+            fi
+            tools/dataplane/install.sh chart "$chart" "charts/$chart" \
+              -n "$chart" -f "$chart-contract.yaml" "${extra[@]}"
+            # Defensively restart all pods in the release namespace to mitigate pods
+            # not picking up configmap or secret changes.
+            tools/dataplane/install.sh restart "$chart"
+          done
+
+      # ── Health gate: binaries Ready, no config-parse crashloop. ──
+      - name: Health gate
+        run: tools/dataplane/install.sh health ${{ matrix.namespaces || matrix.charts }}
+
+      # Shared flyte SDK for the functional tests (every leg).
+      - name: Install flyte SDK
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/flyte-venv"
+          "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/flyte-venv/bin/python" \
+            --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx kubernetes pytest pytest-rerunfailures pytest-xdist
+          echo "$RUNNER_TEMP/flyte-venv/bin" >> "$GITHUB_PATH"
+
+      # ── Resolve this leg's CI credentials for the shared routing + functional steps. CI
+      #    ops authenticate as a CI identity, never the DP operator. All CI secrets
+      #    live in AWS, so non-aws legs federate to the AWS ci_deployer here to read
+      #    them (kubectl keeps using the cloud kubeconfig). ──
+      - name: Auth (AWS ci_deployer, for the CI secret)
+        if: matrix.cloud != 'aws' && matrix.cloud != 'k3d'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.HELM_CHARTS_CI_AWS_ROLE_ARN }}
+          aws-region: us-east-2
+      - name: Resolve CI creds (func-v2)
+        if: matrix.cloud != 'k3d'
+        env:
+          FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
+        run: .github/ci-scripts/resolve-ci-creds.sh "${{ matrix.topology }}/${{ matrix.cloud }}"
+
+      # ── CP-side health gate: poll until the CP reports this DP enabled + healthy.
+      #    Every leg — k3d's fresh operator must register; the standing legs confirm
+      #    health after the chart upgrade. ──
+      - name: Cluster API health gate
+        run: python .github/ci-scripts/integration_ops.py wait-healthy --timeout 360
+
+      # ── Create this leg's cluster pool + project + queue and route to them (isolated
+      #    per leg on the shared tenant). ──
+      - name: Setup Routing
+        run: python .github/ci-scripts/integration_ops.py setup-routing
+
+      # ── Console links to inspect this leg's runs + apps (handy when a run fails).
+      #    Emitted as an annotation + in the job summary. project == cluster name;
+      #    the smoke suite runs in the development domain. ──
+      - name: Inspect links (runs + apps)
+        if: always() && env.CONTROL_PLANE_URL != '' && env.CLUSTER_NAME != ''
+        run: |
+          base="${CONTROL_PLANE_URL}/v2/domain/development/project/${CLUSTER_NAME}"
+          echo "::notice title=Inspect ${{ matrix.topology }}/${{ matrix.cloud }}::runs: $base/runs | apps: $base/apps"
+          {
+            echo "### 🔎 Inspect \`${{ matrix.topology }}/${{ matrix.cloud }}\` (project \`${CLUSTER_NAME}\`)"
+            echo "- [Runs]($base/runs)"
+            echo "- [Apps]($base/apps)"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── Selfhosted only: register the build-image task and route the system project
+      #    to this DP so the remote image builder works. The managed tenant (selfmanaged
+      #    legs) ships both pre-provisioned; a self-hosted CP does neither. ──
+      - name: Register build-image task (selfhosted)
+        if: matrix.topology == 'selfhosted'
+        run: |
+          set -euo pipefail
+          # ContainerTask deploy is broken on flyte >= 2.5.15 (flyte-sdk #1332
+          # regression) — pin the last good release (2.5.14) in a dedicated venv just
+          # for this registration. The functional tests and the actual image build use latest.
+          "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/reg-venv"
+          "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/reg-venv/bin/python" \
+            --no-cache --prerelease=allow 'flyte==2.5.14' 'flyteplugins-union>=0.4.1' kubernetes
+          # build-image is published under the imagebuilder registry, not the operator's
+          # repo — read the chart's authoritative imageBuilder.bootstrap.unionImageNamePrefix.
+          export UNION_IMAGE_NAME_PREFIX="$(awk '/unionImageNamePrefix:/{print $2; exit}' charts/controlplane/values.yaml)"
+          export APP_VERSION="$(awk '/^appVersion:/{print $2}' charts/controlplane/Chart.yaml | tr -d '"')"
+          echo ">> registering build-image: prefix=$UNION_IMAGE_NAME_PREFIX version=$APP_VERSION (flyte 2.5.14)"
+          "$RUNNER_TEMP/reg-venv/bin/python" .github/ci-scripts/integration_ops.py register-build-image
+
+      # No operator restart: v2 picks up Cluster/ClusterPool/Queue wiring dynamically.
+      - name: k3d RustFS port-forward
+        if: matrix.cloud == 'k3d'
+        # The runner reads run outputs from RustFS via its in-cluster DNS name —
+        # port-forward and alias it so it resolves.
+        run: |
+          set -euo pipefail
+          kubectl port-forward -n rustfs svc/rustfs 9000:9000 &
+          echo "127.0.0.1 rustfs.rustfs.svc.cluster.local" | sudo tee -a /etc/hosts
+          for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live && break; sleep 2; done
+
+      # ── Run the functional tests. Every scenario is an independent submit→wait-for-
+      #    terminal run (mostly idle waiting on the cluster), so pytest-xdist distributes
+      #    them across workers (default --dist load — each test is self-contained; no
+      #    shared gating run). FUNCTIONAL_PARALLELISM is set per leg (default 2 for the
+      #    capacity-bound single k3d node; "auto" on the autoscaling standing clusters).
+      - name: Functional tests
+        env:
+          # Bust the built-image cache per run ONLY on k3d: its ephemeral RustFS is
+          # destroyed each teardown, so a stale cross-run cache hit points at a dead
+          # output (ENG26-979). The standing clouds keep persistent object storage, so
+          # cross-run cache hits stay valid (and desirable) — leave the bust empty there.
+          FUNCTIONAL_IMAGE_CACHE_BUST: ${{ matrix.cloud == 'k3d' && format('{0}-{1}', github.run_id, github.run_attempt) || '' }}
+          # Namespace the app ksvc lands in — "dataplane" on every leg (where the
+          # operator pins app pods under low_privilege). verify_app's endpoint poll
+          # resolves here.
+          APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
+        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
+
+      # Debug dump on failure. NOTE: public repo -> public logs; contract config values
+      # may appear (secrets stay in external-secrets, never printed).
+      - name: Debug dump (on failure)
+        if: failure()
+        run: |
+          for ns in ${{ matrix.namespaces || matrix.charts }}; do
+            echo "===== namespace $ns ====="
+            kubectl -n "$ns" get pods -o wide || true
+            kubectl -n "$ns" get events --sort-by=.lastTimestamp | tail -40 || true
+            for p in $(kubectl -n "$ns" get pods --no-headers 2>/dev/null | awk '{split($2,a,"/"); if ($3 ~ /CrashLoop|Error|Init|ImagePull/ || a[1] != a[2]) print $1}'); do
+              echo "--- describe $ns/$p ---"; kubectl -n "$ns" describe pod "$p" | tail -25 || true
+              echo "--- logs $ns/$p ---"; kubectl -n "$ns" logs "$p" --all-containers --tail=60 2>&1 | tail -60 || true
+            done
+          done
+
+      # Teardown: k3d destroys its whole ephemeral cluster; non-k3d uninstalls the
+      # dataplane release so the standing cluster doesn't idle its operator/proxy/
+      # propeller between runs (Auto Mode then consolidates the empty nodes) and to
+      # mirror ephemeral dataplane ops. CRDs are cluster-scoped and left in place
+      # (idempotent re-apply next run); the selfhosted controlplane is left too
+      # (its scylla/kourier/webhook finalizers hang teardown).
+      - name: Post-run
+        if: always() && matrix.cloud == 'k3d'
+        run: tools/dataplane/k3d/up.sh teardown
+      - name: Post-run
+        if: always() && matrix.cloud != 'k3d'
+        run: |
+          set -uo pipefail
+          if helm status dataplane -n dataplane >/dev/null 2>&1; then
+            echo ">> helm uninstall dataplane -n dataplane (free idle capacity)"
+            # Bounded wait; do NOT --force / force-finalize (that corrupts state). A
+            # stuck finalizer is left for the next run's Pre-clean rather than failing
+            # this always() teardown.
+            helm uninstall dataplane -n dataplane --wait --timeout 180s \
+              || echo "WARN: dataplane uninstall did not complete cleanly; left for next Pre-clean"
+          else
+            echo "dataplane release not present; nothing to uninstall"
+          fi

@@ -18,7 +18,19 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test
+test: check-vendored-crds helm-test kubeconform-test check-image-paths
+
+.PHONY: snapshot-generator-test
+snapshot-generator-test:
+	bash ./tests/test-atomic-render.sh
+
+# Gate on fully qualified image references. Reads the checked-in
+# tests/generated/ corpus, so it needs neither network nor helm — but that
+# means it is only as fresh as `make generate-expected`. helm-test is what
+# enforces that freshness.
+.PHONY: check-image-paths
+check-image-paths:
+	python3 scripts/check-image-paths.py
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
@@ -48,7 +60,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR)
+helm-test: $(TMP_DIR) snapshot-generator-test
 	./tests/run.sh helm
 
 .PHONY: kubeconform-test
@@ -57,7 +69,7 @@ kubeconform-test:
 
 .PHONY: requirements
 requirements:
-	@pip-sync
+	uv sync
 
 # Bump all lockstep charts to the next version. For a pre-release of the next
 # version, pass PRERELEASE=alpha or PRERELEASE=beta, e.g.
@@ -68,27 +80,27 @@ _PRERELEASE_FLAG = $(if $(PRERELEASE),--prerelease $(PRERELEASE),)
 
 .PHONY: gen_version_bump
 gen_version_bump: requirements
-	invoke builder.version-bumper --file charts/controlplane/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/dataplane/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
-	invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/controlplane/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/dataplane/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
-	invoke builder.release --chart dataplane
+	uv run invoke builder.release --chart dataplane
 
 .PHONY: gen_dataplane_crds_release
 gen_dataplane_crds_release: requirements
-	invoke builder.release --chart dataplane-crds
+	uv run invoke builder.release --chart dataplane-crds
 
 .PHONY: gen_knative_migration_release
 gen_knative_migration_release: requirements
-	invoke builder.release --chart knative-migration
+	uv run invoke builder.release --chart knative-migration
 
 .PHONY: gen_sandbox_release
 gen_sandbox_release: requirements
-	invoke builder.release --chart sandbox
+	uv run invoke builder.release --chart sandbox
 
 .PHONY: release-notes-dry-run
 release-notes-dry-run:

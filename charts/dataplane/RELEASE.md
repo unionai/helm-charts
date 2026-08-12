@@ -4,26 +4,6 @@
 
 ### Configuration changes
 
-- **Data plane overlay cleanup — remove conflicting and redundant defaults** ([#497](https://github.com/unionai/helm-charts/pull/497)). The per-cloud overlays (`values.{aws,gcp,azure}.yaml`) had accumulated settings that either restated a base default, conflicted between clouds (e.g. catalog-cache `use-admin-auth` defaulted `false` in the GCP overlay but `true` in the AWS/Azure overlays for the same kind of data plane), or belonged in the base chart because they are not cloud-specific. Those settings now live as **base `values.yaml` defaults**, and each overlay is reduced to cloud-specific config only (provider, object storage, IAM / Workload-Identity annotations, region + task-log wiring, and the cloud globals a user fills in) with a PURPOSE header documenting that contract.
-
-  **Base `values.yaml` defaults changed:**
-  - `secrets.admin.clientId` now derives from `global.AUTH_CLIENT_ID` (was a standalone `dataplane-operator` placeholder), so the single admin client id resolves from one global at every `config.*` site.
-  - `storage.enableMultiContainer` now defaults `true` (metadata and fast-registration buckets differ).
-  - Monitoring: `kube{ControllerManager,Scheduler,Etcd,Proxy}.enabled` and `defaultRules.rules.*` now default `false` — a data plane cannot scrape the cluster's control-plane components, so these ServiceMonitors / alerting rules would otherwise trip false-positive `TargetDown` alerts.
-  - `config.union.auth.enable`, `clusterresourcesync.…auth.enable` (+ `scopes`), and catalog-cache `use-admin-auth` now default **enabled** in base (a data plane authenticates to its control plane out of the box).
-  - `ingress` and `ingress-nginx` defaults now live in base (both `enabled: false`, with the class / Service / host defaults ready to switch on).
-  - `secrets.admin.create` stays `true`; `controlplaneNamespace` stays `""`; `serving.auth.enabled` and `dcgm-exporter.enabled` keep their base values — the overlays no longer restate them.
-  - The fluentbit `ServiceAccount` name defaults to `union-system`.
-  - Billing is controlled by `config.operator.billing.model` (base default `ResourceUsage`); the inert `config.operator.billableUsageCollector.enabled` key is removed.
-  - Removed dead base keys: `prometheus.prometheusOperator` (targets a key the community prometheus chart doesn't have) and empty `flytepropeller` stubs.
-
-  **Overlay (`values.{aws,gcp,azure}.yaml`) defaults removed:** the admin `clientId` restatements; the monitoring + `enableMultiContainer` defaults; `config.union.auth.enable`, `clusterresourcesync.…auth`, and catalog-cache `use-admin-auth` (the cross-cloud conflict above); `secrets.admin`; `serving.auth.enabled`; `dcgm-exporter.enabled` (the overlays keep only their cloud-specific node affinity); `controlplaneNamespace`; `ingress` / `ingress-nginx` enablement; the task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker and executor already inject these from `config.union.connection`); and the dead `billableUsageCollector` / `singleTenantOrgID` keys.
-
-- **Control-plane host: one global instead of four.** The DP→CP destination is now a single host global, `global.CONTROLPLANE_HOST` (moved to the top of the globals — it's the first thing to configure). Everything derives from it: the gRPC endpoint and the app-callback URL. Removed:
-  - **`global.CONTROLPLANE_GRPC_ENDPOINT`** — `dataplane.cp.endpoint` derives `dns:///<host>` from `CONTROLPLANE_HOST`. The `:443` port is omitted; grpc-go's DNS resolver and Connect/HTTPS both default to 443.
-  - **`global.QUEUE_GRPC_ENDPOINT`** and the **`dataplane.cp.queueEndpoint`** helper — the task-pod endpoint is injected by the leaseworker/executor from `config.union.connection`; there is no separate queue global. Authless / direct-service routing (skip nginx + OAuth, dial the in-cluster Service on `:80`) is configured explicitly via `config.union.auth` + `config.union.connection`, documented in the new **`examples/values.authless.yaml`**.
-  - **`global.UNION_CONTROL_PLANE_HOST`** and the top-level **`.Values.host`** are now **DEPRECATED** — both are still honored as fallbacks (precedence `CONTROLPLANE_HOST` > `.Values.host` > `UNION_CONTROL_PLANE_HOST`) but should be migrated to `CONTROLPLANE_HOST`; they will be removed in a future release. `.Values.host` is the pre-globals top-level knob; no terraform-generated env sets it. The intracluster examples are simplified to just set `CONTROLPLANE_HOST`.
-
 - **`low_privilege` is now the chart's only privilege axis; `namespaces.enabled` no longer implies single-namespace mode** (Linear UN-29; RBAC hardening phase 0). The `singleNamespace` helper — which drives RBAC kind, `limit-namespace` / `namespace_mapping` / `limitNamespace` injection, and the `clusterresourcesync` gate — was defined as `or (not namespaces.enabled) low_privilege`. That folded a namespace *pre-seed* toggle into a *privilege* decision, and the two are not the same thing: `namespaces.enabled` only pre-seeds six hardcoded namespaces (`flytesnacks-{development,staging,production}` and `union-health-monitoring-{development,staging,production}`); with it off, a fully-privileged data plane still creates namespaces for newly registered projects dynamically, via `clusterresourcesync`. `singleNamespace` is now exactly `low_privilege`, which is the one flag that really does mean "no namespaces are created by any route."
 
   **This fixes a silent misconfiguration in the default full-privilege install.** `namespaces.enabled` defaults to `false`, so `low_privilege: false` alone previously put the chart in single-namespace mode — and all three `clusterresourcesync` templates are gated `not singleNamespace`, so the very component whose `a_namespace` template creates per-project namespaces was suppressed. A multi-namespace data plane that left `namespaces.enabled` at its default had nothing creating namespaces for new projects at all.
@@ -804,8 +784,6 @@ consuming code paths. **No part of it has been verified against a running cluste
   unchanged**; it is declared unconditionally so the component's stated needs match what it
   actually does. This is the only RBAC line that moves in a `low_privilege: true` render.
 
-- **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
-- **fluentbit `ServiceAccount` renamed** to `union-system` (from `fluentbit-system`). No action unless you bound external policy (e.g. a cloud IAM trust) to the old ServiceAccount name.
 - **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a genuine multi-namespace deployment.** If you were running that combination and relying on it behaving as single-namespace, it will not any more: task pods are no longer pinned to the release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping` falls back to its `{{ project }}-{{ domain }}` default unless you set `namespace_mapping.template`). ServiceAccounts are unaffected: `commonServiceAccount.enabled` defaults to `true`, so components keep sharing `union-system` in this mode as before. **If you actually want single-namespace behavior, set `low_privilege: true`** — that is now the flag that means it, and `namespaces.enabled: false` on its own never did.
 - **`clusterresourcesync.enabled` defaults to `false` — a `low_privilege: false` data plane must now enable it (or pre-create namespaces).** It was previously suppressed entirely in this mode by the `singleNamespace` gate, so leaving it off looked harmless. Now that the mode is genuinely multi-namespace, something has to create the per-project/per-domain namespaces and their RBAC as projects are registered. Either set `clusterresourcesync.enabled: true`, or pre-create every namespace your `namespace_mapping.template` can produce by some other means and enumerate them in `namespaces.static` with `namespaces.enabled: true`. Task pods land in `Forbidden`/`namespace not found` otherwise.
 
@@ -882,6 +860,117 @@ consuming code paths. **No part of it has been verified against a running cluste
   verb set can be reviewed in a diff, a wildcard cannot.
 - **`namespaces.enabled` must be a YAML boolean.** It is read for Go-template truthiness, so `"false"` means **true**: the chart silently creates every namespace in `namespaces.static`, binds `union-work-ns` into them, and switches the deployment from the runtime posture to the static one — while the values file reads `false`. That switch also strips `clusterresourcesync` of its cluster-wide grant, so projects outside `namespaces.static` stop being provisioned. **If your overlay stringifies scalars (a `templatefile`/heredoc generator will, `yamlencode` will not), check this key before upgrading.** Use `--set`, not `--set-string`, if you set it on the command line.
 - **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject them.** Go's template engine treats any non-empty string as true, so `"false"` means **true**. The consequences differ by key: `namespaces.enabled: "false"` creates every namespace in `namespaces.static`, binds `union-work-ns` into them and switches the deployment to the static posture, while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses per-component identities onto the shared ServiceAccount, so each component holds the union of the others' rules. `config.operator.secretsWatcher.enabled: "false"` adds cluster-wide `update`/`patch` on Deployments. `low_privilege: "false"` fails safe, landing on the more restrictive branch. **If your values are generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline stringifies scalars, `yamlencode` does not. The rendered manifests for every fixture are committed under `tests/generated/`, which is where a wrong reading becomes visible.
+
+## 2026.8.1
+
+Lockstep `version` bump with the `controlplane` chart (`2026.8.0` -> `2026.8.1`).
+No data-plane chart changes in this release.
+
+## 2026.8.0
+
+Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays
+`2026.7.2`, so the data-plane images are unchanged. This is a **minor** bump rather than
+a patch because it removes the legacy executor and retires several globals — see
+Migration below.
+
+### Removed: executor
+
+The legacy executor Deployment has been removed ([#501](https://github.com/unionai/helm-charts/pull/501)),
+completing the deprecation announced 2026-06-30.
+Leaseworker is the only execution path; the control-plane chart drops the matching queue service in its
+own `2026.8.0`.
+
+- `templates/nodeexecutor/` deleted (Deployment/ConfigMap/Service/ServiceAccount)
+  along with the `executor.*` helpers and the operator's executor heartbeat entry.
+  Stale `config.operator.dependenciesHeartbeat.executor` overlay entries are
+  dropped at render time so the operator doesn't heartbeat a nonexistent service.
+- The `executor.*` values block is deleted; task log links move to
+  `leaseworker.task_logs` (same defaults, same rendered `task_logs.yaml`).
+  The deprecated `executor.task_logs` key still wins when an overlay sets it, so
+  existing overlays keep their custom log links — migrate them to
+  `leaseworker.task_logs`. All other `executor.*` overlay keys (resources,
+  scheduling, `idl2Executor`, `raw_config`, …) are now ignored. The aws/gcp
+  overlay `executor` blocks and the example files are updated accordingly.
+- Monitoring: `union:dp:executor:active_actions` is replaced by
+  `union:dp:leaseworker:active_actions`, backed by `leaseworker:active_run_leases`.
+  The metrics glossary in `unionai-docs` needs a matching update.
+
+### Configuration changes
+
+- **Data plane overlay cleanup — remove conflicting and redundant defaults** ([#497](https://github.com/unionai/helm-charts/pull/497)). The per-cloud overlays (`values.{aws,gcp,azure}.yaml`) had accumulated settings that either restated a base default, conflicted between clouds (e.g. catalog-cache `use-admin-auth` defaulted `false` in the GCP overlay but `true` in the AWS/Azure overlays for the same kind of data plane), or belonged in the base chart because they are not cloud-specific. Those settings now live as **base `values.yaml` defaults**, and each overlay is reduced to cloud-specific config only (provider, object storage, IAM / Workload-Identity annotations, region + task-log wiring, and the cloud globals a user fills in) with a PURPOSE header documenting that contract.
+
+  **Base `values.yaml` defaults changed:**
+  - `secrets.admin.clientId` now derives from `global.AUTH_CLIENT_ID` (was a standalone `dataplane-operator` placeholder), so the single admin client id resolves from one global at every `config.*` site.
+  - `storage.enableMultiContainer` now defaults `true` (metadata and fast-registration buckets differ).
+  - Monitoring: `kube{ControllerManager,Scheduler,Etcd,Proxy}.enabled` and `defaultRules.rules.*` now default `false` — a data plane cannot scrape the cluster's control-plane components, so these ServiceMonitors / alerting rules would otherwise trip false-positive `TargetDown` alerts.
+  - `config.union.auth.enable`, `clusterresourcesync.…auth.enable` (+ `scopes`), and catalog-cache `use-admin-auth` now default **enabled** in base (a data plane authenticates to its control plane out of the box).
+  - `ingress` and `ingress-nginx` defaults now live in base (both `enabled: false`, with the class / Service / host defaults ready to switch on).
+  - `secrets.admin.create` stays `true`; `controlplaneNamespace` stays `""`; `serving.auth.enabled` and `dcgm-exporter.enabled` keep their base values — the overlays no longer restate them.
+  - The fluentbit `ServiceAccount` name defaults to `union-system`.
+  - Billing is controlled by `config.operator.billing.model` (base default `ResourceUsage`); the inert `config.operator.billableUsageCollector.enabled` key is removed.
+  - Removed dead base keys: `prometheus.prometheusOperator` (targets a key the community prometheus chart doesn't have) and empty `flytepropeller` stubs.
+
+  **Overlay (`values.{aws,gcp,azure}.yaml`) defaults removed:** the admin `clientId` restatements; the monitoring + `enableMultiContainer` defaults; `config.union.auth.enable`, `clusterresourcesync.…auth`, and catalog-cache `use-admin-auth` (the cross-cloud conflict above); `secrets.admin`; `serving.auth.enabled`; `dcgm-exporter.enabled` (the overlays keep only their cloud-specific node affinity); `controlplaneNamespace`; `ingress` / `ingress-nginx` enablement; the task-pod `_U_EP_OVERRIDE` / `_U_INSECURE` `default-env-vars` (the leaseworker and executor already inject these from `config.union.connection`); and the dead `billableUsageCollector` / `singleTenantOrgID` keys.
+
+- **Control-plane host: one global instead of four** ([#499](https://github.com/unionai/helm-charts/pull/499)). The DP→CP destination is now a single host global, `global.CONTROLPLANE_HOST` (moved to the top of the globals — it's the first thing to configure). Everything derives from it: the gRPC endpoint and the app-callback URL. Removed:
+  - **`global.CONTROLPLANE_GRPC_ENDPOINT`** — `dataplane.cp.endpoint` derives `dns:///<host>` from `CONTROLPLANE_HOST`. The `:443` port is omitted; grpc-go's DNS resolver and Connect/HTTPS both default to 443.
+  - **`global.QUEUE_GRPC_ENDPOINT`** and the **`dataplane.cp.queueEndpoint`** helper — the task-pod endpoint is injected by the leaseworker/executor from `config.union.connection`; there is no separate queue global. Authless / direct-service routing (skip nginx + OAuth, dial the in-cluster Service on `:80`) is configured explicitly via `config.union.auth` + `config.union.connection`, documented in the new **`examples/values.authless.yaml`**.
+  - **`global.UNION_CONTROL_PLANE_HOST`** and the top-level **`.Values.host`** are now **DEPRECATED** — both are still honored as fallbacks (precedence `CONTROLPLANE_HOST` > `.Values.host` > `UNION_CONTROL_PLANE_HOST`) but should be migrated to `CONTROLPLANE_HOST`; they will be removed in a future release. `.Values.host` is the pre-globals top-level knob; no terraform-generated env sets it. The intracluster examples are simplified to just set `CONTROLPLANE_HOST`.
+
+### Fully qualified image repository paths
+
+([#509](https://github.com/unionai/helm-charts/pull/509), FAB-438.)
+Every image the chart renders now spells out its registry host. An unqualified
+repository (`bitnami/kubectl`) resolves against the implicit `docker.io/`
+default — and one with no slash at all (`busybox`) against `docker.io/library/`.
+Clusters that run an allowed-registry admission policy, or that cannot reach
+Docker Hub, reject those pulls with `ErrImagePull`.
+
+- **`image.kubectl`** — now `docker.io/alpine/k8s:1.32.3`, was `bitnami/kubectl:latest`.
+  Two changes in one: the registry host is explicit, and the image moves off
+  `bitnami/kubectl`, from which upstream has pruned every version tag — only
+  `latest` remains, so it could not be pinned. `alpine/k8s` is what
+  `flytepropellerwebhook.legacyWebhookCleanup` already used, so both Helm hooks
+  now share one image. Override as usual if you mirror internally.
+- **`flytepropellerwebhook.legacyWebhookCleanup.image.repository`** — now
+  `docker.io/alpine/k8s`.
+- **`fluentbit.testFramework.image.repository`** — new override, pinning the
+  subchart's bare `busybox` default to `docker.io/library/busybox`. Rendered
+  only by `helm test`. The `library/` namespace is spelled out because that is
+  where official images actually live on Docker Hub; a bare `busybox` relies on
+  the client to infer it.
+
+A `make check-image-paths` gate (wired into `make test` and the `image-paths` CI
+job) now fails the build on any unqualified reference, in chart values or in
+rendered subchart output.
+
+### New / improved
+
+- **`apps.enabled` toggle for app serving components** ([#506](https://github.com/unionai/helm-charts/pull/506)).
+  `apps.enabled` supersedes `serving.enabled`; a single helper resolves both with
+  precedence `apps.enabled` > `serving.enabled` > `true`. Under zero trust,
+  `apps.enabled: false` now also drops the vendored knative components (activator,
+  autoscaler, …), which `serving.enabled: false` left rendered. `serving.enabled`
+  keeps working and renders a deprecation notice at the top of the operator ConfigMap
+  only when explicitly set. **No rendered-output change at default values** — migrate
+  overlays at your convenience.
+- **Configurable kubectl image for the Helm hook Jobs** ([#467](https://github.com/unionai/helm-charts/pull/467)).
+  The pre-upgrade and pre-delete hook jobs now honor `image.kubectl` (repository, tag,
+  pull policy, imagePullSecrets) instead of hardcoding the image — required for
+  air-gapped clusters that mirror images internally.
+- **`taskPodTemplate.workingDir`** ([#468](https://github.com/unionai/helm-charts/pull/468)).
+  Sets the working directory for task pods (e.g. `/tmp`, for read-only-root-filesystem
+  images) directly, instead of overriding the whole pod template to change one field.
+- **Documented the embedded-secret init container image override** ([#507](https://github.com/unionai/helm-charts/pull/507)).
+  A commented example under `config.core.webhook.embeddedSecretManagerConfig` shows how
+  to override `fileMountInitContainer.image`, whose upstream default
+  (`public.ecr.aws/docker/library/busybox:latest`) air-gapped clusters cannot reach.
+  Comment-only; no rendered-output change.
+
+### Migration / action required
+
+- **Behavior-preserving where a deployment already sets the value.** The removed overlay keys now come from base `values.yaml` defaults. If you relied on an overlay-set value that differs from the new base default, set it in your environment values instead. The one cross-cloud behavior change is catalog-cache `use-admin-auth`, which is now consistently enabled (previously `false` in the GCP overlay).
+- **fluentbit `ServiceAccount` renamed** to `union-system` (from `fluentbit-system`). No action unless you bound external policy (e.g. a cloud IAM trust) to the old ServiceAccount name.
 - **Regenerate before adopting if your env still sets the retired CP-host globals.** An environment whose generated `values.yaml` still contains `global.CONTROLPLANE_GRPC_ENDPOINT` / `global.QUEUE_GRPC_ENDPOINT`, or a task-pod `default-env-vars` `_U_EP_OVERRIDE: "{{ include \`dataplane.cp.queueEndpoint\` . }}"`, must be regenerated (terraform apply) before moving to this chart — the `queueEndpoint` helper is removed, so the stale `include` fails to render. The retired globals are inert if set; drop them. Authless deployments move to `config.union.auth`/`config.union.connection` per `examples/values.authless.yaml`.
 
 ## 2026.7.2

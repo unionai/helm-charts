@@ -37,8 +37,8 @@ cd helm-charts
 # Required when monitoring.enabled=true (chart default).
 kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
 
-# Required when scylla.enabled=true (chart default — ScyllaDB powers the
-# queue service). Skip if you manage scylla-operator + scylla CRDs
+# Required when scylla.enabled=true (chart default — ScyllaDB backs the
+# leasor + actions services). Skip if you manage scylla-operator + scylla CRDs
 # externally.
 kubectl apply --server-side --force-conflicts -f crds/scylla-operator/
 
@@ -56,8 +56,8 @@ ownership.
 
 The control plane needs **both** databases:
 
-- **Postgres** — all services except queue (identity, executions, monolith, …). Provide externally and reference via `dbHost`/`dbName`/`dbUser`/db secret.
-- **ScyllaDB** — queue service only. Can be embedded (chart-managed, default) or external (`scylla.enabled: false` + `scylla.externalHost`).
+- **Postgres** — all services except leasor and actions (identity, executions, monolith, …). Provide externally and reference via `dbHost`/`dbName`/`dbUser`/db secret.
+- **ScyllaDB** — leasor + actions services only (keyspaces `leasor` and `actions`). Can be embedded (chart-managed, default) or external (`scylla.enabled: false` + `scylla.externalHost`).
 
 ## Requirements
 
@@ -151,6 +151,40 @@ All pods should be `Running` and `flyteadmin` should be serving requests.
 
 ---
 
+## AWS Pod Identity Webhook Annotation Prefix
+
+The AWS pod identity webhook mutates pods by reading a service account annotation named `<annotation-prefix>/role-arn`. EKS uses `eks.amazonaws.com` by default, so the AWS values file defaults to `eks.amazonaws.com/role-arn`.
+
+If your cluster operator installed the webhook with a custom `--annotation-prefix`, override each control plane service account annotation key that uses AWS IAM:
+
+```yaml
+flyte:
+  flyteadmin:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  datacatalog:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+  cacheservice:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-flyteadmin"
+
+services:
+  artifacts:
+    serviceAccount:
+      annotations:
+        customer.example.com/role-arn: "arn:aws:iam::123456789012:role/union-artifacts"
+```
+
+When this is layered on top of an AWS preset values file, Helm may still render the default `eks.amazonaws.com/role-arn` annotation. That extra annotation is ignored by a webhook configured with a different prefix; the custom `<prefix>/role-arn` annotation is the one that controls mutation.
+
+The IAM role trust policies must still trust the Kubernetes service account subjects used by the rendered service accounts.
+
+---
+
 ## Installation
 
 ### Database Architecture
@@ -161,7 +195,7 @@ The Union control plane requires **both** database systems:
    - Configure via `dbHost`, `dbName`, `dbUser`, and database secret
    - Must be provided (external or in-cluster)
 
-2. **ScyllaDB**: Required exclusively for the queue service
+2. **ScyllaDB**: Required for the leasor and actions services
    - Configure via `scylla` section
    - Can be embedded (via chart) or external
 
@@ -181,7 +215,7 @@ bucketName: "your-s3-bucket"
 artifactsBucketName: "your-artifacts-bucket"
 region: "us-east-2"
 
-# Use external ScyllaDB for queue service
+# Use external ScyllaDB for the leasor + actions services
 scylla:
   enabled: false
   externalHost: "your-scylla-host"
@@ -199,16 +233,16 @@ helm upgrade --install union-controlplane unionai/controlplane \
 
 ### Installation with Embedded ScyllaDB
 
-If you want to use the embedded ScyllaDB cluster for the queue service, ensure the ScyllaDB Operator is installed (see Prerequisites), then create a `values.yaml`:
+If you want to use the embedded ScyllaDB cluster for the leasor + actions services, ensure the ScyllaDB Operator is installed (see Prerequisites), then create a `values.yaml`:
 
 ```yaml
-# Postgres configuration (required for all services except queue)
+# Postgres configuration (required for all services except leasor/actions)
 dbHost: "your-postgres-host"
 dbName: "your-db-name"
 dbUser: "your-db-user"
 dbPass: "your-db-password"
 
-# Embedded ScyllaDB for queue service
+# Embedded ScyllaDB for the leasor + actions services
 scylla:
   enabled: true
   datacenter: dc1
@@ -305,8 +339,8 @@ helm show values unionai/controlplane
 
 ### Key Configuration Options
 
-- **Postgres Configuration** (Required): Set `dbHost`, `dbName`, `dbUser`, and `dbPass` for the primary database used by all control plane services except the queue service
-- **ScyllaDB Configuration** (Required): Configure `scylla` section for the queue service database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
+- **Postgres Configuration** (Required): Set `dbHost`, `dbName`, `dbUser`, and `dbPass` for the primary database used by all control plane services except leasor and actions
+- **ScyllaDB Configuration** (Required): Configure `scylla` section for the leasor/actions database. Set `scylla.enabled: true` for embedded cluster or provide `scylla.externalHost` for external ScyllaDB
 - **Object Storage**: Configure `bucketName`, `artifactsBucketName`, and `region` for S3-compatible storage
 - **Ingress**: Set `global.INGRESS_PROVIDER` to `nginx`, `envoy`, or `both`. Enable the relevant controller (`ingress-nginx.enabled` or `envoy-gateway.enabled`) and configure `envoyGateway.gatewayClassName` when using Envoy Gateway
 
@@ -463,9 +497,7 @@ kubectl delete namespace union-cp
 
 For deploying Union control plane in the **same Kubernetes cluster** as your Union dataplane, see the [Self-hosted deployment guide](https://docs.union.ai/selfmanaged/deployment/selfhosted-deployment/) on the Union documentation site.
 
-Reference guides are also available in this repository:
-- [AWS](SELFHOSTED_INTRA_CLUSTER_AWS.md)
-- [GCP](SELFHOSTED_INTRA_CLUSTER_GCP.md)
+For intra-cluster topologies, layer `examples/values.{cloud}.intracluster.yaml` on top of the canonical `values.{cloud}.yaml` overlay. See [`MIGRATION.md`](../MIGRATION.md) for details about the cloud overlay consolidation.
 
 ---
 

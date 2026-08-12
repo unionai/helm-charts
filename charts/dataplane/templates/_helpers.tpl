@@ -178,68 +178,6 @@ tolerations:
 {{- end }}
 {{- end -}}
 
-{{- define "executor.scheduling.topologySpreadConstraints" -}}
-{{- with .Values.executor.topologySpreadConstraints }}
-topologySpreadConstraints:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.affinity" -}}
-{{- with .Values.executor.affinity }}
-affinity:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.nodeSelector" -}}
-{{- with .Values.executor.nodeSelector }}
-nodeSelector:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.nodeName" -}}
-{{- with .Values.executor.nodeName }}
-nodeName: {{ toYaml . }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling.tolerations" -}}
-{{- with .Values.executor.tolerations }}
-tolerations:
-{{ toYaml . | nindent 2 }}
-{{- end }}
-{{- end }}
-
-{{- define "executor.scheduling" -}}
-{{- if .Values.executor.topologySpreadConstraints }}
-{{- include "executor.scheduling.topologySpreadConstraints" . }}
-{{- else }}
-{{- include "global.scheduling.topologySpreadConstraints" . }}
-{{- end }}
-{{- if .Values.executor.affinity }}
-{{- include "executor.scheduling.affinity" . }}
-{{- else }}
-{{- include "global.scheduling.affinity" . }}
-{{- end }}
-{{- if .Values.executor.nodeSelector }}
-{{- include "executor.scheduling.nodeSelector" . }}
-{{- else }}
-{{- include "global.scheduling.nodeSelector" . }}
-{{- end }}
-{{- if .Values.executor.nodeName }}
-{{- include "executor.scheduling.nodeName" . }}
-{{- else }}
-{{- include "global.scheduling.nodeName" . }}
-{{- end }}
-{{- if .Values.executor.tolerations }}
-{{- include "executor.scheduling.tolerations" . }}
-{{- else }}
-{{- include "global.scheduling.tolerations" . }}
-{{- end }}
-{{- end -}}
-
 {{- define "leaseworker.scheduling.topologySpreadConstraints" -}}
 {{- with .Values.leaseworker.topologySpreadConstraints }}
 topologySpreadConstraints:
@@ -835,10 +773,6 @@ http://{{ include "prometheus.service.name" . }}:80
 http://flytepropeller:10254
 {{- end -}}
 
-{{- define "executor.health.url" -}}
-http://union-operator-executor:10254
-{{- end -}}
-
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
 {{- end -}}
@@ -1023,6 +957,44 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Render RBAC that grants one service account use of an OpenShift SCC.
+*/}}
+{{- define "openshift.sccRbac" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ .name }}
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccountName }}
+    namespace: {{ .root.Release.Namespace }}
+{{- end -}}
+
+{{/*
 Name of the fluentbit configMap
 */}}
 {{- define "fluentbit.configMapName" -}}
@@ -1061,7 +1033,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
     Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
     Path                /var/log/containers/*.log
-    DB                  /var/log/flb_kube.db
+    DB                  {{ .Values.fluentbit.tailDBPath }}
     multiline.parser    docker, cri
     Mem_Buf_Limit       5MB
     Skip_Long_Lines     On
@@ -1086,10 +1058,10 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
     auth_type             key
 {{/* fluent-bit's azure_blob output only supports key/sas auth (no workload
-     identity), so it needs its own shared key independent of the executor's
-     stow config. Prefer a dedicated fluentbit.azureBlobSharedKey (which may be
-     a ${ENV} placeholder expanded by fluent-bit at runtime); fall back to the
-     stow config key for backward compatibility. */}}
+     identity), so it needs its own shared key independent of the dataplane's
+     stow storage config. Prefer a dedicated fluentbit.azureBlobSharedKey (which
+     may be a ${ENV} placeholder expanded by fluent-bit at runtime); fall back
+     to the stow config key for backward compatibility. */}}
 {{- $fbSharedKey := .Values.storage.custom.stow.config.key }}
 {{- if .Values.fluentbit.azureBlobSharedKey }}
 {{- $fbSharedKey = .Values.fluentbit.azureBlobSharedKey }}
@@ -1212,6 +1184,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: serving
 {{- end -}}
 
+{{- define "serving.kourierGateway.openShiftSccName" -}}
+{{- default (printf "%s-kourier-gateway" (include "serving.fullname" .)) .Values.serving.openShift.kourierGatewayScc.name | trunc 63 | trimSuffix "-" }}
+{{- end }}
+
 {{- define "3scale-kourier-gateway.selectorLabels" -}}
 app.kubernetes.io/name: 3scale-kourier-gateway
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -1308,36 +1284,10 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- end }}
 {{- end -}}
 
-{{- define "executor.serviceAccount.annotations" -}}
-{{- include "global.serviceAccountAnnotations" . }}
-{{- with .Values.executor.serviceAccount.annotations }}
-{{ toYaml . }}
-{{- end }}
-{{- end }}
-
 {{/*
 TODO: Make these consistent with label sets in other components.
 Added complexity here is necessary to support extra pod labels while maintaining the existing chart behavior.
 */}}
-{{- define "executor.selectorLabels" -}}
-{{- if and .Values.executor.selector .Values.executor.selector.matchLabels -}}
-{{- .Values.executor.selector.matchLabels | toYaml }}
-{{- else -}}
-app: executor
-{{- end -}}
-{{- end -}}
-
-{{- define "executor.labels" -}}
-{{- include "executor.selectorLabels" . }}
-{{- end -}}
-
-{{- define "executor.podLabels" -}}
-{{ include "global.podLabels" . }}
-{{ $labels := include "executor.labels" . | fromYaml -}}
-{{- $podLabels := .Values.executor.podLabels | default dict -}}
-{{- tpl (mustMergeOverwrite $podLabels $labels | toYaml) . }}
-{{- end -}}
-
 {{- define "leaseworker.serviceAccount.annotations" -}}
 {{- include "global.serviceAccountAnnotations" . }}
 {{- with .Values.leaseworker.serviceAccount.annotations }}
@@ -1491,17 +1441,6 @@ Returns the common service account name.
 {{- end -}}
 
 {{/*
-Returns the executor service account name, using the common SA when enabled.
-*/}}
-{{- define "executor.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
-{{- include "common.serviceAccountName" . -}}
-{{- else -}}
-executor
-{{- end -}}
-{{- end -}}
-
-{{/*
 Returns the leaseworker service account name, using the common SA when enabled.
 */}}
 {{- define "leaseworker.serviceAccountName" -}}
@@ -1538,10 +1477,37 @@ Returns the fluentbit service account name, using the common SA when enabled.
 Returns the buildkit service account name, using the common SA when enabled.
 */}}
 {{- define "buildkit.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
+{{- if .Values.imageBuilder.buildkit.serviceAccount.forceDedicated -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- else if and .Values.imageBuilder.buildkit.openShift.enabled (include "useCommonServiceAccount" .) -}}
+{{- fail "imageBuilder.buildkit.serviceAccount.forceDedicated must be true when imageBuilder.buildkit.openShift.enabled is true so the BuildKit SCC is not bound to the common service account" -}}
+{{- else if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Return true when the chart should create the BuildKit OpenShift SCC.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftCreateScc" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- if and (include "imagebuilder.buildkit.enabled" .) .Values.imageBuilder.buildkit.openShift.enabled $scc.create (not $scc.existingName) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Create the name of OpenShift SecurityContextConstraints to use for buildkit.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftSccName" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- $defaultName := printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .) -}}
+{{- if $scc.existingName -}}
+{{- $scc.existingName | trunc 63 | trimSuffix "-" -}}
+{{- else if and (not $scc.create) $scc.name -}}
+{{- $scc.name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- default $defaultName $scc.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 
@@ -1612,9 +1578,9 @@ so silently means true.
 
 {{/*
 Resolves the namespace template shared by every component that maps a run to a
-K8s namespace: the executor (namespace_mapping.template), the leaseworker
-(namespace-template), and the operator (org.namespaceTemplate). Callers wrap the
-returned string in their own config key.
+K8s namespace: the leaseworker (namespace-template) and the operator
+(org.namespaceTemplate). Callers wrap the returned string in their own config
+key.
 
 Single-namespace mode pins to the release namespace so namespace-scoped RBAC is
 never exceeded. Otherwise it returns namespace_mapping.template (the single
@@ -1624,7 +1590,7 @@ default).
 
 Returns the raw value WITHOUT tpl so the single caller that re-templates its
 config blob (leaseworker) renders the Terraform-escaped form exactly once;
-callers that emit directly (executor, operator) apply tpl themselves.
+the caller that emits directly (the operator) applies tpl itself.
 */}}
 {{- define "dataplane.namespaceTemplate" -}}
 {{- if include "singleNamespace" . -}}
@@ -1638,7 +1604,9 @@ callers that emit directly (executor, operator) apply tpl themselves.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
-{{- else if and (eq $key "executor") (not $.Values.executor.enabled) }}
+{{- /* The executor was removed from this chart; drop stale overlay entries so
+       the operator doesn't heartbeat a nonexistent service. */}}
+{{- else if eq $key "executor" }}
 {{- else if and (eq $key "prometheus") $.Values.low_privilege }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}

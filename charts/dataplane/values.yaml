@@ -81,6 +81,11 @@ additionalPodLabels: { }
 # -- Define additional PodSpec values for all of the Union pods.
 additionalPodSpec: { }
 
+# -- Service account settings for task pods in single-namespace mode.
+serviceAccount:
+  # -- Image pull secrets to assign to the task pod service account.
+  imagePullSecrets: []
+
 # -- Define additional serviceAccountAnnotations to be added to all system-created service accounts
 additionalServiceAccountAnnotations: { }
 
@@ -320,7 +325,7 @@ clusterresourcesync:
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
 
-# -- Central logging configuration. All services (propeller, operator, node-executor,
+# -- Central logging configuration. All services (propeller, operator, leaseworker,
 # clusterresourcesync, nodeobserver, flyteconnector) pull their log level from here.
 # Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO).
 # Python services (FlyteConnector) use stdlib scale: pythonLevel (10=DEBUG, 20=INFO, 30=WARNING).
@@ -448,6 +453,13 @@ config:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
         imagePullSecrets:
           enabled: true
+        # -- Init container used to mount embedded secrets as files into task pods.
+        # -- Uncomment and override `image` to repoint the default upstream busybox
+        # -- image (public.ecr.aws/docker/library/busybox:latest) at a private or
+        # -- mirrored registry — required for air-gapped clusters that cannot reach
+        # -- public.ecr.aws. Maps to webhook.embeddedSecretManagerConfig.fileMountInitContainer.
+        # fileMountInitContainer:
+        #   image: <your-registry>/busybox:latest
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -554,9 +566,6 @@ config:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
-      # -- Define the propeller health check endpoint.
-      executor:
-        endpoint: '{{ include "executor.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -715,9 +724,8 @@ databricks:
 # -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
 # This is the canonical source of truth (see the selfmanaged namespace-mapping
 # docs). All dataplane services (propeller, clusterresourcesync, operator,
-# executor) inherit this value via the "dataplane.namespaceTemplate" helper,
-# which pins to the release namespace under singleNamespace. The executor alone
-# may still override it via executor.raw_config.namespace_mapping.
+# leaseworker) inherit this value via the "dataplane.namespaceTemplate" helper,
+# which pins to the release namespace under singleNamespace.
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
@@ -1003,6 +1011,16 @@ fluentbit:
   #   fluentbit.rbac.eventsAccess  — adds events
   rbac:
     create: false
+  # Upstream defaults this to a bare `busybox`, which resolves against the
+  # implicit docker.io/library/ default and fails on clusters that pin an
+  # allowed-registry policy. Only rendered by `helm test`, but the policy
+  # applies there too. `library/` is spelled out — that is the namespace
+  # official images actually live in on Docker Hub.
+  testFramework:
+    image:
+      repository: docker.io/library/busybox
+  # -- Path to Fluent Bit's tail input state database.
+  tailDBPath: /var/log/flb_kube.db
   # Allow fluentbit to run on all nodes to be able to push all logs.
   tolerations:
     - operator: Exists
@@ -1027,35 +1045,46 @@ flyteagent:
   enabled: false
   plugin_config: { }
 
-executor:
+leaseworker:
   enabled: true
-  idl2Executor: true
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
     cluster: "{{ tpl .Values.clusterName . }}"
-    workerName: worker1
+    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
+    # Leaseworker dials leasor + actions via the URL set in the union.connection
+    # block on the controlplane chart (see `union.connection.host`); the
+    # leasor/actions endpoints are not separately configurable on the
+    # leaseworker today.
     unionAuth:
       injectSecret: true
       secretName: EAGER_API_KEY
-    maxActions: 2000
-    evaluatorCount: 64
+  capacity: 100000
+  dispatcherCount: 512
+  refreshInterval: 10s
+  terminationGracePeriodSeconds: 75
   serviceAccount:
     annotations: { }
+  podSecurityContext:
+    fsGroup: 1337
   resources:
     limits:
+      cpu: 8
+      memory: 16Gi
+    requests:
       cpu: 4
       memory: 8Gi
-    requests:
-      cpu: 1
-      memory: 1Gi
   podLabels:
-    app: executor
-    app.kubernetes.io/name: executor
+    app: leaseworker
+    app.kubernetes.io/name: leaseworker
     app.kubernetes.io/instance: "{{ .Release.Name }}"
+  podAnnotations: { }
   selector:
     matchLabels:
-      app: executor
+      app: leaseworker
+  # -- Task log link templates surfaced by the UI for task pods (rendered into
+  # the leaseworker ConfigMap as task_logs.yaml). The deprecated executor.task_logs
+  # key, if set by an overlay, takes precedence — see templates/leaseworker/configmap.yaml.
   task_logs:
     plugins:
       logs:
@@ -1102,87 +1131,6 @@ executor:
               linkType: dashboard
               templateUris:
                 - "https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .taskConfig.id }}`}}"
-  sharedService:
-    metrics:
-      scope: "executor:"
-    security:
-      secure: false
-      useAuth: false
-      allowCors: true
-      allowedOrigins:
-        # Accepting all domains for Sandbox installation
-        - "*"
-      allowedHeaders:
-        - "Content-Type"
-      allowLocalhostAccess: true
-  propeller:
-    node-config:
-      disable-input-file-writes: true
-  plugins:
-    ioutils:
-      remoteFileOutputPaths:
-        deckFilename: report.html
-    # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-    fasttask:
-      additional-worker-args:
-        - "--last-ack-grace-period-seconds"
-        - "120"
-      callback-uri: "http://union-operator-executor.{{.Release.Namespace}}.svc.cluster.local:15605"
-      grace-period-status-not-found: 2m
-    k8s:
-      disable-inject-owner-references: true
-  # -- Appends additional volumes to the deployment spec. May include template values.
-  additionalVolumes: []
-  # -- Appends additional volume mounts to the main container's spec. May include template values.
-  additionalVolumeMounts: []
-  # -- Appends additional environment variables to the executor container's spec.
-  podEnv: []
-  # -- nodeSelector for executor deployment
-  nodeSelector: { }
-  # -- tolerations for executor deployment
-  tolerations: [ ]
-  # -- affinity for executor deployment
-  affinity: { }
-  # -- topologySpreadConstraints for executor deployment
-  topologySpreadConstraints: { }
-  # -- nodeName constraints for executor deployment
-  nodeName: ""
-
-leaseworker:
-  enabled: true
-  raw_config: {}
-  config:
-    organization: "{{ tpl .Values.orgName . }}"
-    cluster: "{{ tpl .Values.clusterName . }}"
-    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
-    # Leaseworker dials leasor + actions via the URL set in the union.connection
-    # block on the controlplane chart (see `union.connection.host`); the
-    # leasor/actions endpoints are not separately configurable on the
-    # leaseworker today.
-    unionAuth:
-      injectSecret: true
-      secretName: EAGER_API_KEY
-  capacity: 100000
-  dispatcherCount: 512
-  refreshInterval: 10s
-  terminationGracePeriodSeconds: 75
-  serviceAccount:
-    annotations: { }
-  resources:
-    limits:
-      cpu: 8
-      memory: 16Gi
-    requests:
-      cpu: 4
-      memory: 8Gi
-  podLabels:
-    app: leaseworker
-    app.kubernetes.io/name: leaseworker
-    app.kubernetes.io/instance: "{{ .Release.Name }}"
-  podAnnotations: { }
-  selector:
-    matchLabels:
-      app: leaseworker
   sharedService:
     metrics:
       scope: "leaseworker:"
@@ -1332,7 +1280,10 @@ flytepropellerwebhook:
     # THIS IS MOSTLY NEEDED FOR UPGRADES FROM PRE 2026.24.7 VERSIONS.  IT DOESN'T ACT ON NEW INSTALLS.
     enabled: true
     image:
-      repository: alpine/k8s
+      # Registry host spelled out — an unqualified repository resolves against
+      # the implicit docker.io default and fails on clusters that pin an
+      # allowed-registry policy.
+      repository: docker.io/alpine/k8s
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
@@ -1569,6 +1520,21 @@ image:
     repository: public.ecr.aws/p0i0a9q8/unionoperator
     tag: ""
     pullPolicy: IfNotPresent
+  # -- Kubectl image configuration for Helm hook cleanup jobs.
+  # Registry host is spelled out: an unqualified repository resolves against the
+  # implicit docker.io default, which clusters with an allowed-registry policy
+  # reject with ErrImagePull. alpine/k8s (rather than bitnami/kubectl) because
+  # upstream pruned every version tag from bitnami/kubectl, leaving only
+  # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
+  kubectl:
+    # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
+    repository: docker.io/alpine/k8s
+    # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
+    tag: "1.32.3"
+    # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
+    pullPolicy: ""
+    # -- Optional imagePullSecrets for dataplane Helm hook cleanup jobs.
+    imagePullSecrets: []
   # -- Kubestatemetrics repository and tag.
   kubeStateMetrics:
     repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
@@ -1704,6 +1670,12 @@ operator:
   replicas: 1
   podAnnotations: { }
   podLabels: { }
+  # Opt-in PodDisruptionBudget for the singleton operator. Default off; enable on
+  # ephemeral/CI clusters to stop a mid-run node drain from evicting the operator.
+  # See templates/operator/pdb.yaml.
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
   priorityClassName: ""
   imagePullSecrets: []
   podEnv: { }
@@ -2184,6 +2156,10 @@ commonServiceAccount:
   name: union-system
   annotations: {}
   imagePullSecrets: []
+
+taskPodTemplate:
+  workingDir: ""
+
 # -- Union operator proxy configuration
 proxy:
   serviceAccount:
@@ -2391,6 +2367,17 @@ serving:
   replicas: 2
   # -- Enables scraping of metrics from the serving component
   metrics: true
+  # -- Controls legacy Helm hook annotations on the KnativeServing CR.
+  knativeServingHook:
+    enabled: true
+  # -- OpenShift-specific configuration for Knative Serving components.
+  openShift:
+    kourierGatewayScc:
+      enabled: false
+      create: true
+      name: ""
+      serviceAccountName: default
+      uid: 65534
   # -- Additional configuration for Knative serving
   extraConfig:
     deployment:
@@ -2484,6 +2471,9 @@ imageBuilder:
       name: "union-imagebuilder"
       annotations: {}
       imagePullSecret: ""
+      # -- Force buildkit to use this dedicated service account even when
+      # commonServiceAccount or single-namespace mode would normally use union-system.
+      forceDedicated: false
 
     # -- The name to use for the buildkit deployment, service, configmap, etc.
     fullnameOverride: ""
@@ -2493,6 +2483,11 @@ imageBuilder:
 
     # -- Replicas count for Buildkit deployment
     replicaCount: 1
+
+    # -- Sets pod.spec.hostUsers for the BuildKit pod when specified. On
+    # OpenShift, false runs the pod in a user namespace for rootless UID/GID
+    # mapping.
+    # hostUsers: false
 
     # -- buildkit HPA configuration
     autoscaling:
@@ -2521,6 +2516,21 @@ imageBuilder:
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires
     # -- kernel >= 5.11 with unprivileged user namespace support.
     rootless: false
+
+    # -- Overrides the buildkit container securityContext. Leave empty to use the
+    # chart defaults for privileged or rootless mode.
+    securityContext: {}
+
+    # -- OpenShift-specific configuration for buildkit.
+    openShift:
+      enabled: false
+      securityContextConstraints:
+        create: true
+        name: ""
+        existingName: ""
+        allowPrivilegeEscalation: true
+        defaultAllowPrivilegeEscalation: true
+        pinRequiredSCC: true
 
     # -- Enable debug logging
     log:

@@ -43,14 +43,70 @@ Notes:
 {{- end }}
 
 {{/*
-Cluster-local FQDN for CP↔CP gRPC routing (rootTenantURLPattern).
-Switches between envoy and nginx based on the ingress provider.
+Cluster-local FQDN default for connection.rootTenantURLPattern. Originally just
+CP↔CP gRPC routing; scope has since expanded — EAGER_API_KEY bootstrapping mints
+this endpoint into the api-key, and dataplane task pods dial it. Switches between
+envoy and nginx based on the ingress provider.
 */}}
 {{- define "controlPlaneLibrary.ingressFqdn" -}}
 {{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
 {{ .Values.global.ENVOY_INGRESS_FQDN | default "envoy-controlplane.envoy-gateway.svc.cluster.local" }}
 {{- else -}}
 controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate a connection endpoint (rootTenantURLPattern). It is minted into eager
+api-keys and dialed by both control-plane services and dataplane task pods.
+Control-plane services strip the dns:/// prefix and dial the bare host, and the
+key codec shifts its decoded fields when the endpoint carries a trailing :port —
+so require a dns:/// gRPC target with no port. The {{`{{ organization }}`}}
+placeholder is substituted by the services at runtime (not a helm template), so
+neutralize it before rendering the rest of the value.
+Args: dict "ep" <raw endpoint, may be a tpl string> "ctx" <root context>
+"name" <field name for the error message>.
+*/}}
+{{- define "controlPlaneLibrary.validateGrpcEndpoint" -}}
+{{- $raw := .ep | toString | replace "{{ organization }}" "organization" -}}
+{{- $resolved := trim (tpl $raw .ctx) -}}
+{{- if $resolved -}}
+{{- if not (hasPrefix "dns:///" $resolved) -}}
+{{- fail (printf "controlplane: %s = %q must be a dns:/// gRPC target — control-plane services strip the dns:/// prefix and dial the bare host" .name $resolved) -}}
+{{- end -}}
+{{- $host := trimPrefix "dns:///" $resolved -}}
+{{- if regexMatch ":[0-9]+$" $host -}}
+{{- fail (printf "controlplane: %s = %q must not carry a trailing :port (a port shifts the eager-api-key codec's decoded fields)" .name $resolved) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Enforce that rootTenantURLPattern is identical across every connection in the
+chart. The endpoint is minted into the operator EAGER_API_KEY and dialed by
+dataplane task pods: the control-plane services read the top-level
+configMap.connection, while flyteadmin-private reads
+flyte.configmap.adminServer.connection — a separate values path the flyte
+subchart owns, which cannot share the value through a helm `include`. If the two
+diverge, flyteadmin dials a different control-plane host than every other service
+and the minted key points somewhere the task pods can't reach. Resolve each (tpl)
+and fail on any mismatch. Both default to dns:///<global.UNION_HOST>; override
+them together (e.g. for intracluster svc-FQDN or internal-VPC routing).
+Args: root context (.)
+*/}}
+{{- define "controlPlaneLibrary.validateRootTenantConsistency" -}}
+{{- $tl := index (index (.Values.configMap | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $fa := index (index (index (index (.Values.flyte | default dict) "configmap" | default dict) "adminServer" | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $sources := dict "configMap.connection.rootTenantURLPattern" $tl "flyte.configmap.adminServer.connection.rootTenantURLPattern" $fa -}}
+{{- $byValue := dict -}}
+{{- range $field, $raw := $sources -}}
+{{- if $raw -}}
+{{- $resolved := trim (tpl ($raw | toString | replace "{{ organization }}" "organization") $) -}}
+{{- $_ := set $byValue $resolved (append (index $byValue $resolved | default list) $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len (keys $byValue)) 1 -}}
+{{- fail (printf "controlplane: rootTenantURLPattern must be identical across all connections (it is minted into the operator EAGER_API_KEY and dialed by dataplane task pods), but got divergent values %v — set configMap.connection and flyte.configmap.adminServer.connection consistently (both default to dns:///<global.UNION_HOST>)" $byValue) -}}
 {{- end -}}
 {{- end -}}
 
@@ -142,9 +198,9 @@ false
 
 {{- define "unionai.serviceAccount.annotations" -}}
 {{- if and (hasKey .config "serviceAccount") (hasKey .config.serviceAccount "annotations") }}
-{{- toYaml .config.serviceAccount.annotations }}
+{{- tpl (toYaml .config.serviceAccount.annotations) . }}
 {{- else if and (hasKey .Values "serviceAccount") (hasKey .Values.serviceAccount "annotations") }}
-{{- toYaml .Values.serviceAccount.annotations }}
+{{- tpl (toYaml .Values.serviceAccount.annotations) . }}
 {{- else }}
 {}
 {{- end }}
@@ -418,14 +474,15 @@ IfNotPresent
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
 
-{{- /* actionsLeasor.enabled: opt this deployment's own UNION_ORG into v2-actions
-       CreateRun routing and hard-reject sub-2.0.4 SDKs. Chart default is off so
-       chart upgrades don't break existing legacy-SDK users; single-tenant
-       selfhosted envs flip the toggle in values-overrides.yaml. The run service
-       reads useActionsServiceForOrgs + rejectLegacySDKVersions out of the
-       executions configmap (services.executions.configMap.executions.task
-       in values.yaml), so we patch that path before rendering. */}}
-{{- if and (eq .key "executions") (hasKey .Values "actionsLeasor") .Values.actionsLeasor.enabled }}
+{{- /* v2-actions CreateRun routing is unconditional: this deployment's own
+       UNION_ORG goes through the v2 actions service and sub-2.0.4 SDK
+       CreateRun is hard-rejected. The legacy queue service is gone from this
+       chart, so there is no fallback path and no toggle (.Values.actionsLeasor
+       is a deprecated no-op). The run service reads useActionsServiceForOrgs +
+       rejectLegacySDKVersions out of the executions configmap
+       (services.executions.configMap.executions.task in values.yaml), so we
+       patch that path before rendering. */}}
+{{- if eq .key "executions" }}
   {{- $executions := index $merged "executions" | default dict }}
   {{- $task := index $executions "task" | default dict }}
   {{- $_ := set $task "useActionsServiceForOrgs" (list .Values.global.UNION_ORG) }}
@@ -455,6 +512,14 @@ IfNotPresent
   {{- $_ := set $app "apiKeyOverrides" $overrides }}
   {{- $_ := set $identity "app" $app }}
   {{- $_ := set $merged "identity" $identity }}
+{{- end }}
+
+{{- /* Guard the eager-api-key / CP↔CP endpoint against misconfiguration: a
+       supported scheme and no trailing :port. Runs for every service's merged
+       connection. */}}
+{{- $mergedRootPattern := index (index $merged "connection" | default dict) "rootTenantURLPattern" }}
+{{- if $mergedRootPattern }}
+  {{- include "controlPlaneLibrary.validateGrpcEndpoint" (dict "ep" $mergedRootPattern "ctx" . "name" (printf "services.%s connection.rootTenantURLPattern" (.key | default "*"))) }}
 {{- end }}
 
 {{- /* dataproxy: default union.connection.host to the in-cluster control-plane
@@ -763,31 +828,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ toYaml .Values.strategy }}
 {{- end }}
 {{- end }}
-
-{{/*
-Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
-NOTE: This is ONLY for the queue service. All other services use Postgres (globals.DB_HOST).
-ScyllaDB is required for the queue service, Postgres is required for all other services.
-*/}}
-{{- define "controlplane.dbHost" -}}
-{{- if .Values.scylla.enabled -}}
-{{ printf "%s.%s.svc.cluster.local" (default "scylla" .Values.scylla.fullnameOverride) .Release.Namespace }}
-{{- else -}}
-{{ .Values.global.DB_HOST }}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Queue service database port helper - returns ScyllaDB CQL port if scylla.enabled, otherwise uses 5432 (postgres default)
-NOTE: This is ONLY for the queue service. All other services use Postgres on port 5432.
-*/}}
-{{- define "controlplane.dbPort" -}}
-{{- if .Values.scylla.enabled -}}
-9042
-{{- else -}}
-5432
-{{- end -}}
-{{- end -}}
 
 {{/*
 Start of union.authz helpers.
