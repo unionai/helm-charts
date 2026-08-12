@@ -704,8 +704,10 @@ by all of it. The full per-component breakdown is in the README under
 — `tests/generated/dataplane.aws.zero-trust.yaml` (default posture),
 `dataplane.zero-trust-full-priv.yaml` (`low_privilege: false`),
 `dataplane.zero-trust-per-component-sa.yaml` (split identities) and
-`dataplane.zero-trust-full-priv-per-component-sa.yaml` (both at once, the only render in
-which no pooled slot masks a missing per-component grant) — and by review of the
+`dataplane.zero-trust-full-priv-per-component-sa.yaml` (both at once — the only render in
+which neither the controller's single-namespace branch nor a shared ServiceAccount
+supplies an app-serving component a namespaced grant it did not declare; pooling within
+each namespaced slot still does) — and by review of the
 consuming code paths. **No part of it has been verified against a running cluster.**
 
 ### Migration / action required

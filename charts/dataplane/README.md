@@ -1068,8 +1068,10 @@ describe reality in the cluster dimension — five subjects, five different sets
 cluster-scoped rules,
 `tests/generated/dataplane.zero-trust-per-component-sa.yaml` being where that is
 observable (and `dataplane.zero-trust-full-priv-per-component-sa.yaml` where it is
-observable at `low_privilege: false`, the one render in which no pooled slot supplies a
-component a grant it did not declare). That differentiation is real, and it is the point of the split.
+observable at `low_privilege: false` — the one render in which neither the controller's
+single-namespace branch nor a shared ServiceAccount hands an app-serving component a
+namespaced grant it did not declare. Pooling *within* each namespaced slot still does,
+exactly as below). That differentiation is real, and it is the point of the split.
 
 **The namespaced slots are not per-component, in either arrangement.** `comp-ns-read`,
 `comp-ns-write` and
@@ -1084,9 +1086,10 @@ makes the subject lists visible; at the default they all read `union-system`:
 - **`union-comp-ns-read`** has all five app-serving ServiceAccounts as subjects. It always
   carries `get`/`list`/`watch` on `secrets`, which the activator declares — its
   `pkg/activator/certificate` import registers a namespaced Secret informer at import
-  time, unconditionally, whatever `system-internal-tls` is set to. Under
-  `low_privilege: true` `serviceaccounts` joins it, contributed by `knative-controller`'s
-  digest resolution, alongside `podtemplates`, `endpoints` and `configmaps`. Pooling means
+  time, unconditionally, whatever `system-internal-tls` is set to. `podtemplates`,
+  `endpoints` and `configmaps` are in it in both privilege modes; `serviceaccounts` joins
+  them under `low_privilege: true` only, contributed by `knative-controller`'s digest
+  resolution. Pooling means
   every one of the five holds the union: the activator can read every Secret **and** every
   ServiceAccount in the release namespace in the chart's default posture, not only the
   Secrets its own informer watches.
