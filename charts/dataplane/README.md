@@ -988,9 +988,12 @@ and each needs its own workload-identity binding on the cloud side.
 
 Most of these are cluster-scoped because the code that consumes them reads with an empty
 namespace, which Kubernetes authorizes as a cluster-scope check no `RoleBinding` can
-satisfy. The one exception is the controller's `get` on `serviceaccounts`/`secrets`: that
-is an ordinary namespaced read, but in an app namespace not known at render time, so a
-cluster-scoped grant is the only way to convey it. Each of these is a `ClusterRole` +
+satisfy. Two are not. The controller's `get` on `serviceaccounts`/`secrets` is an
+ordinary namespaced read, but in an app namespace not known at render time, so a
+cluster-scoped grant is the only way to convey it. The webhook's `get` on `namespaces` is
+a read of a cluster-scoped object, which no `Role` can convey at all; it is
+`resourceNames`-scoped to the one namespace the code names. Each of these is a
+`ClusterRole` +
 `ClusterRoleBinding` named
 `union-<component>-cluster-read` or `-cluster-write`, and unlike the
 `-work-ns-cluster-read` roles above **they are emitted in both privilege modes** — the
@@ -1000,17 +1003,19 @@ release namespace.
 | Component | Cluster-scoped grant | What consumes it |
 |---|---|---|
 | `knative-controller` | `list`/`watch` on `services`, `endpoints`, `namespaces`, and on `*` in `serving.knative.dev`, `autoscaling.internal.knative.dev`, `networking.internal.knative.dev`, `caching.internal.knative.dev` | the configuration, labeler, revision, route, serverlessservice, service, gc, nscert and domainmapping reconcilers' informers. There is no `pods` informer here — that is the autoscaler's |
+| `knative-controller` | `list`/`watch` on `apps/deployments` | the revision reconciler's Deployment informer. It is the shared, unfiltered one, and `cmd/controller` never scopes it to a namespace, so the `LIST` goes out with an empty namespace. The deployment *writes* are namespaced and stay in `union-work-ns`. Because `sharedmain` starts informers before it serves health probes, a missing grant here leaves the pod permanently un-Ready |
 | `knative-controller` | `get` — and only `get` — on `serviceaccounts` and `secrets`. **Emitted only at `low_privilege: false`** | digest resolution, which reads the app namespace's ServiceAccount and the Secrets its `imagePullSecrets` name. Under `low_privilege: true` the app namespace *is* the release namespace, so the read is a namespaced one and this rule is not emitted |
-| `knative-webhook` | `list`/`watch` on `mutatingwebhookconfigurations`, `validatingwebhookconfigurations` | the two webhook-configuration informers, which is the whole of this binary's non-namespaced informer set |
+| `knative-webhook` | `list`/`watch` on `mutatingwebhookconfigurations`, `validatingwebhookconfigurations` | the two webhook-configuration informers, which is the whole of this binary's informer set outside its namespaced Secret informer |
+| `knative-webhook` | `get` on `namespaces`, `resourceNames`-scoped to the release namespace | namespace ownership: each of the three admission controllers reads the release `Namespace` on every reconcile, to own its webhook configuration by owner reference. A direct client call, not an informer. Without it the reconcile returns before its `Update` and the `caBundle` is never injected — silently, with the pod at `1/1 Running` |
 | `knative-webhook` | **write:** `get`/`update` on those same two kinds, `resourceNames`-scoped to `webhook.serving.knative.dev`, `config.webhook.serving.knative.dev` and `validation.webhook.serving.knative.dev` | the webhook's own certificates / defaulting / validation / config-validation controllers, reconciling the three configurations they own. The `resourceNames` list is exactly those three, so it can touch no other webhook configuration in the cluster |
 | `knative-webhook` | **write:** `update` on `namespaces/finalizers`, `resourceNames`-scoped to the release namespace | the owner reference Knative's webhook sets from its webhook configurations to the release Namespace |
-| `knative-autoscaler` | `list`/`watch` on `pods`, `services`, `endpoints`, `leases`, `serving.knative.dev/revisions`, and `*` in `autoscaling.internal.knative.dev` and `networking.internal.knative.dev` | the KPA and metric reconcilers; `leases` is the statforwarder's global lease informer |
+| `knative-autoscaler` | `list`/`watch` on `pods`, `services`, `endpoints`, `leases`, `serving.knative.dev/revisions`, `apps/deployments`, and `*` in `autoscaling.internal.knative.dev` and `networking.internal.knative.dev` | the KPA and metric reconcilers; `leases` is the statforwarder's global lease informer; `apps/deployments` is the KPA reconciler's `podscalable` duck informer, whose factory `LIST`s the scale target with no namespace set |
 | `knative-activator` | `list`/`watch` on `services`, `endpoints`, `serving.knative.dev/revisions` | the throttler and revision backends, which watch each revision's private Service and Endpoints. Read-only, and the narrowest of the five *as declared* — at the default all five share one identity, so see "What a component declares is not what it holds" below |
 | `knative-kourier` | `list`/`watch` on `pods`, `endpoints`, `services`, `networking.internal.knative.dev/ingresses` | the xDS translator's informers. The `pods` watch is filtered to the gateway's own pods in code, but goes through the global informer, so the grant is cluster-wide |
 | `knative-kourier` | `list`/`watch` on `secrets` | **a temporary exception — see below** |
 
-**Those two `knative-webhook` rules are the only cluster-scoped writes the app-serving
-stack holds, and both are `resourceNames`-scoped.** There is no cluster-scoped `create`
+**The two `knative-webhook` rows marked *write* are the only cluster-scoped writes the
+app-serving stack holds, and both are `resourceNames`-scoped.** There is no cluster-scoped `create`
 anywhere in the set, and `pods: create` in particular is not granted.
 
 Relatedly, `kubernetes.podspec-dryrun` is set to `"disabled"` in

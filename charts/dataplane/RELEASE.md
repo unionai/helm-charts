@@ -582,9 +582,10 @@ by all of it. The full per-component breakdown is in the README under
   | `knative-serving-namespaced-admin` / `-edit` / `-view` | Knative Serving objects to anyone holding the built-in `admin`, `edit` or `view` role in a namespace, by aggregation |
 
   **What replaces them** is five per-component `union-knative-<component>-cluster-read`
-  `ClusterRole`s — `list`/`watch` informer reads, plus one `get`-only rule on
-  `serviceaccounts`/`secrets` that the controller's role carries at `low_privilege: false`
-  (see below) — plus exactly one cluster-scoped write
+  `ClusterRole`s — `list`/`watch` informer reads, plus two `get`-only rules: the
+  controller's on `serviceaccounts`/`secrets` at `low_privilege: false` (see below) and
+  the webhook's on the release `Namespace`, `resourceNames`-scoped to that one name —
+  plus exactly one cluster-scoped write
   role: `union-knative-webhook-cluster-write`, whose two rules are both
   `resourceNames`-scoped (to the three knative webhook configurations, and to the release
   namespace's `namespaces/finalizers`). There is no cluster-scoped `create` anywhere in
@@ -626,6 +627,14 @@ by all of it. The full per-component breakdown is in the README under
   ServiceAccount and the Secrets its `imagePullSecrets` name. `get` only — no `list`, no
   `watch`. Under `low_privilege: true` the app namespace is the release namespace, so the
   read is namespaced and the rule is not emitted.
+
+- **Two grants the vendored RBAC carried are kept, because the code that consumes them is
+  still here.** They are the reason the pared-down set is not smaller still:
+
+  | Kept grant | Consumer | What its absence does |
+  |---|---|---|
+  | `apps/deployments` `list`/`watch`, cluster-wide, on `knative-controller` and `knative-autoscaler` | the revision reconciler's unfiltered Deployment informer, and the KPA reconciler's `podscalable` duck informer, which LISTs `apps/v1` deployments with no namespace | `sharedmain` starts informers before serving health probes, so a `Forbidden` reflector leaves the pod permanently un-Ready and nothing reconciles. The deployment *writes* stay namespaced, in `union-work-ns` |
+  | `namespaces` `get`, `resourceNames`-scoped to the release namespace, on `knative-webhook` | the namespace-ownership `Get` all three admission controllers perform each reconcile — a direct client call, not an informer | the reconcile fails before its `Update`, so the `caBundle` is never injected. On a cold install the two `failurePolicy: Fail` webhook configurations then reject every `serving.knative.dev` / `autoscaling.internal.knative.dev` / `networking.internal.knative.dev` write, including the controller's own, while the webhook pod stays `1/1 Running` |
 
 - **Per-component ServiceAccounts separate these five in the cluster dimension only.**
   The `-cluster-read` roles are genuinely different from one another, and
