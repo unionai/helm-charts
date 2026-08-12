@@ -2154,6 +2154,11 @@ low_privilege: true
 # the tunnel-service dataplane ingress. Customers must also set
 # `knative-operator.enabled: false` because Helm evaluates that subchart
 # condition at parse time and can't derive it from this flag.
+#
+# This is the only flag that installs app-serving RBAC. Together with
+# `apps.enabled` (below, effective default true) it adds five ClusterRoles of
+# cluster-scoped reads and one of cluster-scoped writes, in either privilege
+# mode. They are enumerated at `apps` and in "App serving RBAC" in the README.
 zero_trust:
   enabled: false
 
@@ -2342,6 +2347,34 @@ tunnelService:
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
 # `knative-operator.enabled` condition evaluated by Helm at parse time — turn
 # that off too on the non-zero-trust path.
+#
+# RBAC. Under `zero_trust.enabled: true` this installs five app-serving
+# components — knative-controller, -webhook, -autoscaler, -activator and
+# net-kourier — whose informers read with an empty namespace, which Kubernetes
+# authorizes as a cluster-scope check. Each therefore gets its own
+# `union-<component>-cluster-read` ClusterRole, emitted in BOTH privilege modes:
+# list/watch on the knative API groups plus some of services, endpoints, pods,
+# namespaces and leases. Two additions to that:
+#   - at `low_privilege: false` only, knative-controller also gets `get` (not
+#     list, not watch) on serviceaccounts and secrets, for image digest
+#     resolution in the app namespace;
+#   - net-kourier holds cluster-wide list/watch on secrets. That one is a
+#     temporary exception, not a considered design: its Secret informer is
+#     registered unconditionally and unfiltered by namespace in the image this
+#     chart ships. UN-39 gates it, after which the grant goes away by default.
+# The only cluster-scoped WRITES are knative-webhook's two, both
+# resourceNames-scoped: to the three knative webhook configurations, and to this
+# release namespace's finalizers.
+#
+# The namespaced slots these components declare into (comp-ns-read,
+# comp-ns-write, work-ns) are pooled — one Role per slot, bound to every
+# declarer — so each of the five also holds every other declarer's rules there,
+# including union's own components'. Per-component ServiceAccounts
+# (`commonServiceAccount.enabled: false`) separate them in the cluster dimension
+# only. See "App serving RBAC" in the README for the full breakdown.
+#
+# `enabled: false` removes the components and every permission they hold; the
+# Envoy gateway and its bootstrap ConfigMap are all that remain of the gateway.
 apps:
   enabled: null
 
@@ -3026,7 +3059,6 @@ gateway:
       ingress-class: "kourier.ingress.networking.knative.dev"
     kourier: {}
     autoscaler: {}
-    certmanager: {}
     domain: {}
     gc: {}
     leader-election: {}

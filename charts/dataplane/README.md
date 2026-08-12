@@ -319,8 +319,8 @@ write union's own Deployments or read its Secrets.
 
 Under `low_privilege: true` — the chart's base default — there is only one namespace: the
 release namespace *is* the work namespace, the work-namespace role is bound there, and
-this separation does not exist. That mode is described in [The four
-postures](#the-four-postures) below.
+this separation does not exist. That mode is described in [The three
+postures](#the-three-postures) below.
 
 **No union role carrying work-namespace *write* access is ever bound cluster-wide.** Under
 `low_privilege: false` the shared work-namespace role renders as a `ClusterRole` named
@@ -636,20 +636,23 @@ that forward is a hard render failure reading
 
 ### The component that needs cluster-scoped writes
 
-**`nodeobserver` holds cluster-scoped grants in every posture, and is the only component
-that holds a cluster-scoped *write*.** Its entire function is watching and updating
+**`nodeobserver` holds cluster-scoped grants in every posture, including a cluster-scoped
+*write* that cannot be narrowed at all.** Its entire function is watching and updating
 `nodes`, a cluster-scoped resource that no namespaced Role can convey and that RBAC
 cannot narrow to "the node this pod runs on". It also lists pods with an empty namespace
 plus a `spec.nodeName` field selector, which Kubernetes authorizes as a cluster-scope
 check — per-namespace RoleBindings cannot satisfy it at any count, so that read is
 cluster-wide too. Both are `ClusterRole` + `ClusterRoleBinding` and are unaffected by
 `namespaces.static`. `nodeobserver.enabled` defaults to `false`; leave it there unless
-you need it, and note that it requires `low_privilege: false`.
+you need it. **It installs in either privilege mode** — cluster slots are emitted as
+`ClusterRole`s regardless of `low_privilege`, so the grant is correct in both.
 
-The only other cluster-scoped writes in the chart are `clusterresourcesync`'s
-(`namespaces` and `rolebindings`, in the runtime posture, so it can provision a project's
-namespace) and — when `flytepropellerwebhook.managedConfig: false` — the pod webhook's
-own `mutatingwebhookconfigurations`.
+The other cluster-scoped writes in the chart are `clusterresourcesync`'s (`namespaces`
+and `rolebindings`, in the runtime posture, so it can provision a project's namespace);
+the pod webhook's own `mutatingwebhookconfigurations`, when
+`flytepropellerwebhook.managedConfig: false` — also emitted in either privilege mode; and,
+in zero-trust mode with app serving on, the Knative webhook's two `resourceNames`-scoped
+rules described under [App serving RBAC](#app-serving-rbac).
 
 ### Cluster-scoped reads at `low_privilege: false`
 
@@ -746,9 +749,12 @@ emitted at all. The cost is that managed-image pull secrets are no longer mirror
   each cycle and collects nothing; nothing else degrades, and `flytepropeller` is off by
   default. The `executor`'s equivalent sweep *is* granted — its namespace list is
   cache-backed, so withholding it leaves a permanently blocked goroutine and a 403
-  reflector loop rather than a clean per-round error, and at the default
-  `commonServiceAccount.enabled: true` the identity already holds cluster-wide
-  `namespaces` reads from the FluentBit subchart, so withholding bought nothing.
+  reflector loop rather than a clean per-round error. (When that trade was made, the
+  shared identity already held cluster-wide `namespaces` reads from the FluentBit
+  subchart, so granting it cost nothing at defaults. FluentBit's `ClusterRole` is removed
+  in this release — see [Third-party subchart RBAC](#third-party-subchart-rbac) — so the
+  grant now rests on the cache-versus-direct-client difference alone, which is still the
+  reason for it.)
 
 - **Cluster-wide `configmaps` for the `operator`.** Its only cluster-scoped ConfigMap read
   targets the release namespace and reaches cluster scope solely because the manager's
@@ -915,6 +921,193 @@ Rendered RBAC is snapshotted per fixture in `tests/generated/`, and `make helm-t
 if a snapshot is stale. A subchart bump that widens a grant shows up there as a reviewable
 diff — but nothing asserts that the grants match the dispositions above, so the table is
 kept honest by review rather than by a check.
+
+### App serving RBAC
+
+This section applies when `zero_trust.enabled: true` **and** `apps.enabled` is not
+`false` — the posture that installs the Knative Serving control plane and the Kourier
+ingress controller behind the Envoy gateway. Set `apps.enabled: false` and none of it
+renders: the only gateway objects left are the Envoy `Deployment` and its bootstrap
+`ConfigMap`, and every ServiceAccount and role below goes with them.
+
+Until this release these components carried Knative's own RBAC, vendored verbatim into
+the chart. That RBAC is gone; the components now declare into the same slot framework
+as union's own. What follows is what they declare, and — separately, because the two are
+not the same — what they end up holding.
+
+#### Five components, five ServiceAccounts
+
+| Component (role-name prefix) | `Deployment` | ServiceAccount at `commonServiceAccount.enabled: false` |
+|---|---|---|
+| `knative-controller` | `controller` | `knative-controller` |
+| `knative-webhook` | `webhook` | `knative-webhook` |
+| `knative-autoscaler` | `autoscaler` | `knative-autoscaler` |
+| `knative-activator` | `activator` | `knative-activator` |
+| `knative-kourier` | `net-kourier-controller` | `net-kourier` |
+
+Note the last row: the component name is `knative-kourier` but the ServiceAccount is
+`net-kourier`, so its roles are `union-knative-kourier-cluster-read` while its subject is
+`net-kourier`.
+
+**At the default `commonServiceAccount.enabled: true` all five ServiceAccount names
+resolve to `union-system`, and Helm renders one ServiceAccount.** The role *names* keep
+the component prefix regardless; only the subject collapses.
+
+**That default is a change of pod identity for existing deployments.** These workloads
+previously ran as dedicated `controller`, `activator` and `net-kourier` ServiceAccounts
+in every configuration — the vendored manifests hard-coded them and did not consult
+`commonServiceAccount.enabled`. They now run as `union-system` at the default. If you
+bound external policy (a cloud IAM trust, an admission policy, an audit filter) to
+`system:serviceaccount:<release-ns>:controller`, `:activator` or `:net-kourier`, rebind
+it. Setting `commonServiceAccount.enabled: false` gives each of the five its own
+identity, but four of those five names are new — only `net-kourier` matches an old one,
+and each needs its own workload-identity binding on the cloud side.
+
+#### What each component declares as cluster-scoped
+
+Every grant here is cluster-scoped because the code that consumes it reads with an empty
+namespace, which Kubernetes authorizes as a cluster-scope check no `RoleBinding` can
+satisfy. Each of these is a `ClusterRole` + `ClusterRoleBinding` named
+`union-<component>-cluster-read` or `-cluster-write`, and unlike the
+`-work-ns-cluster-read` roles above **they are emitted in both privilege modes** — the
+components' informers are cluster-wide even when `low_privilege: true` pins tasks to the
+release namespace.
+
+| Component | Cluster-scoped grant | What consumes it |
+|---|---|---|
+| `knative-controller` | `list`/`watch` on `services`, `endpoints`, `namespaces`, and on `*` in `serving.knative.dev`, `autoscaling.internal.knative.dev`, `networking.internal.knative.dev`, `caching.internal.knative.dev` | the configuration, labeler, revision, route, serverlessservice, service, gc, nscert and domainmapping reconcilers' informers. There is no `pods` informer here — that is the autoscaler's |
+| `knative-controller` | `get` — and only `get` — on `serviceaccounts` and `secrets`. **Emitted only at `low_privilege: false`** | digest resolution, which reads the app namespace's ServiceAccount and the Secrets its `imagePullSecrets` name. Under `low_privilege: true` the app namespace *is* the release namespace, so the read is a namespaced one and this rule is not emitted |
+| `knative-webhook` | `list`/`watch` on `mutatingwebhookconfigurations`, `validatingwebhookconfigurations` | the two webhook-configuration informers, which is the whole of this binary's non-namespaced informer set |
+| `knative-webhook` | **write:** `get`/`update` on those same two kinds, `resourceNames`-scoped to `webhook.serving.knative.dev`, `config.webhook.serving.knative.dev` and `validation.webhook.serving.knative.dev` | the webhook's own certificates / defaulting / validation / config-validation controllers, reconciling the three configurations they own. The `resourceNames` list is exactly those three, so it can touch no other webhook configuration in the cluster |
+| `knative-webhook` | **write:** `update` on `namespaces/finalizers`, `resourceNames`-scoped to the release namespace | the owner reference Knative's webhook sets from its webhook configurations to the release Namespace |
+| `knative-autoscaler` | `list`/`watch` on `pods`, `services`, `endpoints`, `leases`, `serving.knative.dev/revisions`, and `*` in `autoscaling.internal.knative.dev` and `networking.internal.knative.dev` | the KPA and metric reconcilers; `leases` is the statforwarder's global lease informer |
+| `knative-activator` | `list`/`watch` on `services`, `endpoints`, `serving.knative.dev/revisions` | the throttler and revision backends, which watch each revision's private Service and Endpoints. Read-only, and the narrowest of the five |
+| `knative-kourier` | `list`/`watch` on `pods`, `endpoints`, `services`, `networking.internal.knative.dev/ingresses` | the xDS translator's informers. The `pods` watch is filtered to the gateway's own pods in code, but goes through the global informer, so the grant is cluster-wide |
+| `knative-kourier` | `list`/`watch` on `secrets` | **a temporary exception — see below** |
+
+**Those two `knative-webhook` rules are the only cluster-scoped writes the app-serving
+stack holds, and both are `resourceNames`-scoped.** There is no cluster-scoped `create`
+anywhere in the set, and `pods: create` in particular is not granted.
+
+Relatedly, `kubernetes.podspec-dryrun` is set to `"disabled"` in
+`gateway.config.features` — **though that changes no grant.** Knative's dry-run
+validation submits a real `Pod` create (`DryRun: All`) into the user's namespace, which
+would need cluster-wide `pods: create`: a privilege-escalation primitive, since it lets
+the holder schedule a pod under any ServiceAccount. The feature is opt-in per object via
+the `features.knative.dev/podspec-dryrun` annotation and nothing here uses it. The
+declarations above never asked for `pods: create`; disabling the flag makes the
+annotation inert, so a future RBAC gap here cannot surface as a confusing dry-run
+failure.
+
+#### The kourier `secrets` grant is temporary, and tracked
+
+`net-kourier` holds cluster-wide `list`/`watch` on `secrets`. This is not a considered
+permanent grant. Kourier registers its Secret informer unconditionally in the image this
+chart ships, and unfiltered by namespace, so the read really is cluster-scoped — a
+namespaced `Role` cannot authorize a cluster-scoped `LIST` at any count.
+
+Dropping it without changing the image first fails silently rather than loudly: the
+informer's reflector never syncs, the reconcilers never start, and the xDS server's
+readiness probe stays green — so the controller sits at `1/1 Running` with zero restarts
+while every new app deployment hangs at `IngressNotConfigured`.
+
+UN-39 puts that informer behind a `KOURIER_ENABLE_INGRESS_TLS` gate. Once the net-kourier
+image carries it, this grant becomes conditional and is removed by default. Until then it
+is here on purpose, and it is narrower than what the vendored `net-kourier` `ClusterRole`
+it replaces held — that one carried `get` as well.
+
+#### What a component declares is not what it holds
+
+The cluster-scoped roles above are per-component, and they really do differ from one
+another: that differentiation is the point of the split, and
+`tests/generated/dataplane.zero-trust-per-component-sa.yaml` is where it is observable.
+**The namespaced slots are not per-component.** `comp-ns-read`, `comp-ns-write` and
+`work-ns` are pooled exactly as described under
+[What `commonServiceAccount.enabled: false` does not do](#what-commonserviceaccountenabled-false-does-not-do):
+one `Role` per slot, holding the union of every declarer's rules, bound to every
+declarer's ServiceAccount — including union's own non-app-serving components.
+
+Concretely, as rendered:
+
+- **`union-comp-ns-read`** has all five app-serving ServiceAccounts as subjects, and under
+  `low_privilege: true` it carries `get`/`list`/`watch` on `serviceaccounts` and `secrets`
+  (contributed by `knative-controller`'s digest resolution) alongside `podtemplates`,
+  `endpoints` and `configmaps`. So the activator, which declares `configmaps` and nothing
+  else, can read every Secret in the release namespace in the chart's default posture.
+- **`union-comp-ns-write`** has `knative-controller`, `knative-webhook`,
+  `knative-autoscaler` and `net-kourier` as subjects — not the activator — and carries the
+  emitter's full write set (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
+  `deletecollection`) on `leases`, `secrets`, `services` and `endpoints`. The `secrets`
+  entry is the webhook's; the other three hold it too.
+- **`union-work-ns`** has `knative-controller`, `knative-autoscaler` and `net-kourier` as
+  subjects, alongside `executor`, `leaseworker`, `operator-system`, `proxy-system` and
+  `union-webhook-system`. Its first rule is `apiGroups: ["*"]`, `resources: ["*"]` at that
+  same eight-verb write set, contributed by the executor and leaseworker. The narrower
+  resource lists the app-serving components declare into this slot document intent; they
+  do not bound the effective grant. Under `low_privilege: true` this `Role` is bound in
+  the release namespace, so that union lands on union's own objects.
+
+The activator is the one component the split narrows in the namespaced dimension too: it
+is a subject of `comp-ns-read` only, and of neither write slot.
+
+`commonServiceAccount.enabled: false` therefore buys **real separation in the cluster
+dimension** for these five — five different `ClusterRole`s, five different subjects — and
+**no separation at all in the namespaced one**. That is the same trade the rest of the
+chart makes, and it is stated here so nobody reads the per-binary split as more than it is.
+
+#### Knative TLS certificate provisioning is not supported
+
+TLS terminates at the Envoy gateway. The chart ships no `config-certmanager` ConfigMap, no
+`routing-serving-certs` `Certificate`, and no cert-manager RBAC — Knative's cert
+reconciler is never registered, and the grants it would need (`cert-manager.io`
+certificates and issuers, `acme.cert-manager.io` challenges) are not present.
+
+Knative registers that reconciler when any of six `gateway.config.network` settings is on
+— `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
+`namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
+`internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
+absent. Setting one here would otherwise be silently inert, so **the chart fails the
+render naming the key you set.** Remove it; there is no supported way to turn Knative
+certificate provisioning on from this chart.
+
+#### What is no longer installed
+
+- **`autoscaler-hpa`.** Union app serving is KPA-only, so the HPA autoscaler and its
+  `gateway.components.autoscaler-hpa` values block are removed, along with the vendored
+  cluster-wide `autoscaling/horizontalpodautoscalers` grant that served it.
+- **The Knative aggregation shells.** `knative-serving-admin` selected every `ClusterRole`
+  in the cluster labelled `serving.knative.dev/controller: "true"` and conveyed it to the
+  `controller` ServiceAccount; `knative-serving-aggregated-addressable-resolver` did the
+  same for `duck.knative.dev/addressable: "true"`. Both are gone, and with them the class
+  of grant that could arrive from a manifest this chart does not own.
+- **`knative-serving-addressable-resolver` and `knative-serving-podspecable-binding`.**
+  Nothing in this chart bound either to a surviving subject, so no union workload loses
+  anything. They were duck-type contribution roles for *other* Knative components: an
+  out-of-chart install — Knative Eventing being the usual one — that expected serving to
+  provide addressable or podspecable resolution will not find it, and must supply its own.
+- **`knative-serving-namespaced-admin` / `-edit` / `-view`.** These aggregated into the
+  built-in `admin`, `edit` and `view` `ClusterRole`s, so anyone holding one of those in a
+  namespace picked up Knative Serving objects with it. That no longer happens; grant
+  `serving.knative.dev` access explicitly if your users need it.
+
+Together with the vendored `knative-serving-core` `ClusterRole` — cluster-wide
+`get,list,create,update,delete,patch,watch` on `secrets`, `pods`, `namespaces`,
+`serviceaccounts`, `configmaps`, `endpoints`, `services` and `events`, plus the same on
+Deployments, admission webhook configurations, CRDs, HPAs and cert-manager's types, plus
+`delete` on a named `ClusterRole` — that is 16 vendored RBAC objects removed, along with
+the three vendored ServiceAccounts they named. **App serving's only cluster-scoped writes
+are now the webhook's two `resourceNames`-scoped rules, and its only cluster-wide reach
+into Secrets is kourier's `list`/`watch` plus — at `low_privilege: false` only — the
+controller's `get`.** (Union's non-app-serving components hold their own cluster-scoped
+grants — see [The component that needs cluster-scoped
+writes](#the-component-that-needs-cluster-scoped-writes) and [Cluster-scoped reads at
+`low_privilege: false`](#cluster-scoped-reads-at-low_privilege-false).)
+
+The evidence for all of this is the rendered manifests in `tests/generated/` —
+`dataplane.aws.zero-trust.yaml` for the default posture,
+`dataplane.zero-trust-full-priv.yaml` for `low_privilege: false`, and
+`dataplane.zero-trust-per-component-sa.yaml` for the split identities. **None of it has
+been verified against a live cluster.**
 
 ---
 
