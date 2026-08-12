@@ -628,13 +628,14 @@ by all of it. The full per-component breakdown is in the README under
   `watch`. Under `low_privilege: true` the app namespace is the release namespace, so the
   read is namespaced and the rule is not emitted.
 
-- **Two grants the vendored RBAC carried are kept, because the code that consumes them is
-  still here.** They are the reason the pared-down set is not smaller still:
+- **Three grants the vendored RBAC carried are kept, because the code that consumes them
+  is still here.** They are the reason the pared-down set is not smaller still:
 
   | Kept grant | Consumer | What its absence does |
   |---|---|---|
   | `apps/deployments` `list`/`watch`, cluster-wide, on `knative-controller` and `knative-autoscaler` | the revision reconciler's unfiltered Deployment informer, and the KPA reconciler's `podscalable` duck informer, which LISTs `apps/v1` deployments with no namespace | `sharedmain` starts informers before serving health probes, so a `Forbidden` reflector leaves the pod permanently un-Ready and nothing reconciles. The deployment *writes* stay namespaced, in `union-work-ns` |
   | `namespaces` `get`, `resourceNames`-scoped to the release namespace, on `knative-webhook` | the namespace-ownership `Get` all three admission controllers perform each reconcile — a direct client call, not an informer | the reconcile fails before its `Update`, so the `caBundle` is never injected. On a cold install the two `failurePolicy: Fail` webhook configurations then reject every `serving.knative.dev` / `autoscaling.internal.knative.dev` / `networking.internal.knative.dev` write, including the controller's own, while the webhook pod stays `1/1 Running` |
+  | `secrets` in `knative-activator`'s `comp-ns-read` (release namespace, `get`/`list`/`watch`) | the namespaced Secret informer `pkg/activator/certificate` registers at import time; registration is unconditional even though the cert cache it feeds is inert without `system-internal-tls` | the activator waits on a cache that cannot sync. Only reachable at `low_privilege: false` **and** `commonServiceAccount.enabled: false`; in the other postures a pooled slot supplied it anyway. Pinned by `tests/generated/dataplane.zero-trust-full-priv-per-component-sa.yaml` |
 
 - **Per-component ServiceAccounts separate these five in the cluster dimension only.**
   The `-cluster-read` roles are genuinely different from one another, and

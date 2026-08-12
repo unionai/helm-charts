@@ -1079,11 +1079,15 @@ declarer's ServiceAccount — including union's own non-app-serving components.
 Concretely, as rendered at `commonServiceAccount.enabled: false` — the arrangement that
 makes the subject lists visible; at the default they all read `union-system`:
 
-- **`union-comp-ns-read`** has all five app-serving ServiceAccounts as subjects, and under
-  `low_privilege: true` it carries `get`/`list`/`watch` on `serviceaccounts` and `secrets`
-  (contributed by `knative-controller`'s digest resolution) alongside `podtemplates`,
-  `endpoints` and `configmaps`. So the activator, which declares `configmaps` and nothing
-  else, can read every Secret in the release namespace in the chart's default posture.
+- **`union-comp-ns-read`** has all five app-serving ServiceAccounts as subjects. It always
+  carries `get`/`list`/`watch` on `secrets`, which the activator declares — its
+  `pkg/activator/certificate` import registers a namespaced Secret informer at import
+  time, unconditionally, whatever `system-internal-tls` is set to. Under
+  `low_privilege: true` `serviceaccounts` joins it, contributed by `knative-controller`'s
+  digest resolution, alongside `podtemplates`, `endpoints` and `configmaps`. Pooling means
+  every one of the five holds the union: the activator can read every Secret **and** every
+  ServiceAccount in the release namespace in the chart's default posture, not only the
+  Secrets its own informer watches.
 - **`union-comp-ns-write`** has `knative-controller`, `knative-webhook`,
   `knative-autoscaler` and `net-kourier` as subjects — not the activator — and carries the
   emitter's full write set (`get`, `list`, `watch`, `create`, `update`, `patch`, `delete`,
