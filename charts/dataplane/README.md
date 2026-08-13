@@ -135,6 +135,49 @@ gateway:
 
 ---
 
+## AWS Pod Identity Webhook Annotation Prefix
+
+The AWS pod identity webhook mutates pods by reading a service account annotation named `<annotation-prefix>/role-arn`. EKS uses `eks.amazonaws.com` by default, so the AWS values files default to `eks.amazonaws.com/role-arn`.
+
+If your cluster operator installed the webhook with a custom `--annotation-prefix`, set the shared prefix value:
+
+```yaml
+global:
+  AWS_POD_IDENTITY_ANNOTATION_PREFIX: customer.example.com
+```
+
+The AWS values files derive both Union system service account annotations and workflow service account annotations from this prefix.
+
+The IAM role trust policies must still trust the Kubernetes service account subjects used by the rendered service accounts.
+
+---
+
+## OpenShift
+
+For OpenShift clusters, layer `values.openshift.yaml` after your cloud and deployment-mode values file:
+
+```bash
+helm upgrade --install unionai-dataplane unionai/dataplane \
+  --namespace union \
+  --values values.aws.selfhosted-intracluster.yaml \
+  --values values.openshift.yaml \
+  --values values.aws.selfhosted-customer.yaml
+```
+
+This preset enables OpenShift-specific SCC/RBAC for buildkit and Kourier, runs buildkit rootless with a dedicated service account, moves Fluent Bit tail state onto an `emptyDir`, and sets task pods to use `/tmp` as their working directory.
+
+Namespace-specific OpenShift UID, GID, and SELinux category values are not included in the preset. Set those in the environment-specific values file only when your cluster requires them.
+
+After deployment, validate the BuildKit security context, SCC access, service endpoint, and worker readiness:
+
+```bash
+KUBECTL_BIN=oc NAMESPACE=union ../../scripts/validate_rootless_buildkit.sh
+```
+
+Set `TARGET_IMAGE` to an approved registry path to also run the build-and-push smoke test.
+
+---
+
 ## Logging (FluentBit)
 
 The data plane deploys [FluentBit](https://fluentbit.io/) as a DaemonSet to collect container logs from every node and write them to the `persisted-logs/` path in the configured object store. FluentBit runs under the `fluentbit-system` Kubernetes service account, which must have write access to the storage bucket.

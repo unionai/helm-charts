@@ -10,6 +10,8 @@ TMP_DIR=${SCRIPT_DIR}/tmp
 VALUES_DIR=${SCRIPT_DIR}/values
 CHARTS_DIR=${SCRIPT_DIR}/../charts
 
+source "${SCRIPT_DIR}/lib/atomic-render.sh"
+
 function generate {
   TARGET_DIR=$1
   echo "Generating test files..."
@@ -68,12 +70,12 @@ function generate {
       echo "  - Including additional helm args: ${EXTRA_HELM_ARGS}"
     fi
 
-    helm template ${CHARTS_DIR}/${CHART} \
+    render-atomically "${TARGET_DIR}/${OUTPUT}" helm template ${CHARTS_DIR}/${CHART} \
       --namespace union \
       --kube-version 1.32.0 \
       ${ADDITIONAL_VALUES} \
       ${EXTRA_HELM_ARGS} \
-      --values ${file} > ${TARGET_DIR}/${OUTPUT}
+      --values ${file}
   done
 }
 

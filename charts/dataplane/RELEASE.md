@@ -1,5 +1,10 @@
 # dataplane — Release Notes
 
+## 2026.8.1
+
+Lockstep `version` bump with the `controlplane` chart (`2026.8.0` -> `2026.8.1`).
+No data-plane chart changes in this release.
+
 ## 2026.8.0
 
 Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays
