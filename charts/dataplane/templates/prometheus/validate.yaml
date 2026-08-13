@@ -27,20 +27,32 @@ the empty Role rbac.yaml derives from the same empty list.
 
 {{- /*
 rbac.yaml binds the ServiceAccount name each subchart derives, in the release namespace.
-Both assumptions break under the overrides below, and they break silently: the grant lands
-on a ServiceAccount or namespace the workload does not use, which is the 403 this chart
-renders RBAC to prevent. Refuse rather than mirror -- tracking two upstream helpers across
-every subchart bump costs more than the overrides are worth.
+The inputs below break one of those two assumptions, and they break silently: the grant
+lands on a ServiceAccount or namespace the workload does not use, which is the 403 this
+chart renders RBAC to prevent. Refuse rather than mirror -- tracking two upstream helpers
+across every subchart bump costs more than the overrides are worth.
+
+Refuse only where the derivations actually diverge. An explicit `name` is the case that
+does work: rbac.yaml and both subchart helpers all resolve to it, whatever `create` says.
 */ -}}
 {{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
 {{- $promSrvSA := (($prom.serviceAccounts).server) | default dict }}
+{{- if empty $promSrvSA.name }}
 {{- if and (hasKey $promSrvSA "create") (not $promSrvSA.create) }}
-{{- fail "prometheus.serviceAccounts.server.create: false is not supported. templates/prometheus/rbac.yaml binds the ServiceAccount the subchart creates; with creation off the server falls back to `default` and the grant binds a ServiceAccount nothing runs as. Set prometheus.serviceAccounts.server.name to an existing ServiceAccount if you must supply your own." }}
+{{- fail "prometheus.serviceAccounts.server.create: false needs prometheus.serviceAccounts.server.name set to the ServiceAccount you are supplying. Without a name the server runs as `default` while templates/prometheus/rbac.yaml binds prometheus.server.fullnameOverride, so the grant lands on a ServiceAccount nothing runs as." }}
+{{- end }}
+{{- if empty $prom.server.fullnameOverride }}
+{{- fail "prometheus.server.fullnameOverride must stay set, or prometheus.serviceAccounts.server.name must name the ServiceAccount. templates/prometheus/rbac.yaml derives the binding subject from fullnameOverride; cleared and unnamed it renders an empty subject, while the subchart deploys as <release>-prometheus-server." }}
+{{- end }}
 {{- end }}
 {{- if $prom.forceNamespace }}
 {{- fail "prometheus.forceNamespace is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving the workloads elsewhere leaves them unbound." }}
 {{- end }}
-{{- if $ksm.namespaceOverride }}
+{{- $ksmSA := ($ksm.serviceAccount) | default dict }}
+{{- if and $ksm.enabled (empty $ksmSA.name) (hasKey $ksmSA "create") (not $ksmSA.create) }}
+{{- fail "prometheus.kube-state-metrics.serviceAccount.create: false needs prometheus.kube-state-metrics.serviceAccount.name set to the ServiceAccount you are supplying. Without a name kube-state-metrics runs as `default` while templates/prometheus/rbac.yaml binds the name the subchart would have created, so the grant lands on a ServiceAccount nothing runs as." }}
+{{- end }}
+{{- if and $ksm.enabled $ksm.namespaceOverride }}
 {{- fail "prometheus.kube-state-metrics.namespaceOverride is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving kube-state-metrics elsewhere leaves it unbound." }}
 {{- end }}
 
