@@ -73,7 +73,11 @@ grafana = AppEnvironment(
     env_vars={
         "GF_SERVER_HTTP_PORT": "8080",
         "GF_AUTH_ANONYMOUS_ENABLED": "true",
-        "GF_AUTH_ANONYMOUS_ORG_ROLE": "Admin",
+        # Least privilege. The app edge authorizes WHO can open the app, not what they can do
+        # inside Grafana, so every anonymous visitor shares this role. Viewer keeps the
+        # datasource un-editable (no proxy re-point / SSRF). Set to "Admin" only if you are OK
+        # with any identity that can authenticate to your Union host having Admin here.
+        "GF_AUTH_ANONYMOUS_ORG_ROLE": os.environ.get("GF_ANON_ROLE", "Viewer"),
         "GF_AUTH_DISABLE_LOGIN_FORM": "true",
         "GF_AUTH_BASIC_ENABLED": "false",
         "GF_USERS_ALLOW_ORG_CREATE": "false",

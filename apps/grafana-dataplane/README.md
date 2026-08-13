@@ -67,8 +67,15 @@ export PROMETHEUS_URL=http://prometheus-operated.dataplane.svc.cluster.local:909
 flyte serve --project <proj> --domain <domain> app.py grafana
 ```
 
+## Access & least privilege
+
+Grafana is anonymous behind the app edge; the edge authorizes *who* can open the app, not
+what they can do inside, so every visitor shares one role. The default is **Viewer**
+(`GF_ANON_ROLE`) — least privilege, and it keeps the datasource un-editable (no proxy
+re-point / SSRF). Set `GF_ANON_ROLE=Admin` only if you accept that any identity able to
+authenticate to your Union host gets Admin (Explore, datasource edits) here.
+
 ## Deferred hardening
 
 Pod-level egress NetworkPolicy (Prometheus-only, block IMDS `169.254.169.254`) and shared
-multi-org DP scoping. Anonymous Admin is safe only because the app edge is the auth boundary;
-lock the pod egress down before any shared-tenancy use.
+multi-org DP scoping. Lock the pod egress down before any shared-tenancy use.
