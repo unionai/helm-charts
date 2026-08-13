@@ -148,12 +148,31 @@ async def _setup_routing_async(
             raise RuntimeError(f"create cluster pool {pool_name}: {e}") from e
         print(f"[ci] setup-routing: pool '{pool_name}' already exists", flush=True)
 
-    # 2. Assign the pool-less cluster to the pool (also auto-creates the implicit
-    # queue). Without it every submission returns "no clusters found". Idempotent
-    # for the same pool; a DIFFERENT pool fails ("cannot change cluster pool") =
-    # a cluster-name collision with a previous run.
+    # 2. Assign the cluster to the pool (also auto-creates the implicit queue).
+    # Without it every submission returns "no clusters found". The operator's
+    # heartbeat registers the cluster (pool-less) before this runs and the
+    # assignment is one-shot, so on a re-run against a perennial CI cluster the
+    # cluster is already in its pool. Read its current pool and only assign when
+    # unassigned; a cluster already in a DIFFERENT pool is a name collision with
+    # a previous run.
     print(f"[ci] setup-routing: assigning {cluster_name} → pool {pool_name}", flush=True)
-    await Cluster.create.aio(cluster_name, cluster_pool_name=pool_name)  # type: ignore
+    existing = await Cluster.get.aio(name=cluster_name)  # type: ignore
+    if existing.pool == pool_name:
+        print(
+            f"[ci] setup-routing: cluster '{cluster_name}' already in pool '{pool_name}'",
+            flush=True,
+        )
+    elif existing.pool:
+        raise RuntimeError(
+            f"cluster '{cluster_name}' is already in pool '{existing.pool}', not '{pool_name}' "
+            f"(name collision with a previous run)"
+        )
+    else:
+        await Cluster.create.aio(cluster_name, cluster_pool_name=pool_name)  # type: ignore
+        print(
+            f"[ci] setup-routing: cluster '{cluster_name}' assigned to pool '{pool_name}'",
+            flush=True,
+        )
 
     # 3. Sanity-check the implicit queue; create it if an older CP didn't.
     try:
