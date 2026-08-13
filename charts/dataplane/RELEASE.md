@@ -28,8 +28,15 @@ Also in both modes:
   resourcequotas, nodes, namespaces) instead of all 28. Under `low_privilege`, nodes and
   namespaces are not granted: kube-state-metrics logs about 6 lines a minute about it and
   otherwise runs normally.
-- **Nine unused upstream scrape jobs are dropped.** They scraped every pod, service and
-  node in the cluster and fed no dashboard.
+- **Nine upstream scrape jobs are dropped** (`kubernetes-apiservers`, `-nodes`,
+  `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
+  `prometheus-pushgateway`). All nine discover across the whole cluster, which prometheus
+  has never had permission to do in either mode, so none of them has ever returned a
+  sample. Keeping them would have switched cluster-wide scraping on the moment this release
+  granted that read. The only series they overlap with a dashboard is cadvisor's
+  `container_*`, which the chart's own `kubernetes-cadvisor` job collects. Side effect:
+  pods and services annotated `prometheus.io/scrape` are not discovered — add a scrape job
+  under `prometheus.extraScrapeConfigs` if you need one.
 - **`gpu-metrics` now looks in the release namespace**, where dcgm-exporter actually runs.
   It was pointed at `kube-system`.
 - **FluentBit no longer creates a ClusterRole.** It never calls the Kubernetes API here.
