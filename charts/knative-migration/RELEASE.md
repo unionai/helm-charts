@@ -2,6 +2,11 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.8.2
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.1` → `2026.8.2`).
+No functional changes in this release.
+
 ## 2026.8.1
 
 Lockstep `version` bump with the `controlplane` / `dataplane` charts (`2026.8.0` -> `2026.8.1`).
