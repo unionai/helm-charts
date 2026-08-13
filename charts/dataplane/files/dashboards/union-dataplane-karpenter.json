@@ -1,0 +1,107 @@
+{
+  "annotations": { "list": [] },
+  "description": "Karpenter node provisioning and NodePool capacity for the Union dataplane. Shipped only where the Karpenter CRDs are present. All values are computed from raw Karpenter metrics; no Union recording rules required.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "title": "Dataplane Overview",
+      "type": "dashboards",
+      "tags": ["union", "dataplane"],
+      "asDropdown": true,
+      "includeVars": true,
+      "keepTime": true,
+      "targetBlank": false
+    }
+  ],
+  "tags": ["union", "dataplane", "union-karpenter"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "label": "Data Source",
+        "multi": false,
+        "name": "datasource",
+        "options": [],
+        "query": "prometheus",
+        "refresh": 1,
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-3h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Union Dataplane — Karpenter",
+  "uid": "union-dp-karpenter",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "panels": [],
+      "title": "Karpenter — node provisioning & capacity",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Per-NodePool CPU utilization (usage / limit). Near 1.0 = the pool is at its hard CPU limit, so Karpenter cannot add nodes and pods needing that instance shape wait Pending.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" }, "min": 0, "max": 1, "unit": "percentunit", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 0.85 }, { "color": "red", "value": 0.95 } ] } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 1 },
+      "id": 2,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "editorMode": "code", "expr": "max by (nodepool) (karpenter_nodepools_usage{resource_type=\"cpu\"} / karpenter_nodepools_limit{resource_type=\"cpu\"})", "legendFormat": "{{nodepool}}", "range": true, "refId": "A" } ],
+      "title": "NodePool CPU utilization (near 1.0 = at capacity)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Absolute CPU headroom per NodePool (limit - usage, cores). 0 = pool at its hard CPU cap.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" }, "min": 0, "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 16 }, { "color": "green", "value": 64 } ] } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 1 },
+      "id": 3,
+      "options": { "legend": { "calcs": ["lastNotNull", "min"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi", "sort": "asc" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "editorMode": "code", "expr": "max by (nodepool) (karpenter_nodepools_limit{resource_type=\"cpu\"} - karpenter_nodepools_usage{resource_type=\"cpu\"})", "legendFormat": "{{nodepool}}", "range": true, "refId": "A" } ],
+      "title": "NodePool CPU headroom (cores free; 0 = at cap)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Pods awaiting node provisioning (Karpenter scheduler queue). Elevated = Karpenter cannot place pods.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" }, "min": 0, "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 8 },
+      "id": 4,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "editorMode": "code", "expr": "sum by (controller) (karpenter_scheduler_queue_depth)", "legendFormat": "{{controller}}", "range": true, "refId": "A" } ],
+      "title": "Scheduler queue depth (pods awaiting provisioning)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "NodePools at their hard CPU limit (1 = at cap). Pairs with headroom = 0.",
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "custom": { "drawStyle": "line", "fillOpacity": 20, "showPoints": "never", "lineInterpolation": "stepAfter" }, "min": 0, "max": 1, "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 8 },
+      "id": 5,
+      "options": { "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "right" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "editorMode": "code", "expr": "max by (nodepool) (karpenter_nodepools_usage{resource_type=\"cpu\"} >= bool karpenter_nodepools_limit{resource_type=\"cpu\"})", "legendFormat": "{{nodepool}}", "range": true, "refId": "A" } ],
+      "title": "NodePool at CPU limit (1 = at cap)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "description": "Cloud provider errors (e.g. InsufficientCapacityError). A NodePool at its limit with ICE=0 means the cap — not the cloud — is the bottleneck.",
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "custom": { "drawStyle": "line", "fillOpacity": 10, "showPoints": "never" }, "min": 0, "unit": "short", "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 8 },
+      "id": 6,
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [ { "datasource": { "type": "prometheus", "uid": "${datasource}" }, "editorMode": "code", "expr": "sum by (provider, error) (rate(karpenter_cloudprovider_errors_total[$__rate_interval]))", "legendFormat": "{{provider}} {{error}}", "range": true, "refId": "A" } ],
+      "title": "Cloud provider errors (ICE etc.)",
+      "type": "timeseries"
+    }
+  ]
+}

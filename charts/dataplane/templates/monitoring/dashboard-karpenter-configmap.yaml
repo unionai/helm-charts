@@ -1,0 +1,20 @@
+{{- /*
+  Karpenter dashboard — shipped as its own ConfigMap, gated on the Karpenter CRD
+  being present in the cluster (.Capabilities). Kept out of the dashboards/*.json
+  glob (it lives under files/) so clusters without Karpenter don't load it.
+*/ -}}
+{{- if and .Values.monitoring.dashboards.enabled (.Capabilities.APIVersions.Has "karpenter.sh/v1") }}
+{{- $label := .Values.monitoring.dashboards.label | default "grafana_dashboard" }}
+{{- $labelValue := .Values.monitoring.dashboards.labelValue | default "1" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard-union-dataplane-karpenter
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{ $label }}: {{ $labelValue | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  union-dataplane-karpenter.json: |-
+{{ .Files.Get "files/dashboards/union-dataplane-karpenter.json" | replace "__NAMESPACE__" .Release.Namespace | indent 4 }}
+{{- end }}
