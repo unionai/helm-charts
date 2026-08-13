@@ -27,17 +27,27 @@ switched back on.
 The kube-state-metrics rules come from the `collectors` list rather than being hardcoded,
 so a new collector can't end up unauthorized — an unmapped one fails the render.
 
-### The one thing the flag can't reach
+### What the flag can't reach
 
-`collectors` becomes `--resources` on the kube-state-metrics Deployment, which the subchart
-renders, so it's the same list in both modes. Under `low_privilege`, `nodes` and
-`namespaces` are asked for but not granted.
+Two kube-state-metrics values are read by the subchart's own Deployment template, so no
+template of ours can branch on them. Both stay put in either mode.
+
+**`collectors`** becomes `--resources`, so it's the same list both ways. Under
+`low_privilege`, `nodes` and `namespaces` are asked for but not granted.
 
 That's survivable, and measured on a live cluster: kube-state-metrics stays ready with no
 restarts, health checks and `/metrics` return 200, and the other four collectors work
 normally. The denied pair shows up as an error counter on the telemetry port (which this
 chart doesn't scrape) and as about 6 log lines a minute, permanently. That noise is the
 price of keeping this to one flag.
+
+**`releaseNamespace: true`** becomes `--namespaces=<release-ns>`, so pod-level series cover
+only the release namespace. Under `low_privilege` that's the work namespace and covers
+everything. At `low_privilege: false` task pods run elsewhere, so their
+`kube_pod_container_resource_*` are not collected — utilization still is, from the
+cadvisor job, which is node-scoped and namespace-blind. To collect them, set
+`prometheus.kube-state-metrics.releaseNamespace: false`; the ClusterRole granted at that
+privilege level already allows it. `examples/values-legacy.yaml` does exactly this.
 
 ## What each subchart gets
 
@@ -85,9 +95,8 @@ The binding names kube-state-metrics' real ServiceAccount, worked out from the s
 own naming rules. The hand-written binding it replaced named one that didn't exist, for
 every release name, and produced no `kube_*` metrics for three months.
 
-`releaseNamespace: true` limits collection to the release namespace in both modes. Under
-`low_privilege` that's the work namespace, so it covers everything; at `low_privilege:
-false` task pods live elsewhere and aren't collected.
+`releaseNamespace: true` limits collection to the release namespace in both modes — see
+[What the flag can't reach](#what-the-flag-cant-reach).
 
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in
