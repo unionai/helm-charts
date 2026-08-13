@@ -1,5 +1,5 @@
 """
-Grafana as a Flyte App — per-dataplane observability (ENG26-1101).
+Grafana as a Flyte App — per-dataplane observability.
 
 Runs Grafana inside a dataplane cluster, anonymous, serving the shipped v1/v2 + Karpenter
 dataplane dashboards over that cluster's Prometheus. Access is gated by the zero-trust
@@ -60,8 +60,8 @@ image = (
 )
 
 grafana = AppEnvironment(
-    name="grafana-dataplane",
-    description="Read-only Grafana over this dataplane cluster's Prometheus (ENG26-1101).",
+    name=os.environ.get("APP_NAME", "grafana"),
+    description="Read-only Grafana over this dataplane cluster's Prometheus.",
     image=image,
     port=8080,
     command=["/run.sh"],

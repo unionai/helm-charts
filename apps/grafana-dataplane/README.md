@@ -5,8 +5,6 @@ dashboards over that cluster's Prometheus. Grafana runs anonymous with no login;
 boundary is the zero-trust app-serving edge (`requires_auth=True`). One app = one cluster's
 Prometheus — no cross-cluster query fan-out, no public Prometheus exposure.
 
-Tracking: ENG26-1101 (S7). Stacked on the dashboard PR (`charts/dataplane` + `charts/controlplane`).
-
 ## Layout
 
 ```
@@ -42,12 +40,12 @@ Edit dashboards in `charts/dataplane`, then `make sync-app-dashboards` and commi
 identity is the **worker namespace's `default` ServiceAccount** (WIF on GKE, IRSA on EKS,
 Workload Identity on AKS) — no secrets mounted.
 
-| `DATASOURCE_MODE` | `DS_PROM_URL` (`PROMETHEUS_URL`) | Auth |
-| --- | --- | --- |
-| `in-cluster` *(default)* | `http://prometheus-operated.<ns>.svc:9090` | none (proxy) |
-| `gmp-frontend` | in-cluster GMP frontend proxy URL | none; frontend uses pod WIF → GMP |
-| `amp` | `https://aps-workspaces.<region>.amazonaws.com/workspaces/<id>` | SigV4, pod IRSA (`AWS_REGION`) |
-| `azure` | Azure Monitor workspace query endpoint | Azure Workload Identity |
+| `DATASOURCE_MODE`          | `DS_PROM_URL` (`PROMETHEUS_URL`)                              | Auth                               |
+| ---------------------------- | ----------------------------------------------------------------- | ---------------------------------- |
+| `in-cluster` *(default)* | `http://prometheus-operated.<ns>.svc:9090`                      | none (proxy)                       |
+| `gmp-frontend`             | in-cluster GMP frontend proxy URL                                 | none; frontend uses pod WIF → GMP |
+| `amp`                      | `https://aps-workspaces.<region>.amazonaws.com/workspaces/<id>` | SigV4, pod IRSA (`AWS_REGION`)   |
+| `azure`                    | Azure Monitor workspace query endpoint                            | Azure Workload Identity            |
 
 `<ns>` is `dataplane` for a separate DP, `controlplane` for an intracluster (CP+DP) deploy.
 Grafana's Prometheus datasource has no native Google OAuth, so GMP goes through its frontend
@@ -67,7 +65,7 @@ export PROMETHEUS_URL=http://prometheus-operated.dataplane.svc.cluster.local:909
 flyte serve --project <proj> --domain <domain> app.py grafana
 ```
 
-## Deferred (P3 hardening)
+## Deferred hardening
 
 Pod-level egress NetworkPolicy (Prometheus-only, block IMDS `169.254.169.254`) and shared
 multi-org DP scoping. Anonymous Admin is safe only because the app edge is the auth boundary;
