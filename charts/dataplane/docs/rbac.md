@@ -13,7 +13,8 @@ list is on the `low_privilege` key in `values.yaml`.
 Read only — never writes, never secrets, and never a rule that isn't backed by a metric or
 feature actually in use.
 
-Set the flag; there is nothing else to set.
+The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
+that access — layer `examples/values.full-privilege.yaml` for that, below.
 
 ## Why we write prometheus and kube-state-metrics RBAC ourselves
 
@@ -29,32 +30,31 @@ so a new collector can't end up unauthorized — an unmapped one fails the rende
 
 ### What the flag can't reach
 
-Two kube-state-metrics values are read by the subchart's own Deployment template, so no
-template of ours can branch on them. Both stay put in either mode.
+Two kube-state-metrics values become flags on its Deployment, which the subchart renders,
+so no template of ours can branch on them:
 
-**`collectors`** becomes `--resources`, so it's the same list both ways. Under
-`low_privilege`, `nodes` and `namespaces` are asked for but not granted.
+- **`collectors`** → `--resources`. What it asks the API server for.
+- **`releaseNamespace`** → `--namespaces`. Which namespaces it asks about.
 
-That's survivable, and measured on a live cluster: kube-state-metrics stays ready with no
-restarts, health checks and `/metrics` return 200, and the other four collectors work
-normally. The denied pair shows up as an error counter on the telemetry port (which this
-chart doesn't scrape) and as about 6 log lines a minute, permanently. That noise is the
-price of keeping this to one flag.
+The defaults are set for the namespaced install, so nothing is requested that can't be
+granted: four collectors, release namespace only. Asking for more without the grant doesn't
+fail loudly — kube-state-metrics keeps running and logs the denial every few seconds for the
+life of the pod. `templates/prometheus/rbac.yaml` refuses to render a cluster-scoped
+collector under `low_privilege` rather than let that start.
 
-**`releaseNamespace: true`** becomes `--namespaces=<release-ns>`, so pod-level series cover
-only the release namespace. Under `low_privilege` that's the work namespace and covers
-everything. At `low_privilege: false` task pods run elsewhere, so their
-`kube_pod_container_resource_*` are not collected — utilization still is, from the
-cadvisor job, which is node-scoped and namespace-blind. To collect them, set
-`prometheus.kube-state-metrics.releaseNamespace: false`; the ClusterRole granted at that
-privilege level already allows it. `examples/values-legacy.yaml` does exactly this.
+`examples/values.full-privilege.yaml` is the other half of `low_privilege: false`: it adds
+the `nodes` and `namespaces` collectors and drops `--namespaces`, so `kube_node_*`,
+`kube_namespace_labels` and task pods in project namespaces are all collected. Without it,
+`low_privilege: false` grants the cluster-wide read but still collects like a namespaced
+install. Task pod *utilization* doesn't depend on this — `container_*` comes from the
+cadvisor job, which is node-scoped and namespace-blind — but requests and limits do.
 
 ## What each subchart gets
 
 | Subchart | Default | `low_privilege: true` | `low_privilege: false` |
 |---|---|---|---|
 | prometheus | on | namespaced Role (ours) | ClusterRole (ours) |
-| kube-state-metrics | on | namespaced Role, 4 of 6 collectors | ClusterRole, all 6 |
+| kube-state-metrics | on | namespaced Role, 4 collectors | ClusterRole, 6 with the overlay |
 | fluent-bit | on (off on GCP) | none | none |
 | dcgm-exporter | off | none | none |
 | ingress-nginx | off | namespaced Role | namespaced Role |
@@ -83,20 +83,20 @@ At `low_privilege: false` the ClusterRole name is a fixed string, so **one datap
 cluster** is the supported model. A second install in another namespace fails on Helm
 ownership rather than quietly taking over the first release's binding.
 
-**kube-state-metrics.** Six collectors out of 28 (`pods`, `deployments`, `daemonsets`,
-`resourcequotas`, `nodes`, `namespaces`), list/watch only, chosen to match the series the
-control plane's metrics gateway accepts. Dropping the other 22 also drops `secrets`.
+**kube-state-metrics.** Four collectors out of 28 by default (`pods`, `deployments`,
+`daemonsets`, `resourcequotas`), list/watch only, chosen to match the series the control
+plane's metrics gateway accepts. Dropping the other 24 also drops `secrets`. The
+full-privilege overlay adds `nodes` and `namespaces`, which cost `kube_node_*` and
+`kube_namespace_labels` when absent — the latter is the join key for most pod-level
+aggregates, so pod-level dashboards degrade rather than simply losing node panels.
 
-Under `low_privilege` the last two aren't granted, costing `kube_node_*` and
-`kube_namespace_labels`. The latter is the join key for most pod-level aggregates, so
-pod-level dashboards degrade rather than simply losing node panels.
+Grants are derived from whatever `collectors` names, so the two always match: an unmapped
+collector fails the render, and so does a cluster-scoped one under `low_privilege`. See
+[What the flag can't reach](#what-the-flag-cant-reach) for the collection scope.
 
 The binding names kube-state-metrics' real ServiceAccount, worked out from the subchart's
 own naming rules. The hand-written binding it replaced named one that didn't exist, for
 every release name, and produced no `kube_*` metrics for three months.
-
-`releaseNamespace: true` limits collection to the release namespace in both modes — see
-[What the flag can't reach](#what-the-flag-cant-reach).
 
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in

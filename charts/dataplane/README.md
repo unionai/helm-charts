@@ -342,7 +342,9 @@ key in `values.yaml` — no Task-Level Monitoring, no node-level metrics, less a
 data.
 
 To trade that back, set `low_privilege: false`. Union-authored RBAC and both subcharts
-follow the flag in either direction; there is nothing else to set.
+follow the flag in either direction. To also collect with that access — node metrics, and
+task pods in project namespaces — layer `examples/values.full-privilege.yaml`, which
+carries the two kube-state-metrics settings Helm can't derive from the flag.
 
 The exception is metrics-server (off by default), which is cluster-scoped either way.
 

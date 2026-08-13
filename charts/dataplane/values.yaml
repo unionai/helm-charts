@@ -1933,20 +1933,18 @@ prometheus:
     rbac:
       create: false
     # Just the collectors feeding series the metrics gateway accepts; the subchart's
-    # default is 28, including `secrets`. This list is the same in both privilege modes,
-    # so under low_privilege the two cluster-scoped ones are asked for but not granted.
-    # kube-state-metrics keeps running and keeps serving the other four (docs/rbac.md).
+    # default is 28, including `secrets`. Only what a namespaced Role can be granted is
+    # listed here — asking for a cluster-scoped resource we can't grant would make
+    # kube-state-metrics log a permission error every few seconds, forever.
+    # examples/values.full-privilege.yaml adds `nodes` and `namespaces` (docs/rbac.md).
     collectors:
       - pods            # kube_pod_status_phase, kube_pod_container_resource_*, kube_pod_container_status_*
       - deployments     # kube_deployment_spec_replicas, kube_deployment_status_replicas_*
       - daemonsets      # kube_daemonset_status_number_unavailable
       - resourcequotas  # kube_resourcequota
-      - nodes           # kube_node_labels, kube_node_status_condition — cluster-scoped
-      - namespaces      # kube_namespace_labels, the join key for pod aggregates — cluster-scoped
     # Scopes collection to the release namespace (--namespaces=<release-ns>). Static like
-    # collectors above, so it holds at low_privilege: false too — task pods run in other
-    # namespaces and their kube_pod_* are not collected there. Set this false to collect
-    # them; the ClusterRole at that privilege level already allows it (docs/rbac.md).
+    # collectors above, so it holds at low_privilege: false too, where task pods run in
+    # other namespaces — examples/values.full-privilege.yaml flips it (docs/rbac.md).
     releaseNamespace: true
     # Don't add `metricRelabelings` here — nothing reads it. The filter that actually
     # runs is the kube-state-metrics scrape job's metric_relabel_configs above.

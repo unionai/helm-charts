@@ -6,9 +6,10 @@ template can branch on low_privilege, a subchart value cannot.
   low_privilege: true   namespaced Role + RoleBinding in the release namespace
   low_privilege: false  ClusterRole + ClusterRoleBinding
 
-The rules are the subcharts' own, minus anything cluster-scoped in the namespaced variant:
-naming those in a Role is legal but never matches, so it only hides the denial. See
-docs/rbac.md.
+The rules are the subcharts' own. Nothing cluster-scoped goes in the namespaced variant:
+naming it in a Role is legal but never matches, so it only hides the denial. Prometheus'
+node rules are dropped there; a kube-state-metrics collector that needs cluster scope is
+refused outright, since the Deployment would still ask for it. See docs/rbac.md.
 */ -}}
 {{- if .Values.prometheus.enabled }}
 
@@ -40,13 +41,12 @@ docs/rbac.md.
 }}
 {{- $ksmClusterScoped := list "nodes" "namespaces" }}
 
-{{- $ksmSelected := list }}
 {{- range $c := ($ksm.collectors | default list) }}
 {{- if not (hasKey $ksmRules $c) }}
 {{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which templates/prometheus/rbac.yaml has no rule for, so it would run unauthorized. Add it to the $ksmRules map there (and to $ksmClusterScoped if it is cluster-scoped). Mapped collectors: %s." $c (join ", " (keys $ksmRules | sortAlpha))) }}
 {{- end }}
-{{- if not (and $lowPriv (has $c $ksmClusterScoped)) }}
-{{- $ksmSelected = append $ksmSelected $c }}
+{{- if and $lowPriv (has $c $ksmClusterScoped) }}
+{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which is cluster-scoped and cannot be granted under low_privilege: true. kube-state-metrics would ask for it, be denied, and log the denial every few seconds for the life of the pod. Drop it, or layer examples/values.full-privilege.yaml, which sets low_privilege: false and collects it." $c) }}
 {{- end }}
 {{- end }}
 ---
@@ -128,7 +128,7 @@ metadata:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     release: {{ .Release.Name }}
 rules:
-{{- range $c := $ksmSelected }}
+{{- range $c := ($ksm.collectors | default list) }}
 {{- $rule := index $ksmRules $c }}
   - apiGroups: [{{ range $i, $g := $rule.apiGroups }}{{ if $i }}, {{ end }}{{ $g | quote }}{{ end }}]
     resources: [{{ range $i, $r := $rule.resources }}{{ if $i }}, {{ end }}{{ $r | quote }}{{ end }}]

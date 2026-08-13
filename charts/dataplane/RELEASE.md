@@ -15,19 +15,20 @@ bumps. What each one gets is in [docs/rbac.md](docs/rbac.md).
   they never matched: `kubernetes-cadvisor` got `403`s and `container_*` was never
   collected. At `low_privilege: false` the RBAC did not render at all.
 
-**`low_privilege` is now the only switch.** prometheus and kube-state-metrics follow it in
-both directions, with nothing to layer alongside it. Both subcharts are pinned to
-`rbac.create: false` and the chart renders their Role or ClusterRole itself.
+**`low_privilege` decides RBAC by itself.** prometheus and kube-state-metrics follow it in
+both directions. Both subcharts are pinned to `rbac.create: false` and the chart renders
+their Role or ClusterRole itself. What the flag can't decide is how much kube-state-metrics
+collects with that access — that's the new `examples/values.full-privilege.yaml`, below.
 
 Also in both modes:
 
 - **`kubernetes-cadvisor` is no longer scraped under `low_privilege`** — it needs
   cluster-wide node access. This is the Task-Level Monitoring tradeoff `low_privilege` has
   always described.
-- **kube-state-metrics collects six resources** (pods, deployments, daemonsets,
-  resourcequotas, nodes, namespaces) instead of all 28. Under `low_privilege`, nodes and
-  namespaces are not granted: kube-state-metrics logs about 6 lines a minute about it and
-  otherwise runs normally.
+- **kube-state-metrics collects four resources** (pods, deployments, daemonsets,
+  resourcequotas) instead of all 28, and only what it can be granted: asking for a
+  cluster-scoped resource it has no permission for makes it log the denial every few
+  seconds, forever. `examples/values.full-privilege.yaml` adds nodes and namespaces.
 - **Nine upstream scrape jobs are dropped** (`kubernetes-apiservers`, `-nodes`,
   `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
   `prometheus-pushgateway`). All nine discover across the whole cluster, which prometheus
@@ -47,6 +48,14 @@ Also in both modes:
 - **metrics-server is unchanged** — cluster-scoped by design.
 
 ### Migration / action required
+
+- **Running `low_privilege: false`? Layer `examples/values.full-privilege.yaml`.** The flag
+  grants the cluster-wide read; this file is what uses it — it adds the `nodes` and
+  `namespaces` kube-state-metrics collectors and collects from every namespace instead of
+  just the release namespace. Without it you keep the cluster-wide grant but collect like a
+  namespaced install: no `kube_node_*` or `kube_namespace_labels`, and no requests/limits
+  for task pods, which run in project namespaces. Task pod CPU and memory are unaffected —
+  those come from the cadvisor job. `examples/values-legacy.yaml` already includes this.
 
 - **ingress-nginx now watches only the release namespace.** An Ingress outside it stops
   being reconciled, with no error or warning. Every Ingress this chart creates is in the
