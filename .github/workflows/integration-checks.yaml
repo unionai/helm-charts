@@ -228,6 +228,9 @@ jobs:
           {
             echo "CONTROL_PLANE_URL=https://$host"; echo "CP_HOST=$host"
             echo "ORG_NAME=$org"; echo "CLUSTER_NAME=$cluster"
+            # Per-leg TaskEnvironment-name suffix (the suite reads ENV_SUFFIX) so
+            # concurrent legs on the shared tenant don't clobber each other's envs.
+            echo "ENV_SUFFIX=$cluster"
             echo "OPERATOR_CLIENT_ID=$op_id"; echo "OPERATOR_CLIENT_SECRET=$op_secret"
             echo "FLYTE_API_KEY=$api_key"
             # verify_logs is best-effort now (WARNs, never fails), so run it on k3d too.
@@ -316,6 +319,28 @@ jobs:
             --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.4.1' fastapi uvicorn httpx kubernetes pytest pytest-rerunfailures pytest-xdist
           echo "$RUNNER_TEMP/flyte-venv/bin" >> "$GITHUB_PATH"
 
+      # ── The functional suite is no longer vendored here — it lives in
+      #    flyteorg/flyte-sdk and is consumed at a pinned ref (sparse-checkout of just
+      #    tests/functional into flyte-sdk-suite/). ──
+      - name: Checkout flyte-sdk functional suite
+        uses: actions/checkout@v4
+        with:
+          repository: flyteorg/flyte-sdk
+          # TODO: repin to a main SHA/tag once flyteorg/flyte-sdk#1378 merges. Tracking
+          # the branch HEAD keeps this in sync while both PRs iterate.
+          ref: mike/functional-env-validation-tests
+          # Non-cone: fetch just the portable suite — tests/functional/** plus the empty
+          # tests/__init__.py package marker. Deliberately NOT the ancestor
+          # tests/conftest.py: that is flyte-sdk's own unit-test harness (it imports
+          # flyte internals + pytest-asyncio), which the self-contained functional suite
+          # neither uses nor should pull in. Keeping tests/ a package lets the app task's
+          # module resolve as tests.functional.tasks.* when the serving pod re-imports it.
+          sparse-checkout: |
+            tests/__init__.py
+            tests/functional
+          sparse-checkout-cone-mode: false
+          path: flyte-sdk-suite
+
       # ── Resolve this leg's CI credentials for the shared routing + functional steps. CI
       #    ops authenticate as a CI identity, never the DP operator. All CI secrets
       #    live in AWS, so non-aws legs federate to the AWS ci_deployer here to read
@@ -388,23 +413,33 @@ jobs:
           echo "127.0.0.1 rustfs.rustfs.svc.cluster.local" | sudo tee -a /etc/hosts
           for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live && break; sleep 2; done
 
-      # ── Run the functional tests. Every scenario is an independent submit→wait-for-
-      #    terminal run (mostly idle waiting on the cluster), so pytest-xdist distributes
-      #    them across workers (default --dist load — each test is self-contained; no
-      #    shared gating run). FUNCTIONAL_PARALLELISM is set per leg (default 2 for the
-      #    capacity-bound single k3d node; "auto" on the autoscaling standing clusters).
+      # ── Run the functional tests from the flyte-sdk suite (consumed, not vendored).
+      #    Scenarios are independent, so pytest-xdist distributes them across workers;
+      #    FUNCTIONAL_PARALLELISM is per leg (2 on the capacity-bound k3d node, "auto"
+      #    on the autoscaling standing clusters). Connection + naming come from the CI
+      #    contract env (CONTROL_PLANE_URL / CLUSTER_NAME / FLYTE_API_KEY / ORG_NAME /
+      #    ENV_SUFFIX) via the suite's CI-fallback vars.
       - name: Functional tests
         env:
-          # Bust the built-image cache per run ONLY on k3d: its ephemeral RustFS is
-          # destroyed each teardown, so a stale cross-run cache hit points at a dead
-          # output (ENG26-979). The standing clouds keep persistent object storage, so
-          # cross-run cache hits stay valid (and desirable) — leave the bust empty there.
-          FUNCTIONAL_IMAGE_CACHE_BUST: ${{ matrix.cloud == 'k3d' && format('{0}-{1}', github.run_id, github.run_attempt) || '' }}
-          # Namespace the app ksvc lands in — "dataplane" on every leg (where the
-          # operator pins app pods under low_privilege). verify_app's endpoint poll
-          # resolves here.
-          APP_NAMESPACE: ${{ matrix.namespaces || 'dataplane' }}
-        run: pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" ${FUNCTIONAL_ARGS:-}
+          # Union managed data plane — retry the tunnel/proxy/cluster-pool submission
+          # blips (the suite defaults to the OSS transient set).
+          FLYTE_FUNCTIONAL_BACKEND: union
+          # Bust the image-build cache per run ONLY on k3d: its ephemeral RustFS is
+          # destroyed each teardown, so a stale cross-run build-cache hit points at a
+          # dead output. Empty on the standing clouds (persistent stores keep caching).
+          FLYTE_FUNCTIONAL_IMAGE_CACHE_BUST: ${{ matrix.cloud == 'k3d' && format('{0}-{1}', github.run_id, github.run_attempt) || '' }}
+          # App-serving on the shared tenant: poll the app's INTERNAL per-cluster k8s
+          # Service (the public *.apps wildcard is last-writer-wins across dataplanes)
+          # and pin the app to this leg's cluster pool for isolation. Both are consumer
+          # opt-ins the generic suite ignores when unset; selfhosted skips app (inert).
+          INTERNAL_APP_ENDPOINT_PATTERN: "http://${{ env.CLUSTER_NAME }}-development-{app_fqdn}.dataplane.svc.cluster.local"
+          FLYTE_FUNCTIONAL_APP_CLUSTER_POOL: ${{ env.CLUSTER_NAME }}
+        run: |
+          # Run from inside the checkout so flyte roots task module names at the suite
+          # (tests.functional.tasks.*) rather than the hyphenated checkout path, which
+          # is an invalid module name the app-serving pod can't re-import.
+          cd flyte-sdk-suite
+          pytest tests/functional -n "${FUNCTIONAL_PARALLELISM:-2}" --reruns 1 --reruns-delay 15 ${FUNCTIONAL_ARGS:-}
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
       # may appear (secrets stay in external-secrets, never printed).
