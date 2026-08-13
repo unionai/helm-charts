@@ -7,13 +7,18 @@
 Third-party RBAC is now set on each subchart, so grants track the subchart across version
 bumps. What each one gets is in [docs/rbac.md](docs/rbac.md).
 
-**Two broken metrics families are fixed.**
+**Two broken metrics families are fixed**, both under `low_privilege` — the default, and
+the only mode where the chart used to render this RBAC at all.
 
 - kube-state-metrics has had no permissions since 2026-05-02 — its RoleBinding named a
   ServiceAccount that does not exist. No `kube_*` metrics in three months.
 - prometheus's scrape permissions named cluster-scoped resources in a namespaced Role, so
   they never matched: `kubernetes-cadvisor` got `403`s and `container_*` was never
-  collected. At `low_privilege: false` the RBAC did not render at all.
+  collected.
+
+At `low_privilege: false` the chart rendered no RBAC of its own, so what those components
+could read was whatever your values granted directly on the subcharts. That is now the
+chart's job in both modes.
 
 **`low_privilege` decides RBAC by itself.** prometheus and kube-state-metrics follow it in
 both directions. Both subcharts are pinned to `rbac.create: false` and the chart renders
@@ -31,11 +36,12 @@ Also in both modes:
   seconds, forever. `examples/values.full-privilege.yaml` adds nodes and namespaces.
 - **Nine upstream scrape jobs are dropped** (`kubernetes-apiservers`, `-nodes`,
   `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
-  `prometheus-pushgateway`). All nine discover across the whole cluster, which prometheus
-  has never had permission to do in either mode, so none of them has ever returned a
-  sample. Keeping them would have switched cluster-wide scraping on the moment this release
-  granted that read. The only series they overlap with a dashboard is cadvisor's
-  `container_*`, which the chart's own `kubernetes-cadvisor` job collects. Side effect:
+  `prometheus-pushgateway`). All nine discover across the whole cluster. Under
+  `low_privilege` prometheus has never been allowed to do that, so they returned nothing;
+  where your values granted cluster read, they were scraping every pod, service and node
+  in the cluster for output no dashboard reads. The only series they overlap with a
+  dashboard is cadvisor's `container_*`, which the chart's own `kubernetes-cadvisor` job
+  collects with a keep-list. Side effect:
   pods and services annotated `prometheus.io/scrape` are not discovered — add a scrape job
   under `prometheus.extraScrapeConfigs` if you need one.
 - **The "deployments available" dashboard panel gets its data.** The kube-state-metrics
@@ -75,9 +81,10 @@ Also in both modes:
   `dcgm-exporter.namespace`. Neither had any effect. If you used `dcgm-exporter.namespace`
   to scrape an exporter outside the release namespace, that job no longer matches.
 
-- **Expect more metrics.** `kube_*` starts flowing after this upgrade, and `container_*`
-  follows at `low_privilege: false`, so remote_write volume rises. The nine dropped scrape
-  jobs cut the other way.
+- **Expect more metrics under `low_privilege`.** `kube_*` starts flowing after this upgrade,
+  so remote_write volume rises; the nine dropped scrape jobs cut the other way. At
+  `low_privilege: false`, `kube_*` was already flowing and `container_*` joins it — but the
+  collector list shrinks to four, so layer the full-privilege overlay to keep `kube_node_*`.
 
 ## 2026.8.1
 

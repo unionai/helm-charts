@@ -96,7 +96,8 @@ collector fails the render, and so does a cluster-scoped one under `low_privileg
 
 The binding names kube-state-metrics' real ServiceAccount, worked out from the subchart's
 own naming rules. The hand-written binding it replaced named one that didn't exist, for
-every release name, and produced no `kube_*` metrics for three months.
+every release name — no `kube_*` metrics for three months anywhere the chart's own RBAC was
+used, which until now meant every `low_privilege` install.
 
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in

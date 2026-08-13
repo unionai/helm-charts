@@ -373,8 +373,8 @@ Kubectl hook cleanup jobs use `image.kubectl`:
 
 | Key | Default | Description |
 | --- | --- | --- |
-| `image.kubectl.repository` | `bitnami/kubectl` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
-| `image.kubectl.tag` | `latest` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.repository` | `docker.io/alpine/k8s` | Kubectl image repository used by dataplane Helm hook cleanup jobs. |
+| `image.kubectl.tag` | `1.32.3` | Kubectl image tag used by dataplane Helm hook cleanup jobs. |
 | `image.kubectl.pullPolicy` | `""` | Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty. |
 | `image.kubectl.imagePullSecrets` | `[]` | Optional imagePullSecrets for dataplane Helm hook cleanup jobs. |
 
