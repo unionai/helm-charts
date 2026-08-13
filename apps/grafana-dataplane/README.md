@@ -60,6 +60,8 @@ export FLYTECTL_CONFIG=/…/cloud/gen/cli-config/uctl/<env>.v2.yaml
 make sync-app-dashboards            # ensure grafana/dashboards/ is current
 export PROMETHEUS_URL=http://prometheus-operated.dataplane.svc.cluster.local:9090
 # export DATASOURCE_MODE=amp AWS_REGION=us-east-2   # for AMP; azure/gmp-frontend analogous
+# export APP_NAME=grafana                           # deployed app name (default: grafana)
+# export APP_SUBDOMAIN=grafana                      # stable subdomain; empty -> platform default
 
 # Flags BEFORE the file; app env var is `grafana`. Omit --follow (log tail errors; deploy is fine).
 flyte serve --project <proj> --domain <domain> app.py grafana

@@ -28,7 +28,7 @@ import os
 from pathlib import Path
 
 import flyte
-from flyte.app import AppEnvironment, Scaling
+from flyte.app import AppEnvironment, Domain, Scaling
 
 HERE = Path(__file__).parent
 
@@ -44,6 +44,9 @@ PROM_URL = os.environ.get(
     "PROMETHEUS_URL", "http://prometheus-operated.dataplane.svc.cluster.local:9090"
 )
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-2")
+
+# Optional stable subdomain. Empty (default) -> omit so the platform assigns the default.
+APP_SUBDOMAIN = os.environ.get("APP_SUBDOMAIN", "").strip()
 
 image = (
     flyte.Image.from_base("grafana/grafana:11.3.0")
@@ -66,6 +69,7 @@ grafana = AppEnvironment(
     port=8080,
     command=["/run.sh"],
     requires_auth=True,
+    domain=Domain(subdomain=APP_SUBDOMAIN) if APP_SUBDOMAIN else Domain(),
     env_vars={
         "GF_SERVER_HTTP_PORT": "8080",
         "GF_AUTH_ANONYMOUS_ENABLED": "true",
