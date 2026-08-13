@@ -1,24 +1,14 @@
 {{- /*
-RBAC for prometheus and kube-state-metrics, authored here rather than by the subcharts.
-
-Both subcharts are set to rbac.create: false permanently. Their RBAC is driven by values,
-and Helm cannot derive a subchart value from .Values.low_privilege -- so leaving it to
-them would mean a second values file that has to be layered in lockstep with the flag.
-Authoring it here is the only way one flag can decide the whole posture: a template can
-branch, a value cannot.
+RBAC for prometheus and kube-state-metrics, written here rather than by the subcharts.
+Both are pinned to rbac.create: false so that one flag decides the whole posture -- a
+template can branch on low_privilege, a subchart value cannot.
 
   low_privilege: true   namespaced Role + RoleBinding in the release namespace
   low_privilege: false  ClusterRole + ClusterRoleBinding
 
-The rules are the subcharts' own, with one filter: anything cluster-scoped is dropped from
-the namespaced variant. A Role naming nodes or namespaces is accepted by the API server
-and never matches, which is how kubernetes-cadvisor spent three months on 403s. Dropping
-them instead means kube-state-metrics is denied outright -- loudly, in its logs and in its
-kube_state_metrics_list_total{result="error"} counter.
-
-kube-state-metrics rules are derived from the collectors list rather than hardcoded, so
-adding a collector cannot silently leave it unauthorized. An unmapped collector fails the
-render.
+The rules are the subcharts' own, minus anything cluster-scoped in the namespaced variant:
+naming those in a Role is legal but never matches, so it only hides the denial. See
+docs/rbac.md.
 */ -}}
 {{- if .Values.prometheus.enabled }}
 
@@ -26,9 +16,8 @@ render.
 {{- $ksm := index $prom "kube-state-metrics" }}
 {{- $lowPriv := .Values.low_privilege }}
 
-{{- /* ServiceAccount names, mirroring each subchart's own helper -- including the
-       trunc/trimSuffix both apply, without which a 64-character or dash-suffixed
-       override binds a name the subchart never creates. */ -}}
+{{- /* ServiceAccount names, mirroring each subchart's own helper -- trunc/trimSuffix
+       included, or a long or dash-suffixed override binds a name that never exists. */ -}}
 {{- $promSA := default ($prom.server.fullnameOverride | trunc 63 | trimSuffix "-") ((($prom.serviceAccounts).server).name) }}
 {{- $ksmName := "" }}
 {{- if $ksm.fullnameOverride }}
@@ -39,8 +28,8 @@ render.
 {{- end }}
 {{- $ksmSA := default $ksmName (($ksm.serviceAccount).name) }}
 
-{{- /* One entry per collector this chart supports. Cluster-scoped ones are listed
-       separately and dropped from the namespaced Role. */ -}}
+{{- /* One entry per supported collector, so an unmapped one fails the render instead of
+       running unauthorized. Cluster-scoped ones are dropped from the namespaced Role. */ -}}
 {{- $ksmRules := dict
   "pods"            (dict "apiGroups" (list "") "resources" (list "pods"))
   "nodes"           (dict "apiGroups" (list "") "resources" (list "nodes"))
@@ -54,7 +43,7 @@ render.
 {{- $ksmSelected := list }}
 {{- range $c := ($ksm.collectors | default list) }}
 {{- if not (hasKey $ksmRules $c) }}
-{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which templates/prometheus/rbac.yaml has no rule for -- it would run unauthorized. Add it to the $ksmRules map there (and to $ksmClusterScoped if it is a cluster-scoped resource). Mapped collectors: %s." $c (join ", " (keys $ksmRules | sortAlpha))) }}
+{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which templates/prometheus/rbac.yaml has no rule for, so it would run unauthorized. Add it to the $ksmRules map there (and to $ksmClusterScoped if it is cluster-scoped). Mapped collectors: %s." $c (join ", " (keys $ksmRules | sortAlpha))) }}
 {{- end }}
 {{- if not (and $lowPriv (has $c $ksmClusterScoped)) }}
 {{- $ksmSelected = append $ksmSelected $c }}

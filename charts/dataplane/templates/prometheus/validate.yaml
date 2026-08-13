@@ -1,39 +1,33 @@
 {{- /*
-templates/prometheus/rbac.yaml owns RBAC for prometheus and kube-state-metrics, because a
-template can branch on low_privilege and a subchart value cannot. Turning either
-subchart's rbac.create back on adds a second, parallel grant that low_privilege no longer
-governs -- cluster-scoped even in a namespace-confined install, and reported by nothing.
+templates/prometheus/rbac.yaml owns RBAC for prometheus and kube-state-metrics. These
+checks catch the values that would quietly break that: a second grant low_privilege no
+longer governs, or a binding pointing at a ServiceAccount nothing runs as.
 */ -}}
 {{- if .Values.prometheus.enabled }}
 {{- $prom := .Values.prometheus }}
 {{- $ksm := index .Values.prometheus "kube-state-metrics" }}
 
 {{- if .Values.prometheus.rbac.create }}
-{{- fail "prometheus.rbac.create must stay false. RBAC for prometheus is authored by templates/prometheus/rbac.yaml, which follows low_privilege; the subchart's own ClusterRole does not, so enabling it grants cluster-wide read even under low_privilege: true, alongside the grant this chart already renders." }}
+{{- fail "prometheus.rbac.create must stay false. The chart writes prometheus's RBAC itself (templates/prometheus/rbac.yaml) so that it follows low_privilege; the subchart's own ClusterRole does not, so enabling it grants cluster-wide read on top, even under low_privilege: true." }}
 {{- end }}
 
 {{- if ($ksm.rbac).create }}
-{{- fail "prometheus.kube-state-metrics.rbac.create must stay false. RBAC for kube-state-metrics is authored by templates/prometheus/rbac.yaml, which follows low_privilege; the subchart's own does not, so enabling it adds a second grant that low_privilege no longer governs." }}
+{{- fail "prometheus.kube-state-metrics.rbac.create must stay false. The chart writes kube-state-metrics' RBAC itself (templates/prometheus/rbac.yaml) so that it follows low_privilege; the subchart's own does not, so enabling it adds a second grant the flag no longer governs." }}
 {{- end }}
 
-{{- /*
-An empty collectors list is not "collect nothing". It becomes an omitted --resources flag,
-which is how the subchart spells "all of them" -- 28 collectors including secrets, against
-the empty Role rbac.yaml derives from the same empty list.
-*/ -}}
+{{- /* An empty collectors list is not "collect nothing" -- an omitted --resources flag is
+       how the subchart spells "all 28", including secrets. */ -}}
 {{- if and $ksm.enabled (empty $ksm.collectors) }}
 {{- fail "prometheus.kube-state-metrics.collectors must name at least one collector. An empty list drops --resources from the kube-state-metrics Deployment, which makes it collect all 28 defaults (including secrets) while templates/prometheus/rbac.yaml grants it nothing." }}
 {{- end }}
 
 {{- /*
-rbac.yaml binds the ServiceAccount name each subchart derives, in the release namespace.
-The inputs below break one of those two assumptions, and they break silently: the grant
-lands on a ServiceAccount or namespace the workload does not use, which is the 403 this
-chart renders RBAC to prevent. Refuse rather than mirror -- tracking two upstream helpers
-across every subchart bump costs more than the overrides are worth.
-
-Refuse only where the derivations actually diverge. An explicit `name` is the case that
-does work: rbac.yaml and both subchart helpers all resolve to it, whatever `create` says.
+rbac.yaml binds the ServiceAccount each subchart derives, in the release namespace. The
+values below break one of those two assumptions silently: the grant lands on a
+ServiceAccount or namespace the workload does not use, which is the 403 this RBAC exists to
+prevent. Refusing beats mirroring -- following two upstream helpers across every subchart
+bump costs more than the overrides are worth. An explicit `name` still works, so it is
+allowed.
 */ -}}
 {{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
 {{- $promSrvSA := (($prom.serviceAccounts).server) | default dict }}

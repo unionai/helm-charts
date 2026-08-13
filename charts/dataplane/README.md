@@ -335,27 +335,18 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ## RBAC
 
-`low_privilege: true` (the default) scopes the deployment to a single namespace: every
+`low_privilege: true` (the default) keeps the deployment inside a single namespace: every
 component enabled by default, including the prometheus and kube-state-metrics subcharts,
-holds a namespaced Role. The cost is the reduced functionality listed on the
-`low_privilege` key in `values.yaml` — no Task-Level Monitoring, no node-level metrics,
-reduced cost accuracy.
+gets a namespaced Role. The cost is the reduced functionality listed on the `low_privilege`
+key in `values.yaml` — no Task-Level Monitoring, no node-level metrics, less accurate cost
+data.
 
-To trade that back, set `low_privilege: false`. Union-authored RBAC and the prometheus and
-kube-state-metrics subcharts follow the flag in both directions, and nothing has to be
-layered alongside it.
+To trade that back, set `low_privilege: false`. Union-authored RBAC and both subcharts
+follow the flag in either direction; there is nothing else to set.
 
-Three optional subcharts do not follow it, because no values key narrows them without
-breaking them: opencost and metrics-server are cluster-scoped in either mode, and
-kube-prometheus-stack (`monitoring.enabled`) holds cluster-wide `secrets`. All three are
-off by default.
+The exception is metrics-server (off by default), which is cluster-scoped either way.
 
-ingress-nginx does not follow it either, in the other direction: it stays confined to the
-release namespace in both modes. Serving an Ingress from another namespace means setting
-`ingress-nginx.rbac.scope` and `ingress-nginx.controller.scope.enabled` both back to
-`false` — they move together, and the chart enforces that.
-
-See [docs/rbac.md](docs/rbac.md) for what each subchart holds in each mode, and why.
+See [docs/rbac.md](docs/rbac.md) for what each subchart gets in each mode, and why.
 
 ---
 

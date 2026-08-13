@@ -1,26 +1,15 @@
 {{- /*
 The one cluster-scoped read the scoped controller still needs.
 
-rbac.scope: true drops the subchart's ClusterRole entirely and leaves a namespaced Role
-holding, among others, `ingressclasses`. IngressClass is cluster-scoped, so that rule never
-matches -- and unlike the Role's `namespaces` rule, nothing rescues it. (`namespaces` works
-there because the apiserver sets RequestInfo.Namespace for /api/v1/namespaces/<ns>, so a
-Role in that namespace does authorize the controller's own-namespace GET.)
+rbac.scope: true leaves the controller with a namespaced Role that names `ingressclasses`.
+IngressClass is cluster-scoped, so that rule never matches. The controller doesn't crash --
+it logs "No permissions to list and get Ingress Classes", comes up Ready, and then ignores
+every Ingress with a spec.ingressClassName, which is every Ingress this chart renders.
+Ready pod, green sync, silent 404s.
 
-The controller does not crash. It logs
-
-  No permissions to list and get Ingress Classes ... IngressClass feature will be disabled
-
-comes up Ready, and then ignores every Ingress carrying spec.ingressClassName -- which is
-every Ingress this chart renders (templates/common/ingress.yaml). Ready pod, green sync,
-silent 404s.
-
-So: the namespaced Role stays, and this adds back only `ingressclasses`. No secrets,
-configmaps, pods, endpoints or nodes -- the cluster-wide reads scoping exists to remove.
-
-Not rendered when rbac.scope is false: the subchart's own ClusterRole already covers
-ingressclasses there, and templates/ingress-nginx/validate.yaml keeps the scope pair
-moving together.
+So this adds back `ingressclasses` and nothing else -- no secrets, configmaps, pods,
+endpoints or nodes, which are the reads scoping exists to remove. Unscoped, the subchart's
+own ClusterRole already covers it.
 */ -}}
 {{- $nginx := index .Values "ingress-nginx" }}
 {{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}

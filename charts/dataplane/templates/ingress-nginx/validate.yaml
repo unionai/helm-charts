@@ -1,15 +1,13 @@
 {{- /*
-The ingress-nginx subchart checks one direction of this pair: rbac.scope without
-controller.scope.enabled is a hard error in its clusterrole.yaml. The reverse is not
-checked anywhere, and it is the dangerous one — the controller runs confined by
---watch-namespace while its ClusterRoleBinding still grants cluster-wide read on
-secrets, configmaps, pods, endpoints and nodes. Nothing reports it.
+The subchart already errors on rbac.scope without controller.scope.enabled. The reverse is
+the dangerous one and nothing checks it: the controller runs confined to one namespace
+while still holding cluster-wide read on secrets, configmaps, pods, endpoints and nodes.
 */ -}}
 {{- $nginx := index .Values "ingress-nginx" }}
 {{- if $nginx.enabled }}
 {{- $rbacScope := (($nginx.rbac).scope) }}
 {{- $controllerScope := ((($nginx.controller).scope).enabled) }}
 {{- if and $controllerScope (not $rbacScope) }}
-{{- fail "ingress-nginx.controller.scope.enabled is true but ingress-nginx.rbac.scope is false. The controller would watch only the release namespace while still holding a cluster-wide ClusterRole over secrets, configmaps, pods, endpoints and nodes -- confined in what it does, unconfined in what it can read, and silent about it. Set ingress-nginx.rbac.scope: true to match, or set both to false." }}
+{{- fail "ingress-nginx.controller.scope.enabled is true but ingress-nginx.rbac.scope is false. The controller would watch only the release namespace while still holding a cluster-wide ClusterRole over secrets, configmaps, pods, endpoints and nodes -- confined in what it does, unconfined in what it can read, and silent about it. Set ingress-nginx.rbac.scope: true, or set both to false." }}
 {{- end }}
 {{- end }}
