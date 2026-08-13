@@ -27,6 +27,10 @@ function layered_values_flags {
       name=$(echo "${name}" | xargs)
       if [[ -f "${CHARTS_DIR}/${chart}/${name}" ]]; then
         flags="${flags} --values ${CHARTS_DIR}/${chart}/${name}"
+      else
+        # stderr, not stdout: this function's stdout is the flag list itself.
+        echo "ERROR: ${file} declares values file '${name}', which does not exist under ${CHARTS_DIR}/${chart}/" >&2
+        return 1
       fi
     done
   fi

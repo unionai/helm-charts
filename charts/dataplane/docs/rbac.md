@@ -118,9 +118,11 @@ namespace and container names come from the log file path via the tail input's
 `Tag_Regex`, and that tag *is* the object key through `s3_key_format` — the metadata is in
 the path, not in the record.
 
-Three keys reverse this, and any of them means `rbac.create` goes back to `true`:
-`fluentbit.additionalFilters` (if you paste in a `kubernetes` filter),
-`fluentbit.rbac.nodeAccess`, `fluentbit.rbac.eventsAccess`.
+Three keys reverse this: `fluentbit.additionalFilters` (if you paste in a `kubernetes`
+filter), `fluentbit.rbac.nodeAccess`, `fluentbit.rbac.eventsAccess`. Setting any of them
+means setting `fluentbit.rbac.create: true` by hand as well — nothing derives it, and the
+subchart reads `nodeAccess` and `eventsAccess` from inside its own `if rbac.create`, so on
+their own they render nothing and the filter runs unauthorized.
 
 **dcgm-exporter.** GPU-to-pod mapping reads the kubelet podresources socket and the
 metrics CSV is a volume mount, so the pod renders `automountServiceAccountToken: false`

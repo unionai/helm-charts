@@ -88,6 +88,14 @@ exercises `ingress.enabled`, not the subchart.)
   remove it.** Both must stay false; the chart now refuses to render otherwise and says why.
   Nothing else about the privilege mode needs restating — `low_privilege` covers it.
 
+  This is not hypothetical, and it orders the rollout. `union_extension/aws/dataplane.tf`
+  and `union_extension/gcp/dataplane.tf` in `unionai/cloud` both set these keys to
+  `!low_privilege` unconditionally, so every `low_privilege: false` environment carries
+  `create: true` today. Update those modules and regenerate the overlays **before** pinning
+  this chart revision anywhere, or those ArgoCD applications stop rendering. The failure is
+  loud and at render time — no partial apply — but it is a hard stop until the overlay
+  catches up.
+
 - **Removed values keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace`. Neither had a consumer. If an overlay used
   `dcgm-exporter.namespace` to scrape an exporter outside the release namespace, that job

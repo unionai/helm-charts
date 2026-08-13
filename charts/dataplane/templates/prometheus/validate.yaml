@@ -5,6 +5,7 @@ subchart's rbac.create back on adds a second, parallel grant that low_privilege 
 governs -- cluster-scoped even in a namespace-confined install, and reported by nothing.
 */ -}}
 {{- if .Values.prometheus.enabled }}
+{{- $prom := .Values.prometheus }}
 {{- $ksm := index .Values.prometheus "kube-state-metrics" }}
 
 {{- if .Values.prometheus.rbac.create }}
@@ -13,6 +14,34 @@ governs -- cluster-scoped even in a namespace-confined install, and reported by 
 
 {{- if ($ksm.rbac).create }}
 {{- fail "prometheus.kube-state-metrics.rbac.create must stay false. RBAC for kube-state-metrics is authored by templates/prometheus/rbac.yaml, which follows low_privilege; the subchart's own does not, so enabling it adds a second grant that low_privilege no longer governs." }}
+{{- end }}
+
+{{- /*
+An empty collectors list is not "collect nothing". It becomes an omitted --resources flag,
+which is how the subchart spells "all of them" -- 28 collectors including secrets, against
+the empty Role rbac.yaml derives from the same empty list.
+*/ -}}
+{{- if and $ksm.enabled (empty $ksm.collectors) }}
+{{- fail "prometheus.kube-state-metrics.collectors must name at least one collector. An empty list drops --resources from the kube-state-metrics Deployment, which makes it collect all 28 defaults (including secrets) while templates/prometheus/rbac.yaml grants it nothing." }}
+{{- end }}
+
+{{- /*
+rbac.yaml binds the ServiceAccount name each subchart derives, in the release namespace.
+Both assumptions break under the overrides below, and they break silently: the grant lands
+on a ServiceAccount or namespace the workload does not use, which is the 403 this chart
+renders RBAC to prevent. Refuse rather than mirror -- tracking two upstream helpers across
+every subchart bump costs more than the overrides are worth.
+*/ -}}
+{{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
+{{- $promSrvSA := (($prom.serviceAccounts).server) | default dict }}
+{{- if and (hasKey $promSrvSA "create") (not $promSrvSA.create) }}
+{{- fail "prometheus.serviceAccounts.server.create: false is not supported. templates/prometheus/rbac.yaml binds the ServiceAccount the subchart creates; with creation off the server falls back to `default` and the grant binds a ServiceAccount nothing runs as. Set prometheus.serviceAccounts.server.name to an existing ServiceAccount if you must supply your own." }}
+{{- end }}
+{{- if $prom.forceNamespace }}
+{{- fail "prometheus.forceNamespace is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving the workloads elsewhere leaves them unbound." }}
+{{- end }}
+{{- if $ksm.namespaceOverride }}
+{{- fail "prometheus.kube-state-metrics.namespaceOverride is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving kube-state-metrics elsewhere leaves it unbound." }}
 {{- end }}
 
 {{- end }}

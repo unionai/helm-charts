@@ -915,9 +915,11 @@ fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
   # FluentBit never calls the Kubernetes API here: existingConfigMap above replaces the
-  # subchart's config, and the union config configures no `kubernetes` filter. Setting
-  # additionalFilters, rbac.nodeAccess or rbac.eventsAccess means create goes back to
-  # true — see docs/rbac.md.
+  # subchart's config, and the union config configures no `kubernetes` filter. Nothing
+  # derives this key — rbac.nodeAccess and rbac.eventsAccess are read inside the
+  # subchart's `if rbac.create`, so they render nothing on their own. Adding a
+  # `kubernetes` filter, nodeAccess or eventsAccess means setting create: true here too,
+  # by hand — see docs/rbac.md.
   rbac:
     create: false
   # Upstream defaults this to a bare `busybox`, which resolves against the
@@ -1984,9 +1986,11 @@ prometheus:
 #   will not function in low_privilege mode. This list will be expanded as they are
 #   identified.
 #
-# This flag is the only thing to set. RBAC for every component follows it, including the
-# prometheus and kube-state-metrics subcharts — see charts/dataplane/docs/rbac.md for how,
-# and for the one thing that cannot follow it (the kube-state-metrics collector list).
+# Nothing needs to be layered alongside this flag. Union-authored RBAC and the prometheus
+# and kube-state-metrics subcharts follow it in both directions. Four things do not, all
+# of them off by default or namespaced in both modes: opencost, metrics-server and
+# kube-prometheus-stack stay cluster-scoped, and ingress-nginx stays namespaced. Neither
+# does the kube-state-metrics collector list. See charts/dataplane/docs/rbac.md.
 low_privilege: true
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy

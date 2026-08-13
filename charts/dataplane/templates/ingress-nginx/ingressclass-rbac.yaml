@@ -1,0 +1,71 @@
+{{- /*
+The one cluster-scoped read the scoped controller still needs.
+
+rbac.scope: true drops the subchart's ClusterRole entirely and leaves a namespaced Role
+holding, among others, `ingressclasses`. IngressClass is cluster-scoped, so that rule never
+matches -- and unlike the Role's `namespaces` rule, nothing rescues it. (`namespaces` works
+there because the apiserver sets RequestInfo.Namespace for /api/v1/namespaces/<ns>, so a
+Role in that namespace does authorize the controller's own-namespace GET.)
+
+The controller does not crash. It logs
+
+  No permissions to list and get Ingress Classes ... IngressClass feature will be disabled
+
+comes up Ready, and then ignores every Ingress carrying spec.ingressClassName -- which is
+every Ingress this chart renders (templates/common/ingress.yaml). Ready pod, green sync,
+silent 404s.
+
+So: the namespaced Role stays, and this adds back only `ingressclasses`. No secrets,
+configmaps, pods, endpoints or nodes -- the cluster-wide reads scoping exists to remove.
+
+Not rendered when rbac.scope is false: the subchart's own ClusterRole already covers
+ingressclasses there, and templates/ingress-nginx/validate.yaml keeps the scope pair
+moving together.
+*/ -}}
+{{- $nginx := index .Values "ingress-nginx" }}
+{{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
+{{- $rbac := ($nginx.rbac) | default dict }}
+{{- $rbacCreate := or (not (hasKey $rbac "create")) $rbac.create }}
+{{- if and $nginx.enabled $rbacCreate $rbac.scope }}
+
+{{- /* Mirrors the subchart's ingress-nginx.fullname / .serviceAccountName / .namespace. */ -}}
+{{- $fullname := "" }}
+{{- if $nginx.fullnameOverride }}
+{{- $fullname = $nginx.fullnameOverride | trunc 63 | trimSuffix "-" }}
+{{- else }}
+{{- $n := default "ingress-nginx" $nginx.nameOverride }}
+{{- $fullname = ternary (.Release.Name | trunc 63 | trimSuffix "-") (printf "%s-%s" .Release.Name $n | trunc 63 | trimSuffix "-") (contains $n .Release.Name) }}
+{{- end }}
+{{- $saVals := ($nginx.serviceAccount) | default dict }}
+{{- $saCreate := or (not (hasKey $saVals "create")) $saVals.create }}
+{{- $sa := ternary (default $fullname $saVals.name) (default "default" $saVals.name) $saCreate }}
+{{- $ns := default .Release.Namespace $nginx.namespaceOverride | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingressclasses"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    release: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $ns }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-ingressclass" $fullname | trunc 63 | trimSuffix "-" }}
+{{- end }}
