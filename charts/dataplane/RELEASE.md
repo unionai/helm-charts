@@ -37,6 +37,9 @@ Also in both modes:
   `container_*`, which the chart's own `kubernetes-cadvisor` job collects. Side effect:
   pods and services annotated `prometheus.io/scrape` are not discovered — add a scrape job
   under `prometheus.extraScrapeConfigs` if you need one.
+- **The "deployments available" dashboard panel gets its data.** The kube-state-metrics
+  scrape filter dropped `kube_deployment_spec_replicas` and
+  `kube_deployment_status_replicas_available`, the two series behind it.
 - **`gpu-metrics` now looks in the release namespace**, where dcgm-exporter actually runs.
   It was pointed at `kube-system`.
 - **FluentBit no longer creates a ClusterRole.** It never calls the Kubernetes API here.
