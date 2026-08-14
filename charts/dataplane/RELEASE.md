@@ -70,9 +70,17 @@ Also in both modes:
   `ingress-nginx.controller.scope.enabled: false` before upgrading. The chart now errors if
   only one is set.
 
-- **One dataplane per cluster at `low_privilege: false`.** prometheus's ClusterRole has a
-  fixed name, so a second dataplane release in another namespace of the same cluster now
-  fails at install instead of taking over the first one's binding.
+- **One dataplane per cluster at `low_privilege: false`.** prometheus's ClusterRole and
+  ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) while the binding
+  subject is the release namespace, so a second dataplane release elsewhere in the same
+  cluster contends for the same two objects. `helm install` refuses on ownership;
+  **ArgoCD does not** — it applies shared resources unless the Application sets
+  `FailOnSharedResource=true`, so the later sync can rewrite the subject — surfacing at most
+  a `SharedResourceWarning` condition, without blocking — and the first release's prometheus
+  loses its permissions. Don't rely on the collision being caught. (kube-state-metrics' names
+  are release-derived, so with default naming it collides only when the two releases share a
+  release name — `fullnameOverride`/`nameOverride` can make differently named releases
+  collide too.)
 
 - **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create` from
   your values.** Both must stay false; the chart refuses to render otherwise and says why.

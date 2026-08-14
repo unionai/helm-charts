@@ -4,14 +4,19 @@ What each dependency subchart is allowed to read, and why.
 
 ## The rule
 
-`low_privilege: true` — the chart default — keeps everything inside one namespace.
-Prometheus and kube-state-metrics get namespaced Roles and lose the metrics that only exist
-cluster-wide: no Task-Level Monitoring, no `kube_node_*`, less accurate cost data. The full
-list is on the `low_privilege` key in `values.yaml`.
+`low_privilege: true` — the chart default — confines the observability components to one
+namespace. Prometheus and kube-state-metrics get namespaced Roles and lose the metrics that
+only exist cluster-wide: no Task-Level Monitoring, no `kube_node_*`, less accurate cost data.
+The full list is on the `low_privilege` key in `values.yaml`.
 
 `low_privilege: false` trades that back: the observability components may read cluster-wide.
-Read only — never writes, never secrets, and never a rule that isn't backed by a metric or
-feature actually in use.
+Read only — never writes and never secrets.
+
+The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
+along with these two subcharts, and gates namespace creation and priorityclasses — but the
+default-on knative-operator and the Helm hook cleanup job create ClusterRoles in either mode,
+and opencost and metrics-server are cluster-scoped when enabled. See the table below, and the
+README's RBAC section for what that means for your install identity.
 
 The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
 that access — layer `examples/values.full-privilege.yaml` for that, below.
@@ -34,7 +39,9 @@ Two kube-state-metrics values become flags on its Deployment, which the subchart
 so no template of ours can branch on them:
 
 - **`collectors`** → `--resources`. What it asks the API server for.
-- **`releaseNamespace`** → `--namespaces`. Which namespaces it asks about.
+- **`namespaces` + `releaseNamespace`** → `--namespaces`. Which namespaces it asks about: the
+  named ones, plus the release namespace when `releaseNamespace` is set, deduped. When both
+  are empty the flag is dropped entirely, which the subchart reads as *every* namespace.
 
 The defaults are set for the namespaced install, so nothing is requested that can't be
 granted: four collectors, release namespace only. Asking for more without the grant doesn't
@@ -57,11 +64,17 @@ cadvisor job, which is node-scoped and namespace-blind — but requests and limi
 | kube-state-metrics | on | namespaced Role, 4 collectors | ClusterRole, 6 with the overlay |
 | fluent-bit | on (off on GCP) | none | none |
 | dcgm-exporter | off | none | none |
-| ingress-nginx | off | namespaced Role | namespaced Role |
+| ingress-nginx | off | namespaced Role + IngressClass ClusterRole | same |
+| opencost | off | cluster-wide read | same |
 | metrics-server | off | cluster read + `kube-system` write | same |
+| kube-prometheus-stack (`monitoring`) | off | its own ClusterRoles | same |
+
+Only the first two follow the flag. The rest are fixed in either mode.
 
 Out of scope: the vendored Knative Serving / Kourier gateway under `templates/gateway/`
-(our own manifests, not subchart config), and the deprecated knative-operator.
+(our own manifests, not subchart config), and the deprecated knative-operator — which is
+on by default and does create ClusterRoles, so it is the main reason `low_privilege` alone
+doesn't buy you a namespace-confined install.
 
 ## Notes
 
@@ -80,8 +93,20 @@ Verified on a live cluster: with only the namespaced Role, prometheus finds and 
 every target in its own namespace — 4/4 up, no RBAC errors.
 
 At `low_privilege: false` the ClusterRole name is a fixed string, so **one dataplane per
-cluster** is the supported model. A second install in another namespace fails on Helm
-ownership rather than quietly taking over the first release's binding.
+cluster** is the supported model. Nothing enforces it: `helm install` refuses a second
+release on ownership, but ArgoCD — the deployment path this chart is built for — applies
+shared resources unless the Application sets `FailOnSharedResource=true`. There, the later
+sync can rewrite the binding subject to its own namespace without blocking — surfacing at
+most a `SharedResourceWarning` condition — and the first release's prometheus stops being
+authorized. Treat this as a constraint to respect, not one you'll reliably be stopped at.
+
+The cluster-wide read at `low_privilege: false` is wider than the rendered scrape jobs use —
+every job but `kubernetes-cadvisor` discovers with `own_namespace: true`. That is deliberate.
+`low_privilege: false` is a choice of permission posture, not a permission set derived from
+the jobs: Helm can't parse arbitrary `prometheus.extraScrapeConfigs` to work out what a job
+added there will need, so the grant tracks the pinned subchart's own read-only discovery
+profile instead. Concretely, it's what lets a job added there reach `prometheus.io/scrape`
+targets outside the release namespace.
 
 **kube-state-metrics.** Four collectors out of 28 by default (`pods`, `deployments`,
 `daemonsets`, `resourcequotas`), list/watch only, chosen to match the series the control
@@ -102,6 +127,22 @@ used, which until now meant every `low_privilege` install.
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in
 `prometheus.extraScrapeConfigs`.
+
+Because both subcharts are pinned to `rbac.create: false`, the RBAC half of their own
+features never renders. `rbac.extraRules` is simply dropped. `kubeRBACProxy`,
+`customResourceState` and `autosharding` are worse than dropped: the *feature* still renders
+— proxy sidecar, custom-resource config, sharded StatefulSet — while the permissions it needs
+(token/subject-access-review `create`, the configured CRD reads, pod/statefulset reads) do
+not. You get a running component that cannot do its job, which is the same silent shape this
+chart writes RBAC to avoid.
+
+All four are unsupported, and none is a drop-in. `$ksmRules` in
+`templates/prometheus/rbac.yaml` maps one collector to one apiGroup/resource pair at
+`list, watch`, so it cannot express arbitrary `extraRules` or `create` on tokenreviews and
+subjectaccessreviews. `kubeRBACProxy` additionally serves authenticated HTTPS, which the
+chart's kube-state-metrics scrape job — plain HTTP, no bearer token — would no longer reach.
+Supporting any of them means extending `rbac.yaml` and the scrape config together. Nothing
+refuses them at render time today.
 
 **fluent-bit.** Never calls the Kubernetes API in this chart. The subchart's cluster-wide
 read on namespaces and pods exists to serve a `kubernetes` filter, and this chart has never
@@ -134,7 +175,17 @@ cluster-scoped object left is the IngressClass, which has no namespaced form.
 An Ingress outside the release namespace is never reconciled, with no error and no warning.
 To serve one from another namespace, set `rbac.scope` and `controller.scope.enabled` both
 back to `false`. They must move together — the subchart errors on `rbac.scope` alone, and
-`templates/ingress-nginx/validate.yaml` catches the reverse, which is otherwise silent.
+`templates/ingress-nginx/validate.yaml` catches the reverse, which is otherwise silent. That
+check only applies when the subchart is creating the controller's RBAC; at `rbac.create:
+false` it renders no controller Role or ClusterRole, and the scope of whatever you supply is
+yours to get right. (The admission-webhook patch job carries its own RBAC under
+`controller.admissionWebhooks.patch.rbac.create` — off by default here, and unrelated to what
+the controller can read.)
+
+**opencost.** Cluster-wide `get`/`list`/`watch` whenever it's enabled, in either privilege
+mode — it prices the whole cluster, so a namespaced grant would give it nothing to price, and
+the subchart offers no key to narrow it. `low_privilege` does not reach it. `tests/values/
+dataplane.opencost.yaml` pins the grant so a subchart bump that widens it shows up in review.
 
 **metrics-server.** Left as-is; it's cluster-scoped by design. It needs an APIService, the
 `system:auth-delegator` binding, and a RoleBinding in `kube-system` that can't be

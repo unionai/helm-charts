@@ -335,18 +335,31 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ## RBAC
 
-`low_privilege: true` (the default) keeps the deployment inside a single namespace: every
-component enabled by default, including the prometheus and kube-state-metrics subcharts,
-gets a namespaced Role. The cost is the reduced functionality listed on the `low_privilege`
-key in `values.yaml` — no Task-Level Monitoring, no node-level metrics, less accurate cost
-data.
+`low_privilege: true` (the default) confines **prometheus and kube-state-metrics** to a
+single namespace: each gets a namespaced Role instead of a ClusterRole. The cost is the
+reduced functionality listed on the `low_privilege` key in `values.yaml` — no Task-Level
+Monitoring, no node-level metrics, less accurate cost data.
 
-To trade that back, set `low_privilege: false`. Union-authored RBAC and both subcharts
-follow the flag in either direction. To also collect with that access — node metrics, and
-task pods in project namespaces — layer `examples/values.full-privilege.yaml`, which
-carries the two kube-state-metrics settings Helm can't derive from the flag.
+To trade that back, set `low_privilege: false`. Those two subcharts and the Union workload
+RBAC listed below follow the flag in either direction. To also collect with that access —
+node metrics, and task pods in project namespaces — layer
+`examples/values.full-privilege.yaml`, which carries the kube-state-metrics settings Helm
+can't derive from the flag.
 
-The exception is metrics-server (off by default), which is cluster-scoped either way.
+**`low_privilege` is not a whole-chart namespace boundary.** It scopes Union-authored
+workload RBAC (operator, propeller, leaseworker, webhook, nodeobserver) along with prometheus
+and kube-state-metrics, and it gates namespace creation and priorityclasses. It does not
+reach the components below, which hold cluster-scoped permissions in either mode — so a
+namespace-confined install identity will not be enough to deploy the chart:
+
+| Component | Default | Cluster-scoped grant |
+| --- | --- | --- |
+| knative-operator | **on** | ClusterRoles for Knative Serving/Eventing, its webhook, and CRDs |
+| Helm hook cleanup | **on** | a ClusterRole for the webhook-cleanup job |
+| opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
+| metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |
+| ingress-nginx | off | one IngressClass ClusterRole (IngressClass has no namespaced form) |
+| kube-prometheus-stack (`monitoring`) | off | its own ClusterRoles, for its operator, prometheus and kube-state-metrics |
 
 See [docs/rbac.md](docs/rbac.md) for what each subchart gets in each mode, and why.
 
