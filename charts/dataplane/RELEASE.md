@@ -60,6 +60,23 @@ Also, in both modes:
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
   collector list shrinks — layer the full-privilege overlay to keep `kube_node_*`.
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the data-plane images are unchanged.
+
+- A new opt-in `values.openshift.yaml` overlay configures rootless BuildKit with
+  a dedicated service account and SCC, disables host user namespaces, uses
+  `/tmp` for task working directories, persists Fluent Bit tail state, disables
+  the KnativeServing Helm hook, and provisions Kourier SCC access. BuildKit and
+  Kourier can use chart-created or existing SCCs
+  ([#516](https://github.com/unionai/helm-charts/pull/516)).
+- Leaseworker pod security context, Fluent Bit tail database path, and task/system
+  service-account image pull secrets are independently configurable
+  ([#514](https://github.com/unionai/helm-charts/pull/514)).
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
 
 ## 2026.8.1
 

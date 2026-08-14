@@ -1,5 +1,10 @@
 # sandbox — Release Notes
 
+## 2026.8.2
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.1` → `2026.8.2`). No functional changes in this release.
+
 ## 2026.8.1
 
 Lockstep `version` bump (`2026.8.0` -> `2026.8.1`). No sandbox chart changes in this release.
