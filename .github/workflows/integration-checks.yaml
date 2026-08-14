@@ -309,24 +309,38 @@ jobs:
       - name: Health gate
         run: tools/dataplane/install.sh health ${{ matrix.namespaces || matrix.charts }}
 
-      # Shared flyte SDK + the functional suite (every leg). The suite is installed as a
-      # package straight from the flyte-sdk branch (git+subdirectory) — no vendoring or
-      # sparse-checkout. It brings pytest(+xdist/rerunfailures), fastapi/httpx ([app]) and
-      # flyteplugins-union ([harness], for the routing driver in integration_ops.py);
-      # kubernetes is used by the CI ops. TODO: swap the git ref for a released version
-      # (flyte-functional-tests==X) once flyteorg/flyte-sdk#1378 merges.
+      # Check out just the portable suite from the flyte-sdk branch (sparse, non-cone):
+      # tests/functional/** + the tests/__init__.py marker — deliberately NOT the ancestor
+      # tests/conftest.py (flyte-sdk's own unit harness, which needs pytest_asyncio).
+      # TODO: repin ref -> a released version once flyteorg/flyte-sdk#1378 merges.
+      - name: Checkout flyte-sdk functional suite
+        uses: actions/checkout@v4
+        with:
+          repository: flyteorg/flyte-sdk
+          ref: mike/functional-env-validation-tests
+          sparse-checkout: |
+            tests/__init__.py
+            tests/functional
+          sparse-checkout-cone-mode: false
+          path: flyte-sdk-suite
+
+      # Shared flyte SDK + the functional suite (every leg). Install the suite EDITABLE
+      # from the checkout: it's a real package (its pytest11 plugin gives --skip/markers,
+      # extras give fastapi/httpx [app] + flyteplugins-union [harness] for the routing
+      # driver), yet its source stays in the working tree so flyte's fast-register code
+      # bundle ships the scenario modules to the pods (a site-packages install is excluded
+      # from the bundle). kubernetes is used by the CI ops.
       - name: Install flyte SDK + functional suite
         run: |
           set -euo pipefail
           curl -LsSf https://astral.sh/uv/install.sh | sh
           "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/flyte-venv"
           "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/flyte-venv/bin/python" \
-            --no-cache --prerelease=allow --upgrade flyte kubernetes \
-            "flyte-functional-tests[app,harness] @ git+https://github.com/flyteorg/flyte-sdk@mike/functional-env-validation-tests#subdirectory=tests/functional"
+            --no-cache --prerelease=allow --upgrade flyte kubernetes
+          "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/flyte-venv/bin/python" \
+            --no-cache --prerelease=allow -e "flyte-sdk-suite/tests/functional[app,harness]"
           echo "$RUNNER_TEMP/flyte-venv/bin" >> "$GITHUB_PATH"
 
-      # The functional suite is installed as a package (flyte-functional-tests) in the
-      # step above, straight from the flyte-sdk branch — nothing to vendor or check out.
 
       # ── Resolve this leg's CI credentials for the shared routing + functional steps. CI
       #    ops authenticate as a CI identity, never the DP operator. All CI secrets
@@ -421,17 +435,12 @@ jobs:
           # opt-ins the generic suite ignores when unset; selfhosted skips app (inert).
           INTERNAL_APP_ENDPOINT_PATTERN: "http://${{ env.CLUSTER_NAME }}-development-{app_fqdn}.dataplane.svc.cluster.local"
           FLYTE_FUNCTIONAL_APP_CLUSTER_POOL: ${{ env.CLUSTER_NAME }}
-          # Install the suite into every scenario image (same branch ref as the runner
-          # install), so each task/app pod imports its module from site-packages — the
-          # suite isn't under the run's working dir, so flyte's code bundle won't ship it.
-          # TODO: swap the git ref for a released version (flyte-functional-tests==X) once
-          # flyteorg/flyte-sdk#1378 merges.
-          FLYTE_FUNCTIONAL_SUITE_SPEC: "flyte-functional-tests @ git+https://github.com/flyteorg/flyte-sdk@mike/functional-env-validation-tests#subdirectory=tests/functional"
         run: |
-          # The suite is a package (installed above; each image installs it too via
-          # FLYTE_FUNCTIONAL_SUITE_SPEC), so collect it with --pyargs. Run from a neutral
-          # dir so no repo-local conftest interferes with the installed plugin.
-          cd "$RUNNER_TEMP"
+          # Run from tests/functional so flyte's root_dir (== cwd) makes the installed-
+          # editable package the bundle root: the scenario modules bundle as
+          # flyte_functional_tests/** and the serving/task pod re-imports them by that same
+          # name. --pyargs collects the package (with its pytest11 plugin: --skip etc).
+          cd flyte-sdk-suite/tests/functional
           pytest --pyargs flyte_functional_tests -n "${FUNCTIONAL_PARALLELISM:-2}" --reruns 1 --reruns-delay 15 ${FUNCTIONAL_ARGS:-}
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
