@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Positive/negative render tests for the dataplane RBAC guards in
-# templates/prometheus/{rbac,validate}.yaml and templates/ingress-nginx/validate.yaml.
+# templates/prometheus/{rbac,validate}.yaml, templates/ingress-nginx/validate.yaml and
+# templates/gateway/validate.yaml.
 #
 # The snapshot suite only diffs renders that succeed, so it cannot see a guard at all: one
 # that stops firing looks identical to one that never existed, and one that starts refusing a
@@ -257,6 +258,55 @@ expect-render "both unscoped, to serve an Ingress from another namespace" \
   --set ingress-nginx.enabled=true \
   --set ingress-nginx.rbac.scope=false \
   --set ingress-nginx.controller.scope.enabled=false
+
+# The app-serving stack only renders at zero_trust.enabled: true, and its TLS guard is
+# inside that gate, so every case below has to turn it on. knative-operator goes off
+# alongside it exactly as tests/values/dataplane.aws.zero-trust.yaml does -- Helm evaluates
+# the subchart condition at parse time, so it cannot be gated on the same flag. ORG_NAME is
+# not part of the minimum every other case here renders with, but the zero-trust envoy
+# config requires it.
+ZERO_TRUST=(
+  --set zero_trust.enabled=true
+  --set knative-operator.enabled=false
+  --set global.ORG_NAME=test-org-name
+)
+
+echo "- Knative TLS certificate provisioning is refused rather than left inert"
+expect-render "app serving with no TLS key set (chart default)" \
+  "${ZERO_TRUST[@]}"
+for key in external-domain-tls cluster-local-domain-tls system-internal-tls \
+           namespace-wildcard-cert-selector auto-tls internal-encryption; do
+  expect-refusal "${key} enabled" \
+    "gateway.config.network.${key} is set to" \
+    "${ZERO_TRUST[@]}" \
+    --set "gateway.config.network.${key}=Enabled"
+done
+
+# Knative parses these case-insensitively, so an overlay that pins one of them off is off
+# whichever way it spelled it, and must still deploy.
+#
+# Every value here is a string. A YAML boolean is not a case worth asserting: it is falsy,
+# so the guard skips it before the comparison, and configmap-network.yaml then `tpl`s the
+# value, which only accepts a string -- so `false` unquoted has never rendered, guard or no
+# guard. Quoted "false" is the case an overlay carrying a stringified boolean actually hits.
+echo "- a TLS key pinned off still renders, however it was spelled"
+expect-render "external-domain-tls: Disabled" \
+  "${ZERO_TRUST[@]}" \
+  --set gateway.config.network.external-domain-tls=Disabled
+expect-render "external-domain-tls: disabled" \
+  "${ZERO_TRUST[@]}" \
+  --set gateway.config.network.external-domain-tls=disabled
+expect-render "auto-tls: \"false\" (quoted boolean)" \
+  "${ZERO_TRUST[@]}" \
+  --set-string gateway.config.network.auto-tls=false
+
+echo "- a TLS key is inert, not fatal, where app serving does not render"
+expect-render "zero_trust off, stale TLS key left behind" \
+  --set gateway.config.network.external-domain-tls=Enabled
+expect-render "apps off under zero_trust, stale TLS key left behind" \
+  "${ZERO_TRUST[@]}" \
+  --set apps.enabled=false \
+  --set gateway.config.network.external-domain-tls=Enabled
 
 echo
 if [[ ${failures} -ne 0 ]]; then

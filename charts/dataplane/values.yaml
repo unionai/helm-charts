@@ -2745,24 +2745,6 @@ gateway:
         autoscaler:
           image: {}
 
-    autoscaler-hpa:
-      replicas: 2
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                    - key: app
-                      operator: In
-                      values:
-                        - autoscaler-hpa
-                topologyKey: topology.kubernetes.io/zone
-              weight: 100
-      containers:
-        autoscaler-hpa:
-          image: {}
-
     webhook:
       replicas: 2
       affinity:
@@ -2831,11 +2813,20 @@ gateway:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
       kubernetes.podspec-volumes-emptydir: "enabled"
+      # Knative's dry-run validation submits a real Pod create (with DryRun: All)
+      # into the user's namespace to validate a PodSpec. That requires the
+      # controller SA to hold `pods: create` cluster-wide, which is a privilege
+      # escalation primitive: cluster-wide pod create allows scheduling a pod
+      # under any ServiceAccount. The feature is opt-in per object via the
+      # features.knative.dev/podspec-dryrun annotation and nothing here uses it.
+      # Disabling it changes nothing about what is granted; it makes the opt-in
+      # annotation inert, so nothing in this chart exercises cluster-wide pod
+      # creation and that grant can be withdrawn without a behaviour change.
+      kubernetes.podspec-dryrun: "disabled"
     network:
       ingress-class: "kourier.ingress.networking.knative.dev"
     kourier: {}
     autoscaler: {}
-    certmanager: {}
     domain: {}
     gc: {}
     leader-election: {}

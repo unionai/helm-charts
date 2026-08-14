@@ -1129,6 +1129,15 @@ true
 {{- end -}}
 
 {{/*
+True ("true" or "") when the vendored Knative app-serving stack renders. The
+gateway templates and the RBAC component registry must agree on this, so it is
+defined once here rather than repeated per template.
+*/}}
+{{- define "appServing.enabled" -}}
+{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Name of the serving-envoy-bootstrap ConfigMap
 */}}
 {{- define "serving.envoyBootstrapConfigMapName" -}}

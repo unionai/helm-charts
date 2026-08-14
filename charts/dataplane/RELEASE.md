@@ -32,6 +32,46 @@ Also, in both modes:
 - ingress-nginx is confined to the release namespace (see Migration). metrics-server is
   unchanged — cluster-scoped by design.
 
+### App-serving (Knative) RBAC
+
+**Everything in this subsection applies only when `zero_trust.enabled: true` and
+`apps.enabled` is not `false`.** A dataplane that does not run app serving is unaffected by
+all of it.
+
+- **BREAKING: `autoscaler-hpa` is removed.** Union app serving is KPA-only: it sets
+  `min-scale`, `max-scale`, `metric`, `target` and `window`, but never
+  `autoscaling.knative.dev/class`, so the HPA-class autoscaler was never exercised. The
+  workload and its `gateway.components.autoscaler-hpa` values block are both gone.
+  **If your overlay sets `gateway.components.autoscaler-hpa.*`, the key is now inert** —
+  remove it.
+
+- **BREAKING: Knative TLS certificate provisioning is removed, and enabling it now fails
+  the render.** The `config-certmanager` ConfigMap and the `routing-serving-certs`
+  `Certificate` are deleted. TLS terminates at the Envoy gateway. Knative registers its
+  certificate reconciler when any of six `gateway.config.network` settings is on —
+  `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
+  `namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
+  `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
+  absent. So the chart now errors at template time naming the key you enabled, rather than
+  leaving it silently inert. The guard fires on any truthy value other than `disabled` or
+  `false`, compared case-insensitively as Knative's own parser does, so an overlay that
+  pins one of these keys *off* still renders. All six default off, so on any install that
+  left them there the `routing-serving-certs` `Certificate` was never reconciled. The
+  now-dead `gateway.config.certmanager` values key is removed.
+
+  This also removes the `matchConditions` bootstrap exemption from both fail-closed Knative
+  webhooks. It existed solely to let the `routing-serving-certs` `Certificate` be admitted
+  in the same release that creates the webhook's backend; with that `Certificate` gone it
+  matches nothing.
+
+- **`kubernetes.podspec-dryrun` is set to `"disabled"` in `gateway.config.features`.**
+  Knative's dry-run validation submits a real `Pod` create (`DryRun: All`) into the user's
+  namespace, which needs cluster-wide `pods: create` — a privilege-escalation primitive,
+  since it lets the holder schedule a pod under any ServiceAccount. The feature is opt-in
+  per object via the `features.knative.dev/podspec-dryrun` annotation and nothing here uses
+  it. **This does not change what is granted**; it makes the annotation inert, so nothing
+  in this chart exercises cluster-wide pod creation.
+
 ### Migration / action required
 
 - **At `low_privilege: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
@@ -55,11 +95,22 @@ Also, in both modes:
 
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
-  exporter outside the release namespace, that job no longer matches.
+  exporter outside the release namespace, that job no longer matches. Two more go with the
+  app-serving work: `gateway.components.autoscaler-hpa` (the workload is removed) and
+  `gateway.config.certmanager` (the ConfigMap that read it is removed). Both are simply
+  inert if an overlay still sets them; drop them.
+
+- **App serving: enabling a `gateway.config.network` TLS key now fails the render**, at
+  `zero_trust.enabled: true`. If your overlay *enables* `external-domain-tls`,
+  `cluster-local-domain-tls`, `system-internal-tls`, `namespace-wildcard-cert-selector`,
+  `auto-tls` or `internal-encryption`, remove it — Knative certificate provisioning is not
+  shipped and those settings were already inert. An overlay that pins one of them to
+  `"Disabled"` or `"false"` still renders; only a truthy value errors.
 
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
   collector list shrinks — layer the full-privilege overlay to keep `kube_node_*`.
+
 ## 2026.8.2
 
 Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
