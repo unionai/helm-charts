@@ -17,6 +17,20 @@ CHART="${SCRIPT_DIR}/../charts/dataplane"
 RELEASE="release-name"
 NAMESPACE="union"
 
+# Every check below renders the whole chart, and `helm template` refuses outright when a
+# dependency named in Chart.yaml is missing from charts/ -- so on a fresh checkout all of them
+# fail for that reason rather than on anything they test. Nothing else here vendors: this
+# target runs before tests/run.sh, which is the only other thing that does. Keep this ahead of
+# the first render, and do not assume a working tree that happens to have charts/ populated
+# from an earlier run is evidence the suite is self-sufficient.
+#
+# `dependency build` is enough on its own -- helm resolves each repository URL straight from
+# Chart.yaml, so it needs no `helm repo add`, no `dependency update` and no existing
+# Chart.lock.
+echo "Vendoring subchart dependencies..."
+helm dependency build "${CHART}"
+echo
+
 failures=0
 checks=0
 
