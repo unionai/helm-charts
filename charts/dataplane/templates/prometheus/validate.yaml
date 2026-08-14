@@ -11,7 +11,7 @@ longer governs, or a binding pointing at a ServiceAccount nothing runs as.
 {{- fail "prometheus.rbac.create must stay false. The chart writes prometheus's RBAC itself (templates/prometheus/rbac.yaml) so that it follows low_privilege; the subchart's own ClusterRole does not, so enabling it grants cluster-wide read on top, even under low_privilege: true." }}
 {{- end }}
 
-{{- if ($ksm.rbac).create }}
+{{- if and $ksm.enabled ($ksm.rbac).create }}
 {{- fail "prometheus.kube-state-metrics.rbac.create must stay false. The chart writes kube-state-metrics' RBAC itself (templates/prometheus/rbac.yaml) so that it follows low_privilege; the subchart's own does not, so enabling it adds a second grant the flag no longer governs." }}
 {{- end }}
 
@@ -19,6 +19,45 @@ longer governs, or a binding pointing at a ServiceAccount nothing runs as.
        how the subchart spells "all 28", including secrets. */ -}}
 {{- if and $ksm.enabled (empty $ksm.collectors) }}
 {{- fail "prometheus.kube-state-metrics.collectors must name at least one collector. An empty list drops --resources from the kube-state-metrics Deployment, which makes it collect all 28 defaults (including secrets) while templates/prometheus/rbac.yaml grants it nothing." }}
+{{- end }}
+
+{{- /* Collection scope, the other half of the collector check above. Under low_privilege the
+       grant is a Role in the release namespace, so that is the only namespace
+       kube-state-metrics can be allowed to ask about.
+
+       Resolve the same way the subchart does (its deployment.yaml builds --namespaces from
+       `namespaces` then `releaseNamespace`, dedupes, and omits the flag entirely when the
+       result is empty -- which is how it spells "every namespace", not "none") and compare
+       the effective set. Testing the values individually would refuse `namespaces` that
+       names the release namespace explicitly, which resolves to the same single namespace
+       and works fine.
+
+       One thing we deliberately do NOT resolve: a templated entry. The subchart tpl's it
+       against its own context, where `.Chart` and `.Values` are kube-state-metrics', not
+       ours -- `{{ .Chart.Name }}` reads as "kube-state-metrics" there and "dataplane" here.
+       Evaluating it in this context would agree with the Deployment only by luck, and where
+       it disagrees the guard would pass a namespace the Role never covers, which is the
+       whole failure it exists to stop. Refuse instead: under low_privilege the only
+       permitted value is the release namespace, and `releaseNamespace: true` already says
+       that without a template. */ -}}
+{{- /* All of it inside the enabled gate, derivation included -- a disabled subchart's stale
+       namespace values are inert and must not be able to stop a render. */ -}}
+{{- if and $ksm.enabled .Values.low_privilege }}
+{{- $ksmNs := list }}
+{{- if $ksm.namespaces }}
+{{- range $n := join "," $ksm.namespaces | split "," }}
+{{- if contains (printf "%s%s" "{" "{") $n }}
+{{- fail (printf "prometheus.kube-state-metrics.namespaces entry %q is templated, which is not supported under low_privilege: true. The kube-state-metrics subchart renders it against its own context, so this chart cannot tell which namespace it will resolve to -- and a wrong guess passes a namespace the Role in %s never covers. Drop the template: releaseNamespace: true already scopes collection to the release namespace, which is the only value low_privilege permits." $n $.Release.Namespace) }}
+{{- end }}
+{{- $ksmNs = append $ksmNs $n }}
+{{- end }}
+{{- end }}
+{{- if $ksm.releaseNamespace }}
+{{- $ksmNs = append $ksmNs $.Release.Namespace }}
+{{- end }}
+{{- if ne (join "," ($ksmNs | mustUniq)) .Release.Namespace }}
+{{- fail (printf "prometheus.kube-state-metrics must collect from the release namespace (%s) only under low_privilege: true, but its namespaces/releaseNamespace values resolve to %q (empty means every namespace). templates/prometheus/rbac.yaml grants it a namespaced Role in the release namespace, so anything else is denied: kube-state-metrics keeps running and logs the denial every few seconds for the life of the pod. Set releaseNamespace: true and leave namespaces empty, or layer examples/values.full-privilege.yaml, which sets low_privilege: false and collects cluster-wide." .Release.Namespace (join "," ($ksmNs | mustUniq))) }}
+{{- end }}
 {{- end }}
 
 {{- /*
