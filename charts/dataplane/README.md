@@ -354,12 +354,10 @@ namespace-confined install identity will not be enough to deploy the chart:
 
 | Component | Default | Cluster-scoped grant |
 | --- | --- | --- |
-| knative-operator | **on** | ClusterRoles for Knative Serving/Eventing, its webhook, and CRDs |
 | Helm hook cleanup | **on** | a ClusterRole for the webhook-cleanup job |
 | opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
 | metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |
 | ingress-nginx | off | one IngressClass ClusterRole (IngressClass has no namespaced form) |
-| kube-prometheus-stack (`monitoring`) | off | its own ClusterRoles, for its operator, prometheus and kube-state-metrics |
 
 See [docs/rbac.md](docs/rbac.md) for what each subchart gets in each mode, and why.
 

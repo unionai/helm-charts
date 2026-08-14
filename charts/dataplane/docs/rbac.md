@@ -14,9 +14,9 @@ Read only — never writes and never secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
 along with these two subcharts, and gates namespace creation and priorityclasses — but the
-default-on knative-operator and the Helm hook cleanup job create ClusterRoles in either mode,
-and opencost and metrics-server are cluster-scoped when enabled. See the table below, and the
-README's RBAC section for what that means for your install identity.
+Helm hook cleanup job creates a ClusterRole in either mode, and opencost and metrics-server
+are cluster-scoped when enabled. See the table below, and the README's RBAC section for what
+that means for your install identity.
 
 The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
 that access — layer `examples/values.full-privilege.yaml` for that, below.
@@ -67,14 +67,12 @@ cadvisor job, which is node-scoped and namespace-blind — but requests and limi
 | ingress-nginx | off | namespaced Role + IngressClass ClusterRole | same |
 | opencost | off | cluster-wide read | same |
 | metrics-server | off | cluster read + `kube-system` write | same |
-| kube-prometheus-stack (`monitoring`) | off | its own ClusterRoles | same |
 
 Only the first two follow the flag. The rest are fixed in either mode.
 
 Out of scope: the vendored Knative Serving / Kourier gateway under `templates/gateway/`
-(our own manifests, not subchart config), and the deprecated knative-operator — which is
-on by default and does create ClusterRoles, so it is the main reason `low_privilege` alone
-doesn't buy you a namespace-confined install.
+(our own manifests, not subchart config), and the deprecated knative-operator and
+kube-prometheus-stack subcharts.
 
 ## Notes
 
