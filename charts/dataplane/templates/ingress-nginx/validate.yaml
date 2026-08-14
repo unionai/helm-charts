@@ -1,0 +1,20 @@
+{{- /*
+The subchart already errors on rbac.scope without controller.scope.enabled. The reverse is
+the dangerous one and nothing checks it: the controller runs confined to one namespace
+while still holding cluster-wide read on secrets, configmaps, pods, endpoints and nodes.
+*/ -}}
+{{- $nginx := index .Values "ingress-nginx" }}
+{{- if $nginx.enabled }}
+{{- $rbacScope := (($nginx.rbac).scope) }}
+{{- $controllerScope := ((($nginx.controller).scope).enabled) }}
+{{- /* Only when the subchart is the one creating the controller's RBAC. At rbac.create:
+       false it renders no controller Role or ClusterRole, so there is no cluster-wide read
+       to be mismatched against -- whatever the operator supplies externally is their scope
+       to get right. (The admission patch job has its own RBAC under
+       controller.admissionWebhooks.patch.rbac.create; it is unrelated to what the controller
+       can read.) `| default true` would read a literal false as unset. */ -}}
+{{- $rbacCreate := or (not (hasKey (($nginx.rbac) | default dict) "create")) ($nginx.rbac).create }}
+{{- if and $rbacCreate $controllerScope (not $rbacScope) }}
+{{- fail "ingress-nginx.controller.scope.enabled is true but ingress-nginx.rbac.scope is false. The controller would watch only the release namespace while still holding a cluster-wide ClusterRole over secrets, configmaps, pods, endpoints and nodes -- confined in what it does, unconfined in what it can read, and silent about it. Set ingress-nginx.rbac.scope: true, or set both to false." }}
+{{- end }}
+{{- end }}

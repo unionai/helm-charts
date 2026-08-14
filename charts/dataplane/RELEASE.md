@@ -1,5 +1,65 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Third-party subchart RBAC
+
+The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
+`rbac.create: false`), so `low_privilege` decides it in both directions instead of only under
+`low_privilege`. Rationale and per-subchart detail: [docs/rbac.md](docs/rbac.md).
+
+Two broken metrics families are fixed, both under `low_privilege`:
+
+- kube-state-metrics' RoleBinding named a nonexistent ServiceAccount — no `kube_*` since
+  2026-05-02.
+- prometheus's namespaced Role named cluster-scoped resources, which never match —
+  `kubernetes-cadvisor` got `403`s, so no `container_*`.
+
+Also, in both modes:
+
+- `kubernetes-cadvisor` is no longer scraped under `low_privilege` — it needs cluster-wide node
+  access. The Task-Level Monitoring tradeoff the flag has always described.
+- kube-state-metrics collects 4 resources instead of 28 (pods, deployments, daemonsets,
+  resourcequotas). `examples/values.full-privilege.yaml` adds nodes and namespaces.
+- Nine cluster-wide upstream scrape jobs are dropped (`kubernetes-apiservers`, `-nodes`,
+  `-nodes-cadvisor`, `-service-endpoints(-slow)`, `-services`, `-pods(-slow)`,
+  `prometheus-pushgateway`). Pods and services annotated `prometheus.io/scrape` are no longer
+  discovered — add a job under `prometheus.extraScrapeConfigs` if you need one.
+- The "deployments available" dashboard panel gets its data — the kube-state-metrics scrape
+  filter dropped the two series behind it.
+- `gpu-metrics` now looks in the release namespace, where dcgm-exporter runs (was `kube-system`).
+- FluentBit no longer creates a ClusterRole; it never calls the Kubernetes API here.
+- ingress-nginx is confined to the release namespace (see Migration). metrics-server is
+  unchanged — cluster-scoped by design.
+
+### Migration / action required
+
+- **At `low_privilege: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
+  the cluster-wide read; this file uses it (nodes + namespaces collectors, every namespace).
+  Without it: no `kube_node_*`, no `kube_namespace_labels`, no requests/limits for task pods.
+  Task pod CPU and memory are unaffected. `examples/values-legacy.yaml` already includes it.
+
+- **ingress-nginx now watches only the release namespace**, where every Ingress this chart
+  creates lives. An Ingress outside it stops being reconciled, silently. To serve one from
+  elsewhere, set both `ingress-nginx.rbac.scope: false` and
+  `ingress-nginx.controller.scope.enabled: false`; the chart errors if only one is set.
+
+- **One dataplane per cluster at `low_privilege: false`.** prometheus's ClusterRole and
+  ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) but a
+  release-namespace subject, so a second release contends for them. `helm install` refuses;
+  ArgoCD does not unless the Application sets `FailOnSharedResource=true` — the later sync
+  rewrites the subject and the first release's prometheus loses its permissions.
+
+- **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create`** from your
+  values. Both must stay false; the chart now refuses to render otherwise.
+
+- **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
+  `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
+  exporter outside the release namespace, that job no longer matches.
+
+- **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
+  dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
+  collector list shrinks — layer the full-privilege overlay to keep `kube_node_*`.
 ## 2026.8.2
 
 Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
