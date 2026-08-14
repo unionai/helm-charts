@@ -211,12 +211,21 @@ expect-refusal "kube-state-metrics ServiceAccount creation off with no name supp
 expect-refusal "prometheus.server.fullnameOverride cleared without a name" \
   "fullnameOverride must stay set" \
   --set prometheus.server.fullnameOverride=""
-expect-refusal "prometheus.forceNamespace" \
-  "forceNamespace is not supported" \
+expect-refusal "prometheus.forceNamespace naming another namespace" \
+  "prometheus.forceNamespace is \"elsewhere\"" \
   --set prometheus.forceNamespace=elsewhere
-expect-refusal "kube-state-metrics.namespaceOverride" \
-  "namespaceOverride is not supported" \
+expect-refusal "kube-state-metrics.namespaceOverride naming another namespace" \
+  "namespaceOverride is \"elsewhere\"" \
   --set prometheus.kube-state-metrics.namespaceOverride=elsewhere
+
+# Both keys resolve through `default .Release.Namespace <key>` in their subchart, so one
+# naming the release namespace moves nothing -- the workload, its ServiceAccount and the Role
+# all stay where rbac.yaml binds them. Refusing it would block an overlay that pins every
+# subchart to a common namespace, which is a working configuration and a blocked deploy.
+expect-render "prometheus.forceNamespace naming the release namespace" \
+  --set "prometheus.forceNamespace=${NAMESPACE}"
+expect-render "kube-state-metrics.namespaceOverride naming the release namespace" \
+  --set "prometheus.kube-state-metrics.namespaceOverride=${NAMESPACE}"
 
 echo "- values that are inert do not block a deploy"
 expect-render "kube-state-metrics off, stale rbac.create left behind" \
@@ -258,6 +267,27 @@ expect-render "both unscoped, to serve an Ingress from another namespace" \
   --set ingress-nginx.enabled=true \
   --set ingress-nginx.rbac.scope=false \
   --set ingress-nginx.controller.scope.enabled=false
+
+# The mismatch the two booleans cannot express. At rbac.scope: true the subchart renders a
+# Role in its own namespace and no ClusterRole, while controller.scope.namespace is what
+# reaches --watch-namespace -- so any other namespace there is a controller watching what it
+# cannot read, silently.
+expect-refusal "scoped RBAC watching a namespace the Role does not cover" \
+  "controller.scope.namespace is \"elsewhere\"" \
+  --set ingress-nginx.enabled=true \
+  --set ingress-nginx.controller.scope.namespace=elsewhere
+expect-render "scoped RBAC watching the namespace the Role is in" \
+  --set ingress-nginx.enabled=true \
+  --set "ingress-nginx.controller.scope.namespace=${NAMESPACE}"
+expect-render "watch namespace set but both scopes off, so it never reaches --watch-namespace" \
+  --set ingress-nginx.enabled=true \
+  --set ingress-nginx.rbac.scope=false \
+  --set ingress-nginx.controller.scope.enabled=false \
+  --set ingress-nginx.controller.scope.namespace=elsewhere
+expect-render "watch namespace set but the subchart renders no controller RBAC" \
+  --set ingress-nginx.enabled=true \
+  --set ingress-nginx.rbac.create=false \
+  --set ingress-nginx.controller.scope.namespace=elsewhere
 
 # The app-serving stack only renders at zero_trust.enabled: true, and its TLS guard is
 # inside that gate, so every case below has to turn it on. knative-operator goes off

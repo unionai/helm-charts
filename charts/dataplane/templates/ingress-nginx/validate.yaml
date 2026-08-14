@@ -17,4 +17,16 @@ while still holding cluster-wide read on secrets, configmaps, pods, endpoints an
 {{- if and $rbacCreate $controllerScope (not $rbacScope) }}
 {{- fail "ingress-nginx.controller.scope.enabled is true but ingress-nginx.rbac.scope is false. The controller would watch only the release namespace while still holding a cluster-wide ClusterRole over secrets, configmaps, pods, endpoints and nodes -- confined in what it does, unconfined in what it can read, and silent about it. Set ingress-nginx.rbac.scope: true, or set both to false." }}
 {{- end }}
+{{- /* The other half of the same mismatch, and the one the booleans cannot express. At
+       rbac.scope: true the subchart renders no ClusterRole at all -- only a Role, in
+       ingress-nginx.namespace (namespaceOverride, else the release namespace). But
+       controller.scope.namespace is what lands in --watch-namespace, so a value naming any
+       other namespace points the controller somewhere its Role does not reach. It starts
+       clean, reconciles nothing, and reports no error. Empty is the safe default: the
+       subchart substitutes $(POD_NAMESPACE), which is where the Role is. */ -}}
+{{- $nginxNs := ($nginx.namespaceOverride) | default .Release.Namespace }}
+{{- $watchNs := (($nginx.controller).scope).namespace }}
+{{- if and $rbacCreate $rbacScope $watchNs (ne (toString $watchNs) (toString $nginxNs)) }}
+{{- fail (printf "ingress-nginx.controller.scope.namespace is %q while ingress-nginx's namespaced RBAC is written in %s. At ingress-nginx.rbac.scope: true the subchart renders a Role there and no ClusterRole, so the controller would watch a namespace it cannot read: it starts, reconciles no Ingress, and logs nothing you would notice. Leave controller.scope.namespace empty to watch %s, or set ingress-nginx.rbac.scope and ingress-nginx.controller.scope.enabled both false to watch the cluster." (toString $watchNs) $nginxNs $nginxNs) }}
+{{- end }}
 {{- end }}

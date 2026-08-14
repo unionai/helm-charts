@@ -78,15 +78,23 @@ allowed.
 {{- fail "prometheus.server.fullnameOverride must stay set, or prometheus.serviceAccounts.server.name must name the ServiceAccount. templates/prometheus/rbac.yaml derives the binding subject from fullnameOverride; cleared and unnamed it renders an empty subject, while the subchart deploys as <release>-prometheus-server." }}
 {{- end }}
 {{- end }}
-{{- if $prom.forceNamespace }}
-{{- fail "prometheus.forceNamespace is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving the workloads elsewhere leaves them unbound." }}
+{{- /* Compare the effective namespace, not the key: the subchart resolves
+       `default .Release.Namespace .Values.forceNamespace`, so a value naming the release
+       namespace moves nothing and binds fine. Same reasoning as the namespaces/
+       releaseNamespace check above -- refusing the key outright would block a working
+       overlay that pins every subchart to a common namespace. */ -}}
+{{- if and $prom.forceNamespace (ne (toString $prom.forceNamespace) .Release.Namespace) }}
+{{- fail (printf "prometheus.forceNamespace is %q, but templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace (%s), so moving the workloads elsewhere leaves them unbound. Unset it, or set it to %s." (toString $prom.forceNamespace) .Release.Namespace .Release.Namespace) }}
 {{- end }}
 {{- $ksmSA := ($ksm.serviceAccount) | default dict }}
 {{- if and $ksm.enabled (empty $ksmSA.name) (hasKey $ksmSA "create") (not $ksmSA.create) }}
 {{- fail "prometheus.kube-state-metrics.serviceAccount.create: false needs prometheus.kube-state-metrics.serviceAccount.name set to the ServiceAccount you are supplying. Without a name kube-state-metrics runs as `default` while templates/prometheus/rbac.yaml binds the name the subchart would have created, so the grant lands on a ServiceAccount nothing runs as." }}
 {{- end }}
-{{- if and $ksm.enabled $ksm.namespaceOverride }}
-{{- fail "prometheus.kube-state-metrics.namespaceOverride is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving kube-state-metrics elsewhere leaves it unbound." }}
+{{- /* Effective namespace again -- the subchart's helper returns namespaceOverride if set
+       and .Release.Namespace otherwise, so the two agree when it names the release
+       namespace. */ -}}
+{{- if and $ksm.enabled $ksm.namespaceOverride (ne (toString $ksm.namespaceOverride) .Release.Namespace) }}
+{{- fail (printf "prometheus.kube-state-metrics.namespaceOverride is %q, but templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace (%s), so moving kube-state-metrics elsewhere leaves it unbound. Unset it, or set it to %s." (toString $ksm.namespaceOverride) .Release.Namespace .Release.Namespace) }}
 {{- end }}
 
 {{- end }}

@@ -38,13 +38,6 @@ Also, in both modes:
 `apps.enabled` is not `false`.** A dataplane that does not run app serving is unaffected by
 all of it.
 
-- **BREAKING: `autoscaler-hpa` is removed.** Union app serving is KPA-only: it sets
-  `min-scale`, `max-scale`, `metric`, `target` and `window`, but never
-  `autoscaling.knative.dev/class`, so the HPA-class autoscaler was never exercised. The
-  workload and its `gateway.components.autoscaler-hpa` values block are both gone.
-  **If your overlay sets `gateway.components.autoscaler-hpa.*`, the key is now inert** —
-  remove it.
-
 - **BREAKING: Knative TLS certificate provisioning is removed, and enabling it now fails
   the render.** The `config-certmanager` ConfigMap and the `routing-serving-certs`
   `Certificate` are deleted. TLS terminates at the Envoy gateway. Knative registers its
@@ -58,6 +51,13 @@ all of it.
   pins one of these keys *off* still renders. All six default off, so on any install that
   left them there the `routing-serving-certs` `Certificate` was never reconciled. The
   now-dead `gateway.config.certmanager` values key is removed.
+
+  The controller's grants for that reconciler go with it. `knative-serving-core` no longer
+  carries full write on `cert-manager.io` (`certificates`, `clusterissuers`,
+  `certificaterequests`, `issuers`) or `acme.cert-manager.io/challenges`, nor `delete` on the
+  `knative-serving-certmanager` `ClusterRole`. `clusterissuers` is cluster-scoped, so this is
+  a genuine reduction in what a compromised controller could reach — and with the reconciler
+  unshippable, nothing loses access it was using.
 
   This also removes the `matchConditions` bootstrap exemption from both fail-closed Knative
   webhooks. It existed solely to let the `routing-serving-certs` `Certificate` be admitted
@@ -95,10 +95,9 @@ all of it.
 
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
-  exporter outside the release namespace, that job no longer matches. Two more go with the
-  app-serving work: `gateway.components.autoscaler-hpa` (the workload is removed) and
-  `gateway.config.certmanager` (the ConfigMap that read it is removed). Both are simply
-  inert if an overlay still sets them; drop them.
+  exporter outside the release namespace, that job no longer matches. One more goes with the
+  app-serving work: `gateway.config.certmanager` (the ConfigMap that read it is removed). It
+  is simply inert if an overlay still sets it; drop it.
 
 - **App serving: enabling a `gateway.config.network` TLS key now fails the render**, at
   `zero_trust.enabled: true`. If your overlay *enables* `external-domain-tls`,
