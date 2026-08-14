@@ -860,6 +860,23 @@ consuming code paths. **No part of it has been verified against a running cluste
   verb set can be reviewed in a diff, a wildcard cannot.
 - **`namespaces.enabled` must be a YAML boolean.** It is read for Go-template truthiness, so `"false"` means **true**: the chart silently creates every namespace in `namespaces.static`, binds `union-work-ns` into them, and switches the deployment from the runtime posture to the static one — while the values file reads `false`. That switch also strips `clusterresourcesync` of its cluster-wide grant, so projects outside `namespaces.static` stop being provisioned. **If your overlay stringifies scalars (a `templatefile`/heredoc generator will, `yamlencode` will not), check this key before upgrading.** Use `--set`, not `--set-string`, if you set it on the command line.
 - **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject them.** Go's template engine treats any non-empty string as true, so `"false"` means **true**. The consequences differ by key: `namespaces.enabled: "false"` creates every namespace in `namespaces.static`, binds `union-work-ns` into them and switches the deployment to the static posture, while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses per-component identities onto the shared ServiceAccount, so each component holds the union of the others' rules. `config.operator.secretsWatcher.enabled: "false"` adds cluster-wide `update`/`patch` on Deployments. `low_privilege: "false"` fails safe, landing on the more restrictive branch. **If your values are generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline stringifies scalars, `yamlencode` does not. The rendered manifests for every fixture are committed under `tests/generated/`, which is where a wrong reading becomes visible.
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the data-plane images are unchanged.
+
+- A new opt-in `values.openshift.yaml` overlay configures rootless BuildKit with
+  a dedicated service account and SCC, disables host user namespaces, uses
+  `/tmp` for task working directories, persists Fluent Bit tail state, disables
+  the KnativeServing Helm hook, and provisions Kourier SCC access. BuildKit and
+  Kourier can use chart-created or existing SCCs
+  ([#516](https://github.com/unionai/helm-charts/pull/516)).
+- Leaseworker pod security context, Fluent Bit tail database path, and task/system
+  service-account image pull secrets are independently configurable
+  ([#514](https://github.com/unionai/helm-charts/pull/514)).
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
 
 ## 2026.8.1
 
