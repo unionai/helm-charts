@@ -24,6 +24,20 @@ standalone chart. This chart is the near-term delivery of the same substrate
 (Knative + gateway) while that path matures; expect it to be folded into Union
 Apps and eventually retired.
 
+## Dashboards
+
+Grafana ships the dataplane observability dashboards. The JSON under `dashboards/`
+is a **byte-identical vendored copy** of `charts/dataplane/dashboards/` — Helm's
+`.Files` is chart-scoped, so the source can't be read across charts. Keep them in
+lockstep:
+
+- `make sync-tool-dashboards` — refresh the copy from the dataplane chart.
+- `make check-tool-dashboards` — drift gate; fails if the copy diverges. Runs in
+  `make test` and as the `tool-dashboards` CI job.
+
+They are mounted into Grafana via a ConfigMap + file-provider, alongside one
+provisioned Prometheus datasource (`services.grafana.dashboards.datasourceUrl`).
+
 ## Requirements
 
 - **Knative Serving + the vendored gateway** on the data plane (dataplane chart,

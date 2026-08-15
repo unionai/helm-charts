@@ -59,6 +59,40 @@ spec:
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
+          {{- if and (eq $key "grafana") $svc.dashboards.enabled }}
+          volumeMounts:
+            - name: grafana-provisioning-dashboards
+              mountPath: /etc/grafana/provisioning/dashboards
+              readOnly: true
+            - name: grafana-provisioning-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+              readOnly: true
+            {{- if $root.Files.Glob "dashboards/*.json" }}
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards
+              readOnly: true
+            {{- end }}
+          {{- end }}
+      {{- if and (eq $key "grafana") $svc.dashboards.enabled }}
+      volumes:
+        - name: grafana-provisioning-dashboards
+          configMap:
+            name: {{ include "dataplane-tools.fullname" $root }}-grafana-provisioning
+            items:
+              - key: dashboards.yaml
+                path: dashboards.yaml
+        - name: grafana-provisioning-datasources
+          configMap:
+            name: {{ include "dataplane-tools.fullname" $root }}-grafana-provisioning
+            items:
+              - key: datasources.yaml
+                path: datasources.yaml
+        {{- if $root.Files.Glob "dashboards/*.json" }}
+        - name: grafana-dashboards
+          configMap:
+            name: {{ include "dataplane-tools.fullname" $root }}-grafana-dashboards
+        {{- end }}
+      {{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
