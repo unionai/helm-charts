@@ -1,0 +1,62 @@
+{{/*
+Grafana provisioning + embedded dashboards for the grafana service. Rendered only
+when Knative Serving is present (no ksvc => no pod to mount them) and grafana
+dashboards are enabled.
+
+  - <fullname>-grafana-provisioning: a file-provider (points Grafana at the mounted
+    dashboards dir) plus a single Prometheus datasource.
+  - <fullname>-grafana-dashboards: one entry per charts/dataplane-tools/dashboards/
+    *.json — a byte-identical vendored copy of charts/dataplane/dashboards/, kept
+    honest by scripts/check.sh.
+*/}}
+{{- if and (include "dataplane-tools.hasKnativeServing" .) .Values.services.grafana.enabled .Values.services.grafana.dashboards.enabled }}
+{{- $ns := include "dataplane-tools.namespace" . }}
+{{- $fullname := include "dataplane-tools.fullname" . }}
+{{- $files := .Files.Glob "dashboards/*.json" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-grafana-provisioning
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dataplane-tools.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: dataplane-tools
+        orgId: 1
+        folder: {{ .Values.services.grafana.dashboards.folder | default "Dataplane" | quote }}
+        type: file
+        disableDeletion: true
+        editable: false
+        options:
+          path: /var/lib/grafana/dashboards
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        isDefault: true
+        url: {{ required "services.grafana.dashboards.datasourceUrl is required when grafana dashboards are enabled" .Values.services.grafana.dashboards.datasourceUrl | quote }}
+{{- if $files }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-grafana-dashboards
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dataplane-tools.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grafana
+data:
+  # All dashboards share one ConfigMap (Grafana's file provider reads the whole
+  # dir). Watch the 1 MiB ConfigMap limit if the dashboard set grows large.
+{{- range $path, $bytes := $files }}
+  {{ base $path }}: |-
+{{ $.Files.Get $path | replace "__NAMESPACE__" $ns | indent 4 }}
+{{- end }}
+{{- end }}
+{{- end }}

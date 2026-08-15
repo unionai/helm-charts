@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths
+test: check-vendored-crds check-tool-dashboards helm-test kubeconform-test check-image-paths
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -58,6 +58,18 @@ check-vendored-crds:
 	  fi; \
 	done; \
 	exit $${fail}
+
+# dataplane-tools embeds the dataplane chart's Grafana dashboards. Because Helm's
+# .Files is chart-scoped, the JSON is vendored into charts/dataplane-tools/
+# dashboards/ (a byte-identical copy of charts/dataplane/dashboards/). sync
+# refreshes the copy; check is the drift gate, run in `make test` and CI.
+.PHONY: sync-tool-dashboards
+sync-tool-dashboards:
+	./charts/dataplane-tools/scripts/sync.sh
+
+.PHONY: check-tool-dashboards
+check-tool-dashboards:
+	./charts/dataplane-tools/scripts/check.sh
 
 .PHONY: helm-test
 helm-test: $(TMP_DIR) snapshot-generator-test
