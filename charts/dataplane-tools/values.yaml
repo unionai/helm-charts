@@ -1,0 +1,97 @@
+# dataplane-tools — auxiliary, Knative-served tooling deployed into a data plane
+# cluster for observability and debugging: Grafana plus MCP servers that expose
+# the cluster's Prometheus and Kubernetes API to agents.
+#
+# LONG-TERM HOME: these are, conceptually, per-data-plane Apps. The durable home
+# for them is likely Union Apps (the app-serving control plane: App records,
+# leasing, per-DP public_url, the union-authn ext_authz edge) rather than a
+# standalone chart. This chart is the near-term delivery while that path matures;
+# see README.md ("Long-term home").
+#
+# Each service renders as a Knative Service (scale-to-zero via KPA) plus a Knative
+# DomainMapping that publishes it at <subdomain>.<appsDomain> — a single label
+# under the data plane's existing *.apps.<dp>.<domain> wildcard cert + DNS, behind
+# the vendored Kourier gateway and its union-authn ext_authz edge. Every Knative
+# resource is gated on the serving.knative.dev CRDs actually being present
+# (.Capabilities.APIVersions.Has); on a cluster without Knative this chart renders
+# nothing rather than failing.
+
+# -- The data plane's apps wildcard domain, DP name baked in, e.g.
+# "apps.<dp>.<domain>". Required to expose any service (it is the DomainMapping
+# host suffix). Supplied per-environment by terraform.
+appsDomain: ""
+
+nameOverride: ""
+fullnameOverride: ""
+# -- Namespace for the rendered workloads. Empty => release namespace.
+namespace: ""
+
+# -- Defaults applied to every service unless overridden per service.
+defaults:
+  # Scale-to-zero: an idle service costs nothing and cold-starts to 1 on the
+  # first request. Set minScale: 1 for an always-on service (e.g. a scraper).
+  minScale: 0
+  maxScale: 1
+
+# AUTH: services inherit the data plane gateway's union-authn ext_authz edge by
+# being routed through it — there is no per-service auth toggle here. A human
+# reaches Grafana via the browser OIDC client; an agent reaches an MCP server with
+# a Union-minted token. To expose something without auth, configure the gateway,
+# not this chart.
+
+# IMAGES: the MCP image defaults reference community servers so the chart renders
+# and deploys out of the box. Pin a digest and/or mirror them to your registry
+# before production.
+services:
+  # Grafana dashboards over the data plane's in-cluster Prometheus. Runs anonymous
+  # behind the ext_authz edge (the edge authenticates; Grafana does not).
+  grafana:
+    enabled: true
+    subdomain: grafana
+    image: docker.io/grafana/grafana:11.3.0
+    port: 3000
+    minScale: 0
+    env:
+      - name: GF_AUTH_ANONYMOUS_ENABLED
+        value: "true"
+      - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+        value: "Admin"
+      - name: GF_SECURITY_ALLOW_EMBEDDING
+        value: "true"
+    resources:
+      requests: { cpu: 100m, memory: 128Mi }
+      limits: { cpu: 500m, memory: 512Mi }
+
+  # Prometheus MCP server — exposes the cluster's Prometheus to agents over MCP.
+  prometheusMcp:
+    enabled: true
+    subdomain: prometheus-mcp
+    image: ghcr.io/pab1it0/prometheus-mcp-server:latest
+    port: 8080
+    minScale: 0
+    env:
+      # -- In-cluster Prometheus query endpoint. Override per environment.
+      - name: PROMETHEUS_URL
+        value: "http://prometheus-operated.monitoring.svc.cluster.local:9090"
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 256Mi }
+
+  # Kubernetes MCP server — exposes the data plane's own kube API (read-only) to
+  # agents over MCP, using the in-cluster ServiceAccount created below.
+  k8sMcp:
+    enabled: true
+    subdomain: k8s-mcp
+    image: ghcr.io/manusa/kubernetes-mcp-server:latest
+    port: 8080
+    minScale: 0
+    rbac:
+      # -- Create a ServiceAccount + read-only ClusterRole (secrets excluded) and
+      # bind it to the k8s-mcp workload. Disable to supply your own SA via
+      # services.k8sMcp.serviceAccountName.
+      create: true
+      # -- Extra RBAC policy rules appended to the read-only ClusterRole.
+      extraRules: []
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 256Mi }

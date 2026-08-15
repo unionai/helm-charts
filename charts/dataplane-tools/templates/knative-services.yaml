@@ -1,0 +1,64 @@
+{{/*
+One Knative Service per enabled entry in .Values.services. Gated on the Knative
+Serving CRD being served — never assume it exists. Scale-to-zero comes from
+autoscaling.knative.dev/min-scale (default 0): an idle service costs nothing and
+cold-starts to 1 on the first request through the gateway.
+*/}}
+{{- if include "dataplane-tools.hasKnativeServing" . }}
+{{- $root := . }}
+{{- $ns := include "dataplane-tools.namespace" . }}
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $slug := required (printf "services.%s.subdomain is required" $key) $svc.subdomain }}
+{{- $image := required (printf "services.%s.image is required when the service is enabled" $key) $svc.image }}
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ include "dataplane-tools.fullname" $root }}-{{ $slug }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dataplane-tools.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $slug }}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: {{ default $root.Values.defaults.minScale $svc.minScale | quote }}
+        autoscaling.knative.dev/max-scale: {{ default $root.Values.defaults.maxScale $svc.maxScale | quote }}
+        {{- with $svc.annotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "dataplane-tools.labels" $root | nindent 8 }}
+        app.kubernetes.io/component: {{ $slug }}
+    spec:
+      {{- if and (eq $key "k8sMcp") $root.Values.services.k8sMcp.rbac.create }}
+      serviceAccountName: {{ include "dataplane-tools.fullname" $root }}-{{ $root.Values.services.k8sMcp.subdomain }}
+      {{- else if $svc.serviceAccountName }}
+      serviceAccountName: {{ $svc.serviceAccountName }}
+      {{- end }}
+      containers:
+        - name: {{ $slug }}
+          image: {{ $image }}
+          {{- with $svc.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $svc.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+            - containerPort: {{ required (printf "services.%s.port is required" $key) $svc.port }}
+          {{- with $svc.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $svc.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

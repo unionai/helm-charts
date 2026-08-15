@@ -1,0 +1,26 @@
+{{- if not (include "dataplane-tools.hasKnativeServing" .) }}
+⚠  Knative Serving (serving.knative.dev/v1) was not detected on this cluster, so no
+   dataplane-tools workloads were rendered. Install the vendored gateway first
+   (dataplane chart, gateway.enabled=true), then upgrade this release.
+{{- else }}
+dataplane-tools installed. Each service is scale-to-zero — the first request
+through the gateway cold-starts it to one replica.
+
+Services:
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.enabled }}
+  - {{ $svc.subdomain }}: https://{{ $svc.subdomain }}.{{ $.Values.appsDomain | default "<appsDomain-unset>" }}
+{{- end }}
+{{- end }}
+
+Access is gated by the data plane gateway's union-authn ext_authz edge.
+{{- if not (include "dataplane-tools.hasKnativeDomainMapping" .) }}
+
+⚠  Knative DomainMapping (serving.knative.dev/v1beta1) was not detected — the
+   Services rendered but have no external hostname yet. Install the DomainMapping
+   CRD (ships with the vendored gateway) and upgrade.
+{{- else if not .Values.appsDomain }}
+
+⚠  appsDomain is unset — set it to this data plane's apps wildcard (apps.<dp>.<domain>).
+{{- end }}
+{{- end }}
