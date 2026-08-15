@@ -1,0 +1,81 @@
+{{/*
+Read-only cluster access for the Kubernetes MCP server. Only rendered when
+Knative Serving is present (no Service => no pod => no SA needed) and rbac.create
+is set. Secrets are intentionally excluded — this grants inspection for debugging,
+not credential access.
+*/}}
+{{- if and (include "dataplane-tools.hasKnativeServing" .) .Values.services.k8sMcp.enabled .Values.services.k8sMcp.rbac.create }}
+{{- $ns := include "dataplane-tools.namespace" . }}
+{{- $name := printf "%s-%s" (include "dataplane-tools.fullname" .) .Values.services.k8sMcp.subdomain }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dataplane-tools.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ .Values.services.k8sMcp.subdomain }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dataplane-tools.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ .Values.services.k8sMcp.subdomain }}
+rules:
+  # Core resources (secrets deliberately omitted).
+  - apiGroups: [""]
+    resources:
+      - pods
+      - pods/log
+      - services
+      - endpoints
+      - events
+      - nodes
+      - namespaces
+      - configmaps
+      - persistentvolumeclaims
+      - persistentvolumes
+      - replicationcontrollers
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["serving.knative.dev", "networking.internal.knative.dev"]
+    resources: ["*"]
+    verbs: ["get", "list", "watch"]
+  {{- with .Values.services.k8sMcp.rbac.extraRules }}
+  {{- toYaml . | nindent 2 }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "dataplane-tools.labels" . | nindent 4 }}
+    app.kubernetes.io/component: {{ .Values.services.k8sMcp.subdomain }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ $ns }}
+{{- end }}

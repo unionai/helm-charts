@@ -1,0 +1,31 @@
+{{/*
+One Knative DomainMapping per enabled service, publishing it at
+<subdomain>.<appsDomain> — a single label under the data plane's existing
+*.apps.<dp>.<domain> wildcard cert + DNS, routed through the vendored Kourier
+gateway (and its union-authn ext_authz edge). Gated on the DomainMapping CRD
+being served; without it the Services still render but get no external hostname.
+*/}}
+{{- if include "dataplane-tools.hasKnativeDomainMapping" . }}
+{{- $root := . }}
+{{- $ns := include "dataplane-tools.namespace" . }}
+{{- $appsDomain := required "appsDomain is required to expose dataplane-tools services (e.g. apps.<dp>.<domain>)" .Values.appsDomain }}
+{{- range $key, $svc := .Values.services }}
+{{- if $svc.enabled }}
+{{- $slug := required (printf "services.%s.subdomain is required" $key) $svc.subdomain }}
+---
+apiVersion: serving.knative.dev/v1beta1
+kind: DomainMapping
+metadata:
+  name: {{ printf "%s.%s" $slug $appsDomain }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "dataplane-tools.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $slug }}
+spec:
+  ref:
+    apiVersion: serving.knative.dev/v1
+    kind: Service
+    name: {{ include "dataplane-tools.fullname" $root }}-{{ $slug }}
+{{- end }}
+{{- end }}
+{{- end }}
