@@ -21,6 +21,7 @@ SOURCES = [
     CHART / "dashboards" / "union-dataplane-overview.json",
     CHART / "dashboards" / "union-dataplane-v1-overview.json",
     CHART / "files" / "dashboards" / "union-dataplane-karpenter.json",
+    CHART / "files" / "dashboards" / "union-dataplane-slo.json",
 ]
 
 
