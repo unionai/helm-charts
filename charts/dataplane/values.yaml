@@ -72,20 +72,18 @@ updateStatus:
     apps:
       # -- Bare apps domain (no scheme, no subdomain) the dataplane serves apps
       # under, with the dataplane name baked in so the URL routes to the DP
-      # running the app. Defaults to `apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>`
-      # (e.g. "apps.dp-1.mycompany.com") when CLUSTER_NAME is set.
+      # running the app. Empty (default) disables self-reporting; the control
+      # plane then falls back to its global executions.apps.publicURLPattern
+      # (single-dataplane only).
       #
-      # Why a subdomain of the control-plane host by default: browser session /
-      # SSO cookies set at the control-plane host propagate to its subdomains, so
-      # serving apps beneath it gives app SSO out of the box — no extra identity
-      # provider or cookie-domain setup. The per-dataplane label (CLUSTER_NAME)
-      # also routes each app URL to the dataplane running it, for multi-dataplane
-      # deployments.
-      #
-      # Override to serve apps under a different domain (you then own its DNS/TLS
-      # and forgo SSO-by-default); set to "" to disable self-reporting, in which
-      # case the control plane falls back to its own global apps URL pattern.
-      domain: '{{ if .Values.global.CLUSTER_NAME }}apps.{{ .Values.global.CLUSTER_NAME }}.{{ include "dataplane.cp.host" . }}{{ end }}'
+      # Recommended convention: a subdomain of the control-plane host so apps
+      # inherit control-plane SSO — "apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>",
+      # e.g. "apps.dp-1.union.example.com". SSO cookies set at the control-plane
+      # host propagate to its subdomains, and the per-dataplane label routes each
+      # app URL to the dataplane running it (required to run apps on more than one
+      # dataplane). A domain not under the control-plane host works but forgoes
+      # SSO-by-default — you then own its DNS/TLS and cookie setup.
+      domain: ""
       # -- Serve app URLs over http:// instead of https:// when true. Default https.
       insecure: false
 
