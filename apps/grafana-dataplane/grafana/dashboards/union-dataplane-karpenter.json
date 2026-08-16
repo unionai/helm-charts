@@ -70,7 +70,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Per-NodePool CPU utilization (usage / limit). Near 1.0 = the pool is at its hard CPU limit, so Karpenter cannot add nodes and pods needing that instance shape wait Pending.",
+      "description": "Per-NodePool limit saturation = usage / limit, per resource type (cpu / memory / gpu). 1.0 = the pool is at its hard Karpenter cap for that resource, so it cannot add nodes and pods needing that shape wait Pending. This is LIMIT saturation, not node busyness — a GPU pool can read 1.0 (at its gpu cap) while its nodes are only partially utilized.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -132,13 +132,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max by (nodepool) (karpenter_nodepools_usage{resource_type=\"cpu\"} / karpenter_nodepools_limit{resource_type=\"cpu\"})",
-          "legendFormat": "{{nodepool}}",
+          "expr": "max by (nodepool, resource_type) (karpenter_nodepools_usage / (karpenter_nodepools_limit > 0))",
+          "legendFormat": "{{nodepool}} · {{resource_type}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "NodePool CPU utilization (near 1.0 = at capacity)",
+      "title": "NodePool limit saturation (provisioned ÷ limit; 1.0 = at cap)",
       "type": "timeseries"
     },
     {
@@ -292,7 +292,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "NodePools at their hard CPU limit (1 = at cap). Pairs with headroom = 0.",
+      "description": "NodePools at their hard limit, per resource type (1 = at cap). Includes gpu / memory caps, not just cpu. Pairs with saturation = 1.0 and cpu headroom = 0.",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -350,13 +350,13 @@
             "uid": "${datasource}"
           },
           "editorMode": "code",
-          "expr": "max by (nodepool) (karpenter_nodepools_usage{resource_type=\"cpu\"} >= bool karpenter_nodepools_limit{resource_type=\"cpu\"})",
-          "legendFormat": "{{nodepool}}",
+          "expr": "max by (nodepool, resource_type) ((karpenter_nodepools_usage >= bool karpenter_nodepools_limit) and (karpenter_nodepools_limit > 0))",
+          "legendFormat": "{{nodepool}} · {{resource_type}}",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "NodePool at CPU limit (1 = at cap)",
+      "title": "NodePool at limit (per resource; 1 = at cap)",
       "type": "timeseries"
     },
     {
