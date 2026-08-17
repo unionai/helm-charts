@@ -50,8 +50,9 @@ all of it.
   value other than `disabled` or `false`, compared case-insensitively as Knative does, so an
   overlay that pins one *off* still renders. `namespace-wildcard-cert-selector` is checked
   separately — Knative reads it as a `LabelSelector`, where empty is what disables it, so any
-  non-empty value is refused. Values resolve through `tpl` first, as `configmap-network.yaml`
-  renders them, so a templated setting is judged on what it becomes.
+  non-empty value is refused. All six are compared as written: `configmap-network.yaml`
+  renders these values through `tpl`, but the guard does not, so a templated value is refused
+  even where it would resolve to an off value. Hardcode it.
   All six default off, so on any install that
   left them there the `routing-serving-certs` `Certificate` was never reconciled. The
   now-dead `gateway.config.certmanager` values key is removed.
@@ -128,7 +129,8 @@ all of it.
   on/off keys to `"Disabled"` or `"false"` still renders; only a truthy value errors.
   `namespace-wildcard-cert-selector` is a `LabelSelector`, not a switch: leave it empty, the
   chart default. `"false"` and `"disabled"` are refused there too — Knative cannot parse
-  either as a selector, so neither turns the feature off.
+  either as a selector, so neither turns the feature off. All six are compared as written,
+  so a value expressed as a Go template is refused whatever it resolves to; hardcode it.
 
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the

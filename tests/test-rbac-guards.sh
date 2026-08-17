@@ -398,25 +398,27 @@ expect-refusal "an empty object, which enables it for every namespace" \
 expect-render "an empty value, which is how the feature is disabled" \
   "${ZERO_TRUST[@]}" \
   --set-string gateway.config.network.namespace-wildcard-cert-selector=
-# The selector goes through tpl too, including resolving to the empty value that disables it.
-expect-render "a selector templated to the empty value" \
+# These guards compare the raw values entry, so a template is refused whatever it would
+# resolve to -- configmap-network.yaml would tpl it, but resolving it here too would mean two
+# evaluations Helm cannot share, and a template with side effects could then answer the two
+# differently. Pinned in both directions so nobody "fixes" the false rejection by adding tpl.
+echo "- a templated TLS value is refused as written, resolved or not"
+expect-refusal "external-domain-tls templated to an off value" \
+  "gateway.config.network.external-domain-tls is set to" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file tpl-off external-domain-tls '{{ "Disabled" }}')"
+expect-refusal "external-domain-tls templated to an on value" \
+  "gateway.config.network.external-domain-tls is set to" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file tpl-on external-domain-tls '{{ "Enabled" }}')"
+expect-refusal "a selector templated to the empty value that would disable it" \
+  "takes a LabelSelector, not a switch" \
   "${ZERO_TRUST[@]}" \
   --values "$(network-key-file wildcard-tpl-off namespace-wildcard-cert-selector '{{ "" }}')"
 expect-refusal "a selector templated to a real selector" \
   "takes a LabelSelector, not a switch" \
   "${ZERO_TRUST[@]}" \
   --values "$(network-key-file wildcard-tpl-on namespace-wildcard-cert-selector '{{ "{}" }}')"
-
-# configmap-network.yaml renders every network value through `tpl`, so a templated value is
-# judged on what it resolves to, not on its unexpanded text.
-echo "- a templated TLS value is judged on what it resolves to"
-expect-render "external-domain-tls templated to an off value" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file tpl-off external-domain-tls '{{ "Disabled" }}')"
-expect-refusal "external-domain-tls templated to an on value" \
-  "gateway.config.network.external-domain-tls is set to \"Enabled\"" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file tpl-on external-domain-tls '{{ "Enabled" }}')"
 
 echo "- a TLS key is inert, not fatal, where app serving does not render"
 expect-render "zero_trust off, stale TLS key left behind" \
