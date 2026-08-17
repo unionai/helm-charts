@@ -54,6 +54,23 @@ EOF
   echo "${path}"
 }
 
+# Same `--set` limitation, for the gateway network keys: a Go-template value cannot be
+# expressed with --set either.
+# network-key-file <name> <key> <yaml value> -> echoes the file path
+function network-key-file {
+  local name=$1
+  local key=$2
+  local value=$3
+  local path="${WORK_DIR}/${name}.yaml"
+  cat > "${path}" <<EOF
+gateway:
+  config:
+    network:
+      ${key}: '${value}'
+EOF
+  echo "${path}"
+}
+
 # Minimum values any dataplane render needs: the control-plane host guard and the admin
 # secret. Everything a case is actually testing is passed on top as --set flags.
 function render {
@@ -201,6 +218,24 @@ expect-refusal "prometheus.kube-state-metrics.rbac.create" \
   "kube-state-metrics.rbac.create must stay false" \
   --set prometheus.kube-state-metrics.rbac.create=true
 
+# The other side of that pin: each renders its feature while the permissions half rides on
+# the subchart's own Role, which rbac.create: false switches off.
+echo "- kube-state-metrics features the chart-owned grant cannot serve are refused"
+expect-refusal "kubeRBACProxy, which needs review creates and breaks the scrape job" \
+  "kubeRBACProxy.enabled must stay false" \
+  --set prometheus.kube-state-metrics.kubeRBACProxy.enabled=true
+expect-refusal "customResourceState, whose CRD reads ride on rbac.extraRules" \
+  "customResourceState.enabled must stay false" \
+  --set prometheus.kube-state-metrics.customResourceState.enabled=true
+expect-refusal "autosharding, which needs pod and statefulset reads" \
+  "autosharding.enabled must stay false" \
+  --set prometheus.kube-state-metrics.autosharding.enabled=true
+expect-refusal "rbac.extraRules, which is dropped without a word" \
+  "rbac.extraRules renders only inside" \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].apiGroups={""}' \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].resources={secrets}' \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].verbs={get}'
+
 echo "- bindings cannot be pointed at a ServiceAccount or namespace nothing runs as"
 expect-refusal "prometheus ServiceAccount creation off with no name supplied" \
   "serviceAccounts.server.create: false needs" \
@@ -249,6 +284,20 @@ expect-render "kube-state-metrics off, stale serviceAccount.create left behind" 
 expect-render "kube-state-metrics off, stale namespaceOverride left behind" \
   --set prometheus.kube-state-metrics.enabled=false \
   --set prometheus.kube-state-metrics.namespaceOverride=elsewhere
+expect-render "kube-state-metrics off, stale kubeRBACProxy left behind" \
+  --set prometheus.kube-state-metrics.enabled=false \
+  --set prometheus.kube-state-metrics.kubeRBACProxy.enabled=true
+expect-render "kube-state-metrics off, stale autosharding left behind" \
+  --set prometheus.kube-state-metrics.enabled=false \
+  --set prometheus.kube-state-metrics.autosharding.enabled=true
+expect-render "kube-state-metrics off, stale customResourceState left behind" \
+  --set prometheus.kube-state-metrics.enabled=false \
+  --set prometheus.kube-state-metrics.customResourceState.enabled=true
+expect-render "kube-state-metrics off, stale rbac.extraRules left behind" \
+  --set prometheus.kube-state-metrics.enabled=false \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].apiGroups={""}' \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].resources={secrets}' \
+  --set 'prometheus.kube-state-metrics.rbac.extraRules[0].verbs={get}'
 
 echo "- ingress-nginx scope and RBAC ownership move together"
 expect-refusal "controller scoped while the subchart's own RBAC stays cluster-wide" \
@@ -329,6 +378,45 @@ expect-render "external-domain-tls: disabled" \
 expect-render "auto-tls: \"false\" (quoted boolean)" \
   "${ZERO_TRUST[@]}" \
   --set-string gateway.config.network.auto-tls=false
+
+# The one key in that list that is not a switch: a LabelSelector, where empty disables the
+# feature. "false" and "disabled" are not off here, and grouping it with the switches
+# accepted both.
+echo "- namespace-wildcard-cert-selector is a selector, not a switch"
+expect-refusal "the off value that works for the five switches" \
+  "takes a LabelSelector, not a switch" \
+  "${ZERO_TRUST[@]}" \
+  --set-string gateway.config.network.namespace-wildcard-cert-selector=false
+expect-refusal "the other off value that works for the five switches" \
+  "takes a LabelSelector, not a switch" \
+  "${ZERO_TRUST[@]}" \
+  --set-string gateway.config.network.namespace-wildcard-cert-selector=Disabled
+expect-refusal "an empty object, which enables it for every namespace" \
+  "takes a LabelSelector, not a switch" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file wildcard-all namespace-wildcard-cert-selector '{}')"
+expect-render "an empty value, which is how the feature is disabled" \
+  "${ZERO_TRUST[@]}" \
+  --set-string gateway.config.network.namespace-wildcard-cert-selector=
+# The selector goes through tpl too, including resolving to the empty value that disables it.
+expect-render "a selector templated to the empty value" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file wildcard-tpl-off namespace-wildcard-cert-selector '{{ "" }}')"
+expect-refusal "a selector templated to a real selector" \
+  "takes a LabelSelector, not a switch" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file wildcard-tpl-on namespace-wildcard-cert-selector '{{ "{}" }}')"
+
+# configmap-network.yaml renders every network value through `tpl`, so a templated value is
+# judged on what it resolves to, not on its unexpanded text.
+echo "- a templated TLS value is judged on what it resolves to"
+expect-render "external-domain-tls templated to an off value" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file tpl-off external-domain-tls '{{ "Disabled" }}')"
+expect-refusal "external-domain-tls templated to an on value" \
+  "gateway.config.network.external-domain-tls is set to \"Enabled\"" \
+  "${ZERO_TRUST[@]}" \
+  --values "$(network-key-file tpl-on external-domain-tls '{{ "Enabled" }}')"
 
 echo "- a TLS key is inert, not fatal, where app serving does not render"
 expect-render "zero_trust off, stale TLS key left behind" \

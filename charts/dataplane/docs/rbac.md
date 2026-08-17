@@ -139,8 +139,11 @@ All four are unsupported, and none is a drop-in. `$ksmRules` in
 `list, watch`, so it cannot express arbitrary `extraRules` or `create` on tokenreviews and
 subjectaccessreviews. `kubeRBACProxy` additionally serves authenticated HTTPS, which the
 chart's kube-state-metrics scrape job — plain HTTP, no bearer token — would no longer reach.
-Supporting any of them means extending `rbac.yaml` and the scrape config together. Nothing
-refuses them at render time today.
+Supporting any of them means extending `rbac.yaml` and the scrape config together.
+
+`templates/prometheus/validate.yaml` refuses all four at render time, naming what each one
+would need. A failed render is the point: every one of them otherwise deploys a
+kube-state-metrics that starts, stays ready, and returns nothing you asked it for.
 
 **fluent-bit.** Never calls the Kubernetes API in this chart. The subchart's cluster-wide
 read on namespaces and pods exists to serve a `kubernetes` filter, and this chart has never
@@ -179,6 +182,12 @@ false` it renders no controller Role or ClusterRole, and the scope of whatever y
 yours to get right. (The admission-webhook patch job carries its own RBAC under
 `controller.admissionWebhooks.patch.rbac.create` — off by default here, and unrelated to what
 the controller can read.)
+
+Those checks read the scope *values*. `controller.extraArgs.watch-namespace` also reaches
+`--watch-namespace`, appended after the scope-derived one, so it wins — and nothing inspects
+it. Under scoped RBAC that gets you the silent non-reconciliation the guard exists to
+prevent. Like `rbac.create: false` above, a raw passthrough is yours to keep consistent; use
+`controller.scope.namespace`, which is checked.
 
 **opencost.** Cluster-wide `get`/`list`/`watch` whenever it's enabled, in either privilege
 mode — it prices the whole cluster, so a namespaced grant would give it nothing to price, and

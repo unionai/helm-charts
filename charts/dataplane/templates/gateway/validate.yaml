@@ -10,21 +10,44 @@ internal-encryption) that map onto them -- and then hard-fails at startup
 if the cert-manager CRDs are absent. Setting one here would otherwise be
 silently inert, so fail the render naming the key. TLS terminates at the
 Envoy gateway in this chart.
+
+The six do not share a value type, so they are checked in two groups below.
+Both resolve with tpl first, as configmap-network.yaml does, so a templated
+value is judged on what it resolves to rather than on its unexpanded text.
+
+That means two evaluations, and Helm cannot share one across files. A values
+template with side effects can therefore show this guard one value and the
+ConfigMap another. Accepted: whoever writes that template also deploys the
+chart, so there is no boundary to cross, and the alternative moves gateway
+validation out of the file every subchart keeps its guards in.
 */}}
-{{- $tlsKeys := list "external-domain-tls" "cluster-local-domain-tls" "system-internal-tls" "namespace-wildcard-cert-selector" "auto-tls" "internal-encryption" -}}
 {{- $network := ((.Values.gateway).config).network | default dict -}}
-{{- range $key := $tlsKeys }}
+{{/*
+Five on/off switches. Knative parses them case-insensitively, so "disabled" is
+as legitimately off as "Disabled"; compare lowercased or the guard rejects a
+value that turns the feature off.
+*/}}
+{{- $tlsSwitches := list "external-domain-tls" "cluster-local-domain-tls" "system-internal-tls" "auto-tls" "internal-encryption" -}}
+{{- range $key := $tlsSwitches }}
 {{- $v := index $network $key }}
 {{- if $v }}
-{{/*
-Knative parses these values case-insensitively, so "disabled" is as legitimately
-off as "Disabled"; compare lowercased or the guard rejects a value that turns
-the feature off.
-*/}}
-{{- $off := lower (toString $v) }}
+{{- $rendered := tpl (toString $v) $ }}
+{{- $off := lower $rendered }}
 {{- if not (or (eq $off "disabled") (eq $off "false")) }}
-{{- fail (printf "gateway.config.network.%s is set to %q, but this chart does not ship Knative TLS certificate provisioning: the config-certmanager ConfigMap and the routing-serving-certs Certificate are removed. TLS terminates at the Envoy gateway instead. Remove this setting." $key (toString $v)) }}
+{{- fail (printf "gateway.config.network.%s is set to %q, but this chart does not ship Knative TLS certificate provisioning: the config-certmanager ConfigMap and the routing-serving-certs Certificate are removed. TLS terminates at the Envoy gateway instead. Remove this setting." $key $rendered) }}
 {{- end }}
+{{- end }}
+{{- end }}
+{{/*
+The sixth is not a switch. namespace-wildcard-cert-selector is a LabelSelector,
+where empty disables the feature -- so "false" and "disabled" are not off here,
+just selectors Knative cannot parse. Anything non-empty after tpl is refused.
+*/}}
+{{- $selector := index $network "namespace-wildcard-cert-selector" }}
+{{- if $selector }}
+{{- $renderedSelector := tpl (toString $selector) $ }}
+{{- if $renderedSelector }}
+{{- fail (printf "gateway.config.network.namespace-wildcard-cert-selector is set to %q, but this chart does not ship Knative TLS certificate provisioning: the config-certmanager ConfigMap and the routing-serving-certs Certificate are removed. TLS terminates at the Envoy gateway instead. This key takes a LabelSelector, not a switch: an empty value is what disables it, so %q is either a selector this chart cannot serve or one Knative will fail to parse. Remove this setting." $renderedSelector $renderedSelector) }}
 {{- end }}
 {{- end }}
 {{- end }}

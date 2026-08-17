@@ -46,9 +46,13 @@ all of it.
   `namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
   `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
   absent. So the chart now errors at template time naming the key you enabled, rather than
-  leaving it silently inert. The guard fires on any truthy value other than `disabled` or
-  `false`, compared case-insensitively as Knative's own parser does, so an overlay that
-  pins one of these keys *off* still renders. All six default off, so on any install that
+  leaving it silently inert. For the five on/off settings the guard fires on any truthy
+  value other than `disabled` or `false`, compared case-insensitively as Knative does, so an
+  overlay that pins one *off* still renders. `namespace-wildcard-cert-selector` is checked
+  separately — Knative reads it as a `LabelSelector`, where empty is what disables it, so any
+  non-empty value is refused. Values resolve through `tpl` first, as `configmap-network.yaml`
+  renders them, so a templated setting is judged on what it becomes.
+  All six default off, so on any install that
   left them there the `routing-serving-certs` `Certificate` was never reconciled. The
   now-dead `gateway.config.certmanager` values key is removed.
 
@@ -83,6 +87,10 @@ all of it.
   creates lives. An Ingress outside it stops being reconciled, silently. To serve one from
   elsewhere, set both `ingress-nginx.rbac.scope: false` and
   `ingress-nginx.controller.scope.enabled: false`; the chart errors if only one is set.
+  Under scoped RBAC, `ingress-nginx.controller.scope.namespace` must be empty (the default)
+  or name the release namespace; anything else now fails the render. The literal
+  `$(POD_NAMESPACE)` is refused too, though it is what an empty value becomes — the guard
+  compares namespaces, not the expressions producing them. Leave it empty.
 
 - **One dataplane per cluster at `low_privilege: false`.** prometheus's ClusterRole and
   ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) but a
@@ -92,6 +100,19 @@ all of it.
 
 - **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create`** from your
   values. Both must stay false; the chart now refuses to render otherwise.
+
+- **A templated `prometheus.kube-state-metrics.namespaces` entry now fails the render** under
+  `low_privilege: true`. The subchart resolves it against its *own* context, so this chart
+  cannot tell which namespace it becomes, and a wrong guess passes a namespace the Role never
+  covers. The refusal is blanket — including `'{{ .Release.Namespace }}'`, which would in fact
+  resolve correctly. Use `releaseNamespace: true` instead.
+
+- **Four kube-state-metrics features now fail the render:** `kubeRBACProxy`,
+  `customResourceState`, `autosharding` and `rbac.extraRules`. `rbac.create: false` switches
+  off the permissions half of each while the feature half still deploys, so none of them was
+  working — `kubeRBACProxy` additionally took the Prometheus target down by serving HTTPS to a
+  plain-HTTP scrape job. Remove them. To add metrics, name the collector in
+  `prometheus.kube-state-metrics.collectors`, which grants and collects together.
 
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
@@ -103,8 +124,11 @@ all of it.
   `zero_trust.enabled: true`. If your overlay *enables* `external-domain-tls`,
   `cluster-local-domain-tls`, `system-internal-tls`, `namespace-wildcard-cert-selector`,
   `auto-tls` or `internal-encryption`, remove it — Knative certificate provisioning is not
-  shipped and those settings were already inert. An overlay that pins one of them to
-  `"Disabled"` or `"false"` still renders; only a truthy value errors.
+  shipped and those settings were already inert. An overlay that pins one of the five
+  on/off keys to `"Disabled"` or `"false"` still renders; only a truthy value errors.
+  `namespace-wildcard-cert-selector` is a `LabelSelector`, not a switch: leave it empty, the
+  chart default. `"false"` and `"disabled"` are refused there too — Knative cannot parse
+  either as a selector, so neither turns the feature off.
 
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
