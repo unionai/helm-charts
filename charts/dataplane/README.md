@@ -354,8 +354,7 @@ namespace-confined install identity will not be enough to deploy the chart:
 
 | Component | Default | Cluster-scoped grant |
 | --- | --- | --- |
-| knative-operator | **on** | 7 ClusterRoles and 7 ClusterRoleBindings — it installs and reconciles Knative cluster-wide, including CRDs and aggregated roles. The largest cluster-scoped footprint in a default install by some margin |
-| Knative gateway | on at `zero_trust.enabled: true` | 10 ClusterRoles and 4 ClusterRoleBindings, vendored from Knative Serving. Mutually exclusive with knative-operator — one path or the other renders, never both |
+| Knative gateway | on at `zero_trust.enabled: true` | 10 ClusterRoles and 4 ClusterRoleBindings, vendored from Knative Serving |
 | Helm hook cleanup | **on** | a ClusterRole for the webhook-cleanup job |
 | opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
 | metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |

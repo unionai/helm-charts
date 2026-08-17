@@ -1129,11 +1129,13 @@ true
 {{- end -}}
 
 {{/*
-True ("true" or "") when the vendored Knative app-serving stack renders. The
-gateway templates and the RBAC component registry must agree on this, so it is
-defined once here rather than repeated per template.
+True ("true" or "") when the vendored Knative app-serving stack under
+templates/gateway/ renders. Named for both conditions deliberately: app serving
+also runs with zero trust off, via the knative-operator path under
+templates/serving/, which guards on the inverse of this. Every gateway template
+gates on this one definition rather than repeating the pair.
 */}}
-{{- define "appServing.enabled" -}}
+{{- define "zeroTrustApps.enabled" -}}
 {{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
 {{- end -}}
 

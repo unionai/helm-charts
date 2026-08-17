@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 #
 # Positive/negative render tests for the dataplane RBAC guards in
-# templates/prometheus/{rbac,validate}.yaml, templates/ingress-nginx/validate.yaml and
-# templates/gateway/validate.yaml.
+# templates/prometheus/{rbac,validate}.yaml and templates/ingress-nginx/validate.yaml.
 #
 # The snapshot suite only diffs renders that succeed, so it cannot see a guard at all: one
 # that stops firing looks identical to one that never existed, and one that starts refusing a
@@ -50,23 +49,6 @@ prometheus:
   kube-state-metrics:
     releaseNamespace: false
     namespaces: '${value}'
-EOF
-  echo "${path}"
-}
-
-# Same `--set` limitation, for the gateway network keys: a Go-template value cannot be
-# expressed with --set either.
-# network-key-file <name> <key> <yaml value> -> echoes the file path
-function network-key-file {
-  local name=$1
-  local key=$2
-  local value=$3
-  local path="${WORK_DIR}/${name}.yaml"
-  cat > "${path}" <<EOF
-gateway:
-  config:
-    network:
-      ${key}: '${value}'
 EOF
   echo "${path}"
 }
@@ -337,96 +319,6 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.enabled=true \
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
-
-# The app-serving stack only renders at zero_trust.enabled: true, and its TLS guard is
-# inside that gate, so every case below has to turn it on. knative-operator goes off
-# alongside it exactly as tests/values/dataplane.aws.zero-trust.yaml does -- Helm evaluates
-# the subchart condition at parse time, so it cannot be gated on the same flag. ORG_NAME is
-# not part of the minimum every other case here renders with, but the zero-trust envoy
-# config requires it.
-ZERO_TRUST=(
-  --set zero_trust.enabled=true
-  --set knative-operator.enabled=false
-  --set global.ORG_NAME=test-org-name
-)
-
-echo "- Knative TLS certificate provisioning is refused rather than left inert"
-expect-render "app serving with no TLS key set (chart default)" \
-  "${ZERO_TRUST[@]}"
-for key in external-domain-tls cluster-local-domain-tls system-internal-tls \
-           namespace-wildcard-cert-selector auto-tls internal-encryption; do
-  expect-refusal "${key} enabled" \
-    "gateway.config.network.${key} is set to" \
-    "${ZERO_TRUST[@]}" \
-    --set "gateway.config.network.${key}=Enabled"
-done
-
-# Knative parses these case-insensitively, so an overlay that pins one of them off is off
-# whichever way it spelled it, and must still deploy.
-#
-# Every value here is a string. A YAML boolean is not a case worth asserting: it is falsy,
-# so the guard skips it before the comparison, and configmap-network.yaml then `tpl`s the
-# value, which only accepts a string -- so `false` unquoted has never rendered, guard or no
-# guard. Quoted "false" is the case an overlay carrying a stringified boolean actually hits.
-echo "- a TLS key pinned off still renders, however it was spelled"
-expect-render "external-domain-tls: Disabled" \
-  "${ZERO_TRUST[@]}" \
-  --set gateway.config.network.external-domain-tls=Disabled
-expect-render "external-domain-tls: disabled" \
-  "${ZERO_TRUST[@]}" \
-  --set gateway.config.network.external-domain-tls=disabled
-expect-render "auto-tls: \"false\" (quoted boolean)" \
-  "${ZERO_TRUST[@]}" \
-  --set-string gateway.config.network.auto-tls=false
-
-# The one key in that list that is not a switch: a LabelSelector, where empty disables the
-# feature. "false" and "disabled" are not off here, and grouping it with the switches
-# accepted both.
-echo "- namespace-wildcard-cert-selector is a selector, not a switch"
-expect-refusal "the off value that works for the five switches" \
-  "takes a LabelSelector, not a switch" \
-  "${ZERO_TRUST[@]}" \
-  --set-string gateway.config.network.namespace-wildcard-cert-selector=false
-expect-refusal "the other off value that works for the five switches" \
-  "takes a LabelSelector, not a switch" \
-  "${ZERO_TRUST[@]}" \
-  --set-string gateway.config.network.namespace-wildcard-cert-selector=Disabled
-expect-refusal "an empty object, which enables it for every namespace" \
-  "takes a LabelSelector, not a switch" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file wildcard-all namespace-wildcard-cert-selector '{}')"
-expect-render "an empty value, which is how the feature is disabled" \
-  "${ZERO_TRUST[@]}" \
-  --set-string gateway.config.network.namespace-wildcard-cert-selector=
-# These guards compare the raw values entry, so a template is refused whatever it would
-# resolve to -- configmap-network.yaml would tpl it, but resolving it here too would mean two
-# evaluations Helm cannot share, and a template with side effects could then answer the two
-# differently. Pinned in both directions so nobody "fixes" the false rejection by adding tpl.
-echo "- a templated TLS value is refused as written, resolved or not"
-expect-refusal "external-domain-tls templated to an off value" \
-  "gateway.config.network.external-domain-tls is set to" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file tpl-off external-domain-tls '{{ "Disabled" }}')"
-expect-refusal "external-domain-tls templated to an on value" \
-  "gateway.config.network.external-domain-tls is set to" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file tpl-on external-domain-tls '{{ "Enabled" }}')"
-expect-refusal "a selector templated to the empty value that would disable it" \
-  "takes a LabelSelector, not a switch" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file wildcard-tpl-off namespace-wildcard-cert-selector '{{ "" }}')"
-expect-refusal "a selector templated to a real selector" \
-  "takes a LabelSelector, not a switch" \
-  "${ZERO_TRUST[@]}" \
-  --values "$(network-key-file wildcard-tpl-on namespace-wildcard-cert-selector '{{ "{}" }}')"
-
-echo "- a TLS key is inert, not fatal, where app serving does not render"
-expect-render "zero_trust off, stale TLS key left behind" \
-  --set gateway.config.network.external-domain-tls=Enabled
-expect-render "apps off under zero_trust, stale TLS key left behind" \
-  "${ZERO_TRUST[@]}" \
-  --set apps.enabled=false \
-  --set gateway.config.network.external-domain-tls=Enabled
 
 echo
 if [[ ${failures} -ne 0 ]]; then

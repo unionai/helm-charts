@@ -32,51 +32,6 @@ Also, in both modes:
 - ingress-nginx is confined to the release namespace (see Migration). metrics-server is
   unchanged — cluster-scoped by design.
 
-### App-serving (Knative) RBAC
-
-**Everything in this subsection applies only when `zero_trust.enabled: true` and
-`apps.enabled` is not `false`.** A dataplane that does not run app serving is unaffected by
-all of it.
-
-- **BREAKING: Knative TLS certificate provisioning is removed, and enabling it now fails
-  the render.** The `config-certmanager` ConfigMap and the `routing-serving-certs`
-  `Certificate` are deleted. TLS terminates at the Envoy gateway. Knative registers its
-  certificate reconciler when any of six `gateway.config.network` settings is on —
-  `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
-  `namespace-wildcard-cert-selector`, and the legacy aliases `auto-tls` and
-  `internal-encryption` — and then hard-fails at startup if the cert-manager CRDs are
-  absent. So the chart now errors at template time naming the key you enabled, rather than
-  leaving it silently inert. For the five on/off settings the guard fires on any truthy
-  value other than `disabled` or `false`, compared case-insensitively as Knative does, so an
-  overlay that pins one *off* still renders. `namespace-wildcard-cert-selector` is checked
-  separately — Knative reads it as a `LabelSelector`, where empty is what disables it, so any
-  non-empty value is refused. All six are compared as written: `configmap-network.yaml`
-  renders these values through `tpl`, but the guard does not, so a templated value is refused
-  even where it would resolve to an off value. Hardcode it.
-  All six default off, so on any install that
-  left them there the `routing-serving-certs` `Certificate` was never reconciled. The
-  now-dead `gateway.config.certmanager` values key is removed.
-
-  The controller's grants for that reconciler go with it. `knative-serving-core` no longer
-  carries full write on `cert-manager.io` (`certificates`, `clusterissuers`,
-  `certificaterequests`, `issuers`) or `acme.cert-manager.io/challenges`, nor `delete` on the
-  `knative-serving-certmanager` `ClusterRole`. `clusterissuers` is cluster-scoped, so this is
-  a genuine reduction in what a compromised controller could reach — and with the reconciler
-  unshippable, nothing loses access it was using.
-
-  This also removes the `matchConditions` bootstrap exemption from both fail-closed Knative
-  webhooks. It existed solely to let the `routing-serving-certs` `Certificate` be admitted
-  in the same release that creates the webhook's backend; with that `Certificate` gone it
-  matches nothing.
-
-- **`kubernetes.podspec-dryrun` is set to `"disabled"` in `gateway.config.features`.**
-  Knative's dry-run validation submits a real `Pod` create (`DryRun: All`) into the user's
-  namespace, which needs cluster-wide `pods: create` — a privilege-escalation primitive,
-  since it lets the holder schedule a pod under any ServiceAccount. The feature is opt-in
-  per object via the `features.knative.dev/podspec-dryrun` annotation and nothing here uses
-  it. **This does not change what is granted**; it makes the annotation inert, so nothing
-  in this chart exercises cluster-wide pod creation.
-
 ### Migration / action required
 
 - **At `low_privilege: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
@@ -117,20 +72,22 @@ all of it.
 
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
-  exporter outside the release namespace, that job no longer matches. One more goes with the
-  app-serving work: `gateway.config.certmanager` (the ConfigMap that read it is removed). It
-  is simply inert if an overlay still sets it; drop it.
+  exporter outside the release namespace, that job no longer matches. Two more go with the
+  app-serving work: `gateway.config.certmanager` and `gateway.config.network`. Helm does not
+  error on a values key nothing reads, so an overlay still setting either is silently
+  ignored rather than refused; drop them.
 
-- **App serving: enabling a `gateway.config.network` TLS key now fails the render**, at
-  `zero_trust.enabled: true`. If your overlay *enables* `external-domain-tls`,
-  `cluster-local-domain-tls`, `system-internal-tls`, `namespace-wildcard-cert-selector`,
-  `auto-tls` or `internal-encryption`, remove it — Knative certificate provisioning is not
-  shipped and those settings were already inert. An overlay that pins one of the five
-  on/off keys to `"Disabled"` or `"false"` still renders; only a truthy value errors.
-  `namespace-wildcard-cert-selector` is a `LabelSelector`, not a switch: leave it empty, the
-  chart default. `"false"` and `"disabled"` are refused there too — Knative cannot parse
-  either as a selector, so neither turns the feature off. All six are compared as written,
-  so a value expressed as a Go template is refused whatever it resolves to; hardcode it.
+- **App serving: Knative TLS certificate provisioning is gone**, at `zero_trust.enabled:
+  true`. The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
+  are removed; TLS terminates at the Envoy gateway. `config-network` is now written
+  literally — the Kourier `ingress-class` this chart vendors, and nothing else — so
+  `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
+  `namespace-wildcard-cert-selector` and the legacy `auto-tls` and `internal-encryption` can
+  no longer be turned on. All six defaulted off, so nothing that was working stops. The
+  controller's grants go with the reconciler: `knative-serving-core` no longer carries write
+  on `cert-manager.io` (including cluster-scoped `clusterissuers`) or
+  `acme.cert-manager.io/challenges`, nor `delete` on the `knative-serving-certmanager`
+  `ClusterRole`.
 
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
