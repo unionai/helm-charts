@@ -31,10 +31,18 @@
   `useCommonServiceAccount` helper previously returned true whenever `singleNamespace` was
   set, so an explicit `commonServiceAccount.enabled: false` was silently discarded in the
   chart's default mode. Identity sharing and privilege scope are independent concerns and are
-  now keyed independently. **The default is unchanged (`true`), so no existing install is
-  affected.** Setting it `false` creates one ServiceAccount per component; each new name needs
-  a matching workload-identity binding on the cloud side before those workloads can
-  authenticate. It does not narrow RBAC.
+  now keyed independently. **The default is unchanged (`true`), so any install that leaves the
+  key alone is unaffected** — but an install that already sets it `false` while running in the
+  old single-namespace mode had that setting ignored, and will now get what it asked for.
+  Setting it `false` creates one ServiceAccount per component; each new name needs a matching
+  workload-identity binding on the cloud side before those workloads can authenticate.
+
+  It does not change `Role` versus `ClusterRole` scope, but it does partition the existing
+  grants across identities: the shared `union-system` account is the subject of every
+  component's binding at once, where per-component accounts each hold only their own. A
+  compromised workload can no longer exercise the other components' grants. That is a real
+  reduction in each workload's effective permissions — plan the cloud-side bindings before
+  flipping it, not after.
 
 - **`namespaces.static` (new)** enumerates the work namespaces to pre-create when
   `namespaces.enabled: true`. It defaults to the six names `common/namespaces.yaml` previously
@@ -49,14 +57,35 @@
   `false` when Terraform, a platform team or anything else owns the `Namespace` objects, and
   Helm never touches them — no adoption annotations to negotiate.
 
-- **Namespaces created from `namespaces.static` now carry `helm.sh/resource-policy: keep`, so
-  `helm uninstall` no longer deletes them.** Uninstalling previously cascade-deleted each
+- **`namespaces.labels` and `namespaces.annotations` (new)** set metadata on every Namespace
+  the chart creates — Pod Security Standards levels, service-mesh injection, cost attribution,
+  or a retention key for your deployment tool. They cover the `static` list only; namespaces
+  `clusterresourcesync` creates at runtime are shaped by the `a_namespace` entry in
+  `clusterresourcesync.templates`, as before.
+
+- **`namespaces.annotations` defaults to `helm.sh/resource-policy: keep`, so `helm uninstall`
+  no longer deletes the pre-seeded namespaces.** Uninstalling previously cascade-deleted each
   managed namespace and everything inside it: task pods, Secrets, PVCs, and objects
   `clusterresourcesync` created at runtime that this chart never knew about. That is the
   ordinary consequence of Helm owning a resource, but the resource is a whole namespace,
   which made it the largest blast radius in the chart and rarely what "uninstall the
   dataplane" was meant to mean. Leftover namespaces are one `kubectl delete` to recover; the
   reverse is not.
+
+  **Helm is the only thing that honors that key.** A GitOps controller renders this chart and
+  reconciles against its own bookkeeping, so it prunes a Namespace that leaves the desired
+  manifest no matter what Helm annotations it carries — Argo CD does not map
+  `helm.sh/resource-policy` to a sync option at all. If you deploy that way, add your
+  controller's own retention key; they merge with the default:
+
+  ```yaml
+  namespaces:
+    annotations:
+      argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  ```
+
+  Set `helm.sh/resource-policy: null` to drop the default entirely and let your tooling own
+  the namespace lifecycle.
 
 ### Third-party subchart RBAC
 
@@ -116,9 +145,19 @@ Also, in both modes:
   `namespaces.enabled: true`. Task pods land in `Forbidden` / `namespace not found` otherwise.
 
 - **If you relied on `helm uninstall` deleting the pre-seeded namespaces, delete them with
-  `kubectl` instead.** Helm still owns them for install and upgrade; only delete changes. If
-  your namespaces are created outside this chart, set `namespaces.create: false` rather than
-  annotating them for Helm adoption.
+  `kubectl` instead.** Helm still owns them for install and upgrade. If your namespaces are
+  created outside this chart, set `namespaces.create: false` rather than annotating them for
+  Helm adoption.
+
+- **Do not drop a pre-existing namespace from the manifest in the same upgrade that lands on
+  this version.** Helm reads `helm.sh/resource-policy` off the live object, not off the chart
+  it is about to apply. Namespaces created by an earlier version carry no annotation yet, so
+  the upgrade that would first add it will happily delete them instead — with their contents —
+  if that same upgrade also removes them from the render. Migrate in two steps: upgrade once
+  with `namespaces.static` and `namespaces.enabled` unchanged so the annotation lands, then
+  make the change that drops them (`namespaces.create: false`, `low_privilege: true`, or a
+  shorter `static` list). GitOps users get no protection from the annotation on either step —
+  see the retention note above.
 
 - **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject
   them.** Go's template engine treats any non-empty string as true, so `"false"` means

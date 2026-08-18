@@ -2478,11 +2478,35 @@ namespaces:
   # `enabled: true`. Set false when the namespaces are managed outside this chart,
   # so Helm never takes ownership of them.
   create: true
+  # -- Labels to set on every Namespace this chart creates. Applies only to the
+  # `static` list below; namespaces clusterresourcesync creates at runtime are
+  # shaped by the `a_namespace` entry in `clusterresourcesync.templates`.
+  labels: {}
+  #  pod-security.kubernetes.io/enforce: baseline
+  #  istio-injection: enabled
+  # -- Annotations to set on every Namespace this chart creates. Same scope as
+  # `labels` above.
+  #
+  # `helm.sh/resource-policy: keep` is the default because `helm uninstall`
+  # otherwise deletes each namespace and everything in it — task pods, Secrets,
+  # PVCs, and whatever clusterresourcesync created at runtime. Leftover namespaces
+  # cost one `kubectl delete`; the reverse costs the data.
+  #
+  # Helm is the only thing that honors that key. A GitOps controller renders this
+  # chart and reconciles against its own bookkeeping, so it prunes a Namespace
+  # that leaves the desired manifest regardless. If you deploy that way, add your
+  # controller's retention key here — they merge:
+  #
+  #   annotations:
+  #     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  #
+  # Set `helm.sh/resource-policy: null` to drop the default and let your tooling
+  # own the namespace lifecycle outright.
+  annotations:
+    helm.sh/resource-policy: keep
   # -- Work namespaces known at render time. Not the full set when `enabled` is
   # false: clusterresourcesync creates one per project/domain as projects are
-  # registered, and those names are not known in advance. Namespaces this chart
-  # creates carry `helm.sh/resource-policy: keep`, so `helm uninstall` leaves them
-  # and their contents behind.
+  # registered, and those names are not known in advance.
   static:
     - flytesnacks-development
     - flytesnacks-staging

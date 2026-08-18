@@ -384,15 +384,48 @@ expect-manifest "and an explicit apps.enabled still overrides it" absent "name: 
 # fixtures pin the combinations a deployment uses; these pin that the three axes are actually
 # independent, including the combinations no fixture covers.
 echo "- the privilege, namespace and identity axes are independent"
+# These assert on `kind: Namespace`, not on the retention annotation. Asserting the annotation
+# is absent cannot tell "no Namespace rendered" from "a Namespace rendered unprotected", and
+# the second is the state worth catching.
 expect-manifest "namespaces.enabled pre-seeds at full privilege" \
-  present "helm.sh/resource-policy: keep" \
+  present "kind: Namespace" \
   --set low_privilege=false --set namespaces.enabled=true
 expect-manifest "and namespaces.create: false leaves the Namespace objects to someone else" \
-  absent "helm.sh/resource-policy: keep" \
+  absent "kind: Namespace" \
   --set low_privilege=false --set namespaces.enabled=true --set namespaces.create=false
 expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces.enabled says" \
-  absent "helm.sh/resource-policy: keep" \
+  absent "kind: Namespace" \
   --set namespaces.enabled=true
+
+# namespaces.labels / namespaces.annotations are the only hook for Namespace metadata the
+# chart creates, so they carry the retention policy an operator's deployment tool needs.
+expect-manifest "pre-seeded namespaces carry the default Helm retention policy" \
+  present "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true
+expect-manifest "operator annotations merge with it rather than replacing it" \
+  present "argocd.argoproj.io/sync-options: Prune=false" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
+expect-manifest "and the Helm default survives that merge" \
+  present "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
+expect-manifest "nulling the default drops it, for tooling that owns the lifecycle" \
+  absent "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.helm\.sh/resource-policy=null'
+expect-manifest "namespaces.labels lands on the pre-seeded namespaces" \
+  present "pod-security.kubernetes.io/enforce: baseline" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.labels.pod-security\.kubernetes\.io/enforce=baseline'
+expect-manifest "a custom namespaces.static list replaces the defaults" \
+  present "name: my-only-namespace" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={my-only-namespace}'
+expect-manifest "and the hardcoded six are gone with it" \
+  absent "name: flytesnacks-development" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={my-only-namespace}'
 
 # The bug this replaces: namespaces.enabled defaults false, so `or (not namespaces.enabled)
 # low_privilege` made a default full-privilege install look single-namespace and gated off the
