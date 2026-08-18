@@ -2344,9 +2344,7 @@ data:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: http
           action: keep
-      # Keep only what a dashboard or rule reads. kube_deployment_spec_replicas and
-      # kube_deployment_status_replicas_available are the ratio behind the "deployments
-      # available" panel — dropping them left it empty.
+      # Keep only the series a dashboard or recording rule reads.
       metric_relabel_configs:
         - source_labels: [__name__]
           regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_(available|unavailable)|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
@@ -2407,8 +2405,7 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Both are cluster-scoped, so this job can only 403 under low_privilege — that is the
-    # Task-Level Monitoring tradeoff described on the low_privilege key below.
+    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -2460,8 +2457,8 @@ data:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
-    # Looks in the release namespace, where the subchart deploys it. A dcgm-exporter
-    # managed elsewhere (e.g. by the NVIDIA GPU operator) is not picked up.
+    # Only finds dcgm-exporter in the release namespace, where the subchart deploys it;
+    # one managed elsewhere (e.g. by the NVIDIA GPU operator) is not scraped.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod

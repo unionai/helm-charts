@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 #
-# Positive/negative render tests for the dataplane RBAC guards in
-# templates/prometheus/{rbac,validate}.yaml and templates/ingress-nginx/validate.yaml.
+# Render tests for the dataplane RBAC guards in templates/prometheus/{rbac,validate}.yaml,
+# templates/ingress-nginx/validate.yaml and templates/gateway/validate.yaml.
 #
-# The snapshot suite only diffs renders that succeed, so it cannot see a guard at all: one
-# that stops firing looks identical to one that never existed, and one that starts refusing a
-# valid config shows up as a blocked customer deploy rather than a failed test. Both
-# directions are asserted here, along with a stable fragment of each refusal -- a guard that
-# fires for the wrong reason is still a regression.
+# The snapshot suite only diffs renders that succeed, so it cannot see a guard at all. Each
+# case here asserts either that a guard refuses bad values or that it leaves a working
+# configuration alone. Refusals are matched on part of the error text, so a guard firing for
+# the wrong reason still fails.
 
 set -euo pipefail
 
@@ -17,16 +16,10 @@ CHART="${SCRIPT_DIR}/../charts/dataplane"
 RELEASE="release-name"
 NAMESPACE="union"
 
-# Every check below renders the whole chart, and `helm template` refuses outright when a
-# dependency named in Chart.yaml is missing from charts/ -- so on a fresh checkout all of them
-# fail for that reason rather than on anything they test. Nothing else here vendors: this
-# target runs before tests/run.sh, which is the only other thing that does. Keep this ahead of
-# the first render, and do not assume a working tree that happens to have charts/ populated
-# from an earlier run is evidence the suite is self-sufficient.
-#
-# `dependency build` is enough on its own -- helm resolves each repository URL straight from
-# Chart.yaml, so it needs no `helm repo add`, no `dependency update` and no existing
-# Chart.lock.
+# Every check below renders the whole chart, and `helm template` fails outright if a
+# dependency named in Chart.yaml is missing from charts/. Nothing else here vendors, so this
+# has to stay ahead of the first render. `dependency build` alone is enough: helm reads each
+# repository URL from Chart.yaml, so no `helm repo add` or Chart.lock is needed.
 echo "Vendoring subchart dependencies..."
 helm dependency build "${CHART}"
 echo
@@ -68,7 +61,7 @@ function render {
 }
 
 # expect-render <description> [helm --set flags...]
-# Asserts the values render. Guards that refuse a working configuration block a deploy.
+# Asserts the render succeeds.
 function expect-render {
   local desc=$1; shift
   local err
@@ -106,10 +99,9 @@ function expect-refusal {
 }
 
 # expect-collection-scope <description> <expected --namespaces argument> [helm --set flags...]
-# Asserts the values render AND that kube-state-metrics is actually told to watch what the
-# guard concluded it would. Render-success alone is not enough here: the guard's whole job is
-# to agree with the Deployment, so a case that passes while the Deployment disagrees is the
-# bug, not the pass.
+# Asserts the render succeeds and that kube-state-metrics is told to watch the namespaces
+# the guard accepted. The guard's job is to agree with the Deployment, so checking one
+# without the other proves nothing.
 function expect-collection-scope {
   local desc=$1; shift
   local want=$1; shift
@@ -135,9 +127,8 @@ function expect-collection-scope {
 }
 
 # expect-manifest <description> <present|absent> <grep pattern> [helm --set flags...]
-# Asserts the values render AND that a manifest is or is not in the output. Used where the
-# gate is a plain conditional rather than a refusal: nothing errors either way, so the only
-# evidence is what came out.
+# Asserts the render succeeds and that a manifest is or is not in the output. For gates that
+# are a plain conditional rather than a refusal, where nothing errors either way.
 function expect-manifest {
   local desc=$1; shift
   local want=$1; shift
@@ -204,11 +195,10 @@ expect-refusal "the release namespace plus another" \
   "must collect from the release namespace" \
   --set "prometheus.kube-state-metrics.namespaces=other\,${NAMESPACE}"
 
-# A templated entry is resolved by the subchart against its OWN context, where .Chart and
-# .Values differ from ours. Evaluating it here would agree with the Deployment only by
-# coincidence -- and where it disagrees the guard waves through a namespace the Role never
-# covers. Both cases below resolve to the release namespace in this chart's context, so a
-# guard that tried to be clever would accept them.
+# The subchart resolves a templated entry against its own context, where .Chart and .Values
+# differ from ours, so the guard cannot evaluate it and refuses instead. Both cases below
+# resolve to the release namespace in this chart's context, so a guard that tried would
+# accept them.
 echo "- templated collection scope is refused rather than guessed at"
 expect-refusal "a templated entry that resolves differently in the subchart" \
   "is templated, which is not supported" \
@@ -236,8 +226,8 @@ expect-refusal "prometheus.kube-state-metrics.rbac.create" \
   "kube-state-metrics.rbac.create must stay false" \
   --set prometheus.kube-state-metrics.rbac.create=true
 
-# The other side of that pin: each renders its feature while the permissions half rides on
-# the subchart's own Role, which rbac.create: false switches off.
+# Each of these features gets its permissions from the subchart's own Role, which
+# rbac.create: false switches off.
 echo "- kube-state-metrics features the chart-owned grant cannot serve are refused"
 expect-refusal "kubeRBACProxy, which needs review creates and breaks the scrape job" \
   "kubeRBACProxy.enabled must stay false" \
@@ -271,10 +261,10 @@ expect-refusal "kube-state-metrics.namespaceOverride naming another namespace" \
   "namespaceOverride is \"elsewhere\"" \
   --set prometheus.kube-state-metrics.namespaceOverride=elsewhere
 
-# Both keys resolve through `default .Release.Namespace <key>` in their subchart, so one
-# naming the release namespace moves nothing -- the workload, its ServiceAccount and the Role
-# all stay where rbac.yaml binds them. Refusing it would block an overlay that pins every
-# subchart to a common namespace, which is a working configuration and a blocked deploy.
+# Both keys resolve through `default .Release.Namespace <key>` in their subchart, so naming
+# the release namespace moves nothing: the workload, its ServiceAccount and the Role all stay
+# where rbac.yaml binds them. Refusing it would block an overlay that pins every subchart to
+# one namespace, which works fine.
 expect-render "prometheus.forceNamespace naming the release namespace" \
   --set "prometheus.forceNamespace=${NAMESPACE}"
 expect-render "kube-state-metrics.namespaceOverride naming the release namespace" \
@@ -335,10 +325,9 @@ expect-render "both unscoped, to serve an Ingress from another namespace" \
   --set ingress-nginx.rbac.scope=false \
   --set ingress-nginx.controller.scope.enabled=false
 
-# The mismatch the two booleans cannot express. At rbac.scope: true the subchart renders a
-# Role in its own namespace and no ClusterRole, while controller.scope.namespace is what
-# reaches --watch-namespace -- so any other namespace there is a controller watching what it
-# cannot read, silently.
+# At rbac.scope: true the subchart renders a Role in its own namespace and no ClusterRole,
+# while controller.scope.namespace is what reaches --watch-namespace. Any other namespace
+# there is a controller silently watching what it cannot read.
 expect-refusal "scoped RBAC watching a namespace the Role does not cover" \
   "controller.scope.namespace is \"elsewhere\"" \
   --set ingress-nginx.enabled=true \
@@ -356,11 +345,9 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
 
-# The vendored Knative Serving / Kourier stack under templates/gateway/ is 10 ClusterRoles and
-# 4 ClusterRoleBindings with no namespaced form, so app serving requires low_privilege: false.
-# The snapshot suite covers the rendering half (dataplane.aws.zero-trust.yaml pins the flag
-# off); it cannot cover the refusal, and it cannot show that the refusal leaves the rest of the
-# zero-trust dataplane reachable. Both are asserted here.
+# The vendored Knative Serving / Kourier stack under templates/gateway/ holds cluster-scoped
+# RBAC with no namespaced form, so app serving requires low_privilege: false. The snapshot
+# suite covers the rendering; the refusal, and what still renders after it, are asserted here.
 echo "- app serving and low_privilege are refused together, not silently reconciled"
 # knative-operator must be disabled alongside zero_trust (Helm evaluates that subchart
 # condition at parse time), and orgName is what the Envoy auth filter is keyed on.
@@ -373,20 +360,17 @@ expect-refusal "apps on at the low_privilege default" \
   "requires low_privilege: false" \
   "${zt[@]}" --set apps.enabled=true
 
-# App serving is off by default precisely so the default install never meets that refusal.
-# A zero-trust deploy that sets nothing else has to render.
+# App serving is off by default, so a zero-trust deploy that sets nothing else renders.
 expect-manifest "the default zero-trust install renders, with no Knative stack" \
   absent "name: knative-serving-core" "${zt[@]}"
 
-# The refusal names two exits and both have to work. Dropping app serving must leave the
-# zero-trust dataplane intact: the Envoy gateway gates on zero_trust.enabled alone, holds no
-# cluster-scoped RBAC, and its static routes are what zero trust is. A guard that forced a
-# choice between app serving and having any ingress at all would be the wrong guard.
+# The Envoy gateway gates on zero_trust.enabled alone and holds no cluster-scoped RBAC, so
+# dropping app serving leaves the zero-trust dataplane and its routes intact.
 expect-manifest "and keeps the Envoy gateway" \
   present "union-operator-gateway-envoy-bootstrap" "${zt[@]}"
 
-# The deprecated flag still reaches app serving, which is why values.yaml leaves
-# apps.enabled null rather than writing false into it.
+# The deprecated serving.enabled still reaches app serving; values.yaml leaves apps.enabled
+# null so it keeps deciding.
 expect-manifest "the deprecated serving.enabled still turns app serving on" \
   present "name: knative-serving-core" \
   "${zt[@]}" --set serving.enabled=true --set low_privilege=false

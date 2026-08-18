@@ -24,10 +24,9 @@ test: check-vendored-crds helm-test kubeconform-test check-image-paths rbac-guar
 snapshot-generator-test:
 	bash ./tests/test-atomic-render.sh
 
-# The dataplane RBAC guards refuse values that would render a grant nothing runs
-# under. helm-test only diffs renders that succeed, so it cannot see a guard at
-# all — this asserts both that each one fires and that none fires on a valid
-# configuration, which is a blocked deploy.
+# Renders the dataplane chart against values the RBAC guards should accept and
+# values they should refuse. helm-test only diffs renders that succeed, so it
+# cannot see a guard at all.
 .PHONY: rbac-guard-test
 rbac-guard-test:
 	bash ./tests/test-rbac-guards.sh
@@ -67,10 +66,9 @@ check-vendored-crds:
 	done; \
 	exit $${fail}
 
-# rbac-guard-test hangs off helm-test, not just the `test` aggregate: CI
-# (.github/workflows/checks.yaml) invokes helm-test/kubeconform-test/
-# check-image-paths individually and never runs `make test`, so a target attached
-# only there would never gate a PR.
+# CI (.github/workflows/checks.yaml) runs helm-test, kubeconform-test and
+# check-image-paths individually rather than `make test`, so rbac-guard-test
+# hangs off helm-test to gate PRs.
 .PHONY: helm-test
 helm-test: $(TMP_DIR) snapshot-generator-test rbac-guard-test
 	./tests/run.sh helm

@@ -1116,11 +1116,10 @@ present in values.yaml, just null).
 Emits "true"/"" rather than "true"/"false" so callers can write
 `if include "apps.enabled" .` — the literal string "false" is truthy.
 
-Off by default because low_privilege is on by default, and the two cannot both be
-true (templates/gateway/validate.yaml). Note this is the ABSENCE of a branch, not
-`apps.enabled: false` in values.yaml: writing the literal there would make the key
-set, so the deprecated serving.enabled would never be consulted and every install
-still using it would lose app serving while explicitly asking for it.
+Defaults to off, because low_privilege is on by default and the two cannot both be
+set (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
+literal false — a literal counts as set, which would stop the deprecated
+serving.enabled from ever being read.
 */}}
 {{- define "apps.enabled" -}}
 {{- $apps := .Values.apps | default dict -}}
@@ -1133,17 +1132,13 @@ still using it would lose app serving while explicitly asking for it.
 {{- end -}}
 
 {{/*
-True ("true" or "") when the vendored Knative app-serving stack under
-templates/gateway/ renders. Named for both conditions deliberately: app serving
-also runs with zero trust off, via the knative-operator path under
-templates/serving/, which guards on the inverse of this. Every gateway template
-gates on this one definition rather than repeating the pair.
+True when the vendored Knative app-serving stack under templates/gateway/ should
+render: app serving on and zero trust on. With zero trust off, app serving instead
+comes from the knative-operator (templates/serving/), which checks the inverse.
+Every gateway template gates on this one define.
 
-low_privilege is deliberately NOT a term here. The stack holds cluster-scoped
-RBAC that cannot be narrowed, but dropping it silently would leave the operator
-advertising app serving with nothing behind it -- so the combination is refused
-in templates/gateway/validate.yaml instead, and by the time this define is
-evaluated it cannot be true. See docs/rbac.md#app-serving.
+low_privilege is not a term here: that combination is rejected outright in
+gateway/validate.yaml, so it can never reach this point. See docs/rbac.md#app-serving.
 */}}
 {{- define "zeroTrustApps.enabled" -}}
 {{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
