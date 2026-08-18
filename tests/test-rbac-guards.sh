@@ -390,9 +390,9 @@ echo "- the privilege, namespace and identity axes are independent"
 expect-manifest "namespaces.enabled pre-seeds at full privilege" \
   present "kind: Namespace" \
   --set low_privilege=false --set namespaces.enabled=true
-expect-manifest "and namespaces.create: false leaves the Namespace objects to someone else" \
+expect-manifest "and namespaces.enabled: false leaves the Namespace objects to someone else" \
   absent "kind: Namespace" \
-  --set low_privilege=false --set namespaces.enabled=true --set namespaces.create=false
+  --set low_privilege=false --set namespaces.enabled=false
 expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces.enabled says" \
   absent "kind: Namespace" \
   --set namespaces.enabled=true
@@ -442,6 +442,23 @@ expect-manifest "commonServiceAccount.enabled: false is honored under low_privil
   --set commonServiceAccount.enabled=false
 expect-manifest "and the shared identity is still the default there" \
   absent "serviceAccountName: operator-system"
+
+# The per-component names are what an operator builds cloud workload-identity bindings
+# from, so pin the two the values.yaml comment calls out specially: buildkit is enabled
+# by default and moves, and fluentbit does not.
+expect-manifest "buildkit moves to its own identity with the rest" \
+  present 'serviceAccountName: "union-imagebuilder"' \
+  --set commonServiceAccount.enabled=false
+# fluentbit's account name comes from the subchart key fluentbit.serviceAccount.name,
+# pinned to union-system here, and that pin beats the per-component fallback. Partitioning
+# it needs an explicit name override -- see the commonServiceAccount comment in values.yaml.
+expect-manifest "fluentbit stays on the shared name until told otherwise" \
+  present "serviceAccountName: union-system" \
+  --set commonServiceAccount.enabled=false
+expect-manifest "and an explicit name override partitions it" \
+  present "serviceAccountName: fluentbit-system" \
+  --set commonServiceAccount.enabled=false \
+  --set fluentbit.serviceAccount.name=fluentbit-system
 
 echo
 if [[ ${failures} -ne 0 ]]; then

@@ -35,7 +35,14 @@
   key alone is unaffected** — but an install that already sets it `false` while running in the
   old single-namespace mode had that setting ignored, and will now get what it asked for.
   Setting it `false` creates one ServiceAccount per component; each new name needs a matching
-  workload-identity binding on the cloud side before those workloads can authenticate.
+  workload-identity binding on the cloud side before those workloads can authenticate. The
+  names are `operator-system`, `proxy-system`, `leaseworker`, `union-webhook-system`,
+  `union-imagebuilder` (buildkit, enabled by default) and — under `zero_trust.enabled` —
+  `dataproxy-system`. **`fluentbit` is the exception and needs a manual step:** its account
+  name comes from the subchart key `fluentbit.serviceAccount.name`, which this chart pins to
+  `union-system`, and that pin wins over the per-component fallback. Set it to a dedicated
+  name yourself if you want fluentbit partitioned too; its `rbac.create` is false here, so
+  the account carries no Kubernetes permissions either way.
 
   It does not change `Role` versus `ClusterRole` scope, but it does partition the existing
   grants across identities: the shared `union-system` account is the subject of every
@@ -52,10 +59,9 @@
   `clusterresourcesync` creates one namespace per project/domain at runtime and cannot know
   those names in advance.
 
-- **`namespaces.create` (new, default `true`)** is the supported path for
-  externally-managed namespaces. Consulted only when `namespaces.enabled: true`. Set it
-  `false` when Terraform, a platform team or anything else owns the `Namespace` objects, and
-  Helm never touches them — no adoption annotations to negotiate.
+  Leaving `namespaces.enabled: false` remains the supported path for externally-managed
+  namespaces: when Terraform, a platform team or anything else owns the `Namespace` objects,
+  Helm never touches them and there are no adoption annotations to negotiate.
 
 - **`namespaces.labels` and `namespaces.annotations` (new)** set metadata on every Namespace
   the chart creates — Pod Security Standards levels, service-mesh injection, cost attribution,
@@ -146,8 +152,8 @@ Also, in both modes:
 
 - **If you relied on `helm uninstall` deleting the pre-seeded namespaces, delete them with
   `kubectl` instead.** Helm still owns them for install and upgrade. If your namespaces are
-  created outside this chart, set `namespaces.create: false` rather than annotating them for
-  Helm adoption.
+  created outside this chart, leave `namespaces.enabled: false` rather than annotating them
+  for Helm adoption.
 
 - **Do not drop a pre-existing namespace from the manifest in the same upgrade that lands on
   this version.** Helm reads `helm.sh/resource-policy` off the live object, not off the chart
@@ -155,7 +161,7 @@ Also, in both modes:
   the upgrade that would first add it will happily delete them instead — with their contents —
   if that same upgrade also removes them from the render. Migrate in two steps: upgrade once
   with `namespaces.static` and `namespaces.enabled` unchanged so the annotation lands, then
-  make the change that drops them (`namespaces.create: false`, `low_privilege: true`, or a
+  make the change that drops them (`namespaces.enabled: false`, `low_privilege: true`, or a
   shorter `static` list). GitOps users get no protection from the annotation on either step —
   see the retention note above.
 

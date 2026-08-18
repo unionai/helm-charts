@@ -1999,13 +1999,28 @@ zero_trust:
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
-# -- Run every component (operator, leaseworker, proxy, webhook, fluentbit) under one
-# ServiceAccount (`name` below).
+# -- Run every component under one ServiceAccount (`name` below).
 #
 # Setting this false creates one ServiceAccount per component, and each new name
 # needs its own workload-identity binding on the cloud side before those workloads
 # can authenticate (an IRSA trust-policy subject on AWS, a
 # roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential).
+# The full set of names it switches to:
+#
+#   operator          -> operator-system
+#   operator proxy    -> proxy-system
+#   leaseworker       -> leaseworker
+#   webhook           -> union-webhook-system
+#   buildkit          -> union-imagebuilder     (imageBuilder.enabled, on by default)
+#   dataproxy         -> dataproxy-system       (zero_trust.enabled only)
+#
+# fluentbit is the exception and needs a manual step: its ServiceAccount name comes
+# from the subchart values key `fluentbit.serviceAccount.name`, which this chart
+# pins to `union-system` so the shared account is used by default. That pin wins
+# over the per-component fallback, so fluentbit keeps running as `union-system`
+# unless you also set `fluentbit.serviceAccount.name` to a dedicated name. Its
+# `rbac.create` is false here, so that account holds no Kubernetes permissions —
+# only whatever cloud role is bound to it.
 #
 # It buys identity separation for cloud IAM; it is not a privilege boundary, and it
 # is independent of low_privilege — honored in both privilege modes.
@@ -2473,11 +2488,10 @@ namespaces:
   # so a full-privilege dataplane does not need them known at render time. This key
   # does not change privilege scope — that is `low_privilege` alone — and is ignored
   # entirely under `low_privilege: true`, where work runs in the release namespace.
+  #
+  # Leave it `false` when the namespaces are managed outside this chart, so Helm
+  # never takes ownership of them.
   enabled: false
-  # -- Also create the Namespace objects listed in `static`. Only consulted when
-  # `enabled: true`. Set false when the namespaces are managed outside this chart,
-  # so Helm never takes ownership of them.
-  create: true
   # -- Labels to set on every Namespace this chart creates. Applies only to the
   # `static` list below; namespaces clusterresourcesync creates at runtime are
   # shaped by the `a_namespace` entry in `clusterresourcesync.templates`.
