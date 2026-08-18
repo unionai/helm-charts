@@ -53,7 +53,14 @@ spec:
         - name: http-metrics
           containerPort: {{ .Values.console.service.metricsPort }}
           protocol: TCP
-        {{- $envVars := .Values.console.env | default (list) }}
+        {{- /* Always inject UNION_ORG_OVERRIDE (single-tenant org) first so a consumer
+               that overrides .Values.console.env (helm lists replace, not merge) can't
+               drop it; then append the user-provided list. */}}
+        {{- $envVars := list }}
+        {{- if .Values.global.UNION_ORG }}
+        {{- $envVars = concat $envVars (list (dict "name" "UNION_ORG_OVERRIDE" "value" (.Values.global.UNION_ORG | toString))) }}
+        {{- end }}
+        {{- $envVars = concat $envVars (.Values.console.env | default (list)) }}
         {{- $telemetry := .Values.console.telemetry | default dict }}
         {{- if and (hasKey $telemetry "externalEnabled") (not $telemetry.externalEnabled) }}
         {{- $envVars = concat $envVars (list (dict "name" "DISABLE_EXTERNAL_TELEMETRY" "value" "true")) }}

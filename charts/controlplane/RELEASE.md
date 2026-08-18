@@ -1,5 +1,19 @@
 # controlplane — Release Notes
 
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the control-plane images are unchanged.
+
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
+- Actions shard coordination init containers now use
+  `actions.coordination.securityContext`, with non-root defaults suitable for
+  restricted Kubernetes distributions. Shard label values are rendered
+  consistently as strings across Deployments, Services, selectors, and pod
+  templates ([#515](https://github.com/unionai/helm-charts/pull/515)).
+
 ## 2026.8.1
 
 Adding redis-consumer service to control plane ([#525](https://github.com/unionai/helm-charts/pull/525)).
