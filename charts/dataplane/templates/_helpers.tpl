@@ -1109,12 +1109,17 @@ Create a full name prefix for serving resources
 {{- end }}
 
 {{/*
-App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > true.
+App serving toggle. Precedence: apps.enabled > serving.enabled (deprecated) > false.
 Both default to null so an explicit setting is distinguishable from the default;
 `kindIs "invalid"` is the Helm idiom for "is nil" (hasKey won't do — the keys are
 present in values.yaml, just null).
 Emits "true"/"" rather than "true"/"false" so callers can write
 `if include "apps.enabled" .` — the literal string "false" is truthy.
+
+Defaults to off, because low_privilege is on by default and the two cannot both be
+set (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
+literal false — a literal counts as set, which would stop the deprecated
+serving.enabled from ever being read.
 */}}
 {{- define "apps.enabled" -}}
 {{- $apps := .Values.apps | default dict -}}
@@ -1123,9 +1128,20 @@ Emits "true"/"" rather than "true"/"false" so callers can write
 {{- if $apps.enabled -}}true{{- end -}}
 {{- else if not (kindIs "invalid" $serving.enabled) -}}
 {{- if $serving.enabled -}}true{{- end -}}
-{{- else -}}
-true
 {{- end -}}
+{{- end -}}
+
+{{/*
+True when the vendored Knative app-serving stack under templates/gateway/ should
+render: app serving on and zero trust on. With zero trust off, app serving instead
+comes from the knative-operator (templates/serving/), which checks the inverse.
+Every gateway template gates on this one define.
+
+low_privilege is not a term here: that combination is rejected outright in
+gateway/validate.yaml, so it can never reach this point. See docs/rbac.md#app-serving.
+*/}}
+{{- define "zeroTrustApps.enabled" -}}
+{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
 {{- end -}}
 
 {{/*

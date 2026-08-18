@@ -1,6 +1,8 @@
 # Third-party subchart RBAC
 
-What each dependency subchart is allowed to read, and why.
+What each dependency subchart is allowed to read, and why. [App serving](#app-serving) is
+here too — it isn't a subchart, but it's the one component the flag governs by refusing to
+render at all.
 
 ## The rule
 
@@ -13,10 +15,10 @@ The full list is on the `low_privilege` key in `values.yaml`.
 Read only — never writes and never secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
-along with these two subcharts, and gates namespace creation and priorityclasses — but the
-Helm hook cleanup job creates a ClusterRole in either mode, and opencost and metrics-server
-are cluster-scoped when enabled. See the table below, and the README's RBAC section for what
-that means for your install identity.
+along with these two subcharts, and gates [app serving](#app-serving), namespace creation and
+priorityclasses — but the Helm hook cleanup job creates a ClusterRole in either mode, and
+opencost and metrics-server are cluster-scoped when enabled. See the table below, and the
+README's RBAC section for what that means for your install identity.
 
 The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
 that access — layer `examples/values.full-privilege.yaml` for that, below.
@@ -70,9 +72,65 @@ cadvisor job, which is node-scoped and namespace-blind — but requests and limi
 
 Only the first two follow the flag. The rest are fixed in either mode.
 
-Out of scope: the vendored Knative Serving / Kourier gateway under `templates/gateway/`
-(our own manifests, not subchart config), and the deprecated knative-operator and
-kube-prometheus-stack subcharts.
+Out of scope: the deprecated knative-operator and kube-prometheus-stack subcharts.
+
+## App serving
+
+App serving is off by default and requires `low_privilege: false`.
+`templates/gateway/validate.yaml` refuses `apps.enabled: true` alongside `low_privilege: true`,
+naming both exits. Since `low_privilege` defaults on, `apps.enabled` defaults off — so the
+default install is self-consistent and never meets the refusal.
+
+That default lives in the `apps.enabled` helper's missing final branch, not in `values.yaml`.
+Writing `apps.enabled: false` there would make the key *set*, and precedence is
+`apps.enabled > serving.enabled > false` — so the deprecated `serving.enabled` would stop
+being consulted and every install still using it would lose app serving while explicitly
+asking for it. `tests/values/dataplane.aws.zero-trust-serving-enabled.yaml` is the golden that
+catches that.
+
+It is the one component the flag governs by refusing outright rather than by narrowing a
+grant, because there is no narrower grant to write. Its footprint is 10 ClusterRoles and 4
+ClusterRoleBindings vendored from upstream, and three separate things about it have no
+namespaced form:
+
+- **Aggregation.** `controller` receives its entire grant through `knative-serving-admin`,
+  which aggregates everything labelled `serving.knative.dev/controller: "true"`;
+  `knative-serving-aggregated-addressable-resolver` works the same way. `aggregationRule`
+  exists only on ClusterRole. Converting means hand-flattening the set and re-flattening it
+  on every upstream bump, which is the opposite of vendoring.
+- **Cluster-scoped resources.** `knative-serving-core` needs `namespaces`,
+  `namespaces/finalizers`, `customresourcedefinitions` and both `*webhookconfigurations`.
+  Under the rule above those get dropped from a namespaced Role, not converted — but the
+  webhook runs as `controller` and reconciles its own webhook configurations and CA bundles
+  at startup, so dropping them means it never goes Ready and every Knative Service admission
+  fails.
+- **No watch scope.** The deployments take `SYSTEM_NAMESPACE` (where Knative's own config
+  lives) and nothing else; upstream ships no namespace-scoped install, and the informers are
+  cluster-wide. A namespaced Role would leave controller, webhook and activator Ready and
+  denied — the same silent shape the prometheus and kube-state-metrics guards exist to
+  prevent, with no values key to guard on.
+
+The webhook configurations make the last point concrete: every rule is `scope: "*"` with no
+`namespaceSelector`, so admission intercepts cluster-wide regardless of what RBAC says.
+
+**Why it refuses rather than just dropping the stack.** Silently rendering nothing would be
+the cheaper change, and it would be wrong in a familiar way: `apps.enabled` would still be
+true with no backend behind it, so the operator would keep advertising app serving and keep
+its (namespaced) `serving.knative.dev` grant, and every Knative Service it created would sit
+unreconciled with nothing reporting why. Refusing keeps `apps.enabled` meaning one thing, so
+the operator's config and Role stay correct by construction rather than by a second helper
+that has to be kept in step.
+
+**What `apps.enabled: false` keeps.** The Envoy gateway, dataproxy and tunnel-service ingress
+gate on `zero_trust.enabled` alone — they hold no cluster-scoped RBAC, and their static
+dataplane routes are what zero trust is. So the choice the guard forces is app serving vs.
+`low_privilege`, never zero trust vs. `low_privilege`.
+
+`tests/values/dataplane.aws.zero-trust{,-overrides,-serving-enabled}.yaml` turn app serving on
+and so pin `low_privilege: false`; `-apps-disabled` leaves it at the default, which is what
+makes it prove `apps.enabled` beats `serving.enabled` — a regression reading it as true would
+hit this guard and fail the render rather than quietly matching.
+`tests/test-rbac-guards.sh` asserts the refusal itself, which no golden can.
 
 ## Notes
 
@@ -139,8 +197,11 @@ All four are unsupported, and none is a drop-in. `$ksmRules` in
 `list, watch`, so it cannot express arbitrary `extraRules` or `create` on tokenreviews and
 subjectaccessreviews. `kubeRBACProxy` additionally serves authenticated HTTPS, which the
 chart's kube-state-metrics scrape job — plain HTTP, no bearer token — would no longer reach.
-Supporting any of them means extending `rbac.yaml` and the scrape config together. Nothing
-refuses them at render time today.
+Supporting any of them means extending `rbac.yaml` and the scrape config together.
+
+`templates/prometheus/validate.yaml` refuses all four at render time, naming what each one
+would need. A failed render is the point: every one of them otherwise deploys a
+kube-state-metrics that starts, stays ready, and returns nothing you asked it for.
 
 **fluent-bit.** Never calls the Kubernetes API in this chart. The subchart's cluster-wide
 read on namespaces and pods exists to serve a `kubernetes` filter, and this chart has never
@@ -179,6 +240,12 @@ false` it renders no controller Role or ClusterRole, and the scope of whatever y
 yours to get right. (The admission-webhook patch job carries its own RBAC under
 `controller.admissionWebhooks.patch.rbac.create` — off by default here, and unrelated to what
 the controller can read.)
+
+Those checks read the scope *values*. `controller.extraArgs.watch-namespace` also reaches
+`--watch-namespace`, appended after the scope-derived one, so it wins — and nothing inspects
+it. Under scoped RBAC that gets you the silent non-reconciliation the guard exists to
+prevent. Like `rbac.create: false` above, a raw passthrough is yours to keep consistent; use
+`controller.scope.namespace`, which is checked.
 
 **opencost.** Cluster-wide `get`/`list`/`watch` whenever it's enabled, in either privilege
 mode — it prices the whole cluster, so a namespaced grant would give it nothing to price, and

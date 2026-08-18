@@ -1,4 +1,4 @@
-{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) }}
+{{- if include "zeroTrustApps.enabled" . }}
 # Copyright 2018 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,19 @@ metadata:
     app.kubernetes.io/component: networking
   annotations:
     knative.dev/example-checksum: "0573e07d"
+{{- /*
+The data block is literal, not driven by values. Kourier is the only ingress this
+chart vendors, so no other ingress class is valid; templates/serving/knative-serving.yaml
+pins the same string for the knative-operator path.
+
+Do not add TLS settings here. This chart does not ship Knative's certificate
+provisioning -- TLS terminates at the Envoy gateway -- so external-domain-tls,
+cluster-local-domain-tls, system-internal-tls, namespace-wildcard-cert-selector
+and the aliases auto-tls and internal-encryption would start a reconciler with no
+config-certmanager ConfigMap and no controller RBAC behind it.
+*/}}
 data:
-  {{- range $key, $value := .Values.gateway.config.network }}
-  {{ $key }}: {{ tpl $value $ | quote }}
-  {{- end }}
+  ingress-class: "kourier.ingress.networking.knative.dev"
   _example: |
     ################################
     #                              #

@@ -751,7 +751,8 @@ dcgm-exporter:
   # -- Enable or disable the dcgm exporter
   enabled: false
 
-  # No Kubernetes API access at these defaults. Three keys change that — see docs/rbac.md.
+  # At these defaults dcgm-exporter needs no Kubernetes API access, so it gets no RBAC.
+  # A few of its options do need access — see docs/rbac.md.
 
   # -- It's common practice to taint and label  to not run dcgm exporter on all nodes, so we can use node selectors and
   #    tolerations to ensure it only runs on GPU nodes.
@@ -912,9 +913,9 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
-  # FluentBit never calls the Kubernetes API here. If you add a `kubernetes` filter,
-  # rbac.nodeAccess or rbac.eventsAccess, set create: true by hand too — nothing derives
-  # it. See docs/rbac.md.
+  # Fluent Bit doesn't call the Kubernetes API with this chart's config, so it needs no
+  # RBAC. If you add a `kubernetes` filter, or rbac.nodeAccess or rbac.eventsAccess, set
+  # create: true here as well. See docs/rbac.md.
   rbac:
     create: false
   # Upstream defaults this to a bare `busybox`, which resolves against the
@@ -1655,15 +1656,15 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
-  # Leave this false — the chart writes this RBAC itself so it can follow low_privilege,
-  # which a subchart value cannot. See docs/rbac.md.
+  # Leave false: the dataplane chart creates Prometheus's RBAC itself, scoped to match
+  # low_privilege. See docs/rbac.md.
   rbac:
     create: false
 
   server:
-    # Fixed names, so health checks, opencost and ingress work without changes and the
-    # ClusterRole does not collide with kube-prometheus-stack's. Because that name is
-    # fixed, only one dataplane per cluster is supported — see docs/rbac.md.
+    # Fixed names, so health checks, opencost and ingress work without extra config and
+    # the ClusterRole does not collide with kube-prometheus-stack's. The fixed
+    # ClusterRole name means only one dataplane per cluster.
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
@@ -1721,11 +1722,9 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
-  # Helm replaces lists wholesale, so this is the complete scrape_configs list: the
-  # self-scrape, plus extraScrapeConfigs below. Without it we inherit the subchart's nine
-  # cluster-wide discovery jobs, which scrape every pod, service and node in the cluster.
-  # The only series they add that anything reads is cadvisor's container_*, which the
-  # kubernetes-cadvisor job below collects. Re-check on subchart bumps.
+  # The complete scrape_configs list (Helm replaces lists wholesale): this self-scrape,
+  # plus extraScrapeConfigs below. Setting it replaces the subchart's default cluster-wide
+  # discovery jobs, which scrape every pod, service and node in the cluster.
   serverFiles:
     prometheus.yml:
       scrape_configs:
@@ -1752,9 +1751,7 @@ prometheus:
         - source_labels: [__meta_kubernetes_endpoint_port_name]
           regex: http
           action: keep
-      # Keep only what a dashboard or rule reads. kube_deployment_spec_replicas and
-      # kube_deployment_status_replicas_available are the ratio behind the "deployments
-      # available" panel — dropping them left it empty.
+      # Keep only the series a dashboard or recording rule reads.
       metric_relabel_configs:
         - source_labels: [__name__]
           regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_spec_replicas|kube_deployment_status_replicas_(available|unavailable)|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
@@ -1815,8 +1812,7 @@ prometheus:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Both are cluster-scoped, so this job can only 403 under low_privilege — that is the
-    # Task-Level Monitoring tradeoff described on the low_privilege key below.
+    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
     {{- if not .Values.low_privilege }}
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
@@ -1892,8 +1888,8 @@ prometheus:
           target_label: pod
     # DCGM GPU metrics.
     # No-op when dcgm-exporter is not deployed (no pods match the label selector).
-    # Looks in the release namespace, where the subchart deploys it. A dcgm-exporter
-    # managed elsewhere (e.g. by the NVIDIA GPU operator) is not picked up.
+    # Only finds dcgm-exporter in the release namespace, where the subchart deploys it;
+    # one managed elsewhere (e.g. by the NVIDIA GPU operator) is not scraped.
     - job_name: 'gpu-metrics'
       kubernetes_sd_configs:
         - role: pod
@@ -1929,37 +1925,42 @@ prometheus:
   # (monitoring-kube-state-metrics) — both can coexist.
   kube-state-metrics:
     enabled: true
-    # Leave this false too — same reason as above. See docs/rbac.md.
+    # Leave false: the dataplane chart creates this RBAC itself, scoped to match
+    # low_privilege. See docs/rbac.md.
     rbac:
       create: false
-    # Just the collectors feeding series the metrics gateway accepts; the subchart's
-    # default is 28, including `secrets`. Only what a namespaced Role can be granted is
-    # listed here — asking for a cluster-scoped resource we can't grant would make
-    # kube-state-metrics log a permission error every few seconds, forever.
-    # examples/values.full-privilege.yaml adds `nodes` and `namespaces` (docs/rbac.md).
+    # Helm replaces lists wholesale, so this is the whole list. It is limited to
+    # collectors a namespaced Role can be granted; a cluster-scoped one would make
+    # kube-state-metrics log permission errors continuously.
+    # examples/values.full-privilege.yaml adds `nodes` and `namespaces`.
     collectors:
       - pods            # kube_pod_status_phase, kube_pod_container_resource_*, kube_pod_container_status_*
       - deployments     # kube_deployment_spec_replicas, kube_deployment_status_replicas_*
       - daemonsets      # kube_daemonset_status_number_unavailable
       - resourcequotas  # kube_resourcequota
-    # Scopes collection to the release namespace (--namespaces=<release-ns>). Static like
-    # collectors above, so it holds at low_privilege: false too, where task pods run in
-    # other namespaces — examples/values.full-privilege.yaml flips it (docs/rbac.md).
+    # Collect from the release namespace only. Not derived from low_privilege: at
+    # low_privilege: false, layer examples/values.full-privilege.yaml to also collect
+    # from the namespaces task pods run in.
     releaseNamespace: true
-    # Don't add `metricRelabelings` here — nothing reads it. The filter that actually
-    # runs is the kube-state-metrics scrape job's metric_relabel_configs above.
+    # `metricRelabelings` here has no effect. Filtering happens in the
+    # kube-state-metrics scrape job's metric_relabel_configs above.
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
     enabled: false
 
-# -- Scopes Union-authored workload RBAC, plus the prometheus and kube-state-metrics
-#  subcharts, to a single namespace: a Role instead of a ClusterRole. Also gates namespace
-#  creation and priorityclasses. This limits the functionality though. It is not a
-#  whole-chart namespace boundary -- the Helm hook cleanup job creates a ClusterRole
-#  either way, as do opencost and metrics-server when enabled. See docs/rbac.md.
+# -- Scopes the RBAC for Union's own workloads, plus the prometheus and
+#  kube-state-metrics subcharts, to a single namespace: a Role instead of a ClusterRole.
+#  Also gates app serving, namespace creation and priorityclasses. This limits the
+#  functionality though. It is not a whole-chart namespace boundary: the Helm hook
+#  cleanup job creates a ClusterRole either way, as do opencost and metrics-server when
+#  enabled.
 #
 # Known tradeoffs when low_privilege is enabled:
+# - App serving cannot run: the Knative Serving / Kourier stack needs cluster-scoped RBAC
+#   that cannot be narrowed, so the chart refuses `apps.enabled: true` here rather than
+#   deploying apps that never start. Set `apps.enabled: false` to run the zero-trust
+#   dataplane without it; the Envoy gateway, dataproxy and tunnel ingress work either way.
 # - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
 #   cluster-scoped node discovery, and kube-state-metrics is limited to the release
 #   namespace (no cross-namespace pod resource metrics for task execution pods).
@@ -1971,7 +1972,7 @@ prometheus:
 #   will not function in low_privilege mode. This list will be expanded as they are
 #   identified.
 #
-# See charts/dataplane/docs/rbac.md for what each subchart gets in each mode.
+# See docs/rbac.md for what each subchart gets in each mode.
 low_privilege: true
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
@@ -1979,6 +1980,12 @@ low_privilege: true
 # the tunnel-service dataplane ingress. Customers must also set
 # `knative-operator.enabled: false` because Helm evaluates that subchart
 # condition at parse time and can't derive it from this flag.
+#
+# Adding app serving on top (`apps.enabled: true`) also requires
+# `low_privilege: false`: the Knative half needs cluster-scoped RBAC that cannot be
+# narrowed, and the chart refuses the combination. At the `low_privilege: true`
+# default, set `apps.enabled: false` — you keep the Envoy gateway, dataproxy and
+# tunnel ingress and give up app serving. See docs/rbac.md#app-serving.
 zero_trust:
   enabled: false
 
@@ -2155,7 +2162,11 @@ tunnelService:
 
 # -- Union app serving (Knative Serving). Supersedes the deprecated
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
-# deprecated flag can still take effect — the effective default is `true`.
+# deprecated flag can still take effect — the effective default is `false`.
+#
+# App serving requires `low_privilege: false`: the Knative stack needs
+# cluster-scoped RBAC that cannot be narrowed, so the chart refuses `enabled: true`
+# alongside `low_privilege: true`. Set both to run app serving.
 #
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
@@ -2166,10 +2177,9 @@ apps:
 
 # -- Configure app serving and knative.
 serving:
-  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
-  # unset. Left unset (null) so an explicit value is distinguishable from the
-  # default. Installs Knative Serving — knative-operator must be running in the
-  # cluster for the non-zero-trust path to work.
+  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is unset.
+  # Installs Knative Serving — knative-operator must be running in the cluster for
+  # the non-zero-trust path to work.
   enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
@@ -2406,8 +2416,8 @@ ingress-nginx:
   # Confines the controller to the release namespace, where all of this chart's endpoints
   # live, instead of reading secrets, configmaps, pods, endpoints and nodes cluster-wide.
   # An Ingress in another namespace is then never reconciled; to serve one, set this and
-  # controller.scope.enabled below both back to false. They must move together — see
-  # docs/rbac.md.
+  # controller.scope.enabled below both to false. They must move together.
+  # See docs/rbac.md.
   rbac:
     scope: true
 
@@ -2449,8 +2459,8 @@ namespaces:
   enabled: false
 
 monitoring:
-  # kube-prometheus-stack subchart. Off everywhere and on a deprecation path — the
-  # supported monitoring path is the standalone, CRD-free `prometheus` subchart above.
+  # kube-prometheus-stack subchart. Disabled and deprecated; the supported monitoring
+  # path is the standalone, CRD-free `prometheus` subchart above.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2831,11 +2841,9 @@ gateway:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
       kubernetes.podspec-volumes-emptydir: "enabled"
-    network:
-      ingress-class: "kourier.ingress.networking.knative.dev"
+      kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}
-    certmanager: {}
     domain: {}
     gc: {}
     leader-election: {}

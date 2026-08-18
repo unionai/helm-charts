@@ -1,7 +1,7 @@
 {{- /*
-templates/prometheus/rbac.yaml owns RBAC for prometheus and kube-state-metrics. These
-checks catch the values that would quietly break that: a second grant low_privilege no
-longer governs, or a binding pointing at a ServiceAccount nothing runs as.
+This chart writes the RBAC for prometheus and kube-state-metrics itself. The checks here
+catch values that would quietly break that: a second grant low_privilege does not govern,
+or a binding pointing at a ServiceAccount nothing runs as.
 */ -}}
 {{- if .Values.prometheus.enabled }}
 {{- $prom := .Values.prometheus }}
@@ -15,33 +15,46 @@ longer governs, or a binding pointing at a ServiceAccount nothing runs as.
 {{- fail "prometheus.kube-state-metrics.rbac.create must stay false. The chart writes kube-state-metrics' RBAC itself (templates/prometheus/rbac.yaml) so that it follows low_privilege; the subchart's own does not, so enabling it adds a second grant the flag no longer governs." }}
 {{- end }}
 
+{{- /* Each feature below renders its workload but takes its permissions from the subchart's
+       own Role, which rbac.create: false switches off. The rules this chart writes are
+       derived from the collectors list and cover none of them, so the component would come
+       up unable to do its job. See docs/rbac.md. */ -}}
+{{- if and $ksm.enabled (($ksm.kubeRBACProxy).enabled) }}
+{{- fail "prometheus.kube-state-metrics.kubeRBACProxy.enabled must stay false. The proxy authorizes each scrape by creating a tokenreview and a subjectaccessreview, which templates/prometheus/rbac.yaml does not grant -- it derives its rules from the collectors list. It also serves HTTPS, which this chart's plain-HTTP scrape job cannot reach: the sidecar starts and the Prometheus target goes down, silently. Supporting it means extending rbac.yaml and the scrape config together (docs/rbac.md)." }}
+{{- end }}
+
+{{- if and $ksm.enabled (($ksm.customResourceState).enabled) }}
+{{- fail "prometheus.kube-state-metrics.customResourceState.enabled must stay false. Both halves of its permissions ride on the subchart's own Role, which rbac.create: false switches off: the customresourcedefinitions list/watch it adds for discovery, and the custom-resource reads you supply through rbac.extraRules (refused here too). kube-state-metrics gets the config and no permission to read anything it names, then logs the denial for the life of the pod (docs/rbac.md)." }}
+{{- end }}
+
+{{- if and $ksm.enabled (($ksm.autosharding).enabled) }}
+{{- fail "prometheus.kube-state-metrics.autosharding.enabled must stay false. Autosharding runs kube-state-metrics as a StatefulSet that reads its own pod and statefulset to work out its shard. templates/prometheus/rbac.yaml grants no statefulset access, and pods only at list/watch from the `pods` collector -- not the get this needs. The StatefulSet starts and cannot shard (docs/rbac.md)." }}
+{{- end }}
+
+{{- if and $ksm.enabled (not (empty (($ksm.rbac).extraRules))) }}
+{{- fail "prometheus.kube-state-metrics.rbac.extraRules renders only inside the subchart's own Role, which rbac.create: false switches off -- so these rules are dropped without a word. templates/prometheus/rbac.yaml derives its rules from the collectors list and has no equivalent key: name the collector you need in prometheus.kube-state-metrics.collectors, which grants and collects together (docs/rbac.md)." }}
+{{- end }}
+
 {{- /* An empty collectors list is not "collect nothing" -- an omitted --resources flag is
        how the subchart spells "all 28", including secrets. */ -}}
 {{- if and $ksm.enabled (empty $ksm.collectors) }}
 {{- fail "prometheus.kube-state-metrics.collectors must name at least one collector. An empty list drops --resources from the kube-state-metrics Deployment, which makes it collect all 28 defaults (including secrets) while templates/prometheus/rbac.yaml grants it nothing." }}
 {{- end }}
 
-{{- /* Collection scope, the other half of the collector check above. Under low_privilege the
-       grant is a Role in the release namespace, so that is the only namespace
-       kube-state-metrics can be allowed to ask about.
+{{- /* Collection scope. Under low_privilege the grant is a Role in the release namespace, so
+       that is the only namespace kube-state-metrics may ask about.
 
-       Resolve the same way the subchart does (its deployment.yaml builds --namespaces from
-       `namespaces` then `releaseNamespace`, dedupes, and omits the flag entirely when the
-       result is empty -- which is how it spells "every namespace", not "none") and compare
-       the effective set. Testing the values individually would refuse `namespaces` that
-       names the release namespace explicitly, which resolves to the same single namespace
-       and works fine.
+       Resolve the list the way the subchart builds --namespaces -- `namespaces` then
+       `releaseNamespace`, deduped, an empty result meaning every namespace -- and compare
+       the effective set, so `namespaces` that names the release namespace explicitly still
+       passes.
 
-       One thing we deliberately do NOT resolve: a templated entry. The subchart tpl's it
-       against its own context, where `.Chart` and `.Values` are kube-state-metrics', not
-       ours -- `{{ .Chart.Name }}` reads as "kube-state-metrics" there and "dataplane" here.
-       Evaluating it in this context would agree with the Deployment only by luck, and where
-       it disagrees the guard would pass a namespace the Role never covers, which is the
-       whole failure it exists to stop. Refuse instead: under low_privilege the only
-       permitted value is the release namespace, and `releaseNamespace: true` already says
-       that without a template. */ -}}
-{{- /* All of it inside the enabled gate, derivation included -- a disabled subchart's stale
-       namespace values are inert and must not be able to stop a render. */ -}}
+       A templated entry is refused rather than resolved. The subchart renders it against its
+       own context, so evaluating it here would agree only by luck, and a wrong guess passes
+       a namespace the Role never covers -- the exact failure this check exists to stop.
+       `releaseNamespace: true` says the same thing without a template. */ -}}
+{{- /* Gated on enabled, derivation included: a disabled subchart's stale namespace values
+       must not be able to stop a render. */ -}}
 {{- if and $ksm.enabled .Values.low_privilege }}
 {{- $ksmNs := list }}
 {{- if $ksm.namespaces }}
@@ -61,14 +74,13 @@ longer governs, or a binding pointing at a ServiceAccount nothing runs as.
 {{- end }}
 
 {{- /*
-rbac.yaml binds the ServiceAccount each subchart derives, in the release namespace. The
-values below break one of those two assumptions silently: the grant lands on a
-ServiceAccount or namespace the workload does not use, which is the 403 this RBAC exists to
-prevent. Refusing beats mirroring -- following two upstream helpers across every subchart
-bump costs more than the overrides are worth. An explicit `name` still works, so it is
-allowed.
+The bindings this chart writes name the ServiceAccount each subchart derives, in the release
+namespace. The values below break one of those two assumptions silently, leaving the grant on
+a ServiceAccount or namespace the workload does not use -- the 403 this RBAC exists to
+prevent. Refuse them rather than mirror two more upstream helpers across every subchart bump.
+An explicit `name` still works.
 */ -}}
-{{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
+{{- /* hasKey, not `| default true`: that reads a literal false as unset. */ -}}
 {{- $promSrvSA := (($prom.serviceAccounts).server) | default dict }}
 {{- if empty $promSrvSA.name }}
 {{- if and (hasKey $promSrvSA "create") (not $promSrvSA.create) }}
@@ -78,15 +90,20 @@ allowed.
 {{- fail "prometheus.server.fullnameOverride must stay set, or prometheus.serviceAccounts.server.name must name the ServiceAccount. templates/prometheus/rbac.yaml derives the binding subject from fullnameOverride; cleared and unnamed it renders an empty subject, while the subchart deploys as <release>-prometheus-server." }}
 {{- end }}
 {{- end }}
-{{- if $prom.forceNamespace }}
-{{- fail "prometheus.forceNamespace is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving the workloads elsewhere leaves them unbound." }}
+{{- /* Compare the effective namespace, not the key: the subchart falls back to the release
+       namespace, so a value naming it moves nothing and binds fine. Refusing the key
+       outright would block a working overlay that pins every subchart to one namespace. */ -}}
+{{- if and $prom.forceNamespace (ne (toString $prom.forceNamespace) .Release.Namespace) }}
+{{- fail (printf "prometheus.forceNamespace is %q, but templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace (%s), so moving the workloads elsewhere leaves them unbound. Unset it, or set it to %s." (toString $prom.forceNamespace) .Release.Namespace .Release.Namespace) }}
 {{- end }}
 {{- $ksmSA := ($ksm.serviceAccount) | default dict }}
 {{- if and $ksm.enabled (empty $ksmSA.name) (hasKey $ksmSA "create") (not $ksmSA.create) }}
 {{- fail "prometheus.kube-state-metrics.serviceAccount.create: false needs prometheus.kube-state-metrics.serviceAccount.name set to the ServiceAccount you are supplying. Without a name kube-state-metrics runs as `default` while templates/prometheus/rbac.yaml binds the name the subchart would have created, so the grant lands on a ServiceAccount nothing runs as." }}
 {{- end }}
-{{- if and $ksm.enabled $ksm.namespaceOverride }}
-{{- fail "prometheus.kube-state-metrics.namespaceOverride is not supported. templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace, so moving kube-state-metrics elsewhere leaves it unbound." }}
+{{- /* Effective namespace again: the subchart uses namespaceOverride when set and the
+       release namespace otherwise, so the two agree when it names the release namespace. */ -}}
+{{- if and $ksm.enabled $ksm.namespaceOverride (ne (toString $ksm.namespaceOverride) .Release.Namespace) }}
+{{- fail (printf "prometheus.kube-state-metrics.namespaceOverride is %q, but templates/prometheus/rbac.yaml renders its Role and binding subjects in the release namespace (%s), so moving kube-state-metrics elsewhere leaves it unbound. Unset it, or set it to %s." (toString $ksm.namespaceOverride) .Release.Namespace .Release.Namespace) }}
 {{- end }}
 
 {{- end }}

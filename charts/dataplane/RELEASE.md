@@ -43,6 +43,10 @@ Also, in both modes:
   creates lives. An Ingress outside it stops being reconciled, silently. To serve one from
   elsewhere, set both `ingress-nginx.rbac.scope: false` and
   `ingress-nginx.controller.scope.enabled: false`; the chart errors if only one is set.
+  Under scoped RBAC, `ingress-nginx.controller.scope.namespace` must be empty (the default)
+  or name the release namespace; anything else now fails the render. The literal
+  `$(POD_NAMESPACE)` is refused too, though it is what an empty value becomes — the guard
+  compares namespaces, not the expressions producing them. Leave it empty.
 
 - **One dataplane per cluster at `low_privilege: false`.** prometheus's ClusterRole and
   ClusterRoleBinding have a fixed name (`union-operator-prometheus-rbac`) but a
@@ -53,13 +57,67 @@ Also, in both modes:
 - **Remove `prometheus.rbac.create` and `prometheus.kube-state-metrics.rbac.create`** from your
   values. Both must stay false; the chart now refuses to render otherwise.
 
+- **A templated `prometheus.kube-state-metrics.namespaces` entry now fails the render** under
+  `low_privilege: true`. The subchart resolves it against its *own* context, so this chart
+  cannot tell which namespace it becomes, and a wrong guess passes a namespace the Role never
+  covers. The refusal is blanket — including `'{{ .Release.Namespace }}'`, which would in fact
+  resolve correctly. Use `releaseNamespace: true` instead.
+
+- **Four kube-state-metrics features now fail the render:** `kubeRBACProxy`,
+  `customResourceState`, `autosharding` and `rbac.extraRules`. `rbac.create: false` switches
+  off the permissions half of each while the feature half still deploys, so none of them was
+  working — `kubeRBACProxy` additionally took the Prometheus target down by serving HTTPS to a
+  plain-HTTP scrape job. Remove them. To add metrics, name the collector in
+  `prometheus.kube-state-metrics.collectors`, which grants and collects together.
+
 - **Removed keys:** `prometheus.kube-state-metrics.metricRelabelings` and
   `dcgm-exporter.namespace` — neither had any effect. If you used the latter to scrape an
-  exporter outside the release namespace, that job no longer matches.
+  exporter outside the release namespace, that job no longer matches. Two more go with the
+  app-serving work: `gateway.config.certmanager` and `gateway.config.network`. Helm does not
+  error on a values key nothing reads, so an overlay still setting either is silently
+  ignored rather than refused; drop them.
+
+- **App serving is now off by default.** `apps.enabled` (and the deprecated `serving.enabled`)
+  previously defaulted to *on*, so every install that set neither got Knative Serving — 32 of
+  the 37 dataplane snapshot fixtures did. It now defaults off, because `low_privilege`
+  defaults on and the two cannot both be true (see the next entry). **Any deployment relying
+  on the default loses app serving on upgrade**, on the zero-trust *and* the legacy
+  knative-operator path; set `apps.enabled: true` (plus `low_privilege: false`) to keep it.
+  Check the generated overlays in `unionai/cloud` for environments that never set it
+  explicitly before pinning this revision. `serving.enabled: true` still works and still takes
+  effect — `apps.enabled` is left null rather than false precisely so the deprecated key keeps
+  being consulted.
+
+- **App serving now requires `low_privilege: false`, and the chart refuses the alternative.**
+  The vendored Knative Serving / Kourier stack under `templates/gateway/` is 10 ClusterRoles
+  and 4 ClusterRoleBindings with no namespaced form — `controller` gets its whole grant
+  through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the
+  webhook configurations, and the deployments take no watch-scope flag — so `low_privilege`
+  cannot scope it. **An existing `zero_trust.enabled: true` install that has not set
+  `low_privilege: false` will fail to render on upgrade** with a message naming both exits:
+  set `low_privilege: false` to keep app serving, or `apps.enabled: false` to run without it.
+  On the ArgoCD path this surfaces as a sync failure rather than a silent degradation, which
+  is the intent — the alternative was a dataplane whose apps never start and nothing saying
+  why. The Envoy gateway, dataproxy and tunnel-service ingress gate on `zero_trust.enabled`
+  alone, so `apps.enabled: false` leaves the zero-trust dataplane fully working.
+  ([docs/rbac.md](docs/rbac.md#app-serving))
+
+- **App serving: Knative TLS certificate provisioning is gone**, at `zero_trust.enabled:
+  true`. The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
+  are removed; TLS terminates at the Envoy gateway. `config-network` is now written
+  literally — the Kourier `ingress-class` this chart vendors, and nothing else — so
+  `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
+  `namespace-wildcard-cert-selector` and the legacy `auto-tls` and `internal-encryption` can
+  no longer be turned on. All six defaulted off, so nothing that was working stops. The
+  controller's grants go with the reconciler: `knative-serving-core` no longer carries write
+  on `cert-manager.io` (including cluster-scoped `clusterissuers`) or
+  `acme.cert-manager.io/challenges`, nor `delete` on the `knative-serving-certmanager`
+  `ClusterRole`.
 
 - **remote_write volume shifts.** Under `low_privilege`, `kube_*` starts flowing while the nine
   dropped jobs cut the other way. At `low_privilege: false`, `container_*` joins it but the
   collector list shrinks — layer the full-privilege overlay to keep `kube_node_*`.
+
 ## 2026.8.2
 
 Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`

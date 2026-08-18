@@ -1,0 +1,9 @@
+{{- /*
+Why this fails the install instead of just skipping the gateway stack: apps.enabled would
+stay true with nothing behind it. The operator would keep advertising app serving and keep
+its serving.knative.dev grant, and every Knative Service would sit unreconciled with nothing
+reporting why.
+*/ -}}
+{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) .Values.low_privilege }}
+{{- fail "App serving at zero_trust.enabled: true requires low_privilege: false. The vendored Knative Serving / Kourier stack is 10 ClusterRoles and 4 ClusterRoleBindings with no namespaced form -- `controller` receives its whole grant through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the webhook configurations, and the deployments take no watch-scope flag -- so low_privilege cannot scope it, and this chart will not render it unscoped behind a flag that promises otherwise. Set low_privilege: false to run app serving, or apps.enabled: false to run the zero-trust dataplane (Envoy gateway, dataproxy, tunnel ingress) without it. See charts/dataplane/docs/rbac.md#app-serving." }}
+{{- end }}

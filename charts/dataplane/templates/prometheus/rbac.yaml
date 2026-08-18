@@ -1,15 +1,14 @@
 {{- /*
-RBAC for prometheus and kube-state-metrics, written here rather than by the subcharts.
-Both are pinned to rbac.create: false so that one flag decides the whole posture -- a
-template can branch on low_privilege, a subchart value cannot.
+RBAC for prometheus and kube-state-metrics. Both subcharts run with rbac.create: false, so
+that a single flag decides the posture:
 
-  low_privilege: true   namespaced Role + RoleBinding in the release namespace
+  low_privilege: true   Role + RoleBinding in the release namespace
   low_privilege: false  ClusterRole + ClusterRoleBinding
 
 The rules are the subcharts' own. Nothing cluster-scoped goes in the namespaced variant:
 naming it in a Role is legal but never matches, so it only hides the denial. Prometheus'
-node rules are dropped there; a kube-state-metrics collector that needs cluster scope is
-refused outright, since the Deployment would still ask for it. See docs/rbac.md.
+node rules are dropped there, and a kube-state-metrics collector that needs cluster scope
+is refused outright. See docs/rbac.md.
 */ -}}
 {{- if .Values.prometheus.enabled }}
 
@@ -17,8 +16,9 @@ refused outright, since the Deployment would still ask for it. See docs/rbac.md.
 {{- $ksm := index $prom "kube-state-metrics" }}
 {{- $lowPriv := .Values.low_privilege }}
 
-{{- /* ServiceAccount names, mirroring each subchart's own helper -- trunc/trimSuffix
-       included, or a long or dash-suffixed override binds a name that never exists. */ -}}
+{{- /* ServiceAccount names, derived the way each subchart derives them. The trunc and
+       trimSuffix matter: a long or dash-suffixed override would otherwise bind a name that
+       never exists. */ -}}
 {{- $promSA := default ($prom.server.fullnameOverride | trunc 63 | trimSuffix "-") ((($prom.serviceAccounts).server).name) }}
 {{- $ksmName := "" }}
 {{- if $ksm.fullnameOverride }}
@@ -30,7 +30,7 @@ refused outright, since the Deployment would still ask for it. See docs/rbac.md.
 {{- $ksmSA := default $ksmName (($ksm.serviceAccount).name) }}
 
 {{- /* One entry per supported collector, so an unmapped one fails the render instead of
-       running unauthorized. Cluster-scoped ones are dropped from the namespaced Role. */ -}}
+       running unauthorized. */ -}}
 {{- $ksmRules := dict
   "pods"            (dict "apiGroups" (list "") "resources" (list "pods"))
   "nodes"           (dict "apiGroups" (list "") "resources" (list "nodes"))

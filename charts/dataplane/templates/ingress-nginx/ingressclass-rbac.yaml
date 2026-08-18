@@ -1,23 +1,23 @@
 {{- /*
-The one cluster-scoped read the scoped controller still needs.
+The one cluster-scoped read a scoped ingress-nginx controller still needs.
 
-rbac.scope: true leaves the controller with a namespaced Role that names `ingressclasses`.
-IngressClass is cluster-scoped, so that rule never matches. The controller doesn't crash --
-it logs "No permissions to list and get Ingress Classes", comes up Ready, and then ignores
-every Ingress with a spec.ingressClassName, which is every Ingress this chart renders.
-Ready pod, green sync, silent 404s.
+At rbac.scope: true the subchart gives the controller a namespaced Role that names
+`ingressclasses`. IngressClass is cluster-scoped, so that rule never matches. The controller
+does not crash -- it logs "No permissions to list and get Ingress Classes", comes up Ready,
+and then ignores every Ingress that sets spec.ingressClassName, which is every Ingress this
+chart renders. Ready pod, green sync, silent 404s.
 
-So this adds back `ingressclasses` and nothing else -- no secrets, configmaps, pods,
-endpoints or nodes, which are the reads scoping exists to remove. Unscoped, the subchart's
-own ClusterRole already covers it.
+This grants `ingressclasses` and nothing else -- not the secrets, configmaps, pods, endpoints
+or nodes that scoping exists to take away. Unscoped, the subchart's own ClusterRole already
+covers it, so nothing renders here.
 */ -}}
 {{- $nginx := index .Values "ingress-nginx" }}
-{{- /* `| default true` would read a literal false as unset -- test the key instead. */ -}}
+{{- /* hasKey, not `| default true`: that reads a literal false as unset. */ -}}
 {{- $rbac := ($nginx.rbac) | default dict }}
 {{- $rbacCreate := or (not (hasKey $rbac "create")) $rbac.create }}
 {{- if and $nginx.enabled $rbacCreate $rbac.scope }}
 
-{{- /* Mirrors the subchart's ingress-nginx.fullname / .serviceAccountName / .namespace. */ -}}
+{{- /* Name, ServiceAccount and namespace, derived the way the subchart derives them. */ -}}
 {{- $fullname := "" }}
 {{- if $nginx.fullnameOverride }}
 {{- $fullname = $nginx.fullnameOverride | trunc 63 | trimSuffix "-" }}
