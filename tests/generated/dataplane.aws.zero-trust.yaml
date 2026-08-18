@@ -54,16 +54,6 @@ metadata:
     'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
 
 ---
-# Source: dataplane/templates/common/union-serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union
-  namespace: union
-  annotations:
-    eks.amazonaws.com/role-arn: test-worker-iam-role-arn
-automountServiceAccountToken: true
----
 # Source: dataplane/templates/flyteconnector/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -2110,37 +2100,6 @@ data:
     sample-rate: "0.1"
 
 ---
-# Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: build-image-config
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  storage.yaml: | 
-    storage:
-      container: "test-metadata-bucket"
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: iam
-          region: test-region
-      enable-multicontainer: true
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: "123456789012.dkr.ecr.test-region.amazonaws.com/union-dataplane"
-  authentication-type: "noop"
-
----
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -2239,8 +2198,6 @@ data:
   webhook.yaml: |
 
     
-    propeller:
-      limit-namespace: union
     webhook:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
@@ -2284,8 +2241,6 @@ data:
       capacity: 100000
       cluster: 'test-cluster-name'
       dispatcherCount: 512
-      limit-namespace: union
-      namespace-template: union
       organization: 'test-org-name'
       refreshInterval: 10s
       task_resources:
@@ -4026,7 +3981,6 @@ data:
         appIngressOriginURL: "http://union-operator-gateway:80"
         enableDataplaneIngress: true
         dataplaneIngressOriginURL: "http://union-operator-gateway:8888"
-      limitNamespace: union
       apps:
         enabled: 'true'
       syncClusterConfig:
@@ -4053,8 +4007,6 @@ data:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
-      org:
-        namespaceTemplate: "union"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -6807,7 +6759,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a52e2b07f5b137e020e8fc851e9ab2c90701bef44dfcffd430aa00af9ccc24c"
+        configChecksum: "898bb04ff63b7200302c378f79016eea26f56feb5798582f4ae6347270c571d"
         
       labels:
         
@@ -7929,7 +7881,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "207d417719d17cff11a8803bfef2880aed41ef5afade7a8d398167dd085ed18"
+        configChecksum: "9dde7a94f5f7ae415e683491aa5eee81629e5170d326f8ee1db422b127c34b9"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -8036,7 +7988,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a52e2b07f5b137e020e8fc851e9ab2c90701bef44dfcffd430aa00af9ccc24c"
+        configChecksum: "898bb04ff63b7200302c378f79016eea26f56feb5798582f4ae6347270c571d"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -8175,7 +8127,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "a52e2b07f5b137e020e8fc851e9ab2c90701bef44dfcffd430aa00af9ccc24c"
+        configChecksum: "898bb04ff63b7200302c378f79016eea26f56feb5798582f4ae6347270c571d"
         
       labels:
         
@@ -8301,7 +8253,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "207d417719d17cff11a8803bfef2880aed41ef5afade7a8d398167dd085ed18"
+        configChecksum: "9dde7a94f5f7ae415e683491aa5eee81629e5170d326f8ee1db422b127c34b9"
         
     spec:
       securityContext:
@@ -8970,20 +8922,6 @@ spec:
   # This is the Go import path for the binary that is containerized
   # and substituted here.
   image: gcr.io/knative-releases/knative.dev/serving/cmd/queue@sha256:c61042001b1f21c5d06bdee9b42b5e4524e4370e09d4f46347226f06db29ba0f
-
----
-# Source: dataplane/templates/common/task-podtemplate.yaml
-apiVersion: v1
-kind: PodTemplate
-metadata:
-  name: task-template
-  namespace: union
-template:
-  spec:
-    serviceAccountName: union
-    containers:
-      - name: default
-        image: docker.io/rwgrim/docker-noop
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1

@@ -3,6 +3,8 @@
 # Render tests for the dataplane RBAC guards in templates/prometheus/{rbac,validate}.yaml,
 # templates/ingress-nginx/validate.yaml and templates/gateway/validate.yaml.
 #
+# It also covers the values-key combinations no snapshot fixture pins.
+#
 # The snapshot suite only diffs renders that succeed, so it cannot see a guard at all. Each
 # case here asserts either that a guard refuses bad values or that it leaves a working
 # configuration alone. Refusals are matched on part of the error text, so a guard firing for
@@ -376,6 +378,37 @@ expect-manifest "the deprecated serving.enabled still turns app serving on" \
   "${zt[@]}" --set serving.enabled=true --set low_privilege=false
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: knative-serving-core" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set low_privilege=false
+
+# low_privilege decides privilege scope, namespaces.enabled decides whether work namespaces
+# are pre-seeded, and commonServiceAccount.enabled decides identity sharing. The snapshot
+# fixtures pin the combinations a deployment uses; these pin that the three axes are actually
+# independent, including the combinations no fixture covers.
+echo "- the privilege, namespace and identity axes are independent"
+expect-manifest "namespaces.enabled pre-seeds at full privilege" \
+  present "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true
+expect-manifest "and namespaces.create: false leaves the Namespace objects to someone else" \
+  absent "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true --set namespaces.create=false
+expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces.enabled says" \
+  absent "helm.sh/resource-policy: keep" \
+  --set namespaces.enabled=true
+
+# The bug this replaces: namespaces.enabled defaults false, so `or (not namespaces.enabled)
+# low_privilege` made a default full-privilege install look single-namespace and gated off the
+# component that creates namespaces for newly registered projects.
+expect-manifest "clusterresourcesync renders at full privilege with namespaces.enabled unset" \
+  present "name: union-syncresources" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "and is still suppressed under low_privilege, where nothing needs it" \
+  absent "name: union-syncresources" \
+  --set clusterresourcesync.enabled=true
+
+expect-manifest "commonServiceAccount.enabled: false is honored under low_privilege" \
+  present "serviceAccountName: operator-system" \
+  --set commonServiceAccount.enabled=false
+expect-manifest "and the shared identity is still the default there" \
+  absent "serviceAccountName: operator-system"
 
 echo
 if [[ ${failures} -ne 0 ]]; then

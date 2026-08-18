@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### Privilege and namespace axes
+
+- **`low_privilege` is now the chart's only privilege axis; `namespaces.enabled` no longer
+  implies single-namespace mode.** The `singleNamespace` helper — which drives
+  `limit-namespace` / `namespace_mapping` / `limitNamespace` injection, the single-namespace
+  task PodTemplate, and the `clusterresourcesync` gate — was
+  `or (not namespaces.enabled) low_privilege`. That folded a
+  namespace *pre-seed* toggle into a *privilege* decision, and the two are not the same thing:
+  `namespaces.enabled` only pre-seeds a fixed list of namespaces, while a full-privilege
+  dataplane creates namespaces for newly registered projects dynamically via
+  `clusterresourcesync`. `singleNamespace` is now exactly `low_privilege`, the one flag that
+  really does mean "no namespaces are created by any route."
+
+  **This fixes a silent misconfiguration in the default full-privilege install.**
+  `namespaces.enabled` defaults to `false`, so `low_privilege: false` alone previously put the
+  chart in single-namespace mode — and all three `clusterresourcesync` templates are gated
+  `not singleNamespace`, so the very component that creates per-project namespaces was
+  suppressed. A multi-namespace dataplane that left `namespaces.enabled` at its default had
+  nothing creating namespaces for new projects at all.
+
+  **Every `low_privilege: true` deployment is namespace-scoped exactly as before**, and
+  pre-seeds nothing regardless of `namespaces.enabled`. Only the
+  `namespaces.enabled: false` + `low_privilege: false` combination changes behaviour; see
+  Migration.
+
+- **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
+  `useCommonServiceAccount` helper previously returned true whenever `singleNamespace` was
+  set, so an explicit `commonServiceAccount.enabled: false` was silently discarded in the
+  chart's default mode. Identity sharing and privilege scope are independent concerns and are
+  now keyed independently. **The default is unchanged (`true`), so no existing install is
+  affected.** Setting it `false` creates one ServiceAccount per component; each new name needs
+  a matching workload-identity binding on the cloud side before those workloads can
+  authenticate. It does not narrow RBAC.
+
+- **`namespaces.static` (new)** enumerates the work namespaces to pre-create when
+  `namespaces.enabled: true`. It defaults to the six names `common/namespaces.yaml` previously
+  hardcoded (`flytesnacks-{development,staging,production}` and
+  `union-health-monitoring-{development,staging,production}`), so the rendered output is
+  unchanged for anyone who has not set it. **This is not the full set a dataplane uses** —
+  `clusterresourcesync` creates one namespace per project/domain at runtime and cannot know
+  those names in advance.
+
+- **`namespaces.create` (new, default `true`)** is the supported path for
+  externally-managed namespaces. Consulted only when `namespaces.enabled: true`. Set it
+  `false` when Terraform, a platform team or anything else owns the `Namespace` objects, and
+  Helm never touches them — no adoption annotations to negotiate.
+
+- **Namespaces created from `namespaces.static` now carry `helm.sh/resource-policy: keep`, so
+  `helm uninstall` no longer deletes them.** Uninstalling previously cascade-deleted each
+  managed namespace and everything inside it: task pods, Secrets, PVCs, and objects
+  `clusterresourcesync` created at runtime that this chart never knew about. That is the
+  ordinary consequence of Helm owning a resource, but the resource is a whole namespace,
+  which made it the largest blast radius in the chart and rarely what "uninstall the
+  dataplane" was meant to mean. Leftover namespaces are one `kubectl delete` to recover; the
+  reverse is not.
+
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
@@ -33,6 +89,45 @@ Also, in both modes:
   unchanged — cluster-scoped by design.
 
 ### Migration / action required
+
+- **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a
+  genuine multi-namespace deployment.** If you were running that combination and relying on it
+  behaving as single-namespace, it will not any more: task pods are no longer pinned to the
+  release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping`
+  falls back to its `{{ project }}-{{ domain }}` default unless you set
+  `namespace_mapping.template`), and the single-namespace task PodTemplate, the `union`
+  task ServiceAccount and the image-builder ConfigMap stop being rendered. Union's own
+  RBAC is unchanged — it already keyed on `low_privilege`, which this combination already
+  had set to `false`. ServiceAccounts are unaffected too: `commonServiceAccount.enabled`
+  defaults to `true`, so components keep sharing `union-system`. The one privilege
+  increase is `clusterresourcesync` itself: once you enable it (see the next entry) it
+  brings a ClusterRole and two ClusterRoleBindings, which is how it creates namespaces.
+  **If you actually want single-namespace
+  behavior, set `low_privilege: true`** — that is now the flag that means it, and
+  `namespaces.enabled: false` on its own never did.
+
+- **A `low_privilege: false` dataplane must now enable `clusterresourcesync` (or pre-create
+  namespaces).** It defaults to `false` and was previously suppressed entirely in the
+  `namespaces.enabled: false` mode by the `singleNamespace` gate, so leaving it off looked
+  harmless. Now that the mode is genuinely multi-namespace, something has to create the
+  per-project/domain namespaces as projects are registered. Either set
+  `clusterresourcesync.enabled: true`, or pre-create every namespace your
+  `namespace_mapping.template` can produce and enumerate them in `namespaces.static` with
+  `namespaces.enabled: true`. Task pods land in `Forbidden` / `namespace not found` otherwise.
+
+- **If you relied on `helm uninstall` deleting the pre-seeded namespaces, delete them with
+  `kubectl` instead.** Helm still owns them for install and upgrade; only delete changes. If
+  your namespaces are created outside this chart, set `namespaces.create: false` rather than
+  annotating them for Helm adoption.
+
+- **Quoted booleans are a silent hazard on every boolean key, and the chart does not reject
+  them.** Go's template engine treats any non-empty string as true, so `"false"` means
+  **true**. `low_privilege: "false"` fails safe, landing on the more restrictive branch;
+  `namespaces.enabled: "false"` does not — it creates every namespace in `namespaces.static`
+  while the values file reads `false`. `commonServiceAccount.enabled: "false"` collapses
+  per-component identities back onto the shared ServiceAccount. **If your values are
+  generated, confirm the generator emits real booleans** — a `templatefile`/heredoc pipeline
+  stringifies scalars, `yamlencode` does not.
 
 - **At `low_privilege: false`, layer `examples/values.full-privilege.yaml`.** The flag grants
   the cluster-wide read; this file uses it (nodes + namespaces collectors, every namespace).

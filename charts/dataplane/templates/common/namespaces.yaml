@@ -1,32 +1,31 @@
-{{- if and .Values.namespaces.enabled (not .Values.low_privilege) }}
+{{- if and .Values.namespaces.enabled .Values.namespaces.create (not (include "singleNamespace" .)) }}
+{{/*
+Pre-seeded task namespaces from .Values.namespaces.static. clusterresourcesync
+creates further namespaces at runtime as projects are registered, and those
+cannot appear here.
+*/}}
+{{/*
+helm.sh/resource-policy: keep makes `helm uninstall` leave these Namespaces in
+place. Without it, uninstall deletes each namespace and everything inside it:
+task pods, Secrets, PVCs, ResourceQuotas, and objects clusterresourcesync
+created at runtime. The cost is leftover namespaces, which one kubectl delete
+recovers; the reverse does not.
+
+Verified on k3s 1.35: uninstall leaves the Namespace and its Helm ownership
+metadata, so reinstalling under the same release name adopts it cleanly.
+Reinstalling under a different release name fails with "invalid ownership
+metadata". Renaming the release means re-annotating the Namespaces for the new
+release, not deleting them.
+
+Set namespaces.create: false when the namespaces are created elsewhere.
+*/}}
+{{- range $ns := .Values.namespaces.static }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: flytesnacks-development
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-staging
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-production
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-development
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-staging
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-production
-{{- end}}
+  name: {{ $ns }}
+  annotations:
+    helm.sh/resource-policy: keep
+{{- end }}
+{{- end }}
