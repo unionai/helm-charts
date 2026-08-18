@@ -77,6 +77,31 @@ Also, in both modes:
   error on a values key nothing reads, so an overlay still setting either is silently
   ignored rather than refused; drop them.
 
+- **App serving is now off by default.** `apps.enabled` (and the deprecated `serving.enabled`)
+  previously defaulted to *on*, so every install that set neither got Knative Serving — 32 of
+  the 37 dataplane snapshot fixtures did. It now defaults off, because `low_privilege`
+  defaults on and the two cannot both be true (see the next entry). **Any deployment relying
+  on the default loses app serving on upgrade**, on the zero-trust *and* the legacy
+  knative-operator path; set `apps.enabled: true` (plus `low_privilege: false`) to keep it.
+  Check the generated overlays in `unionai/cloud` for environments that never set it
+  explicitly before pinning this revision. `serving.enabled: true` still works and still takes
+  effect — `apps.enabled` is left null rather than false precisely so the deprecated key keeps
+  being consulted.
+
+- **App serving now requires `low_privilege: false`, and the chart refuses the alternative.**
+  The vendored Knative Serving / Kourier stack under `templates/gateway/` is 10 ClusterRoles
+  and 4 ClusterRoleBindings with no namespaced form — `controller` gets its whole grant
+  through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the
+  webhook configurations, and the deployments take no watch-scope flag — so `low_privilege`
+  cannot scope it. **An existing `zero_trust.enabled: true` install that has not set
+  `low_privilege: false` will fail to render on upgrade** with a message naming both exits:
+  set `low_privilege: false` to keep app serving, or `apps.enabled: false` to run without it.
+  On the ArgoCD path this surfaces as a sync failure rather than a silent degradation, which
+  is the intent — the alternative was a dataplane whose apps never start and nothing saying
+  why. The Envoy gateway, dataproxy and tunnel-service ingress gate on `zero_trust.enabled`
+  alone, so `apps.enabled: false` leaves the zero-trust dataplane fully working.
+  ([docs/rbac.md](docs/rbac.md#app-serving))
+
 - **App serving: Knative TLS certificate provisioning is gone**, at `zero_trust.enabled:
   true`. The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
   are removed; TLS terminates at the Envoy gateway. `config-network` is now written

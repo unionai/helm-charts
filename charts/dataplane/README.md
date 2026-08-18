@@ -346,7 +346,16 @@ node metrics, and task pods in project namespaces — layer
 `examples/values.full-privilege.yaml`, which carries the kube-state-metrics settings Helm
 can't derive from the flag.
 
-**`low_privilege` is not a whole-chart namespace boundary.** It scopes Union-authored
+**App serving is off by default, and requires `low_privilege: false`.** The vendored Knative
+Serving / Kourier stack at `zero_trust.enabled: true` is 10 ClusterRoles and 4
+ClusterRoleBindings that have no namespaced equivalent, so the chart **refuses to render**
+`apps.enabled: true` alongside `low_privilege: true`. Because `low_privilege` defaults on,
+`apps.enabled` defaults off — a default install never meets that refusal. To run app serving,
+set **both** `apps.enabled: true` and `low_privilege: false`. The Envoy gateway, dataproxy and
+tunnel ingress are unaffected by `apps.enabled` and keep working either way. See
+[docs/rbac.md](docs/rbac.md#app-serving).
+
+**`low_privilege` is still not a whole-chart namespace boundary.** It scopes Union-authored
 workload RBAC (operator, propeller, leaseworker, webhook, nodeobserver) along with prometheus
 and kube-state-metrics, and it gates namespace creation and priorityclasses. It does not
 reach the components below, which hold cluster-scoped permissions in either mode — so a
@@ -354,7 +363,6 @@ namespace-confined install identity will not be enough to deploy the chart:
 
 | Component | Default | Cluster-scoped grant |
 | --- | --- | --- |
-| Knative gateway | on at `zero_trust.enabled: true` | 10 ClusterRoles and 4 ClusterRoleBindings, vendored from Knative Serving |
 | Helm hook cleanup | **on** | a ClusterRole for the webhook-cleanup job |
 | opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
 | metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |

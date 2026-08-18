@@ -134,6 +134,42 @@ function expect-collection-scope {
   fi
 }
 
+# expect-manifest <description> <present|absent> <grep pattern> [helm --set flags...]
+# Asserts the values render AND that a manifest is or is not in the output. Used where the
+# gate is a plain conditional rather than a refusal: nothing errors either way, so the only
+# evidence is what came out.
+function expect-manifest {
+  local desc=$1; shift
+  local want=$1; shift
+  local pattern=$1; shift
+  local out
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  if grep -q -- "${pattern}" <<<"${out}"; then
+    if [[ "${want}" == "present" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected '${pattern}' to be absent from the render, but it is there"
+      failures=$((failures + 1))
+    fi
+  else
+    if [[ "${want}" == "absent" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected '${pattern}' in the render, but it is missing"
+      failures=$((failures + 1))
+    fi
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -319,6 +355,43 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.enabled=true \
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
+
+# The vendored Knative Serving / Kourier stack under templates/gateway/ is 10 ClusterRoles and
+# 4 ClusterRoleBindings with no namespaced form, so app serving requires low_privilege: false.
+# The snapshot suite covers the rendering half (dataplane.aws.zero-trust.yaml pins the flag
+# off); it cannot cover the refusal, and it cannot show that the refusal leaves the rest of the
+# zero-trust dataplane reachable. Both are asserted here.
+echo "- app serving and low_privilege are refused together, not silently reconciled"
+# knative-operator must be disabled alongside zero_trust (Helm evaluates that subchart
+# condition at parse time), and orgName is what the Envoy auth filter is keyed on.
+zt=(--set zero_trust.enabled=true --set knative-operator.enabled=false --set orgName=test-org)
+expect-manifest "the stack renders with apps on and low_privilege off" present "name: knative-serving-core" \
+  "${zt[@]}" --set apps.enabled=true --set low_privilege=false
+expect-manifest "and its Kourier half with it" present "name: net-kourier" \
+  "${zt[@]}" --set apps.enabled=true --set low_privilege=false
+expect-refusal "apps on at the low_privilege default" \
+  "requires low_privilege: false" \
+  "${zt[@]}" --set apps.enabled=true
+
+# App serving is off by default precisely so the default install never meets that refusal.
+# A zero-trust deploy that sets nothing else has to render.
+expect-manifest "the default zero-trust install renders, with no Knative stack" \
+  absent "name: knative-serving-core" "${zt[@]}"
+
+# The refusal names two exits and both have to work. Dropping app serving must leave the
+# zero-trust dataplane intact: the Envoy gateway gates on zero_trust.enabled alone, holds no
+# cluster-scoped RBAC, and its static routes are what zero trust is. A guard that forced a
+# choice between app serving and having any ingress at all would be the wrong guard.
+expect-manifest "and keeps the Envoy gateway" \
+  present "union-operator-gateway-envoy-bootstrap" "${zt[@]}"
+
+# The deprecated flag still reaches app serving, which is why values.yaml leaves
+# apps.enabled null rather than writing false into it.
+expect-manifest "the deprecated serving.enabled still turns app serving on" \
+  present "name: knative-serving-core" \
+  "${zt[@]}" --set serving.enabled=true --set low_privilege=false
+expect-manifest "and an explicit apps.enabled still overrides it" absent "name: knative-serving-core" \
+  "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set low_privilege=false
 
 echo
 if [[ ${failures} -ne 0 ]]; then

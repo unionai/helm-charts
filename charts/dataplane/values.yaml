@@ -1954,12 +1954,18 @@ prometheus:
     enabled: false
 
 # -- Scopes Union-authored workload RBAC, plus the prometheus and kube-state-metrics
-#  subcharts, to a single namespace: a Role instead of a ClusterRole. Also gates namespace
-#  creation and priorityclasses. This limits the functionality though. It is not a
-#  whole-chart namespace boundary -- the Helm hook cleanup job creates a ClusterRole
-#  either way, as do opencost and metrics-server when enabled. See docs/rbac.md.
+#  subcharts, to a single namespace: a Role instead of a ClusterRole. Also gates app
+#  serving, namespace creation and priorityclasses. This limits the functionality though.
+#  It is not a whole-chart namespace boundary -- the Helm hook cleanup job creates a
+#  ClusterRole either way, as do opencost and metrics-server when enabled. See docs/rbac.md.
 #
 # Known tradeoffs when low_privilege is enabled:
+# - App serving cannot run, and asking for both is refused rather than degraded. The
+#   vendored Knative Serving / Kourier stack at zero_trust.enabled: true is 10
+#   ClusterRoles and 4 ClusterRoleBindings with no namespaced form -- aggregated roles,
+#   cluster-scoped resources, and no watch-scope flag on the deployments. Set
+#   apps.enabled: false to run the zero-trust dataplane without it; the Envoy gateway,
+#   dataproxy and tunnel ingress are unaffected either way. See docs/rbac.md#app-serving.
 # - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
 #   cluster-scoped node discovery, and kube-state-metrics is limited to the release
 #   namespace (no cross-namespace pod resource metrics for task execution pods).
@@ -1979,6 +1985,13 @@ low_privilege: true
 # the tunnel-service dataplane ingress. Customers must also set
 # `knative-operator.enabled: false` because Helm evaluates that subchart
 # condition at parse time and can't derive it from this flag.
+#
+# The Knative half of that -- everything under templates/gateway/ except Envoy
+# itself -- additionally requires `low_privilege: false`; it holds cluster-scoped
+# RBAC that cannot be narrowed, and the chart refuses to render the two together.
+# To run the zero-trust dataplane at the `low_privilege: true` default, set
+# `apps.enabled: false`: you keep the Envoy gateway, dataproxy and tunnel ingress
+# and give up app serving. See docs/rbac.md#app-serving.
 zero_trust:
   enabled: false
 
@@ -2155,7 +2168,12 @@ tunnelService:
 
 # -- Union app serving (Knative Serving). Supersedes the deprecated
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
-# deprecated flag can still take effect — the effective default is `true`.
+# deprecated flag can still take effect — the effective default is `false`.
+#
+# App serving is opt-in because `low_privilege` defaults to true and the two
+# cannot both be on: the Knative stack holds cluster-scoped RBAC that cannot be
+# narrowed, and the chart refuses the combination rather than deploying apps that
+# never start. Set `enabled: true` here AND `low_privilege: false` to run it.
 #
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
@@ -2167,9 +2185,10 @@ apps:
 # -- Configure app serving and knative.
 serving:
   # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
-  # unset. Left unset (null) so an explicit value is distinguishable from the
-  # default. Installs Knative Serving — knative-operator must be running in the
-  # cluster for the non-zero-trust path to work.
+  # unset — and still honored, which is why `apps.enabled` stays null rather
+  # than being set to false: a literal there would shadow this key for everyone
+  # who has not migrated yet. Installs Knative Serving — knative-operator must be
+  # running in the cluster for the non-zero-trust path to work.
   enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
