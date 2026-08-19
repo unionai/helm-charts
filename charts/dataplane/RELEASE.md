@@ -136,22 +136,33 @@ wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, a
 `serviceaccounts` it grants `impersonate`.
 
 `leaseworker` and `flytepropeller` are on this model too, so the roles named
-`<release-ns>-leaseworker` and `flytepropeller-role` — and the bindings of the same names —
-no longer exist. Both declared the same `apiGroups: ['*']`, `resources: ['*']` grant, and it
-now lives once in the pooled `union-work-ns` role rather than twice in roles of their own.
+`<release-ns>-leaseworker` and `flytepropeller-role`, and the bindings named
+`<release-ns>-leaseworker` and `flytepropeller-binding`, no longer exist. Both declared the
+same `apiGroups: ['*']`, `resources: ['*']` grant, and it now lives once in the pooled
+`union-work-ns` role rather than twice in roles of their own.
+
+**Two consequences of pooling that rule, both confined to work namespaces.** The pooled role
+carries the slot's verb set, so the wildcard now also grants `deletecollection`, which
+neither component's own rule did. And because a pooled role is bound to every declaring
+ServiceAccount, `commonServiceAccount.enabled: false` no longer keeps the operator and proxy
+to their enumerated resources — on this slot they hold the wildcard too. Both apply **only
+where `union-work-ns` is bound**: the work namespaces, never the release namespace at
+`low_privilege: false`. Union's own Deployments and Secrets are unaffected either way, and at
+the default shared identity nothing changes at all — that one account already held this
+grant, cluster-wide.
 
 **Read the raw diff carefully here: this is a narrowing, not a widening.** At
 `low_privilege: false` the released chart bound `<release-ns>-leaseworker` — a wildcard on
 every resource in every API group at `get`, `list`, `watch`, `create`, `update`, `delete`,
 `patch` — with a **`ClusterRoleBinding`**, so it applied in every namespace in the cluster,
 including the release namespace and `kube-system`. `flytepropeller-role` was the same shape.
-What replaces them is the same wildcard in a `ClusterRole` that is only ever referenced from
+What replaces them is that wildcard in a `ClusterRole` that is only ever referenced from
 per-work-namespace `RoleBindings`, so it conveys nothing outside the work namespaces and
 nothing at all on Union's own objects. A new `ClusterRole` appearing in the diff is what that
 looks like; the object that actually granted cluster-wide access is the `ClusterRoleBinding`
 that went away. Under `low_privilege: true` both were namespaced `Role`s bound in the release
-namespace, and the pooled `Role` that replaces them is bound in the same place — packaging
-only.
+namespace, and the pooled `Role` that replaces them is bound in the same place, so the change
+there is one of packaging plus the two additions noted above.
 
 **Grants that are gone.** From `leaseworker` and `flytepropeller`, and only at
 `low_privilege: false`:
@@ -176,7 +187,8 @@ From the operator:
   grant at all, and neither has write on either.
 - `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
   `low_privilege: false`, so the default install never had it.
-- `post` left the `flyteworkflows` rule. It is not a Kubernetes verb and authorized nothing.
+- `post` left the `flyteworkflows` rule — `flytepropeller`'s rule, not the operator's. It is
+  not a Kubernetes verb and authorized nothing.
 
 ### Third-party subchart RBAC
 
@@ -227,8 +239,10 @@ Also, in both modes:
   - **Static** — `namespaces.enabled: true` with a non-empty `namespaces.static`. This chart
     emits one `RoleBinding` per listed namespace. It is a single pooled role, so the count
     does not grow with the number of components or with `commonServiceAccount.enabled: false`.
-    In this posture the chart binds the namespaces itself, so the two `clusterresourcesync`
-    grants above are withdrawn rather than duplicated.
+    **This covers the listed names only.** `namespaces.static` is a pre-seeded subset, not the
+    full set a dataplane uses, so if projects are registered after install you still need
+    `clusterresourcesync` (or your own tooling) for their namespaces — the two are additive,
+    not alternatives, and the grants above stay in place when both are on.
   - **Your own tooling** — if you provision work namespaces yourself, create the binding
     alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, `roleRef`
     pointing at the `ClusterRole` of the same name, with one `ServiceAccount` subject per
@@ -241,10 +255,11 @@ Also, in both modes:
   the release namespace is the work namespace and the chart binds there itself.
 
 - **BREAKING: the per-component role names `operator-system`, `proxy-system`,
-  `<release-ns>-leaseworker` and `flytepropeller-role` no longer exist**, nor do the bindings
-  of the same names. Their rules moved into the destination roles above. Any external tooling,
-  audit policy or `RoleBinding` outside this chart that references them by name must be
-  updated.
+  `<release-ns>-leaseworker` and `flytepropeller-role` no longer exist**, nor do their
+  bindings — `operator-system`, `proxy-system`, `<release-ns>-leaseworker` and
+  `flytepropeller-binding`. Their rules moved into the destination roles above. Any external
+  tooling, audit policy or `RoleBinding` outside this chart that references them by name must
+  be updated.
 
 - **At `low_privilege: false`, the operator no longer reads or writes Secrets and Deployments
   in the release namespace unless a feature that needs them is on.** It previously held

@@ -713,27 +713,40 @@ echo
 echo "- the runtime provisioner supplies the work-ns binding the chart cannot"
 
 # Where work namespaces are created at runtime the chart binds nothing itself, so
-# clusterresourcesync has to. Both halves must appear together: the RoleBinding it is told to
-# create per namespace, and the `bind` grant without which the API server refuses to let it
-# create one. Either half alone leaves a full-privilege install whose work namespaces are
-# unreachable, and no snapshot of the release namespace alone would show it.
+# clusterresourcesync has to. Three grants must appear together: the RoleBinding it is told to
+# create per namespace, ordinary authority to create a RoleBinding at all, and the `bind`
+# grant without which the API server refuses to let it reference a role it does not hold.
+# Any one missing leaves a full-privilege install whose work namespaces are unreachable, and
+# no snapshot of the release namespace alone would show it.
 expect-manifest "the work-ns RoleBinding is handed to the provisioner at full privilege" \
   present "ab_work_ns_binding.yaml" \
   --set low_privilege=false --set clusterresourcesync.enabled=true
-expect-role-resource "and the bind grant that lets it create one" \
+expect-role-resource "and the bind grant that lets it reference the pooled role" \
   present union-clustersync-resource clusterroles \
   --set low_privilege=false --set clusterresourcesync.enabled=true
+# expect-role-resource matches a line anywhere in the role, so this pins the resourceNames
+# entry rather than the verb: a bind grant that lost its resourceNames, or aimed at another
+# role, would stop naming union-work-ns here.
+expect-role-resource "confined by resourceNames to the one chart-authored role" \
+  present union-clustersync-resource union-work-ns \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# clusterRoleRules is an operator override, so the ordinary rolebindings authority is emitted
+# from the template too. Withdrawing it would fail silently: clean render, refused sync.
+expect-role-resource "and ordinary rolebindings authority survives an emptied override" \
+  present union-clustersync-resource rolebindings \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules=null'
 
-# Under static posture the chart emits the per-namespace RoleBindings itself, so the
-# provisioner must not also be told to. The two halves key off dataplane.rbac.staticPosture
-# and suppress together -- leaving the template while dropping the grant would hand
-# clusterresourcesync an object it is refused every sync.
-expect-manifest "and neither is handed over once the chart binds the namespaces itself" \
-  absent "ab_work_ns_binding.yaml" \
+# namespaces.static is a pre-seeded SUBSET, not the complement of runtime provisioning:
+# clusterresourcesync still creates a namespace per project as projects are registered. So
+# both halves stay in this posture too. Suppressing them here is the bug that leaves every
+# namespace registered after install unreachable.
+expect-manifest "and both are still handed over when the chart also pre-seeds namespaces" \
+  present "ab_work_ns_binding.yaml" \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
-expect-role-resource "with the bind grant withdrawn in the same posture" \
-  absent union-clustersync-resource clusterroles \
+expect-role-resource "with the bind grant kept in the same posture" \
+  present union-clustersync-resource clusterroles \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 

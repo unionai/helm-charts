@@ -142,12 +142,17 @@ Verbs a cluster-slot declaration may name. Excludes wildcards, `escalate` and
 {{- end -}}
 
 {{/*
-True ("true" or "") when the work namespaces are known at render time, so the
-chart creates the bindings itself rather than delegating them to whatever
-provisions namespaces at runtime. Everything that keys off this define must move
-together, or a namespace ends up with no binding and no provisioner allowed to
-make one: the per-namespace RoleBindings in dataplane.rbac.emitSlot, the
-provisioner's `bind` rule, and the RoleBinding template handed to it.
+True ("true" or "") when some work namespaces are known at render time, so the
+chart can create their bindings itself.
+
+This is not the complement of runtime provisioning, and nothing else may treat it
+as one. namespaces.static is a pre-seeded subset: clusterresourcesync still
+creates a namespace per project/domain as projects are registered, whatever this
+returns. So the provisioner's `bind` rule and the RoleBinding handed to it are
+emitted in both postures -- withholding them here would leave every namespace
+registered after install with no binding and nothing allowed to make one, which
+renders clean and fails at first task execution. Only the per-namespace
+RoleBindings in dataplane.rbac.emitSlot key off this.
 */}}
 {{- define "dataplane.rbac.staticPosture" -}}
 {{- if and .Values.namespaces.static .Values.namespaces.enabled -}}true{{- end -}}
@@ -301,12 +306,15 @@ subjects:
 {{- else if include "dataplane.rbac.staticPosture" $ctx }}
 {{/*
 One RoleBinding per known work namespace. Referencing a ClusterRole from a
-RoleBinding scopes the grant to that namespace. When the namespaces are instead
-created at runtime nothing is emitted here, and whatever provisions them owes each
-one a binding: dataplane.rbac.provisionerBindingTemplate renders exactly that
-object, and dataplane.rbac.provisionerBindRule the `bind` grant its creator needs.
-Both are wired to clusterresourcesync, which is the provisioner this chart ships;
-anything else provisioning work namespaces owes the same two things itself.
+RoleBinding scopes the grant to that namespace.
+
+This covers namespaces.static and nothing else. Namespaces created at runtime are
+not known here, so their bindings come from the provisioner instead:
+dataplane.rbac.provisionerBindingTemplate renders exactly that object and
+dataplane.rbac.provisionerBindRule the `bind` grant its creator needs. Both are
+wired to clusterresourcesync and are emitted in both postures, because a static
+list does not stop projects being registered later; anything else provisioning
+work namespaces owes the same two things itself.
 */}}
 {{- range $ns := $ctx.Values.namespaces.static }}
 ---
@@ -355,10 +363,15 @@ every permission in the referenced role or `bind` on it. resourceNames confines
 this to the one chart-authored role, so clusterresourcesync never holds that
 role's permissions and cannot substitute a stronger role.
 
-Returns a one-rule YAML list, or nothing when the chart binds work-ns itself.
+Emitted whether or not namespaces.static pre-seeds some namespaces: static is a
+subset, and the namespaces registered after install are exactly the ones only the
+provisioner can reach.
+
+Returns a one-rule YAML list, or nothing when no component declares work-ns and
+there is therefore no pooled role to bind.
 */}}
 {{- define "dataplane.rbac.provisionerBindRule" -}}
-{{- if not (include "dataplane.rbac.staticPosture" .) -}}
+{{- if fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" . "slot" "work-ns")) -}}
 - apiGroups:
     - rbac.authorization.k8s.io
   resources:
@@ -379,11 +392,15 @@ that order: work-ns is what gives clusterresourcesync access to a new namespace,
 this binding must be applied before the ServiceAccount and ResourceQuota it then
 creates, or new projects stall until the next sync.
 
-Returns nothing when the chart binds work-ns itself, matching
-dataplane.rbac.provisionerBindRule: the two halves are one grant, and a provisioner
-told to create a binding it has no `bind` rule for would be refused on every sync.
-Nothing to bind is the other empty case -- with no work-ns declarer there is no
-pooled role for the RoleBinding to reference.
+Emitted alongside dataplane.rbac.provisionerBindRule and under the same condition:
+the two halves are one grant, and either alone is useless. Emitted even when
+namespaces.static pre-seeds some namespaces, because the chart's own RoleBindings
+cover only that list -- a project registered after install gets its namespace from
+the provisioner, so it gets its binding from here or from nowhere. Where both
+apply to the same namespace the two produce the identical object.
+
+Returns nothing when no component declares work-ns: there is then no pooled role
+for the RoleBinding to reference.
 
 `{{ namespace }}` is clusterresourcesync's own placeholder, substituted at
 provision time, so it is passed through literally. That is also why the ConfigMap
@@ -391,7 +408,7 @@ carrying this does not `tpl` its entries.
 */}}
 {{- define "dataplane.rbac.provisionerBindingTemplate" -}}
 {{- $subjects := fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" . "slot" "work-ns")) -}}
-{{- if and (not (include "dataplane.rbac.staticPosture" .)) $subjects -}}
+{{- if $subjects -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" . "slot" "work-ns" "component" "") -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

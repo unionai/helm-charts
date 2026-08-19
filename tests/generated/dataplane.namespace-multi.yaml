@@ -427,6 +427,20 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
     
+  ab_work_ns_binding.yaml: | 
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: union-work-ns
+      namespace: {{ namespace }}
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: union-work-ns
+    subjects:
+      - kind: ServiceAccount
+        name: union-system
+        namespace: union
 
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
@@ -4233,6 +4247,23 @@ rules:
     - services
     verbs:
     - '*'
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - rolebindings
+    verbs:
+    - get
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resourceNames:
+    - union-work-ns
+    resources:
+    - clusterroles
+    verbs:
+    - bind
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5832,7 +5863,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3c05b3b39a6121ae46880dca41b82be5b677a3aec37eb98a97a6ea6cc24016e"
+        configChecksum: "d5b35ea443d86ac3522b4f7f1bbe3f67373937b8d294f05dc4117680715fc90"
         
       labels:
         platform.union.ai/zone: "dataplane"
