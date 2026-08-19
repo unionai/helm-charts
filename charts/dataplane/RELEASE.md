@@ -326,19 +326,22 @@ are covered in their own sections.
   keeps its upstream name rather than gaining a `knative-` prefix — it is a separate project
   and that is the name its own manifests and issue reports use.
 
-- **No binary gains or loses a permission.** The vendored knative-serving RBAC is unchanged;
-  only the subject lists move to follow the names. The two aggregated ClusterRoleBindings
-  that upstream binds to `controller` now name the controller, webhook and autoscaler
-  identities together, which is what the single shared account conveyed before.
+- **No binary loses a permission, and no new grant is written.** The vendored knative-serving
+  roles are unchanged — only the subject lists move to follow the names, so every grant that
+  existed before is still held, by the renamed identity. The two aggregated ClusterRoleBindings
+  upstream binds to `controller` now name the controller, webhook and autoscaler identities
+  together, which is exactly what the one shared account conveyed to all three before.
 
-- **At the chart default this means the app-serving pods run as the shared `union-system`
-  account, and that account becomes a subject of the knative bindings.** It therefore holds
-  the aggregated `knative-serving-admin` ClusterRole in addition to what it already had, and
-  the app-serving pods hold everything the shared account already carried. That is the
-  standing trade of `commonServiceAccount.enabled: true` — one identity per install, so one
-  cloud-side workload-identity binding — applied to app serving for the first time. Set
-  `commonServiceAccount.enabled: false` to keep the six workloads partitioned; each name then
-  needs its own cloud-side binding.
+- **What each binary *gains* depends on the identity mode, and at the chart default it gains
+  a lot.** With `commonServiceAccount.enabled: true` the app-serving pods run as
+  `union-system`, so they hold everything that account already carried for the operator, the
+  proxy, the leaseworker and the rest — and `union-system`, in the other direction, becomes a
+  subject of the knative bindings and picks up the aggregated `knative-serving-admin`
+  ClusterRole. Nothing new is granted to the cluster; the same grants are simply pooled onto
+  one identity. That is the standing trade of a shared service account — one identity per
+  install, so one cloud-side workload-identity binding — reaching app serving for the first
+  time. Set `commonServiceAccount.enabled: false` to keep the six workloads partitioned, at
+  the cost of a cloud-side binding per name.
 
 ### Third-party subchart RBAC
 
