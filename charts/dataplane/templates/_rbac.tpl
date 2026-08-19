@@ -387,10 +387,19 @@ there is therefore no pooled role to bind.
 The clusterresource-template entry creating the work-ns RoleBinding in each
 namespace clusterresourcesync provisions. Its consumer is
 clusterresourcesync/configmap.yaml, which keys it `ab_work_ns_binding` so it sorts
-between a_namespace and b_default_service_account (`_` is 0x5F, `b` is 0x62). Keep
-that order: work-ns is what gives clusterresourcesync access to a new namespace, so
-this binding must be applied before the ServiceAccount and ResourceQuota it then
-creates, or new projects stall until the next sync.
+between a_namespace and b_default_service_account (`_` is 0x5F, `b` is 0x62).
+
+That ordering is real, not decorative: the sync lists the mounted template directory
+with a call that returns entries sorted by filename and applies them sequentially in
+one pass, so the key decides when this object is created relative to the others. Keep
+it directly after the Namespace, so a work namespace is reachable by union's
+components from the moment it exists rather than at the end of the pass.
+
+What this ordering is NOT for: clusterresourcesync does not need this binding to
+create the ServiceAccount and ResourceQuota that follow it. Its own ClusterRole
+already grants those cluster-wide, and a template that fails does not abort the rest
+of the pass -- it is retried on the next sync. So reordering this key degrades how
+quickly a new namespace becomes usable; it does not break provisioning.
 
 Emitted alongside dataplane.rbac.provisionerBindRule and under the same condition:
 the two halves are one grant, and either alone is useless. Emitted even when
