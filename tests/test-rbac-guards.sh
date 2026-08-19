@@ -264,6 +264,61 @@ function expect-binding-namespaces {
   fi
 }
 
+# expect-role-resource <description> <present|absent> <role name> <resource> [helm --set flags...]
+# Asserts the render succeeds and that a resource is or is not listed in the rules of one
+# named role.
+#
+# A plain grep cannot do this. Several subcharts grant `nodes`, so searching the whole render
+# for it passes no matter which role carries it -- including when the role under test has
+# none. Scoping to the one document is what makes the assertion mean anything.
+function expect-role-resource {
+  local desc=$1; shift
+  local want=$1; shift
+  local role=$1; shift
+  local resource=$1; shift
+  local out doc
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # Buffer each document and emit only the one whose metadata.name matches. A binding names
+  # the role too, under roleRef, so restrict to documents that carry a rules block.
+  doc=$(awk -v name="  name: ${role}" '
+    $0 == "---" { if (sawname && sawrules) print buf; buf = ""; sawname = 0; sawrules = 0; next }
+    { buf = buf $0 "\n" }
+    $0 == name { sawname = 1 }
+    $0 == "rules:" { sawrules = 1 }
+    END { if (sawname && sawrules) print buf }
+  ' <<<"${out}")
+  if [[ -z "${doc}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           no role named ${role} with a rules block is in the render"
+    failures=$((failures + 1))
+    return
+  fi
+  if grep -qE "^ +- ${resource}\$" <<<"${doc}"; then
+    if [[ "${want}" == "present" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected ${role} not to grant ${resource}, but it does"
+      failures=$((failures + 1))
+    fi
+  else
+    if [[ "${want}" == "absent" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected ${role} to grant ${resource}, but it does not"
+      failures=$((failures + 1))
+    fi
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -617,6 +672,20 @@ expect-manifest "work-ns-cluster-read is emitted at full privilege" \
 expect-manifest "and not at all under low_privilege" \
   absent "name: union-operator-work-ns-cluster-read"
 
+# Nodes are cluster-scoped, so this slot is the only one that can carry them: a RoleBinding
+# grants nothing cluster-scoped whatever role it points at. The informer runs under two of the
+# four billing models, so the grant is gated the same way -- and withheld under the other two,
+# which is the narrowing the slot exists for.
+expect-role-resource "the node informer's grant appears under Legacy billing" \
+  present union-operator-work-ns-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=Legacy
+expect-role-resource "and under Shadow billing" \
+  present union-operator-work-ns-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=Shadow
+expect-role-resource "and not under the default ResourceUsage billing" \
+  absent union-operator-work-ns-cluster-read nodes \
+  --set low_privilege=false
+
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
 # so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
 expect-manifest "comp-ns-write appears once a component declares into it" \
@@ -624,6 +693,42 @@ expect-manifest "comp-ns-write appears once a component declares into it" \
   --set config.operator.secretsWatcher.enabled=true
 expect-manifest "and is absent at stock values, where nothing declares" \
   absent "name: union-comp-ns-write"
+
+echo
+echo "- the secrets watcher stays inside the namespaces it is granted"
+
+# The watcher finds what to restart by listing pods carrying platform.union.ai/zone, and only
+# union's own components carry it: the dataplane's, in the release namespace, and the control
+# plane's, in its own namespace when the two share a cluster. Left unconfigured it lists every
+# namespace instead -- a cluster-scope check no RoleBinding satisfies -- and the first Get in a
+# namespace it holds nothing in ends the process. So the chart names the namespaces itself.
+expect-manifest "the watch list is the release namespace alone by default" \
+  present "          - union\$" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false
+expect-manifest "and picks up the control plane namespace when one is set" \
+  present "          - union-cp\$" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set controlplaneNamespace=union-cp
+expect-manifest "an explicit namespaces list wins over the default" \
+  absent "          - union-cp\$" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set controlplaneNamespace=union-cp \
+  --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
+
+# The control plane half is a Role in someone else's namespace, so the slot emitter cannot
+# carry it. It was previously gated on low_privilege, which left the watcher listing control
+# plane pods at full privilege with no grant to read them.
+expect-binding-namespaces "the control plane Role is bound in the control plane namespace at full privilege" \
+  RoleBinding operator-system-secrets-watcher union-cp \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set controlplaneNamespace=union-cp
+expect-binding-namespaces "and still under low_privilege" \
+  RoleBinding operator-system-secrets-watcher union-cp \
+  --set config.operator.secretsWatcher.enabled=true \
+  --set controlplaneNamespace=union-cp
+expect-manifest "and nothing is emitted when the control plane is elsewhere" \
+  absent "name: operator-system-secrets-watcher" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false
 
 echo
 echo "- namespaces.static and the release namespace"

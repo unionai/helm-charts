@@ -106,10 +106,20 @@ for them. In the usual `union` release namespace:
 
 **The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
 once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
-namespace. Because it is never bound in the release namespace at `low_privilege: false`, a
-component that can create any Pod in a work namespace can no longer write Union's own
-Deployments or read its Secrets. Under `low_privilege: true` the release namespace *is* the
-work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
+namespace. Because it is never bound in the release namespace at `low_privilege: false`,
+`union-work-ns` conveys no access at all to Union's own Deployments and Secrets: what it grants
+in a work namespace stops at that namespace's edge. Under `low_privilege: true` the release
+namespace *is* the work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
+
+That is a claim about `union-work-ns`, not about everything a given ServiceAccount can do. RBAC
+unions every binding a subject holds, so a component's effective permissions are the sum of its
+slot roles *and* any role outside the slot model. One such grant exists at stock values: with
+`proxy.secretManager.enabled: true` and `type: K8s` (both defaults), the proxy holds `get`,
+`list`, `create`, `update` and `delete` on Secrets in `proxy.secretsNamespace`, which defaults
+to the release namespace. Set `proxy.secretManager.namespace` to keep Union-managed secrets out
+of the release namespace. With `commonServiceAccount.enabled: true` (the default) every
+component shares one identity, so each also holds every other component's roles — split the
+identities before reasoning about any component's permissions individually.
 
 The namespaced roles are **pooled**: one object holding the union of every declaring
 component's rules, bound to every declaring ServiceAccount. Pooling is by destination, not by
@@ -171,7 +181,7 @@ Also, in both modes:
 - **BREAKING: something must bind `union-work-ns` in each work namespace at
   `low_privilege: false`, and the chart cannot check that it happened.** No Union role is
   bound cluster-wide to reach work namespaces any more, so the binding is what grants
-  access. Two ways to arrange it:
+  access. Ways to arrange it:
 
   - **Static** — `namespaces.enabled: true` with a non-empty `namespaces.static`. This chart
     emits one `RoleBinding` per listed namespace. It is a single pooled role, so the count
@@ -179,7 +189,9 @@ Also, in both modes:
   - **Your own tooling** — if you provision work namespaces yourself, create the binding
     alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, `roleRef`
     pointing at the `ClusterRole` of the same name, with one `ServiceAccount` subject per
-    Union identity in the release namespace.
+    Union identity in the release namespace. Where `clusterresourcesync` provisions the
+    namespaces, that binding belongs in its `clusterresourcesync.templates` list, keyed to
+    sort ahead of the ServiceAccount and ResourceQuota entries.
 
   If nothing creates it, the install renders clean and task pods fail with `Forbidden` the
   first time they run, not at deploy time. `low_privilege: true` deployments need no action:

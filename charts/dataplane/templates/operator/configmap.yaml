@@ -110,7 +110,18 @@ data:
     {{- with .Values.config.operator.secretsWatcher }}
       secretsWatcher:
         {{- tpl (toYaml .) $ | nindent 8 }}
-        {{- if and $.Values.low_privilege (not .namespaces) }}
+{{- /*
+Left unset, the watcher lists pods in every namespace to find the ones it should
+watch. Only Union's own components carry the zone label it selects on, and those
+run in the release namespace -- plus the control plane's namespace when the two
+are installed in the same cluster. Naming both here keeps the watcher inside the
+namespaces the chart actually grants it, in either privilege mode: a cluster-wide
+list is authorized as a cluster-scope check, and a pod found somewhere the
+operator holds nothing fails the first Get and takes the process down with it.
+
+An explicit config.operator.secretsWatcher.namespaces wins over this default.
+*/}}
+        {{- if not .namespaces }}
         namespaces:
           - {{ $.Release.Namespace }}
           {{- if $.Values.controlplaneNamespace }}
