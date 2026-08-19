@@ -1,23 +1,4 @@
 {{- if and (include "apps.enabled" .) (not .Values.zero_trust.enabled) }}
-{{- /*
-Nulling a values block (`serving: null`, `serving.auth: null`) is Helm's
-documented way to drop a chart default, so every read below goes through a
-`default dict` guard instead of dereferencing the block directly -- a bare
-`.Values.serving.extraConfig.deployment` panics with "nil pointer evaluating
-interface {}.extraConfig" the moment the block above it is null.
-
-`auth.enabled` falls back to true rather than empty when its block is dropped:
-values.yaml defaults it on, and rendering "" would quietly hand Kourier a
-disabled Union authz plugin. An explicit `false` still renders as false.
-*/}}
-{{- $serving := .Values.serving | default dict }}
-{{- $extraConfig := $serving.extraConfig | default dict }}
-{{- $resources := $serving.resources | default dict }}
-{{- $auth := $serving.auth | default dict }}
-{{- $authEnabled := true }}
-{{- if not (kindIs "invalid" $auth.enabled) }}
-{{- $authEnabled = $auth.enabled }}
-{{- end }}
 apiVersion: operator.knative.dev/v1beta1
 kind: KnativeServing
 metadata:
@@ -40,8 +21,8 @@ spec:
       queue-sidecar-memory-limit: "800Mi"
       queue-sidecar-ephemeral-storage-request: "512Mi"
       queue-sidecar-ephemeral-storage-limit: "1024Mi"
-      {{- if $extraConfig.deployment }}
-      {{- tpl ($extraConfig.deployment | toYaml) . | nindent 6 }}
+      {{- if .Values.serving.extraConfig.deployment }}
+      {{- tpl (.Values.serving.extraConfig.deployment | toYaml) . | nindent 6 }}
       {{- end }}
     features:
       kubernetes.podspec-affinity: "enabled"
@@ -55,18 +36,16 @@ spec:
       # (e.g. CAP_SYS_ADMIN, which PodTemplate.allow_fuse() sets so apps/tasks can
       # mount a FUSE filesystem such as a flyteplugins-union Volume).
       kubernetes.containerspec-addcapabilities: "enabled"
-      {{- if $extraConfig.features }}
-      {{- tpl ($extraConfig.features | toYaml) . | nindent 6 }}
+      {{- if .Values.serving.extraConfig.features }}
+      {{- tpl (.Values.serving.extraConfig.features | toYaml) . | nindent 6 }}
       {{- end }}
     network:
       ingress-class: "kourier.ingress.networking.knative.dev"
-      {{- if $extraConfig.network }}
-      {{- tpl ($extraConfig.network | toYaml) . | nindent 6 }}
+      {{- if .Values.serving.extraConfig.network }}
+      {{- tpl (.Values.serving.extraConfig.network | toYaml) . | nindent 6 }}
       {{- end }}
-  {{- with $serving.replicas }}
   high-availability:
-    replicas: {{ . }}
-  {{- end }}
+    replicas: {{ .Values.serving.replicas }}
   ingress:
     kourier:
       enabled: true
@@ -109,7 +88,7 @@ spec:
         value: "https://{{ include "dataplane.cp.host" . }}/login"
       - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
         value: "https://{{ include "dataplane.cp.host" . }}"
-    {{- with index $resources "3scale-kourier-gateway" }}
+    {{- with index .Values.serving.resources "3scale-kourier-gateway" }}
     resources:
     {{- range $container, $resources := . }}
       - container: {{ $container }}
@@ -185,8 +164,8 @@ spec:
     - container: controller
       envVars:
       - name: KOURIER_UNION_AUTHZ_ENABLED
-        value: {{ $authEnabled | quote }}
-    {{- with index $resources "net-kourier-controller" }}
+        value: {{ .Values.serving.auth.enabled | quote }}
+    {{- with index .Values.serving.resources "net-kourier-controller" }}
     resources:
     {{- range $container, $resources := . }}
       - container: {{ $container }}

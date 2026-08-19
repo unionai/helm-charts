@@ -319,6 +319,84 @@ function expect-role-resource {
   fi
 }
 
+# expect-provisioner-matches-chart <description> <namespace> [helm --set flags...]
+# Asserts that the work-ns RoleBinding this chart writes for a pre-seeded namespace and the one
+# it hands clusterresourcesync to write at runtime are the same object.
+#
+# Both can target the same namespace, so if they disagree on any field Helm and the sync each
+# reconcile the object back to their own version, forever. Nothing else catches that: a
+# snapshot contains both, but nothing compares them, and the two are emitted by different
+# templates -- dataplane.rbac.emitSlot and dataplane.rbac.provisionerBindingTemplate. They
+# agree today only because both build every field from the same two defines, which is an
+# invariant a later edit to one side can break silently.
+#
+# Compares roleRef and the ordered subject list, which is every field either one sets.
+function expect-provisioner-matches-chart {
+  local desc=$1; shift
+  local ns=$1; shift
+  local out chart provisioned
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # One parser for both sides. Tracks which top-level block each line is under, because
+  # `name:` appears in metadata, in roleRef and in every subject, and they mean different
+  # things. Emits `roleRef=<kind>/<name> subjects=<a,b>` for the RoleBinding named
+  # union-work-ns in namespace NS -- every field either emitter sets.
+  local parse='
+    function emit(   i, l, sec, mdname, mdns, rkind, rname, subs, s) {
+      for (i = 1; i <= n; i++) {
+        l = buf[i]
+        if (l ~ /^[a-zA-Z]/) sec = l
+        if (l == "kind: RoleBinding") isrb = 1
+        else if (sec == "metadata:") {
+          if (l ~ /^  name: /)      mdname = substr(l, 9)
+          if (l ~ /^  namespace: /) mdns   = substr(l, 14)
+        }
+        else if (sec == "roleRef:") {
+          if (l ~ /^  kind: /) rkind = substr(l, 9)
+          if (l ~ /^  name: /) rname = substr(l, 9)
+        }
+        else if (sec == "subjects:") {
+          if (l ~ /^    name: /) { s = substr(l, 11); subs = subs == "" ? s : subs "," s }
+        }
+      }
+      if (isrb && mdname == "union-work-ns" && mdns == NS)
+        print "roleRef=" rkind "/" rname " subjects=" subs
+      n = 0; isrb = 0
+    }
+    $0 == "---" { emit(); next }
+    { buf[++n] = $0 }
+    END { emit() }
+  '
+  chart=$(awk -v NS="${ns}" "${parse}" <<<"${out}")
+  # The block handed to the provisioner, dedented out of the ConfigMap and its placeholder
+  # resolved, then run through the same parser.
+  provisioned=$(awk '
+    /^  ab_work_ns_binding\.yaml: \|/ { grab = 1; next }
+    grab && /^  [a-z_0-9]+\.yaml: \|/ { grab = 0 }
+    grab && /^---$/ { grab = 0 }
+    grab { sub(/^    /, ""); print }
+  ' <<<"${out}" | sed "s/{{ namespace }}/${ns}/" | awk -v NS="${ns}" "${parse}")
+  if [[ -z "${chart}" || "${chart}" != *"subjects="?* ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           no chart-emitted union-work-ns RoleBinding found in ${ns}"
+    failures=$((failures + 1))
+  elif [[ "${chart}" != "${provisioned}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           the chart and the provisioner would write different objects into ${ns}"
+    echo "           chart:       ${chart}"
+    echo "           provisioner: ${provisioned}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -749,6 +827,19 @@ expect-role-resource "with the bind grant kept in the same posture" \
   present union-clustersync-resource clusterroles \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+
+# Both writers can land on the same namespace in that posture, so they must agree exactly or
+# they reconcile against each other forever. Checked with the identities shared and split,
+# since the subject list is the field most likely to diverge.
+expect-provisioner-matches-chart "and the two writers agree on the object, shared identity" \
+  flytesnacks-development \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+expect-provisioner-matches-chart "and with per-component identities and propeller on" \
+  flytesnacks-development \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}' \
+  --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
 
 echo
 echo "- leaseworker and flytepropeller declare into slots instead of owning roles"
