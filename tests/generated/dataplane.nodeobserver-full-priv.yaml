@@ -11,54 +11,6 @@ globalDefault: false
 description: "Priority for the Union leaseworker (a Recreate singleton) so it schedules ahead of task pods and leases keep flowing during node scale-up. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
 
 ---
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-development
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-staging
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-production
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-development
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-staging
-  annotations:
-    helm.sh/resource-policy: keep
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-production
-  annotations:
-    helm.sh/resource-policy: keep
----
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
 #
@@ -167,6 +119,13 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nodeobserver-system
+  namespace: union
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -366,9 +325,6 @@ data:
         type: json
       level: 4
       show-source: true
-  namespace_mapping.yaml: |
-    namespace_mapping:
-      template: '{{ project }}-{{ domain }}'
 ---
 # Source: dataplane/templates/clusterresourcesync/configmap.yaml
 apiVersion: v1
@@ -618,7 +574,6 @@ data:
       capacity: 100000
       cluster: ''
       dispatcherCount: 512
-      namespace-template: '{{ project }}-{{ domain }}'
       organization: ''
       refreshInterval: 10s
       task_resources:
@@ -2311,6 +2266,17 @@ data:
     
 
 ---
+# Source: dataplane/templates/nodeobserver/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-nodeobserver
+  namespace: union
+data:
+  config.yaml: | 
+    criticalDaemonSets: []
+
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -2386,8 +2352,6 @@ data:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
-      org:
-        namespaceTemplate: "{{ project }}-{{ domain }}"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -4378,6 +4342,38 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
+  name: union-nodeobserver-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - get
+  - apiGroups:
+    - ""
+    resources:
+    - pods
+    verbs:
+    - list
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-nodeobserver-cluster-write
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - update
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
   name: union-clusterresourcesync-cluster-write
 rules:
   - apiGroups:
@@ -4710,6 +4706,34 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  name: union-nodeobserver-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-nodeobserver-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: nodeobserver-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-nodeobserver-cluster-write
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-nodeobserver-cluster-write
+subjects:
+  - kind: ServiceAccount
+    name: nodeobserver-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
   name: union-clusterresourcesync-cluster-write
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -4890,96 +4914,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-comp-ns-read
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: flytesnacks-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: flytesnacks-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: flytesnacks-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: union-health-monitoring-development
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: union-health-monitoring-staging
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
----
-# Source: dataplane/templates/common/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-work-ns
-  namespace: union-health-monitoring-production
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-work-ns
 subjects:
   - kind: ServiceAccount
     name: union-system
@@ -5396,6 +5330,110 @@ spec:
           name: etcmachineid
       tolerations:
         - operator: Exists
+
+---
+# Source: dataplane/templates/nodeobserver/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-nodeobserver
+  labels:
+    app.kubernetes.io/name: nodeobserver
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodeobserver
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "53588c33a77619d28361e2b7ac9d8d903680ecb12be9214e4adb74210f52d03"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        
+        app.kubernetes.io/name: nodeobserver
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: 
+      serviceAccountName: nodeobserver-system
+      securityContext:
+        {}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-nodeobserver
+      containers:
+        - name: node-observer
+          securityContext:
+            capabilities:
+              add:
+              - SYS_ADMIN
+            privileged: true
+            runAsNonRoot: false
+            runAsUser: 0
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 500m
+              memory: 100Mi
+          volumeMounts:
+            - mountPath: /etc/union
+              name: config-volume
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: LOG_LEVEL
+            value: "4"
+          - name: KUBE_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          args:
+            - nodeobserver
+            - --config
+            - /etc/union/config.yaml
+      
+      
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -5847,7 +5885,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "544867ce4e904df3e6a57512f842941d5204635d91decf6c6e38f0f7e3043ab"
+        configChecksum: "924c1cd4763741f9e2d91615d4ad53cc8eb6d0810df31170867b16d6fe9692f"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6126,7 +6164,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
+        configChecksum: "1e995cca394ddf36fac75dec5c2c13f0963bfd2bdf15ec6e606141b618a0eb7"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6233,7 +6271,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ad66c192f16e4dac6ba523375eeedcc438976d1ec77f9eed607573a63848ecf"
+        configChecksum: "7cd85f43e8a9b77e67641e63322439e62cd67479b173967d2a2ea7c12b0a789"
         
       labels:
         
@@ -6373,7 +6411,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ad66c192f16e4dac6ba523375eeedcc438976d1ec77f9eed607573a63848ecf"
+        configChecksum: "7cd85f43e8a9b77e67641e63322439e62cd67479b173967d2a2ea7c12b0a789"
         
       labels:
         
@@ -6499,7 +6537,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "bee75440cb2b2c9d154f43c8bcbd3cb6ee21caef57af5fe8e2b788a1cdb5479"
+        configChecksum: "1e995cca394ddf36fac75dec5c2c13f0963bfd2bdf15ec6e606141b618a0eb7"
         
     spec:
       securityContext:

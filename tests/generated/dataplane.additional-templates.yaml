@@ -4294,6 +4294,21 @@ rules:
     - patch
     - delete
     - deletecollection
+  - apiGroups:
+    - '*'
+    resources:
+    - secrets
+    - pods
+    - replicasets/finalizers
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4385,28 +4400,6 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["list", "watch"]
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-kind: Role
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-role
-  namespace: union
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - mutatingwebhookconfigurations
-      - secrets
-      - pods
-      - replicasets/finalizers
-    verbs:
-      - get
-      - create
-      - update
-      - patch
-      - list
-      - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -4534,23 +4527,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: release-name-kube-state-metrics
-
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-# Create a binding from Role -> ServiceAccount
-kind: RoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-binding
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-webhook-role
-subjects:
-  - kind: ServiceAccount
-    name: union-system
-    namespace: union
 
 ---
 # Source: dataplane/charts/fluentbit/templates/service.yaml
@@ -6145,12 +6121,8 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
     verbs: ["get", "delete"]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
@@ -6165,6 +6137,48 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount

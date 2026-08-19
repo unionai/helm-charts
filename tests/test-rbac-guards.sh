@@ -706,7 +706,7 @@ expect-manifest "and the shared identity is still the default there" \
 # subject list follows commonServiceAccount.enabled on both sides of the privilege switch,
 # and the per-component cluster roles do the same.
 expect-binding-subject "the pooled work-ns role binds every declarer at low privilege" \
-  RoleBinding union-work-ns leaseworker,operator-system,proxy-system \
+  RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
   --set commonServiceAccount.enabled=false
 expect-binding-subject "and collapses to one subject when they share an identity" \
   RoleBinding union-work-ns union-system
@@ -809,18 +809,18 @@ expect-manifest "the work-ns RoleBinding is handed to the provisioner at full pr
   present "ab_work_ns_binding.yaml" \
   --set low_privilege=false --set clusterresourcesync.enabled=true
 expect-role-resource "and the bind grant that lets it reference the pooled role" \
-  present union-clustersync-resource clusterroles \
+  present union-clusterresourcesync-cluster-write clusterroles \
   --set low_privilege=false --set clusterresourcesync.enabled=true
 # expect-role-resource matches a line anywhere in the role, so this pins the resourceNames
 # entry rather than the verb: a bind grant that lost its resourceNames, or aimed at another
 # role, would stop naming union-work-ns here.
 expect-role-resource "confined by resourceNames to the one chart-authored role" \
-  present union-clustersync-resource union-work-ns \
+  present union-clusterresourcesync-cluster-write union-work-ns \
   --set low_privilege=false --set clusterresourcesync.enabled=true
 # clusterRoleRules is an operator override, so the ordinary rolebindings authority is emitted
 # from the template too. Withdrawing it would fail silently: clean render, refused sync.
 expect-role-resource "and ordinary rolebindings authority survives an emptied override" \
-  present union-clustersync-resource rolebindings \
+  present union-clusterresourcesync-cluster-write rolebindings \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules=null'
 
@@ -833,7 +833,7 @@ expect-manifest "and both are still handed over when the chart also pre-seeds na
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 expect-role-resource "with the bind grant kept in the same posture" \
-  present union-clustersync-resource clusterroles \
+  present union-clusterresourcesync-cluster-write clusterroles \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
@@ -867,7 +867,7 @@ expect-manifest "and flytepropeller-role with it" \
 # cluster-wide. The subject list is registry order, and it is what says both components
 # joined the pool rather than keeping a role of their own.
 expect-binding-subject "both join the pooled work-ns role, in registry order" \
-  RoleBinding union-work-ns leaseworker,operator-system,proxy-system,flytepropeller-system \
+  RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system,flytepropeller-system \
   --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
 # Disabling a component drops it from the pool, which is what makes the pooled role track
 # the components actually installed rather than everything the chart can install.
@@ -876,7 +876,7 @@ expect-binding-subject "both join the pooled work-ns role, in registry order" \
 # role document, so it cannot tell a wildcard under `resources` from one under `apiGroups`,
 # and operator declares the latter in this slot either way.
 expect-binding-subject "and drop out of it when disabled" \
-  RoleBinding union-work-ns operator-system,proxy-system \
+  RoleBinding union-work-ns operator-system,proxy-system,union-webhook-system \
   --set commonServiceAccount.enabled=false \
   --set leaseworker.enabled=false --set flytepropeller.enabled=false
 
@@ -960,6 +960,395 @@ expect-render "including with an empty list" \
   --set 'namespaces.static=null'
 
 echo
+echo "- the webhook reaches work namespaces instead of the whole cluster"
+
+# union-webhook-role was the largest cluster-wide write union held: apiGroups ['*'] over
+# secrets, pods and replicasets/finalizers, conveyed by a ClusterRoleBinding at
+# low_privilege: false. It is gone in both modes, and its resources are in the pooled
+# work-ns role, which is only ever referenced from namespaced RoleBindings.
+expect-manifest "the cluster-wide union-webhook-role is gone at full privilege" \
+  absent "name: union-webhook-role" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "and under low_privilege, where it was a Role" \
+  absent "name: union-webhook-role"
+expect-role-resource "its resources are in the pooled work-ns role instead" \
+  present union-work-ns replicasets/finalizers \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# The whole point of the move: where the webhook's writes are bound. Not the release
+# namespace at full privilege, and no ClusterRoleBinding carrying them anywhere.
+expect-binding-namespaces "and bound only in the work namespaces the chart knows" \
+  RoleBinding union-work-ns flytesnacks-development \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+
+# The Secret cache is the one grant that has to stay cluster-scoped, and only at full
+# privilege: under low_privilege limit-namespace scopes the cache and the pooled work-ns
+# Role already covers the single namespace. work-ns-cluster-read is the slot that renders
+# empty there, which is why the rule sits in it.
+expect-role-resource "the webhook's cluster-wide Secret read appears at full privilege" \
+  present union-webhook-work-ns-cluster-read secrets \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "and not at all under low_privilege" \
+  absent "name: union-webhook-work-ns-cluster-read"
+# It exists to serve image-pull-secret mirroring, so it goes when that is switched off.
+expect-manifest "nor when image-pull-secret injection is disabled" \
+  absent "name: union-webhook-work-ns-cluster-read" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled=false
+
+# mutatingwebhookconfigurations create cannot be confined by resourceNames -- RBAC has no
+# name to match before the object exists -- so it is emitted only where the webhook really
+# self-registers. propeller/configmap.yaml sets disableCreateMutatingWebhookConfig under
+# `or low_privilege (and webhook.enabled managedConfig)`, so both halves of that expression
+# have to be false. A gate on managedConfig alone would grant it under low_privilege, where
+# the binary is configured never to use it.
+expect-manifest "the self-registration grant appears when the webhook registers itself" \
+  present "name: union-webhook-cluster-write" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false
+expect-manifest "and not when Helm manages the configuration" \
+  absent "name: union-webhook-cluster-write" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "nor under low_privilege, which disables self-registration on its own" \
+  absent "name: union-webhook-cluster-write" \
+  --set flytepropellerwebhook.managedConfig=false
+
+echo
+echo "- nodeobserver holds the same grant in both privilege modes"
+
+# Its rules were never conveyable by the namespaced Role low_privilege emitted: nodes is
+# cluster-scoped, and nodeobserver lists pods with an empty namespace plus a spec.nodeName
+# field selector, which the API server authorizes as a cluster-scope request. Both slots are
+# cluster slots for that reason, so the grant is identical either side of the switch. This is
+# the one place in the chart where low_privilege does not narrow anything, and it is
+# deliberate -- pinning both directions is what stops someone "fixing" it back to a Role.
+# union-nodeobserver cannot be checked with a grep, for the same reason union-leaseworker
+# could not: a ConfigMap and a DaemonSet of that name still ship, so the name is in the
+# render either way. What this asserts is narrower than "the old objects are gone" -- it
+# pins that nothing binds the old Role, which is what made it convey anything. A stranded
+# Role would survive this check; the snapshots are what would show it.
+expect-binding-subject "nothing binds the old union-nodeobserver Role any more" \
+  RoleBinding union-nodeobserver "" \
+  --set nodeobserver.enabled=true
+expect-role-resource "nodes read is a ClusterRole under low_privilege" \
+  present union-nodeobserver-cluster-read nodes \
+  --set nodeobserver.enabled=true
+expect-role-resource "and the pods list with it" \
+  present union-nodeobserver-cluster-read pods \
+  --set nodeobserver.enabled=true
+expect-role-resource "the node write is split into its own cluster role" \
+  present union-nodeobserver-cluster-write nodes \
+  --set nodeobserver.enabled=true
+# Resource-level only: this says the write role carries nodes in both modes, not that the two
+# renders are rule-identical. The dataplane.nodeobserver and dataplane.nodeobserver-full-priv
+# snapshots are what pin equality, since comparing across two renders is not something this
+# harness can express.
+expect-role-resource "and carries nodes at full privilege too" \
+  present union-nodeobserver-cluster-write nodes \
+  --set nodeobserver.enabled=true --set low_privilege=false \
+  --set clusterresourcesync.enabled=true
+expect-manifest "nothing renders when nodeobserver is off" \
+  absent "name: union-nodeobserver-cluster-read"
+
+# expect-verb-resources <description> <role name> <verb> <expected resources>
+#   [helm --set flags...]
+# Asserts that within one named role, the complete set of resources granted <verb> is exactly
+# the comma-separated sorted list given ("" for none).
+#
+# Replaces a pair of expect-role-resource checks that asserted "role contains namespaces" and
+# "role contains delete" independently -- which passed when `delete` was moved onto a different
+# rule. Asserting the whole set also covers resources nobody thought to name: a cleanup-gated
+# `delete` appearing on resourcequotas, or on the emitter's clusterroles bind rule, fails this
+# without anyone adding a case for it.
+#
+# Fails closed. If the role is not in the render the assertion fails rather than passing with
+# an empty set, so removing the object under test cannot turn a check green.
+function expect-verb-resources {
+  local desc=$1 role=$2 verb=$3 expected=$4; shift 4
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  # Rules are evaluated at their closing boundary, so the order of `resources` and `verbs`
+  # within a rule does not matter and no state leaks into a following rule.
+  got=$(awk -v role="${role}" -v want="${verb}" '
+    function flush(  i) {
+      if (has_verb) for (i in res) print i
+      delete res; has_verb=0
+    }
+    /^# Source: / {flush(); kind=""; inrole=0}
+    /^kind: / {kind=$2; next}
+    /^  name: / {if ((kind=="Role" || kind=="ClusterRole") && $2==role) {inrole=1; found=1} next}
+    inrole && /^  - apiGroups:/ {flush(); key=""; next}
+    inrole && /^    (resources|verbs):[[:space:]]*$/ {key=$1; sub(/:$/,"",key); next}
+    inrole && /^    [a-z]/ {key=""}
+    inrole && key=="resources" && /^    - / {v=$0; sub(/^    - /,"",v); gsub(/"/,"",v); res[v]=1; next}
+    inrole && key=="verbs" && /^    - / {v=$0; sub(/^    - /,"",v); gsub(/"/,"",v); if (v==want) has_verb=1; next}
+    END {flush(); if (!found) print "<NO-SUCH-ROLE>"}
+  ' <<<"${out}" | sort -u | paste -sd, -)
+  if [[ "${got}" == "${expected}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           resources granted ${verb} on ${role}"
+    echo "           expected: ${expected:-<none>}"
+    echo "           observed: ${got:-<none>}"
+    failures=$((failures + 1))
+  fi
+}
+
+# expect-cleanup-grant-exact <description> [helm --set flags...]
+# Asserts the pre-upgrade cleanup hook's four RBAC documents render EXACTLY as written below,
+# and that its Job deletes exactly the four legacy objects they authorize.
+#
+# Compares whole documents rather than parsing fields out of them. Four earlier versions of
+# this check parsed progressively more -- names, then (resource, name), then adding the RBAC
+# kind -- and each one was defeated by a mutation that changed a field the parser did not read.
+# The last, which called itself "exact", ignored verbs, apiGroups and the bindings entirely, so
+# narrowing verbs to [get] passed while the Job would take a Forbidden. A text comparison is
+# closed under that whole class: there is no field it forgets to check.
+#
+# The expected text is a migration contract, not a restatement of the template. These four
+# object names come from objects that chart versions before 2026.4.7 left behind in live
+# clusters (introduced in ff7da126; the webhook Deployment was renamed in d724734b), so they
+# cannot be derived from the current chart and a legitimate change to them SHOULD fail here --
+# that failure is the prompt to state that the contract moved.
+function expect-cleanup-grant-exact {
+  local desc=$1; shift
+  local out got job
+  local want_job="deployment/flytepropeller-webhook
+deployment/union-operator-prometheus
+mutatingwebhookconfiguration/flyte-pod-webhook
+secret/flyte-pod-webhook"
+  read -r -d '' want_rbac <<'EXPECTED' || true
+kind: ClusterRole
+metadata:
+  name: flyte-webhook-cleanup-union
+rules:
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["mutatingwebhookconfigurations"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+kind: ClusterRoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+EXPECTED
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  # Every RBAC document from this template, in render order. apiVersion and the hook
+  # annotations are dropped: the annotations are asserted separately below, and repeating them
+  # four times here would bury the grant in boilerplate.
+  got=$(awk '
+    /^# Source: / {src=$3; inrbac=0}
+    src !~ /pre-upgrade-cleanup\.yaml$/ {next}
+    /^kind: (Role|ClusterRole|RoleBinding|ClusterRoleBinding)$/ {inrbac=1}
+    !inrbac {next}
+    /^(apiVersion:|---)$|^apiVersion:/ {next}
+    /^    helm\.sh\/hook/ {next}
+    /^  annotations:$/ {next}
+    {print}
+  ' <<<"${out}")
+  job=$(awk '
+    /^# Source: / {src=$3}
+    src !~ /pre-upgrade-cleanup\.yaml$/ {next}
+    /kubectl delete [a-z]+ [a-z0-9.-]+/ {
+      for (i=1; i<NF; i++) if ($i == "delete") {print $(i+1) "/" $(i+2); break}
+    }
+  ' <<<"${out}" | sort -u)
+  if [[ "${got}" == "${want_rbac}" && "${job}" == "${want_job}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    if [[ "${got}" != "${want_rbac}" ]]; then
+      echo "           rendered RBAC differs from the expected migration contract:"
+      diff <(echo "${want_rbac}") <(echo "${got}") | sed 's/^/             /'
+    fi
+    if [[ "${job}" != "${want_job}" ]]; then
+      echo "           Job deletions differ from the four legacy objects:"
+      diff <(echo "${want_job}") <(echo "${job}") | sed 's/^/             /'
+    fi
+    failures=$((failures + 1))
+  fi
+}
+
+expect-cleanup-grant-exact "its grant is exactly the four objects its Job deletes"
+expect-cleanup-grant-exact "and at full privilege too" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# Dropped from the expected text above to keep the grant readable, so pinned here instead:
+# without hook-delete-policy these objects outlive the upgrade they exist for.
+expect-manifest "and every cleanup object is hook-scoped" \
+  present "helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed"
+
+# Both new slot gates read an optional map. An overlay that disables one of these blocks by
+# setting it to null leaves the key present with a nil value, which a field chain dereferences
+# and `dig` alone will not traverse -- so both are read through a defaulted map. Without that,
+# a values file the chart accepted before this release aborts the render.
+expect-render "an explicitly null imagePullSecrets block still renders" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set-json 'config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets=null'
+# The parent, not just the leaf. A first version of the fix defaulted only imagePullSecrets
+# and still chained through embeddedSecretManagerConfig, so nulling the parent went on
+# failing -- the reported case was fixed and the class was not.
+expect-render "and an explicitly null embeddedSecretManagerConfig around it" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set-json 'config.core.webhook.embeddedSecretManagerConfig=null'
+expect-render "and an explicitly null unionProjectSyncConfig" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set-json 'clusterresourcesync.config.cluster_resources.unionProjectSyncConfig=null'
+
+echo
+echo "- clusterresourcesync's grant is derived, not an operator default"
+
+# The twelve-resource verbs ['*'] default is gone. These three were the escalation vectors in
+# it: cluster-wide secrets, and roles/clusterrolebindings, which let a holder mint any grant
+# it likes. Nothing in the chart's own templates creates them.
+expect-role-resource "cluster-wide secrets are no longer granted" \
+  absent union-clusterresourcesync-cluster-write secrets \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-role-resource "nor roles" \
+  absent union-clusterresourcesync-cluster-write roles \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-role-resource "nor clusterrolebindings" \
+  absent union-clusterresourcesync-cluster-write clusterrolebindings \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# What the default templates do create, which is what the derived rules cover.
+expect-role-resource "the namespaces the default template creates are granted" \
+  present union-clusterresourcesync-cluster-write namespaces \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-role-resource "and the serviceaccounts and resourcequotas that follow them" \
+  present union-clusterresourcesync-cluster-write resourcequotas \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# Derived, so an operator emptying the override cannot withdraw them. Task 5 shipped the
+# same property for the rolebindings rule; it now covers the whole grant.
+expect-role-resource "and none of it depends on the clusterRoleRules override" \
+  present union-clusterresourcesync-cluster-write namespaces \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules=null'
+
+# Bound to the namespaces rule specifically, not merely present somewhere in the role. The
+# token-level version of these two cases passed when `delete` was moved onto the
+# serviceaccounts/resourcequotas rule -- which grants deletion of the wrong objects AND leaves
+# archived-project cleanup failing with Forbidden. No snapshot covers cleanupNamespace: true,
+# so this pair is the only thing standing behind that conditional.
+expect-verb-resources "nothing is granted delete by default" \
+  union-clusterresourcesync-cluster-write delete "" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# The complete set, not just "namespaces is in it". Asserting the whole set is what catches a
+# cleanup-gated `delete` landing on resourcequotas or on the emitter's clusterroles bind rule
+# -- resources no one would have thought to write an absence case for.
+expect-verb-resources "and exactly namespaces once cleanup is asked for" \
+  union-clusterresourcesync-cluster-write delete "namespaces" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace=true
+
+# The extension point still works, and is not gated on namespace posture: namespaces.enabled
+# pre-seeds a subset, so a rule an operator adds still has to reach namespaces registered
+# later, which no RoleBinding written now can cover.
+expect-role-resource "operator-supplied rules are granted cluster-wide" \
+  present union-clusterresourcesync-cluster-write widgets \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={get,list,watch}'
+expect-role-resource "including where the chart also pre-seeds namespaces" \
+  present union-clusterresourcesync-cluster-write widgets \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={get,list,watch}'
+
+# A wildcard verb is refused rather than granted. On `roles` it conveys `escalate`, which
+# switches off RBAC's own escalation-prevention check; on `serviceaccounts` it conveys
+# `impersonate`. The old default carried both resources at verbs ['*'].
+expect-refusal "a wildcard verb in clusterRoleRules is refused" \
+  'names verb "*", which is not allowed here' \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={*}'
+expect-refusal "and so is escalate, spelled out" \
+  'names verb "escalate", which is not allowed here' \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={rbac.authorization.k8s.io}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={roles}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={escalate}'
+# bind is emitter-authored: allowing it on a declared rule would let an operator aim one at
+# any role, which is the check resourceNames on the chart's own bind rule exists to enforce.
+expect-refusal "nor bind, which only the emitter may write" \
+  'names verb "bind", which is not allowed here' \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={rbac.authorization.k8s.io}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={clusterroles}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={bind}'
+
+# clusterresourcesync renders nothing under low_privilege, so it must not join the registry
+# there either: its ServiceAccount does not exist, and the emitter would bind rules to a
+# subject that is never created.
+expect-manifest "no clusterresourcesync RBAC under low_privilege, even when enabled" \
+  absent "name: union-clusterresourcesync-cluster-write" \
+  --set clusterresourcesync.enabled=true
+# Nor does it join the pooled work-ns role: it has to reach a namespace before any binding
+# exists there, so all of its rules are cluster-scoped and its identity is not a work-ns
+# subject. Adding it would also change the object the provisioner is handed.
+#
+# This has to run at low_privilege: false. Under low_privilege the registry excludes
+# clusterresourcesync outright, so the same assertion there passes whatever the slot
+# declaration says -- which is how a first version of this case let the mutation through.
+expect-binding-subject "and it stays out of the pooled work-ns subject list" \
+  RoleBinding union-work-ns union-system \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+expect-binding-subject "with per-component identities too, where it would be visible" \
+  RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set commonServiceAccount.enabled=false \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"
   exit 1

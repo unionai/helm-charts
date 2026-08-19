@@ -5,10 +5,40 @@ helper ranges over this, so rules and binding subjects cannot drift apart.
 Returns a YAML list of {name, sa} pairs. The order is fixed, which also fixes
 emission order downstream.
 
-A component joins this list once it declares dataplane.rbac.slots.<name>. Until
-then it keeps its own hand-written Role and binding, and the two coexist without
-conflict: the slot roles are named for their destination, so no name collides
-with a per-component one, and RBAC unions a subject's rules.
+A component joins this list once it declares dataplane.rbac.slots.<name>. Every
+component with general RBAC now does, so none still owns a hand-written Role for
+its release-namespace, work-namespace or cluster-scope grants. imagebuilder and
+the Kourier gateway declare no slots: their only grant is an OpenShift SCC `use`,
+which is not a slot destination.
+
+That is not the same as "the chart writes no RBAC outside this file", and the
+difference matters when auditing. Slots are organized by destination, and three
+kinds of grant have no destination here:
+
+  a namespace the operator names   proxy's Secret Role in proxy.secretsNamespace,
+                                   the operator's secrets-watcher Role in the
+                                   control-plane namespace. The emitter binds
+                                   only in the release namespace and the work
+                                   namespaces, so neither fits.
+  a role with no rules to carry    clusterresourcesync's system:auth-delegator
+                                   ClusterRoleBinding references a built-in role.
+  objects that outlive nothing     the pre-upgrade hooks in common/ and webhook/,
+                                   which carry hook-delete-policy.
+  a verb with no slot              the OpenShift SCC Roles for imagebuilder and the
+                                   Kourier gateway, both via openshift.sccRbac.
+                                   `use` on a named SecurityContextConstraints is
+                                   not one of the emitter's verb sets.
+
+Also outside: third-party subchart RBAC this chart authors
+(templates/prometheus/, templates/ingress-nginx/) and the vendored Knative Serving
+grants under templates/gateway/.
+
+If you are auditing, do not enumerate by grepping for `kind: Role`. Some templates
+emit RBAC only through a helper and contain no such literal -- inspect the callers
+of openshift.sccRbac and of dataplane.rbac.emitSlot as well. Nor is rendering the
+test fixtures sufficient: the Kourier SCC Role appears in none of them, because it
+needs apps.enabled and kourierGatewayScc.enabled together. Both blind spots have
+produced a wrong inventory in this file before.
 */}}
 {{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}
@@ -21,8 +51,24 @@ with a per-component one, and RBAC unions a subject's rules.
 {{- if .Values.proxy.serviceAccount.create -}}
 {{- $components = append $components (dict "name" "proxy" "sa" (include "proxy.serviceAccountName" .)) -}}
 {{- end -}}
+{{- if .Values.flytepropellerwebhook.enabled -}}
+{{- $components = append $components (dict "name" "webhook" "sa" (include "webhook.serviceAccountName" .)) -}}
+{{- end -}}
 {{- if .Values.flytepropeller.enabled -}}
 {{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
+{{- end -}}
+{{- if .Values.nodeobserver.enabled -}}
+{{- $components = append $components (dict "name" "nodeobserver" "sa" (include "nodeobserver.serviceAccountName" .)) -}}
+{{- end -}}
+{{/*
+The one entry whose gate is not just an enabled key: clusterresourcesync's own
+templates render only outside singleNamespace, so joining the registry under
+low_privilege would emit RBAC for a ServiceAccount that does not exist. Its
+subject is `union-` prefixed because the ServiceAccount is, unlike every other
+component here.
+*/}}
+{{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
+{{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
 {{- end -}}
 {{- toYaml $components -}}
 {{- end -}}
@@ -232,9 +278,10 @@ bind rule never passes through $rules, and is spliced into $resolved below.
 {{- end -}}
 {{- if and (eq .slot "cluster-write") (eq (.component | default "") "clusterresourcesync") -}}
 {{/*
-provisionerBindRule returns nothing unless the work namespaces are created at
-runtime, and in that case $rules is never empty for this slot, so nothing is
-lost by sitting inside the `if $rules` gate above.
+Sitting inside the `if $rules` gate above costs nothing: clusterresourcesync's
+own declaration always puts the provisioning rules in this slot, so whenever
+this component is in the registry at all the slot has rules to carry the bind
+rule alongside.
 */}}
 {{- $resolved = concat $resolved (fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list) -}}
 {{- end -}}
