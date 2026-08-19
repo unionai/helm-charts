@@ -157,9 +157,12 @@ the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which d
   **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system` and
   `proxy-system` previously held only their own enumerated resources in the release namespace
   and now hold `apiGroups: ['*'], resources: ['*']` there**, covering Union's own Deployments
-  and Secrets. If you run split identities under `low_privilege`, this is the one change in
-  this release to weigh before upgrading — it is the flip side of pooling by destination, and
-  splitting identities does not narrow a pooled slot.
+  and Secrets. It is bounded by that namespace — `low_privilege: true` creates no work
+  namespaces, so nothing here reaches a namespace Union does not already own outright, and no
+  tenant workload is exposed to it. What it costs is blast-radius separation *between Union's
+  own components* inside that one namespace, which is what splitting the identities was
+  buying. Splitting identities does not narrow a pooled slot; if that separation is why you
+  set the key, weigh this before upgrading.
 
 **Read the raw diff carefully here: this is a narrowing, not a widening.** At
 `low_privilege: false` the released chart bound `<release-ns>-leaseworker` — a wildcard on
@@ -173,6 +176,15 @@ looks like; the object that actually granted cluster-wide access is the `Cluster
 that went away. Under `low_privilege: true` both were namespaced `Role`s bound in the release
 namespace, and the pooled `Role` that replaces them is bound in the same place, so the change
 there is one of packaging plus the two additions noted above.
+
+**Measured cluster-wide, which is what matters on a shared cluster:** the only write-capable
+cluster-scoped grants Union's ServiceAccounts still hold are `union-clustersync-resource` and
+`union-webhook-role`, both unchanged by this release. `leaseworker`'s and `flytepropeller`'s
+cluster-wide wildcards are replaced by `list`/`watch`-only `-work-ns-cluster-read` roles, and
+`clusterresourcesync` gains only `bind` on the single `union-work-ns` `ClusterRole`, pinned by
+`resourceNames` so it cannot be used to grant any other role. Every namespaced Union grant
+lands in the release namespace, a namespace listed in `namespaces.static`, or one
+`clusterresourcesync` provisions — never anywhere else.
 
 **Grants that are gone.** From `leaseworker` and `flytepropeller`, and only at
 `low_privilege: false`:
