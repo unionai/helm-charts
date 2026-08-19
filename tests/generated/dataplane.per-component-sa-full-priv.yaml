@@ -436,6 +436,9 @@ data:
       - kind: ServiceAccount
         name: proxy-system
         namespace: union
+      - kind: ServiceAccount
+        name: union-webhook-system
+        namespace: union
 
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
@@ -4208,48 +4211,6 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-clustersync-resource
-rules:
-  - apiGroups:
-    - ""
-    - rbac.authorization.k8s.io
-    resources:
-    - clusterrolebindings
-    - configmaps
-    - limitranges
-    - namespaces
-    - podtemplates
-    - pods
-    - resourcequotas
-    - rolebindings
-    - roles
-    - secrets
-    - serviceaccounts
-    - services
-    verbs:
-    - '*'
-  - apiGroups:
-    - rbac.authorization.k8s.io
-    resources:
-    - rolebindings
-    verbs:
-    - get
-    - create
-    - update
-    - patch
-  - apiGroups:
-    - rbac.authorization.k8s.io
-    resourceNames:
-    - union-work-ns
-    resources:
-    - clusterroles
-    verbs:
-    - bind
----
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -4310,6 +4271,21 @@ rules:
     - pods
     - rayjobs
     - resourcequotas
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
+  - apiGroups:
+    - '*'
+    resources:
+    - secrets
+    - pods
+    - replicasets/finalizers
     verbs:
     - get
     - list
@@ -4392,6 +4368,63 @@ rules:
     - list
     - watch
 ---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-webhook-work-ns-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - secrets
+    verbs:
+    - list
+    - watch
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-clusterresourcesync-cluster-write
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - namespaces
+    verbs:
+    - get
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - ""
+    resources:
+    - serviceaccounts
+    - resourcequotas
+    verbs:
+    - get
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resources:
+    - rolebindings
+    verbs:
+    - get
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - rbac.authorization.k8s.io
+    resourceNames:
+    - union-work-ns
+    resources:
+    - clusterroles
+    verbs:
+    - bind
+---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -4461,28 +4494,6 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["list", "watch"]
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-kind: ClusterRole
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-role
-  namespace: union
-rules:
-  - apiGroups:
-      - "*"
-    resources:
-      - mutatingwebhookconfigurations
-      - secrets
-      - pods
-      - replicasets/finalizers
-    verbs:
-      - get
-      - create
-      - update
-      - patch
-      - list
-      - watch
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2020 The Knative Authors
@@ -4637,20 +4648,6 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: union-clustersync-resource
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-clustersync-resource
-subjects:
-  - kind: ServiceAccount
-    name: union-clustersync-system
-    namespace: union
----
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
   name: union-clustersync-auth-delegator
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -4660,7 +4657,6 @@ subjects:
   - kind: ServiceAccount
     name: union-clustersync-system
     namespace: union
-
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -4704,6 +4700,34 @@ subjects:
     name: proxy-system
     namespace: union
 ---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-webhook-work-ns-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-webhook-work-ns-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: union-webhook-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-clusterresourcesync-cluster-write
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-clusterresourcesync-cluster-write
+subjects:
+  - kind: ServiceAccount
+    name: union-clustersync-system
+    namespace: union
+---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -4745,23 +4769,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: release-name-kube-state-metrics
-
----
-# Source: dataplane/templates/webhook/serviceaccount.yaml
-# Create a binding from Role -> ServiceAccount
-kind: ClusterRoleBinding
-apiVersion: rbac.authorization.k8s.io/v1
-metadata:
-  name: union-webhook-binding
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-webhook-role
-subjects:
-  - kind: ServiceAccount
-    name: union-webhook-system
-    namespace: union
 
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
@@ -5761,7 +5768,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "40373e1e710a0d26a5e050d9d5de6e7aa99190d01e86306005d81638c122cff"
+        configChecksum: "9afc024d98489975dffa3a0601625888c1ff6c2a1abf741135bb2c6ffcc5695"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6607,12 +6614,8 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
     verbs: ["get", "delete"]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
@@ -6627,6 +6630,48 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
+  name: flyte-webhook-cleanup-union
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: union
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+---
+# Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-union
+  namespace: union
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
   name: flyte-webhook-cleanup-union
 subjects:
   - kind: ServiceAccount

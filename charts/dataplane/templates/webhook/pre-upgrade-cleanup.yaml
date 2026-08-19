@@ -1,12 +1,18 @@
 {{- if .Values.flytepropellerwebhook.enabled }}
 {{- if .Values.flytepropellerwebhook.legacyWebhookCleanup.enabled }}
 {{/*
-Pre-upgrade hook that deletes stale flyte-pod-webhook resources left behind from
-old chart versions. These cannot be updated in-place by Kubernetes or Helm:
+Pre-upgrade hook that deletes objects left behind by chart versions before
+2026.4.7. These cannot be updated in-place by Kubernetes or Helm:
   1. MutatingWebhookConfiguration/flyte-pod-webhook — cluster-scoped orphan causing
      "service not found" errors on pod creation.
   2. Deployment/flytepropeller-webhook — selector label changed (immutable field).
   3. Secret/flyte-pod-webhook — marked immutable:true; blocks TLS cert renewal.
+  4. Deployment/union-operator-prometheus — same selector problem.
+
+Four, not three: this list, the Job's commands below and the RBAC grant must all
+agree, and expect-cleanup-grant-exact pins the latter two against a fixed list.
+The names are a migration contract with clusters running old releases, so they
+cannot be derived from anything in the current chart.
 */}}
 ---
 apiVersion: v1
@@ -19,6 +25,73 @@ metadata:
     helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
     helm.sh/hook-weight: "-5"
 ---
+{{/*
+Namespaced half of the hook's grant. The Job names every object it deletes as a
+literal and never looks outside its own namespace, so this is a Role, and every
+rule is pinned by resourceNames to the names in the Job's script below.
+
+resourceNames works here because the authorizing request is name-based: `kubectl
+delete <kind> <name>` sends a named DELETE, which resourceNames matches, and
+--ignore-not-found tolerates the 404 when the object is already gone. kubectl then
+enters a wait phase that may GET, LIST and WATCH the object; a Forbidden there is
+deliberately suppressed upstream, so `get` is granted for it but the hook does not
+depend on it. (RBAC cannot scope `create` or `deletecollection` by name, but
+neither is used here.) Keep this list and the Job's commands in step -- adding a
+`kubectl delete` without adding its name here fails the hook with a Forbidden
+mid-upgrade. expect-cleanup-grant-exact pins both sides against a fixed list of
+the four legacy objects, including which kind of RBAC object carries each rule.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames:
+      - flytepropeller-webhook
+      - union-operator-prometheus
+    verbs: ["get", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
+    verbs: ["get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded,hook-failed
+    helm.sh/hook-weight: "-5"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyte-webhook-cleanup-{{ .Release.Namespace }}
+subjects:
+  - kind: ServiceAccount
+    name: flyte-webhook-cleanup
+    namespace: {{ .Release.Namespace }}
+---
+{{/*
+The third deletion is a MutatingWebhookConfiguration, which is cluster-scoped, so
+this half cannot be a Role. It stays in both privilege modes: the object being
+deleted is the cluster-scoped orphan that makes the hook necessary at all.
+
+resourceNames matters more here than on the Role above. Unpinned, this rule would
+let the hook delete any MutatingWebhookConfiguration in the cluster -- including a
+policy engine's, whose absence fails open and is not obvious from the outside.
+Pinned, the hook can delete exactly the one orphan it exists to remove, and
+lifetime bounds it further: every object here carries hook-delete-policy.
+*/}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -30,12 +103,8 @@ metadata:
 rules:
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["mutatingwebhookconfigurations"]
-    verbs: ["get", "delete"]
-  - apiGroups: ["apps"]
-    resources: ["deployments"]
-    verbs: ["get", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
+    resourceNames:
+      - flyte-pod-webhook
     verbs: ["get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1

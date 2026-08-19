@@ -154,10 +154,13 @@ the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which d
   the pooled role is bound there — over Union's own objects. With the default
   `commonServiceAccount.enabled: true` this changes nothing between components, because that
   single account already held the wildcard; only `deletecollection` is new.
-  **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system` and
-  `proxy-system` previously held only their own enumerated resources in the release namespace
-  and now hold `apiGroups: ['*'], resources: ['*']` there**, covering Union's own Deployments
-  and Secrets. It is bounded by that namespace — `low_privilege: true` creates no work
+  **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system`,
+  `proxy-system` and `union-webhook-system` previously held only their own enumerated
+  resources in the release namespace and now hold `apiGroups: ['*'], resources: ['*']`
+  there**, covering Union's own Deployments and Secrets. (`union-webhook-system` joins that
+  list in this release, when the pod webhook moves onto the slot model; the other two joined
+  when `leaseworker` and `flytepropeller` did.) It is bounded by that namespace —
+  `low_privilege: true` creates no work
   namespaces, so nothing here reaches a namespace Union does not already own outright, and no
   tenant workload is exposed to it. What it costs is blast-radius separation *between Union's
   own components* inside that one namespace, which is what splitting the identities was
@@ -177,14 +180,41 @@ that went away. Under `low_privilege: true` both were namespaced `Role`s bound i
 namespace, and the pooled `Role` that replaces them is bound in the same place, so the change
 there is one of packaging plus the two additions noted above.
 
-**Measured cluster-wide, which is what matters on a shared cluster:** the only write-capable
-cluster-scoped grants Union's ServiceAccounts still hold are `union-clustersync-resource` and
-`union-webhook-role`, both unchanged by this release. `leaseworker`'s and `flytepropeller`'s
-cluster-wide wildcards are replaced by `list`/`watch`-only `-work-ns-cluster-read` roles, and
-`clusterresourcesync` gains only `bind` on the single `union-work-ns` `ClusterRole`, pinned by
-`resourceNames` so it cannot be used to grant any other role. Every namespaced Union grant
-lands in the release namespace, a namespace listed in `namespaces.static`, or one
+**Measured cluster-wide, which is what matters on a shared cluster**, this is the set of
+write-capable cluster-scoped grants Union's own identities hold after this release **at the
+default `clusterresourcesync.clusterRoleRules: []`**. Anything you add to that key is appended
+to `union-clusterresourcesync-cluster-write` and granted cluster-wide, so it belongs in your
+own copy of this table:
+
+| ServiceAccount | Grant | When |
+|---|---|---|
+| `union-clustersync-system` | `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings` at `get`/`create`/`update`/`patch`; `bind` on `union-work-ns` | `clusterresourcesync.enabled` at `low_privilege: false` |
+| `union-clustersync-system` | `namespaces: [delete]`, on that rule only | additionally `unionProjectSyncConfig.cleanupNamespace: true` |
+| `nodeobserver-system` | `nodes: [update]` | `nodeobserver.enabled` |
+| the webhook's account | `mutatingwebhookconfigurations` at `get`/`create`/`update`/`patch` | `managedConfig: false` **and** `low_privilege: false` |
+| `flyte-webhook-cleanup` | `mutatingwebhookconfigurations: [get, delete]` | during a `pre-upgrade` hook only |
+
+`leaseworker`'s and `flytepropeller`'s cluster-wide wildcards are replaced by
+`list`/`watch`-only `-work-ns-cluster-read` roles, and the webhook's `ClusterRole` over
+Secrets, Pods and `replicasets/finalizers` goes the same way. **The one row worth reading
+twice is the first.** `clusterresourcesync` keeps cluster-wide write on three *namespaced*
+resources, and that is not a narrowing this chart can make: it applies those objects into a
+namespace on the sync that creates it, at which point it holds no `RoleBinding` there — it is
+about to create one. What did change is the size of that grant, from twelve resources at
+`verbs: ['*']` (including `secrets`, `roles` and `clusterrolebindings`) down to the four
+above; `bind` is pinned by `resourceNames` to the single `union-work-ns` `ClusterRole`, so it
+cannot be used to grant any other role. Every namespaced Union grant that is *not* in this
+table lands in the release namespace, a namespace listed in `namespaces.static`, or one
 `clusterresourcesync` provisions — never anywhere else.
+
+"Write-capable" here means state-mutating. It excludes the `create` on `tokenreviews` and
+`subjectaccessreviews` that `union-clustersync-auth-delegator` conveys through the built-in
+`system:auth-delegator`: those are non-mutating authentication and authorization reviews that
+happen to use `create`, and that binding is unchanged by this release.
+
+This table covers Union-authored components. Vendored third-party RBAC — the Knative Serving
+grants under `templates/gateway/` and the `kube-prometheus-stack` operator where it is enabled
+— is not in scope here and is unchanged by this release.
 
 **Grants that are gone.** From `leaseworker` and `flytepropeller`, and only at
 `low_privilege: false`:
@@ -211,6 +241,67 @@ From the operator:
   `low_privilege: false`, so the default install never had it.
 - `post` left the `flyteworkflows` rule — `flytepropeller`'s rule, not the operator's. It is
   not a Kubernetes verb and authorized nothing.
+
+**No Union component owns a hand-written `Role` for its general permissions any more.** The
+pod webhook, `nodeobserver` and `clusterresourcesync` were the last three, and they now
+declare into the same slots as everything else.
+
+Some Union-authored RBAC is still written by hand, because slots are organized by
+destination and these grants have none — **if you are auditing what this chart creates, this
+is the list the slot roles do not cover**:
+
+| Object | Why it is not a slot |
+|---|---|
+| the proxy's `<sa>-secret` `Role` | targets `proxy.secretsNamespace`, which is neither the release namespace nor a work namespace |
+| the operator's `<sa>-secrets-watcher` `Role` | targets the control-plane namespace, same reason; only with `config.operator.secretsWatcher.enabled` |
+| `union-clustersync-auth-delegator` | references the built-in `system:auth-delegator`, so there are no rules for the emitter to carry |
+| `flyte-webhook-cleanup-<release-ns>`, `<release>-pre-upgrade` | hook-scoped, carrying `helm.sh/hook-delete-policy` |
+| the OpenShift SCC `Role`s for imagebuilder and the Kourier gateway | grant `use` on a `SecurityContextConstraints` by name — a resource the slot model has no verb set for |
+
+Third-party RBAC this chart authors (`templates/prometheus/`, `templates/ingress-nginx/`) and
+the vendored Knative Serving grants under `templates/gateway/` are outside the model too, and
+are covered in their own sections.
+
+- **The pod webhook.** `union-webhook-role` held `apiGroups: ['*']` over
+  `secrets`, `pods` and `replicasets/finalizers` at `get`/`create`/`update`/`patch`/`list`/
+  `watch`, and at `low_privilege: false` a `ClusterRoleBinding` conveyed it in every namespace
+  in the cluster. Those resources move to the pooled `union-work-ns` role, which is bound only
+  per work namespace, so the webhook keeps exactly the reach it uses — task pods and their
+  secrets — and loses the rest. Two grants stay cluster-scoped because they cannot be
+  narrowed: `secrets: [list, watch]` in `union-webhook-work-ns-cluster-read`, which backs the
+  Secret cache the webhook builds without a namespace filter (read-only, and not emitted at
+  all under `low_privilege: true`, where the cache *is* scoped); and
+  `mutatingwebhookconfigurations` in `union-webhook-cluster-write`, emitted only with
+  `flytepropellerwebhook.managedConfig: false` **and** `low_privilege: false`, the one
+  combination in which the webhook registers its own configuration.
+
+- **`nodeobserver.enabled: true` now works under `low_privilege: true`, where it previously
+  could not.** Its two rules were emitted as a namespaced `Role` in that mode and neither was
+  conveyable by one: `nodes` is cluster-scoped, and `nodeobserver` lists pods with an empty
+  namespace and a `spec.nodeName` field selector, which the API server authorizes as a
+  cluster-scope check. Both now sit in cluster slots in both privilege modes —
+  `union-nodeobserver-cluster-read` (`nodes: [get]`, `pods: [list]`) and
+  `union-nodeobserver-cluster-write` (`nodes: [update]`). **This is the one place in the chart
+  where `low_privilege: true` does not narrow a grant, and it is deliberate.** `nodeobserver`
+  is off by default, so no install that has not opted in is affected.
+
+- **`clusterresourcesync`'s grant is now derived from the templates it applies.** See the
+  `clusterRoleRules` entry under Migration — this is the release's one breaking default
+  change.
+
+- **The pre-upgrade cleanup hook is split and pinned to the objects it deletes.**
+  `flyte-webhook-cleanup-<release-ns>` was a single `ClusterRole` granting `get`/`delete` on
+  `deployments`, `secrets` and `mutatingwebhookconfigurations` cluster-wide, with no
+  `resourceNames`. The Job only ever names four literal objects, so the two namespaced kinds
+  move to a `Role` and every rule is now confined by `resourceNames` to exactly those names.
+  Both objects keep the same name and the same hook annotations.
+
+  The rule worth calling out is the cluster-scoped one. Unpinned, it let the upgrade hook
+  delete **any** `MutatingWebhookConfiguration` in the cluster for the duration of an
+  upgrade — including a policy engine's, whose absence fails open rather than loudly. It is
+  now confined to `flyte-pod-webhook`. Nothing an operator could previously clean up stops
+  working: the Job's commands are unchanged, and a leftover under any other name was never
+  being deleted.
 
 ### Third-party subchart RBAC
 
@@ -243,6 +334,48 @@ Also, in both modes:
   unchanged — cluster-scoped by design.
 
 ### Migration / action required
+
+- **BREAKING: `clusterresourcesync.clusterRoleRules` now defaults to `[]`, and a `*` verb in
+  it fails the render.** It used to default to twelve resources at `verbs: ['*']`, granted
+  cluster-wide: `clusterrolebindings`, `configmaps`, `limitranges`, `namespaces`,
+  `podtemplates`, `pods`, `resourcequotas`, `rolebindings`, `roles`, `secrets`,
+  `serviceaccounts` and `services`. That was a permission set nothing derived — it was simply
+  the default nobody changed — and it included the two grants that convey privilege
+  escalation: a verb wildcard on `roles` conveys `escalate`, which switches off Kubernetes'
+  own escalation-prevention check, and on `serviceaccounts` it conveys `impersonate`.
+
+  The chart now derives what the component needs from the templates it actually applies:
+  `namespaces`, `serviceaccounts` and `resourcequotas` (the three default
+  `clusterresourcesync.templates` entries) plus `rolebindings` and `bind` for the work-ns
+  binding, all at `get`/`create`/`update`/`patch`. `delete` on `namespaces` is added only
+  with `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace`.
+  Those rules are chart-owned and cannot be withdrawn by an override.
+
+  **`clusterRoleRules` is now purely an extension point, and you must set it if your own
+  `clusterresourcesync.templates` or `additionalTemplates` entries create anything else.**
+  Eight of the old twelve resources are no longer granted — most likely to matter are
+  `limitranges`, `services`, `roles` and `clusterrolebindings`. Verbs must come from `get`,
+  `list`, `watch`, `create`, `update`, `patch`, `delete`, `deletecollection`; anything else,
+  including `*`, `escalate`, `impersonate` and `bind`, fails the render with the offending
+  verb named. **The failure mode if you miss this is not a failed render** — the sync is
+  refused per template, per namespace, at runtime. Check your overlay for a
+  `clusterresourcesync.templates` or `additionalTemplates` entry before upgrading.
+
+- **BREAKING: `union-webhook-role` / `union-webhook-binding`, `union-nodeobserver` and
+  `union-clustersync-resource` no longer exist.** Their rules are in the destination roles
+  described above (`union-work-ns`, `union-webhook-work-ns-cluster-read`,
+  `union-webhook-cluster-write`, `union-nodeobserver-cluster-{read,write}` and
+  `union-clusterresourcesync-cluster-write`). `union-clustersync-auth-delegator` is unchanged.
+  Any external tooling, audit policy or binding outside this chart that names the old objects
+  must be updated.
+
+- **At `low_privilege: true` with `flytepropellerwebhook.managedConfig: false`, the webhook no
+  longer gets `mutatingwebhookconfigurations` write.** It was never usable: the propeller
+  config template sets `disableCreateMutatingWebhookConfig` whenever `low_privilege` is true,
+  so the binary does not self-register in that mode. This exposes rather than causes a gap in
+  that combination — with `managedConfig: false` under `low_privilege`, neither Helm nor the
+  webhook creates the `MutatingWebhookConfiguration`. If you run those two settings together,
+  either set `managedConfig: true` or create the object yourself.
 
 - **BREAKING: something must bind `union-work-ns` in each work namespace at
   `low_privilege: false`, and the chart cannot check that it happened.** No Union role is

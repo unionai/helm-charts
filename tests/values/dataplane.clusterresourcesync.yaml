@@ -1,10 +1,18 @@
 # helm-values: examples/values-test-certs.yaml
 
-# Exercises the clusterresourcesync ClusterRole template, which is only rendered
-# when namespaces.enabled=true and low_privilege=false (i.e. not singleNamespace
-# mode). Locks in the default clusterRoleRules (including limitranges) and
-# verifies that custom rules render through to the union-clustersync-resource
-# ClusterRole.
+# clusterresourcesync at low_privilege: false with namespaces.enabled: true, plus a
+# non-empty clusterRoleRules.
+#
+# Two things are pinned here. First, the shape of the derived grant: the twelve
+# resources at verbs ['*'] that clusterRoleRules used to default to are gone, and
+# union-clusterresourcesync-cluster-write now carries only what the chart's own
+# templates create, plus the `bind` rule confined by resourceNames to the pooled
+# work-ns role.
+#
+# Second, that clusterRoleRules is still a working extension point and is not gated
+# on namespace posture: namespaces.enabled: true pre-seeds the six default names,
+# and the widgets rule below is granted cluster-wide regardless, because a project
+# registered after install lands in a namespace this render cannot know.
 host: test.example.com
 
 low_privilege: false
@@ -25,24 +33,6 @@ clusterresourcesync:
         enable: false
   clusterRoleRules:
     - apiGroups:
-        - ""
-        - rbac.authorization.k8s.io
-      resources:
-        - clusterrolebindings
-        - configmaps
-        - limitranges
-        - namespaces
-        - podtemplates
-        - pods
-        - resourcequotas
-        - rolebindings
-        - roles
-        - secrets
-        - serviceaccounts
-        - services
-      verbs:
-        - '*'
-    - apiGroups:
         - example.com
       resources:
         - widgets
@@ -50,3 +40,5 @@ clusterresourcesync:
         - get
         - list
         - watch
+        - create
+        - patch
