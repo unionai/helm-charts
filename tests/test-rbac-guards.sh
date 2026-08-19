@@ -163,6 +163,47 @@ function expect-manifest {
   fi
 }
 
+# expect-binding-subject <description> <binding kind> <binding name> <expected subject name>
+#   [helm --set flags...]
+# Asserts the render succeeds and that a named RoleBinding/ClusterRoleBinding binds the
+# identity given. expect-manifest cannot do this: the per-component name also appears on
+# the Deployment, so a plain grep passes even when the binding still names the shared
+# account. Templates that emit `subjects:` separately per privilege branch -- operator's
+# is the only one -- can drift on one branch alone, so the binding has to be read directly.
+function expect-binding-subject {
+  local desc=$1; shift
+  local kind=$1; shift
+  local name=$1; shift
+  local want=$1; shift
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # Slice the one document whose kind and metadata.name both match, then read the first
+  # subject name out of it.
+  got=$(awk -v kind="kind: ${kind}" -v name="  name: ${name}" '
+    $0 == "---" { inmatch = 0; sawkind = 0; sawname = 0; insubjects = 0 }
+    $0 == kind { sawkind = 1 }
+    $0 == name && !insubjects { sawname = 1 }
+    $0 == "subjects:" { insubjects = 1; if (sawkind && sawname) inmatch = 1 }
+    inmatch && /^  - kind: ServiceAccount$/ { getline; sub(/^ *name: /, ""); print; exit }
+  ' <<<"${out}")
+  if [[ "${got}" != "${want}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           ${kind}/${name} binds the wrong identity"
+    echo "           want: ${want}"
+    echo "           got:  ${got:-<no matching binding in the render>}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -271,6 +312,19 @@ expect-render "prometheus.forceNamespace naming the release namespace" \
   --set "prometheus.forceNamespace=${NAMESPACE}"
 expect-render "kube-state-metrics.namespaceOverride naming the release namespace" \
   --set "prometheus.kube-state-metrics.namespaceOverride=${NAMESPACE}"
+
+# The kube-prometheus-stack subchart owns its own RBAC and no template in this chart reaches
+# it, so low_privilege has to leave it alone. That used to be pinned by a second 12.5k-line
+# monitoring golden that differed from the first only by the generic privilege delta; these
+# two checks assert the same negative against both privilege modes for three lines.
+echo "- low_privilege does not reach the kube-prometheus-stack subchart's RBAC"
+expect-manifest "the subchart's prometheus ClusterRole is there under low_privilege" \
+  present "name: monitoring-prometheus" \
+  --set monitoring.enabled=true --set clusterresourcesync.enabled=true
+expect-manifest "and is unchanged at full privilege" \
+  present "name: monitoring-prometheus" \
+  --set monitoring.enabled=true --set clusterresourcesync.enabled=true \
+  --set low_privilege=false
 
 echo "- values that are inert do not block a deploy"
 expect-render "kube-state-metrics off, stale rbac.create left behind" \
@@ -442,6 +496,22 @@ expect-manifest "commonServiceAccount.enabled: false is honored under low_privil
   --set commonServiceAccount.enabled=false
 expect-manifest "and the shared identity is still the default there" \
   absent "serviceAccountName: operator-system"
+
+# The identity axis is independent of the privilege axis, so the per-component name has to
+# survive the switch to low_privilege: false. Every serviceaccount template emits `subjects:`
+# once, outside the privilege branch -- except operator's, which repeats it under both the
+# RoleBinding (low privilege) and the ClusterRoleBinding (full privilege). Only the second
+# copy can regress to a hardcoded union-system, and only at full privilege, so it gets its
+# own check on each side of the switch.
+expect-binding-subject "operator RoleBinding binds the per-component identity at low privilege" \
+  RoleBinding operator-system operator-system \
+  --set commonServiceAccount.enabled=false
+expect-binding-subject "and the ClusterRoleBinding does the same at full privilege" \
+  ClusterRoleBinding operator-system operator-system \
+  --set commonServiceAccount.enabled=false --set low_privilege=false
+expect-binding-subject "the shared identity still reaches that ClusterRoleBinding by default" \
+  ClusterRoleBinding operator-system union-system \
+  --set low_privilege=false
 
 # The per-component names are what an operator builds cloud workload-identity bindings
 # from, so pin the two the values.yaml comment calls out specially: buildkit is enabled
