@@ -1065,6 +1065,12 @@ expect-manifest "nothing renders when nodeobserver is off" \
 # chart deliberately binds identities into namespaces it does not own. A ServiceAccount with no
 # explicit metadata.namespace lands in the release namespace, so it is normalised to it.
 #
+# It also reports the mirror-image defect: the same (namespace, name) emitted by more than one
+# template. Several ServiceAccount names are computed rather than literal, and two templates
+# can resolve the same one -- the app-serving accounts collapse onto the common account when
+# that is enabled, where common/system-serviceaccount.yaml already emits it. A subject then
+# resolves, so the dangling half stays quiet, and the install carries duplicate objects.
+#
 # Fails closed three ways, per the rule that a negative assertion needs more than two states:
 # the render must succeed, at least one ServiceAccount object must be found, and at least one
 # ServiceAccount subject must be found. Without those, deleting every binding -- or breaking
@@ -1123,8 +1129,11 @@ function expect-no-dangling-subjects {
       flush()
       for (d in dkind)
         if (dkind[d] == "ServiceAccount" && dname[d] != "")
-          sa[(dns[d] == "" ? rel : dns[d]) "/" dname[d]] = 1
-      for (d in sa) sas++
+          sa[(dns[d] == "" ? rel : dns[d]) "/" dname[d]]++
+      for (d in sa) {
+        sas++
+        if (sa[d] > 1) print "duplicate ServiceAccount object: " d " rendered " sa[d] " times"
+      }
       for (i = 1; i <= n; i++) {
         d = sub_doc[i]
         if (dkind[d] != "RoleBinding" && dkind[d] != "ClusterRoleBinding") continue
