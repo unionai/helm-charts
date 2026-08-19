@@ -657,7 +657,11 @@ expect-binding-namespaces "work-ns binds only the listed work namespaces at full
   RoleBinding union-work-ns flytesnacks-development,flytesnacks-staging \
   --set low_privilege=false --set namespaces.enabled=true \
   --set 'namespaces.static={flytesnacks-development,flytesnacks-staging}'
-expect-binding-namespaces "and binds nowhere when the work namespaces are provisioned later" \
+# No static list means no namespace is known at render time, so the chart emits no binding
+# at all and whatever provisions the namespaces owes each one. This asserts only that the
+# chart stays out of it; the provisioner's own binding and bind grant arrive with the
+# component that gets wired to dataplane.rbac.provisionerBindingTemplate.
+expect-binding-namespaces "and binds nowhere when no work namespace is known at render time" \
   RoleBinding union-work-ns "" \
   --set low_privilege=false
 expect-binding-namespaces "under low_privilege it binds the release namespace, which is the work namespace" \
@@ -685,6 +689,18 @@ expect-role-resource "and under Shadow billing" \
 expect-role-resource "and not under the default ResourceUsage billing" \
   absent union-operator-work-ns-cluster-read nodes \
   --set low_privilege=false
+# The operator reaches the same decision from a tpl'd value and a lower-cased one -- the
+# config passes through tpl and its enum parser retries lower-cased -- so a gate comparing
+# the raw string would withhold the grant while the informer starts. That direction fails
+# closed at the API server, not at render.
+expect-role-resource "and follows a lower-cased model, which the operator also accepts" \
+  present union-operator-work-ns-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=legacy
+# disableClusterPermissions stops the informer outright, so the grant goes with it.
+expect-role-resource "and is withheld when cluster permissions are disabled outright" \
+  absent union-operator-work-ns-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set config.operator.disableClusterPermissions=true
 
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
 # so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
@@ -714,6 +730,25 @@ expect-manifest "an explicit namespaces list wins over the default" \
   --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
   --set controlplaneNamespace=union-cp \
   --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
+# ...and the grants follow it, in both directions. Config and RBAC read one define precisely
+# so this cannot drift: a namespace granted but not watched is an overgrant, and one watched
+# but not granted is a Forbidden the watcher dies on.
+expect-binding-namespaces "and the grants follow the explicit list rather than controlplaneNamespace" \
+  RoleBinding operator-system-secrets-watcher somewhere-else \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set controlplaneNamespace=union-cp \
+  --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
+# An explicitly empty list is the operator's way of asking for every namespace, so it must
+# survive as an empty list rather than being overwritten by the default -- and must not be
+# emitted twice, which a duplicate key would resolve silently in favour of the later one.
+expect-manifest "an explicitly empty list stays empty" \
+  present "        namespaces: \[\]" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set 'config.operator.secretsWatcher.namespaces=null'
+expect-manifest "and is not emitted twice" \
+  absent "          - union\$" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set 'config.operator.secretsWatcher.namespaces=null'
 
 # The control plane half is a Role in someone else's namespace, so the slot emitter cannot
 # carry it. It was previously gated on low_privilege, which left the watcher listing control

@@ -140,8 +140,10 @@ wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, a
 - `namespaces` and `nodes` left its write rule. Both are cluster-scoped, so the namespaced
   `Role` that carried them under `low_privilege: true` never conveyed them at all. At
   `low_privilege: false` the operator keeps cluster-wide `namespaces: [list, watch]` while
-  `imageBuilder.enabled` (the default); it no longer holds `nodes` in any mode, nor write on
-  either.
+  `imageBuilder.enabled` (the default). `nodes` is now read-only and only where the node
+  informer actually runs — `billing.model: Legacy` or `Shadow`, with
+  `disableClusterPermissions` unset — so the default `ResourceUsage` install has no `nodes`
+  grant at all, and neither has write on either.
 - `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
   `low_privilege: false`, so the default install never had it.
 - `post` left the `flyteworkflows` rule. It is not a Kubernetes verb and authorized nothing.
@@ -189,9 +191,12 @@ Also, in both modes:
   - **Your own tooling** — if you provision work namespaces yourself, create the binding
     alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, `roleRef`
     pointing at the `ClusterRole` of the same name, with one `ServiceAccount` subject per
-    Union identity in the release namespace. Where `clusterresourcesync` provisions the
-    namespaces, that binding belongs in its `clusterresourcesync.templates` list, keyed to
-    sort ahead of the ServiceAccount and ResourceQuota entries.
+    Union identity in the release namespace. Whatever creates that `RoleBinding` also needs
+    `bind` on the `union-work-ns` `ClusterRole` — Kubernetes refuses to let a caller grant
+    permissions it does not itself hold, unless it holds `bind` on the referenced role.
+    Where `clusterresourcesync` provisions the namespaces, the binding belongs in its
+    `clusterresourcesync.templates` list, keyed to sort ahead of the ServiceAccount and
+    ResourceQuota entries, and its ServiceAccount needs that `bind` grant.
 
   If nothing creates it, the install renders clean and task pods fail with `Forbidden` the
   first time they run, not at deploy time. `low_privilege: true` deployments need no action:

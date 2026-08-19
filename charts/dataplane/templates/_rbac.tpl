@@ -296,8 +296,11 @@ subjects:
 {{/*
 One RoleBinding per known work namespace. Referencing a ClusterRole from a
 RoleBinding scopes the grant to that namespace. When the namespaces are instead
-created at runtime, nothing is emitted here and
-dataplane.rbac.provisionerBindingTemplate handles the binding.
+created at runtime nothing is emitted here, and whatever provisions them owes each
+one a binding: dataplane.rbac.provisionerBindingTemplate renders exactly that
+object, and dataplane.rbac.provisionerBindRule the `bind` grant its creator needs.
+Neither has a caller yet -- they are the contract a provisioner will be wired to,
+not something this file already does.
 */}}
 {{- range $ns := $ctx.Values.namespaces.static }}
 ---
