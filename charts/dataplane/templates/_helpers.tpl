@@ -1400,11 +1400,14 @@ This returns the base64-encoded CA certificate based on the certificate provider
 {{- end -}}
 {{- end -}}
 {{/*
-Returns "true" when a common service account should be used for all components.
-Enabled explicitly via commonServiceAccount.enabled or implicitly via singleNamespace mode.
+Returns "true" when all components share one service account.
+
+Keyed on commonServiceAccount.enabled alone; sharing an identity is independent
+of privilege scope. It defaults to true because every per-component KSA needs a
+matching workload-identity binding on the cloud side.
 */}}
 {{- define "useCommonServiceAccount" -}}
-{{- if or .Values.commonServiceAccount.enabled (include "singleNamespace" .) -}}true{{- end -}}
+{{- if .Values.commonServiceAccount.enabled -}}true{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1535,12 +1538,27 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns "true" when namespaces.enabled is false, indicating single-namespace mode.
-In this mode, templates auto-inject namespace-scoping config (limitNamespace, limit-namespace,
-namespace_mapping) so users only need to set namespaces.enabled: false.
+Returns "true" under low_privilege, the empty string otherwise.
+
+low_privilege: true means no namespaces are created, so every workload runs in
+the release namespace. Templates key their namespace-scoping config
+(limitNamespace, limit-namespace, namespace_mapping) off this helper, and
+clusterresourcesync renders only when it is empty.
+
+This does not decide RBAC kind. The templates that choose Role over ClusterRole
+read .Values.low_privilege directly; this helper resolves to the same value, so
+routing them through it would change nothing today.
+
+namespaces.enabled is deliberately not read here: it pre-seeds a fixed list of
+work namespaces and says nothing about privilege. Folding it in meant a default
+full-privilege install looked single-namespace and suppressed clusterresourcesync.
+
+low_privilege must be a YAML boolean. This helper and every other low_privilege
+gate read it for Go-template truthiness, where the string "false" is truthy and
+so silently means true.
 */}}
 {{- define "singleNamespace" -}}
-{{- if or (not .Values.namespaces.enabled) .Values.low_privilege -}}true{{- end -}}
+{{- if .Values.low_privilege -}}true{{- end -}}
 {{- end -}}
 
 {{/*

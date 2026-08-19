@@ -3,6 +3,8 @@
 # Render tests for the dataplane RBAC guards in templates/prometheus/{rbac,validate}.yaml,
 # templates/ingress-nginx/validate.yaml and templates/gateway/validate.yaml.
 #
+# It also covers the values-key combinations no snapshot fixture pins.
+#
 # The snapshot suite only diffs renders that succeed, so it cannot see a guard at all. Each
 # case here asserts either that a guard refuses bad values or that it leaves a working
 # configuration alone. Refusals are matched on part of the error text, so a guard firing for
@@ -161,6 +163,47 @@ function expect-manifest {
   fi
 }
 
+# expect-binding-subject <description> <binding kind> <binding name> <expected subject name>
+#   [helm --set flags...]
+# Asserts the render succeeds and that a named RoleBinding/ClusterRoleBinding binds the
+# identity given. expect-manifest cannot do this: the per-component name also appears on
+# the Deployment, so a plain grep passes even when the binding still names the shared
+# account. Templates that emit `subjects:` separately per privilege branch -- operator's
+# is the only one -- can drift on one branch alone, so the binding has to be read directly.
+function expect-binding-subject {
+  local desc=$1; shift
+  local kind=$1; shift
+  local name=$1; shift
+  local want=$1; shift
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # Slice the one document whose kind and metadata.name both match, then read the first
+  # subject name out of it.
+  got=$(awk -v kind="kind: ${kind}" -v name="  name: ${name}" '
+    $0 == "---" { inmatch = 0; sawkind = 0; sawname = 0; insubjects = 0 }
+    $0 == kind { sawkind = 1 }
+    $0 == name && !insubjects { sawname = 1 }
+    $0 == "subjects:" { insubjects = 1; if (sawkind && sawname) inmatch = 1 }
+    inmatch && /^  - kind: ServiceAccount$/ { getline; sub(/^ *name: /, ""); print; exit }
+  ' <<<"${out}")
+  if [[ "${got}" != "${want}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           ${kind}/${name} binds the wrong identity"
+    echo "           want: ${want}"
+    echo "           got:  ${got:-<no matching binding in the render>}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -270,6 +313,19 @@ expect-render "prometheus.forceNamespace naming the release namespace" \
 expect-render "kube-state-metrics.namespaceOverride naming the release namespace" \
   --set "prometheus.kube-state-metrics.namespaceOverride=${NAMESPACE}"
 
+# The kube-prometheus-stack subchart owns its own RBAC and no template in this chart reaches
+# it, so low_privilege has to leave it alone. That used to be pinned by a second 12.5k-line
+# monitoring golden that differed from the first only by the generic privilege delta; these
+# two checks assert the same negative against both privilege modes for three lines.
+echo "- low_privilege does not reach the kube-prometheus-stack subchart's RBAC"
+expect-manifest "the subchart's prometheus ClusterRole is there under low_privilege" \
+  present "name: monitoring-prometheus" \
+  --set monitoring.enabled=true --set clusterresourcesync.enabled=true
+expect-manifest "and is unchanged at full privilege" \
+  present "name: monitoring-prometheus" \
+  --set monitoring.enabled=true --set clusterresourcesync.enabled=true \
+  --set low_privilege=false
+
 echo "- values that are inert do not block a deploy"
 expect-render "kube-state-metrics off, stale rbac.create left behind" \
   --set prometheus.kube-state-metrics.enabled=false \
@@ -376,6 +432,103 @@ expect-manifest "the deprecated serving.enabled still turns app serving on" \
   "${zt[@]}" --set serving.enabled=true --set low_privilege=false
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: knative-serving-core" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set low_privilege=false
+
+# low_privilege decides privilege scope, namespaces.enabled decides whether work namespaces
+# are pre-seeded, and commonServiceAccount.enabled decides identity sharing. The snapshot
+# fixtures pin the combinations a deployment uses; these pin that the three axes are actually
+# independent, including the combinations no fixture covers.
+echo "- the privilege, namespace and identity axes are independent"
+# These assert on `kind: Namespace`, not on the retention annotation. Asserting the annotation
+# is absent cannot tell "no Namespace rendered" from "a Namespace rendered unprotected", and
+# the second is the state worth catching.
+expect-manifest "namespaces.enabled pre-seeds at full privilege" \
+  present "kind: Namespace" \
+  --set low_privilege=false --set namespaces.enabled=true
+expect-manifest "and namespaces.enabled: false leaves the Namespace objects to someone else" \
+  absent "kind: Namespace" \
+  --set low_privilege=false --set namespaces.enabled=false
+expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces.enabled says" \
+  absent "kind: Namespace" \
+  --set namespaces.enabled=true
+
+# namespaces.labels / namespaces.annotations are the only hook for Namespace metadata the
+# chart creates, so they carry the retention policy an operator's deployment tool needs.
+expect-manifest "pre-seeded namespaces carry the default Helm retention policy" \
+  present "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true
+expect-manifest "operator annotations merge with it rather than replacing it" \
+  present "argocd.argoproj.io/sync-options: Prune=false" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
+expect-manifest "and the Helm default survives that merge" \
+  present "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
+expect-manifest "nulling the default drops it, for tooling that owns the lifecycle" \
+  absent "helm.sh/resource-policy: keep" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.annotations.helm\.sh/resource-policy=null'
+expect-manifest "namespaces.labels lands on the pre-seeded namespaces" \
+  present "pod-security.kubernetes.io/enforce: baseline" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.labels.pod-security\.kubernetes\.io/enforce=baseline'
+expect-manifest "a custom namespaces.static list replaces the defaults" \
+  present "name: my-only-namespace" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={my-only-namespace}'
+expect-manifest "and the hardcoded six are gone with it" \
+  absent "name: flytesnacks-development" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={my-only-namespace}'
+
+# The bug this replaces: namespaces.enabled defaults false, so `or (not namespaces.enabled)
+# low_privilege` made a default full-privilege install look single-namespace and gated off the
+# component that creates namespaces for newly registered projects.
+expect-manifest "clusterresourcesync renders at full privilege with namespaces.enabled unset" \
+  present "name: union-syncresources" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "and is still suppressed under low_privilege, where nothing needs it" \
+  absent "name: union-syncresources" \
+  --set clusterresourcesync.enabled=true
+
+expect-manifest "commonServiceAccount.enabled: false is honored under low_privilege" \
+  present "serviceAccountName: operator-system" \
+  --set commonServiceAccount.enabled=false
+expect-manifest "and the shared identity is still the default there" \
+  absent "serviceAccountName: operator-system"
+
+# The identity axis is independent of the privilege axis, so the per-component name has to
+# survive the switch to low_privilege: false. Every serviceaccount template emits `subjects:`
+# once, outside the privilege branch -- except operator's, which repeats it under both the
+# RoleBinding (low privilege) and the ClusterRoleBinding (full privilege). Only the second
+# copy can regress to a hardcoded union-system, and only at full privilege, so it gets its
+# own check on each side of the switch.
+expect-binding-subject "operator RoleBinding binds the per-component identity at low privilege" \
+  RoleBinding operator-system operator-system \
+  --set commonServiceAccount.enabled=false
+expect-binding-subject "and the ClusterRoleBinding does the same at full privilege" \
+  ClusterRoleBinding operator-system operator-system \
+  --set commonServiceAccount.enabled=false --set low_privilege=false
+expect-binding-subject "the shared identity still reaches that ClusterRoleBinding by default" \
+  ClusterRoleBinding operator-system union-system \
+  --set low_privilege=false
+
+# The per-component names are what an operator builds cloud workload-identity bindings
+# from, so pin the two the values.yaml comment calls out specially: buildkit is enabled
+# by default and moves, and fluentbit does not.
+expect-manifest "buildkit moves to its own identity with the rest" \
+  present 'serviceAccountName: "union-imagebuilder"' \
+  --set commonServiceAccount.enabled=false
+# fluentbit's account name comes from the subchart key fluentbit.serviceAccount.name,
+# pinned to union-system here, and that pin beats the per-component fallback. Partitioning
+# it needs an explicit name override -- see the commonServiceAccount comment in values.yaml.
+expect-manifest "fluentbit stays on the shared name until told otherwise" \
+  present "serviceAccountName: union-system" \
+  --set commonServiceAccount.enabled=false
+expect-manifest "and an explicit name override partitions it" \
+  present "serviceAccountName: fluentbit-system" \
+  --set commonServiceAccount.enabled=false \
+  --set fluentbit.serviceAccount.name=fluentbit-system
 
 echo
 if [[ ${failures} -ne 0 ]]; then

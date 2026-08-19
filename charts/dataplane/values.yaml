@@ -128,12 +128,10 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service. Required in multi-namespace
-  # mode (namespaces.enabled=true and low_privilege=false) to provision the
-  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
-  # is driven by the top-level namespace_mapping. Its configmap is gated off under
-  # singleNamespace, where task pods run in the release namespace and no per-domain
-  # namespaces are needed.
+  # -- Enable or disable the syncresources service. It creates the per-project/domain
+  # namespaces and RBAC that task pods land in, driven by the top-level
+  # namespace_mapping. Required when low_privilege is false unless something else
+  # provisions those namespaces. Not rendered at all when low_privilege is true.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -1956,6 +1954,14 @@ prometheus:
 #  cleanup job creates a ClusterRole either way, as do opencost and metrics-server when
 #  enabled.
 #
+# This is the chart's only privilege axis. When true, no namespaces are created by
+# any route: `namespaces` is not consulted, clusterresourcesync is not rendered, and
+# all workloads run in the release namespace. `namespaces.enabled` on its own pre-seeds
+# a fixed list of work namespaces and does not change privilege.
+#
+# Write this as an unquoted YAML boolean. A quoted `"false"` is a non-empty string
+# and reads as true, here and for every other boolean in this chart.
+#
 # Known tradeoffs when low_privilege is enabled:
 # - App serving cannot run: the Knative Serving / Kourier stack needs cluster-scoped RBAC
 #   that cannot be narrowed, so the chart refuses `apps.enabled: true` here rather than
@@ -1993,9 +1999,31 @@ zero_trust:
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
-# -- When enabled, creates a single shared ServiceAccount for all components
-# (operator, leaseworker, proxy, webhook, fluentbit) instead of individual ones.
-# Automatically enabled when singleNamespace mode is active.
+# -- Run every component under one ServiceAccount (`name` below).
+#
+# Setting this false creates one ServiceAccount per component, and each new name
+# needs its own workload-identity binding on the cloud side before those workloads
+# can authenticate (an IRSA trust-policy subject on AWS, a
+# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential).
+# The full set of names it switches to:
+#
+#   operator          -> operator-system
+#   operator proxy    -> proxy-system
+#   leaseworker       -> leaseworker
+#   webhook           -> union-webhook-system
+#   buildkit          -> union-imagebuilder     (imageBuilder.enabled, on by default)
+#   dataproxy         -> dataproxy-system       (zero_trust.enabled only)
+#
+# fluentbit is the exception and needs a manual step: its ServiceAccount name comes
+# from the subchart values key `fluentbit.serviceAccount.name`, which this chart
+# pins to `union-system` so the shared account is used by default. That pin wins
+# over the per-component fallback, so fluentbit keeps running as `union-system`
+# unless you also set `fluentbit.serviceAccount.name` to a dedicated name. Its
+# `rbac.create` is false here, so that account holds no Kubernetes permissions —
+# only whatever cloud role is bound to it.
+#
+# It buys identity separation for cloud IAM; it is not a privilege boundary, and it
+# is independent of low_privilege — honored in both privilege modes.
 commonServiceAccount:
   enabled: true
   name: union-system
@@ -2454,9 +2482,52 @@ ingress-nginx:
 ## -- Extra Kubernetes objects to deploy with the helm chart
 extraObjects: []
 
-## -- Automatically create namespaces to deploy into
 namespaces:
+  # -- Pre-seed a fixed list of work namespaces, named in `static` below. Off by
+  # default: clusterresourcesync creates work namespaces as projects are registered,
+  # so a full-privilege dataplane does not need them known at render time. This key
+  # does not change privilege scope — that is `low_privilege` alone — and is ignored
+  # entirely under `low_privilege: true`, where work runs in the release namespace.
+  #
+  # Leave it `false` when the namespaces are managed outside this chart, so Helm
+  # never takes ownership of them.
   enabled: false
+  # -- Labels to set on every Namespace this chart creates. Applies only to the
+  # `static` list below; namespaces clusterresourcesync creates at runtime are
+  # shaped by the `a_namespace` entry in `clusterresourcesync.templates`.
+  labels: {}
+  #  pod-security.kubernetes.io/enforce: baseline
+  #  istio-injection: enabled
+  # -- Annotations to set on every Namespace this chart creates. Same scope as
+  # `labels` above.
+  #
+  # `helm.sh/resource-policy: keep` is the default because `helm uninstall`
+  # otherwise deletes each namespace and everything in it — task pods, Secrets,
+  # PVCs, and whatever clusterresourcesync created at runtime. Leftover namespaces
+  # cost one `kubectl delete`; the reverse costs the data.
+  #
+  # Helm is the only thing that honors that key. A GitOps controller renders this
+  # chart and reconciles against its own bookkeeping, so it prunes a Namespace
+  # that leaves the desired manifest regardless. If you deploy that way, add your
+  # controller's retention key here — they merge:
+  #
+  #   annotations:
+  #     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+  #
+  # Set `helm.sh/resource-policy: null` to drop the default and let your tooling
+  # own the namespace lifecycle outright.
+  annotations:
+    helm.sh/resource-policy: keep
+  # -- Work namespaces known at render time. Not the full set when `enabled` is
+  # false: clusterresourcesync creates one per project/domain as projects are
+  # registered, and those names are not known in advance.
+  static:
+    - flytesnacks-development
+    - flytesnacks-staging
+    - flytesnacks-production
+    - union-health-monitoring-development
+    - union-health-monitoring-staging
+    - union-health-monitoring-production
 
 monitoring:
   # kube-prometheus-stack subchart. Disabled and deprecated; the supported monitoring

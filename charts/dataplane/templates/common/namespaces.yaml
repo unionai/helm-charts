@@ -1,32 +1,47 @@
-{{- if and .Values.namespaces.enabled (not .Values.low_privilege) }}
+{{- if and .Values.namespaces.enabled (not (include "singleNamespace" .)) }}
+{{/*
+Pre-seeded task namespaces from .Values.namespaces.static. clusterresourcesync
+creates further namespaces at runtime as projects are registered, and those
+cannot appear here. Their metadata is set by the a_namespace entry in
+.Values.clusterresourcesync.templates, not by the keys below.
+
+Metadata comes from .Values.namespaces.labels and .Values.namespaces.annotations
+so an operator can attach whatever their tooling needs -- Pod Security Standards
+levels, service-mesh injection, cost attribution, or a retention key for a GitOps
+controller.
+
+annotations defaults to helm.sh/resource-policy: keep, which makes `helm
+uninstall` leave these Namespaces in place. Without it, uninstall deletes each
+namespace and everything inside it: task pods, Secrets, PVCs, ResourceQuotas, and
+objects clusterresourcesync created at runtime. The cost is leftover namespaces,
+which one kubectl delete recovers; the reverse does not.
+
+That key is honored by Helm alone. A GitOps controller renders this chart and
+reconciles against its own bookkeeping, so it prunes a Namespace that leaves the
+desired manifest no matter what Helm annotations it carries. Add the controller's
+own retention key to namespaces.annotations to cover that path.
+
+Verified on k3s 1.35: uninstall leaves the Namespace and its Helm ownership
+metadata, so reinstalling under the same release name adopts it cleanly.
+Reinstalling under a different release name fails with "invalid ownership
+metadata". Renaming the release means re-annotating the Namespaces for the new
+release, not deleting them.
+
+Set namespaces.enabled: false when the namespaces are created elsewhere.
+*/}}
+{{- range $ns := .Values.namespaces.static }}
 ---
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: flytesnacks-development
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-staging
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-production
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-development
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-staging
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-production
-{{- end}}
+  name: {{ $ns }}
+  {{- with $.Values.namespaces.labels }}
+  labels:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+  {{- with $.Values.namespaces.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}
