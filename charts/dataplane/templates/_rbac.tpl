@@ -12,11 +12,17 @@ with a per-component one, and RBAC unions a subject's rules.
 */}}
 {{- define "dataplane.rbac.components" -}}
 {{- $components := list -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $components = append $components (dict "name" "leaseworker" "sa" (include "leaseworker.serviceAccountName" .)) -}}
+{{- end -}}
 {{- if .Values.operator.serviceAccount.create -}}
 {{- $components = append $components (dict "name" "operator" "sa" (include "operator.serviceAccountName" .)) -}}
 {{- end -}}
 {{- if .Values.proxy.serviceAccount.create -}}
 {{- $components = append $components (dict "name" "proxy" "sa" (include "proxy.serviceAccountName" .)) -}}
+{{- end -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- $components = append $components (dict "name" "flytepropeller" "sa" "flytepropeller-system") -}}
 {{- end -}}
 {{- toYaml $components -}}
 {{- end -}}
@@ -299,8 +305,8 @@ RoleBinding scopes the grant to that namespace. When the namespaces are instead
 created at runtime nothing is emitted here, and whatever provisions them owes each
 one a binding: dataplane.rbac.provisionerBindingTemplate renders exactly that
 object, and dataplane.rbac.provisionerBindRule the `bind` grant its creator needs.
-Neither has a caller yet -- they are the contract a provisioner will be wired to,
-not something this file already does.
+Both are wired to clusterresourcesync, which is the provisioner this chart ships;
+anything else provisioning work namespaces owes the same two things itself.
 */}}
 {{- range $ns := $ctx.Values.namespaces.static }}
 ---
@@ -366,18 +372,26 @@ Returns a one-rule YAML list, or nothing when the chart binds work-ns itself.
 
 {{/*
 The clusterresource-template entry creating the work-ns RoleBinding in each
-namespace clusterresourcesync provisions.
+namespace clusterresourcesync provisions. Its consumer is
+clusterresourcesync/configmap.yaml, which keys it `ab_work_ns_binding` so it sorts
+between a_namespace and b_default_service_account (`_` is 0x5F, `b` is 0x62). Keep
+that order: work-ns is what gives clusterresourcesync access to a new namespace, so
+this binding must be applied before the ServiceAccount and ResourceQuota it then
+creates, or new projects stall until the next sync.
 
-Its consumer must key it `ab_`, so it sorts between a_namespace and
-b_default_service_account (`_` is 0x5F, `b` is 0x62). Keep that order: work-ns is
-what gives clusterresourcesync access to a new namespace, so this binding must be
-applied before the ServiceAccount and ResourceQuota it then creates, or new
-projects stall until the next sync.
+Returns nothing when the chart binds work-ns itself, matching
+dataplane.rbac.provisionerBindRule: the two halves are one grant, and a provisioner
+told to create a binding it has no `bind` rule for would be refused on every sync.
+Nothing to bind is the other empty case -- with no work-ns declarer there is no
+pooled role for the RoleBinding to reference.
 
 `{{ namespace }}` is clusterresourcesync's own placeholder, substituted at
-provision time, so it is passed through literally.
+provision time, so it is passed through literally. That is also why the ConfigMap
+carrying this does not `tpl` its entries.
 */}}
 {{- define "dataplane.rbac.provisionerBindingTemplate" -}}
+{{- $subjects := fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" . "slot" "work-ns")) -}}
+{{- if and (not (include "dataplane.rbac.staticPosture" .)) $subjects -}}
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" . "slot" "work-ns" "component" "") -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -389,9 +403,10 @@ roleRef:
   kind: ClusterRole
   name: {{ $name }}
 subjects:
-{{- range $sa := fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" . "slot" "work-ns")) }}
+{{- range $sa := $subjects }}
   - kind: ServiceAccount
     name: {{ $sa }}
     namespace: {{ $.Release.Namespace }}
 {{- end }}
+{{- end -}}
 {{- end -}}

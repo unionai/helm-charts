@@ -1099,6 +1099,20 @@ data:
         limits.memory: {{ projectQuotaMemory }}
         requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
     
+  ab_work_ns_binding.yaml: | 
+    apiVersion: rbac.authorization.k8s.io/v1
+    kind: RoleBinding
+    metadata:
+      name: union-work-ns
+      namespace: {{ namespace }}
+    roleRef:
+      apiGroup: rbac.authorization.k8s.io
+      kind: ClusterRole
+      name: union-work-ns
+    subjects:
+      - kind: ServiceAccount
+        name: union-system
+        namespace: union
 
 ---
 # Source: dataplane/templates/fluent-bit/configmap.yaml
@@ -5237,6 +5251,14 @@ rules:
     - services
     verbs:
     - '*'
+  - apiGroups:
+      - rbac.authorization.k8s.io
+    resources:
+      - clusterroles
+    verbs:
+      - bind
+    resourceNames:
+      - union-work-ns
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5244,6 +5266,19 @@ kind: ClusterRole
 metadata:
   name: union-work-ns
 rules:
+  - apiGroups:
+    - '*'
+    resources:
+    - '*'
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+    - deletecollection
   - apiGroups:
     - flyte.lyft.com
     resources:
@@ -5294,6 +5329,21 @@ rules:
     - patch
     - delete
     - deletecollection
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-leaseworker-work-ns-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - podtemplates
+    - pods
+    verbs:
+    - list
+    - watch
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5351,59 +5401,6 @@ rules:
     verbs:
     - list
     - watch
----
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
-rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5775,6 +5772,20 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
+  name: union-leaseworker-work-ns-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-leaseworker-work-ns-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
   name: union-operator-work-ns-cluster-read
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -5798,23 +5809,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
----
-# Source: dataplane/templates/leaseworker/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-leaseworker
-  labels:
-    app: leaseworker
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-leaseworker
-subjects:
-- kind: ServiceAccount
-  name: union-system
-  namespace: union
-
 ---
 # Source: dataplane/templates/prometheus/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5934,6 +5928,14 @@ metadata:
   name: union-comp-ns-read
   namespace: union
 rules:
+  - apiGroups:
+    - ""
+    resources:
+    - endpoints
+    verbs:
+    - get
+    - list
+    - watch
   - apiGroups:
     - ""
     resources:
@@ -7620,7 +7622,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9b77ff52643004ba394b315ae1b6c880578c6986c4d74e1238fdb0f7db41bad"
+        configChecksum: "992f00f13df1d20209e00aa9fed4851516546cb8b9326d251a943adc3880f08"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -8546,10 +8548,6 @@ webhooks:
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
----
-# Source: dataplane/templates/propeller/serviceaccount.yaml
----
-
 ---
 # Source: dataplane/charts/monitoring/templates/prometheus/prometheus.yaml
 apiVersion: monitoring.coreos.com/v1
