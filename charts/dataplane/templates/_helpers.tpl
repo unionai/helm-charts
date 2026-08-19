@@ -1494,6 +1494,87 @@ Returns the buildkit service account name, using the common SA when enabled.
 {{- end -}}
 
 {{/*
+Service account names for the app-serving (Knative) binaries.
+
+Upstream Knative runs the controller, webhook and both autoscalers under a
+single `controller` ServiceAccount, and gives the activator and the Kourier
+controller one each. Naming every binary separately is what makes
+commonServiceAccount.enabled: false meaningful for app serving: without it,
+three binaries share one identity and no per-binary grant can be expressed.
+
+Each returns the common service account when that is enabled -- the chart
+default, so at stock values all five resolve to the same name and the
+app-serving workloads run as the shared identity like every other component.
+
+Kourier keeps the upstream name `net-kourier` rather than gaining a
+`knative-` prefix; it is a separate project and the name is what its own
+manifests, docs and issue reports use.
+*/}}
+{{- define "knative.controller.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-controller
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.webhook.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-webhook
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.autoscaler.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-autoscaler
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.activator.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+knative-activator
+{{- end -}}
+{{- end -}}
+
+{{- define "knative.kourier.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+net-kourier
+{{- end -}}
+{{- end -}}
+
+{{/*
+Subject list for the two aggregated ClusterRoles upstream binds to the shared
+`controller` ServiceAccount.
+
+The controller, webhook and both autoscalers all ran as `controller` before
+this chart split them, so all three identities have to stay on these bindings
+or the webhook and the autoscalers lose every grant they hold. When the common
+service account is enabled the three names collide, and `uniq` keeps the
+rendered subject list from repeating it.
+
+This is temporary: the vendored knative-serving RBAC is replaced by per-binary
+slot declarations, and these aggregated bindings go with it.
+*/}}
+{{- define "knative.controllerSubjects" -}}
+{{- range $name := list
+      (include "knative.controller.serviceAccountName" .)
+      (include "knative.webhook.serviceAccountName" .)
+      (include "knative.autoscaler.serviceAccountName" .) | uniq }}
+- kind: ServiceAccount
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end -}}
+
+{{/*
 Return true when the chart should create the BuildKit OpenShift SCC.
 */}}
 {{- define "imagebuilder.buildkit.openShiftCreateScc" -}}

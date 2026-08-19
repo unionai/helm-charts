@@ -303,6 +303,43 @@ are covered in their own sections.
   working: the Job's commands are unchanged, and a leftover under any other name was never
   being deleted.
 
+### App-serving pod identity
+
+- **BREAKING: the app-serving workloads no longer run as `controller`, `activator` and
+  `net-kourier`.** Upstream Knative ships three ServiceAccounts for five binaries: the
+  controller, the webhook and both autoscalers all ran as one account named `controller`,
+  which meant no grant could be expressed for any one of them without giving it to the other
+  three. Each binary now has its own name, and `commonServiceAccount.enabled` decides them
+  the same way it decides every other component's:
+
+  | Binary | Was | Default (`commonServiceAccount.enabled: true`) | Per-component |
+  |---|---|---|---|
+  | `controller` | `controller` | `union-system` | `knative-controller` |
+  | `webhook` | `controller` | `union-system` | `knative-webhook` |
+  | `autoscaler` | `controller` | `union-system` | `knative-autoscaler` |
+  | `autoscaler-hpa` | `controller` | `union-system` | `knative-autoscaler` |
+  | `activator` | `activator` | `union-system` | `knative-activator` |
+  | `net-kourier-controller` | `net-kourier` | `union-system` | `net-kourier` |
+
+  `autoscaler-hpa` shares the autoscaler's identity: it is the same reconciler with a
+  different PodAutoscaler class, and it held exactly the autoscaler's grants before. Kourier
+  keeps its upstream name rather than gaining a `knative-` prefix — it is a separate project
+  and that is the name its own manifests and issue reports use.
+
+- **No binary gains or loses a permission.** The vendored knative-serving RBAC is unchanged;
+  only the subject lists move to follow the names. The two aggregated ClusterRoleBindings
+  that upstream binds to `controller` now name the controller, webhook and autoscaler
+  identities together, which is what the single shared account conveyed before.
+
+- **At the chart default this means the app-serving pods run as the shared `union-system`
+  account, and that account becomes a subject of the knative bindings.** It therefore holds
+  the aggregated `knative-serving-admin` ClusterRole in addition to what it already had, and
+  the app-serving pods hold everything the shared account already carried. That is the
+  standing trade of `commonServiceAccount.enabled: true` — one identity per install, so one
+  cloud-side workload-identity binding — applied to app serving for the first time. Set
+  `commonServiceAccount.enabled: false` to keep the six workloads partitioned; each name then
+  needs its own cloud-side binding.
+
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
@@ -334,6 +371,16 @@ Also, in both modes:
   unchanged — cluster-scoped by design.
 
 ### Migration / action required
+
+- **The app-serving ServiceAccount names change; rebind anything outside the chart that
+  referenced them.** Nothing inside the chart needs action — the bindings follow the names —
+  but anything that named `controller`, `activator` or `net-kourier` from outside does: a
+  cloud IAM trust policy or workload-identity binding scoped to one of those accounts, an
+  admission policy that matches on the requesting user
+  (`system:serviceaccount:<release-ns>:controller`), or a NetworkPolicy or audit rule keyed
+  on the same. Retarget them at `union-system` at the chart default, or at the per-binary
+  names if you run `commonServiceAccount.enabled: false`. Only app serving is affected, so
+  installs with `apps.enabled` off — the default — have nothing to do here.
 
 - **BREAKING: `clusterresourcesync.clusterRoleRules` now defaults to `[]`, and a `*` verb in
   it fails the render.** It used to default to twelve resources at `verbs: ['*']`, granted

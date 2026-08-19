@@ -44,12 +44,31 @@ metadata:
     {}
 
 ---
-# Source: dataplane/templates/common/system-serviceaccount.yaml
+# Source: dataplane/templates/dataproxy/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: dataproxy-system
+  labels:
+    app.kubernetes.io/name: union-dataproxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+
+---
+# Source: dataplane/templates/fluent-bit/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: union-system
   namespace: union
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
   annotations:
     'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
 
@@ -64,6 +83,134 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+---
+# Source: dataplane/templates/gateway/serviceaccounts.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: knative-controller
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.2
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/component: controller
+---
+# Source: dataplane/templates/gateway/serviceaccounts.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: knative-webhook
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.2
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/component: webhook
+---
+# Source: dataplane/templates/gateway/serviceaccounts.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: knative-autoscaler
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.2
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/component: autoscaler
+---
+# Source: dataplane/templates/gateway/serviceaccounts.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: knative-activator
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.2
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/component: activator
+---
+# Source: dataplane/templates/gateway/serviceaccounts.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: net-kourier
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.2
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/name: knative-serving
+    app.kubernetes.io/version: "1.16.0"
+    networking.knative.dev/ingress-provider: kourier
+    app.kubernetes.io/component: net-kourier
+
+---
+# Source: dataplane/templates/imagebuilder/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-imagebuilder
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+
+---
+# Source: dataplane/templates/leaseworker/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+---
+# Source: dataplane/templates/operator/serviceaccount-proxy.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: proxy-system
+  labels:
+    app.kubernetes.io/name: operator-proxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: operator-system
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
+
+---
+# Source: dataplane/templates/webhook/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union-webhook-system
+  namespace: union
+  annotations:
+    'eks.amazonaws.com/role-arn': 'test-backend-iam-role-arn'
 ---
 # Source: dataplane/templates/common/auth-secret.yaml
 apiVersion: v1
@@ -328,7 +475,7 @@ data:
                             envoy.filters.http.cors:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
                               allow_origin_string_match:
-                                - exact: "https://override.example.com"
+                                - exact: "https://test-controlplane-host"
                               allow_methods: "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"
                               allow_headers: "DNT, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Range, Authorization, Connect-Protocol-Version, Connect-Timeout-Ms, Grpc-Timeout, X-Grpc-Web, X-User-Agent"
                               expose_headers: "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, x-request-id"
@@ -336,7 +483,7 @@ data:
                               forward_not_matching_preflights: false
                               max_age: "86400"
                           domains:
-                            - "test-cluster-name.dp.override.example.com"
+                            - "test-cluster-name.dp.test-controlplane-host"
                           routes:
                             - match:
                                 prefix: "/spark-history-server/"
@@ -2186,7 +2333,7 @@ data:
       workerName: 'test-org-name-test-cluster-name-worker1'
     union:
       connection:
-        host: 'dns:///override.example.com'
+        host: 'dns:///test-controlplane-host'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
@@ -2198,20 +2345,20 @@ data:
     admin:
       clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///override.example.com'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///override.example.com'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///override.example.com'
-      endpoint: 'dns:///override.example.com'
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -3879,7 +4026,7 @@ data:
   config.yaml: |
     union:
       connection:
-        host: 'dns:///override.example.com'
+        host: 'dns:///test-controlplane-host'
         insecureSkipVerify: false
       auth:
         authorizationMetadataKey: flyte-authorization
@@ -3896,7 +4043,7 @@ data:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///override.example.com'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
@@ -3921,7 +4068,7 @@ data:
         appId: ''
         bucketName: 'test-metadata-bucket'
         bucketRegion: 'test-region'
-        cloudHostName: 'override.example.com'
+        cloudHostName: 'test-controlplane-host'
         cloudProvider: 'aws'
         gcpProjectId: ''
         metadataBucketPrefix: 's3://test-metadata-bucket'
@@ -3979,7 +4126,7 @@ data:
       identity:
         enabled: false
     connection:
-      rootTenantURLPattern: 'dns:///override.example.com'
+      rootTenantURLPattern: 'dns:///test-controlplane-host'
   storage.yaml: | 
     storage:
       container: "test-metadata-bucket"
@@ -4040,8 +4187,8 @@ data:
         client_secret_file: /etc/prometheus/secrets/app_secret
         scopes:
         - all
-        token_url: https://override.example.com/auth/token
-      url: https://override.example.com/metrics/remote_write
+        token_url: https://test-controlplane-host/auth/token
+      url: https://test-controlplane-host/metrics/remote_write
     rule_files:
     - /etc/config/recording_rules.yml
     - /etc/config/alerting_rules.yml
@@ -5555,7 +5702,7 @@ roleRef:
   name: union-leaseworker-work-ns-cluster-read
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: leaseworker
     namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
@@ -5569,7 +5716,7 @@ roleRef:
   name: union-operator-work-ns-cluster-read
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: operator-system
     namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
@@ -5583,7 +5730,7 @@ roleRef:
   name: union-proxy-work-ns-cluster-read
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: proxy-system
     namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
@@ -5597,7 +5744,7 @@ roleRef:
   name: union-webhook-work-ns-cluster-read
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: union-webhook-system
     namespace: union
 ---
 # Source: dataplane/templates/gateway/kourier-controller.yaml
@@ -5619,7 +5766,7 @@ roleRef:
   name: net-kourier
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: net-kourier
     namespace: union
 ---
 # Source: dataplane/templates/gateway/rbac.yaml
@@ -5636,7 +5783,13 @@ metadata:
     app.kubernetes.io/component: controller
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: knative-controller
+    namespace: union
+  - kind: ServiceAccount
+    name: knative-webhook
+    namespace: union
+  - kind: ServiceAccount
+    name: knative-autoscaler
     namespace: union
 roleRef:
   kind: ClusterRole
@@ -5657,7 +5810,13 @@ metadata:
     app.kubernetes.io/component: controller
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: knative-controller
+    namespace: union
+  - kind: ServiceAccount
+    name: knative-webhook
+    namespace: union
+  - kind: ServiceAccount
+    name: knative-autoscaler
     namespace: union
 roleRef:
   kind: ClusterRole
@@ -5678,7 +5837,7 @@ metadata:
     app.kubernetes.io/component: activator
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: knative-activator
     namespace: union
 roleRef:
   kind: ClusterRole
@@ -5793,7 +5952,7 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: union-system-secret
+  name: proxy-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -5825,7 +5984,10 @@ roleRef:
   name: union-comp-ns-read
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: leaseworker
+    namespace: union
+  - kind: ServiceAccount
+    name: operator-system
     namespace: union
 ---
 # Source: dataplane/templates/gateway/rbac.yaml
@@ -5843,7 +6005,7 @@ metadata:
     app.kubernetes.io/component: activator
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: knative-activator
     namespace: union
 roleRef:
   kind: Role
@@ -5854,7 +6016,7 @@ roleRef:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: union-system-secret
+  name: proxy-system-secret
   namespace: union
   labels:
     app.kubernetes.io/name: operator-proxy
@@ -5864,10 +6026,10 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: union-system-secret
+  name: proxy-system-secret
 subjects:
   - kind: ServiceAccount
-    name: union-system
+    name: proxy-system
     namespace: union
 
 ---
@@ -6739,7 +6901,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "948d09b33bc66efcff8195f87d2ff3c42293b7b39286cff6a9bb0e3a748c916"
+        configChecksum: "7e8f9a9c6d07fc60dc3bc89842a29b1f260d85229f203b7e3c71d06e3736b1c"
         
       labels:
         
@@ -6748,7 +6910,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      serviceAccountName: union-system
+      serviceAccountName: dataproxy-system
       securityContext:
         {}
       volumes:
@@ -6946,7 +7108,7 @@ spec:
                   - activator
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: knative-activator
       containers:
         - name: activator
           # This is the Go import path for the binary that is containerized
@@ -7075,7 +7237,7 @@ spec:
                   - autoscaler-hpa
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: knative-autoscaler
       containers:
         - name: autoscaler-hpa
           image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:64166849fc5fd9b03ab2c1ebca72e70b826cf30e731b1fa3cdf725cdd30d6210
@@ -7182,7 +7344,7 @@ spec:
                   - autoscaler
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: knative-autoscaler
       containers:
         - name: autoscaler
           # This is the Go import path for the binary that is containerized
@@ -7291,7 +7453,7 @@ spec:
                   - controller
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: knative-controller
       containers:
         - name: controller
           # This is the Go import path for the binary that is containerized
@@ -7386,7 +7548,7 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 5eb56696a3f7b4cbd6933a651f2eee88d7098629bdf36b17e47a11efc0fef7ff
+        checksum/bootstrap-config: f7d1bb7311bf1f7d022afa4e7bd808513bb2efa6fe9c231e18e6c7db6e418de8
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
@@ -7405,11 +7567,11 @@ spec:
             - name: DRAIN_TIME_SECONDS
               value: "15"
             - name: UNION_AUTH_TENANTAUTHURL
-              value: "https://override.example.com/me"
+              value: "https://test-controlplane-host/me"
             - name: UNION_AUTH_TENANTAUTHSIGNINURL
-              value: "https://override.example.com/login"
+              value: "https://test-controlplane-host/login"
             - name: UNION_AUTH_TENANTCONTROLPLANEURL
-              value: "https://override.example.com"
+              value: "https://test-controlplane-host"
             - name: UNION_AUTH_OVERRIDENORG
               value: "test-org-name"
           ports:
@@ -7599,7 +7761,7 @@ spec:
               cpu: 500m
               memory: 1Gi
       restartPolicy: Always
-      serviceAccountName: union-system
+      serviceAccountName: net-kourier
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -7666,7 +7828,7 @@ spec:
                   - webhook
               topologyKey: topology.kubernetes.io/zone
             weight: 100
-      serviceAccountName: union-system
+      serviceAccountName: knative-webhook
       containers:
         - name: webhook
           # This is the Go import path for the binary that is containerized
@@ -7756,7 +7918,7 @@ spec:
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
     spec:
-      serviceAccountName: "union-system"
+      serviceAccountName: "union-imagebuilder"
       containers:
         - name: "buildkit"
           image: "docker.io/moby/buildkit:buildx-stable-1"
@@ -7861,7 +8023,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "cbbd195a2fc6e233510bf433754807b5fd86939318ef357c8397fe692b19ee8"
+        configChecksum: "9dde7a94f5f7ae415e683491aa5eee81629e5170d326f8ee1db422b127c34b9"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7872,7 +8034,7 @@ spec:
     spec:
       securityContext:
         fsGroup: 1337
-      serviceAccountName: union-system
+      serviceAccountName: leaseworker
       priorityClassName: union-leaseworker
       terminationGracePeriodSeconds: 75
       volumes:
@@ -7968,7 +8130,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "948d09b33bc66efcff8195f87d2ff3c42293b7b39286cff6a9bb0e3a748c916"
+        configChecksum: "7e8f9a9c6d07fc60dc3bc89842a29b1f260d85229f203b7e3c71d06e3736b1c"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -7987,7 +8149,7 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
-      serviceAccountName: union-system
+      serviceAccountName: proxy-system
       securityContext:
         {}
       containers:
@@ -8107,7 +8269,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "948d09b33bc66efcff8195f87d2ff3c42293b7b39286cff6a9bb0e3a748c916"
+        configChecksum: "7e8f9a9c6d07fc60dc3bc89842a29b1f260d85229f203b7e3c71d06e3736b1c"
         
       labels:
         
@@ -8116,7 +8278,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
     spec:
-      serviceAccountName: union-system
+      serviceAccountName: operator-system
       securityContext:
         {}
       volumes:
@@ -8233,7 +8395,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "cbbd195a2fc6e233510bf433754807b5fd86939318ef357c8397fe692b19ee8"
+        configChecksum: "9dde7a94f5f7ae415e683491aa5eee81629e5170d326f8ee1db422b127c34b9"
         
     spec:
       securityContext:
@@ -8241,7 +8403,7 @@ spec:
         fsGroupChangePolicy: Always
         runAsNonRoot: true
         runAsUser: 1001
-      serviceAccountName: union-system
+      serviceAccountName: union-webhook-system
       containers:
         - name: webhook
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.0"
