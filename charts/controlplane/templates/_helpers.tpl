@@ -303,7 +303,7 @@ null
 {{- if .config.fullnameOverride }}
 {{- .config.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" $.Release.Name .key | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
