@@ -667,6 +667,34 @@ Create the name of the service account to use
 {{- default .Release.Namespace .Values.proxy.secretManager.namespace }}
 {{- end }}
 
+{{/*
+The namespaces the secrets watcher is told to inspect, as a YAML list.
+
+Both the operator's config and the Roles backing it read this define, so a
+namespace cannot end up watched without being granted, or granted without being
+watched. The two drifted apart while each read its own condition.
+
+An explicit config.operator.secretsWatcher.namespaces wins, including an empty
+list -- the operator reads empty as "every namespace", so `hasKey` rather than
+truthiness is what distinguishes "unset" from "deliberately cluster-wide".
+
+Unset, it resolves to the release namespace plus the control plane's when the two
+share a cluster. Those are the only namespaces holding pods with the zone label
+the watcher selects on; user task namespaces never carry it.
+*/}}
+{{- define "operator.secretsWatcher.namespaces" -}}
+{{- $sw := .Values.config.operator.secretsWatcher -}}
+{{- if hasKey $sw "namespaces" -}}
+{{- toYaml ($sw.namespaces | default list) -}}
+{{- else -}}
+{{- $ns := list .Release.Namespace -}}
+{{- if .Values.controlplaneNamespace -}}
+{{- $ns = append $ns .Values.controlplaneNamespace -}}
+{{- end -}}
+{{- toYaml $ns -}}
+{{- end -}}
+{{- end }}
+
 {{- define "proxy.selectorLabels" -}}
 app.kubernetes.io/name: operator-proxy
 app.kubernetes.io/instance: {{ .Release.Name }}

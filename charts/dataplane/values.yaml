@@ -1981,6 +1981,46 @@ prometheus:
 # See docs/rbac.md for what each subchart gets in each mode.
 low_privilege: true
 
+# RBAC layout, and the one thing this chart cannot do for you.
+#
+# Union's own permissions are split by where they apply, not by which component
+# asked for them. The release namespace, holding Union's own Deployments, Secrets
+# and ConfigMaps, uses the shared `<release-ns>-comp-ns-read` and
+# `-comp-ns-write` Roles. The work namespaces, one per project/domain, holding
+# user tasks, apps and builds, use the shared `<release-ns>-work-ns` role.
+#
+# `work-ns` is a ClusterRole only so its rules are written once. Every binding
+# the chart emits for it is a namespaced RoleBinding, and a RoleBinding pointing
+# at a ClusterRole confines that role's rules to the binding's own namespace — so
+# it grants nothing in a namespace where no binding exists. Under
+# `low_privilege: true` the release namespace is the work namespace, and work-ns
+# is a plain Role bound there.
+#
+# Under `low_privilege: false`, something must create that RoleBinding in each
+# work namespace:
+#
+#   - this chart, when `namespaces.enabled: true` and `namespaces.static` is
+#     non-empty — one RoleBinding per listed namespace
+#   - `clusterresourcesync`, when it is enabled — it creates each work namespace
+#     as a project is registered, from the `clusterresourcesync.templates` list,
+#     so the binding must be an entry in that list
+#   - your own tooling, if you provision work namespaces yourself. With
+#     `clusterresourcesync.enabled: false` this is the only remaining route:
+#     nothing else creates work namespaces, so the binding is yours to create.
+#
+# Whatever creates the binding also needs `bind` on the `<release-ns>-work-ns`
+# ClusterRole. Kubernetes refuses to let a caller grant permissions it does not
+# hold itself, so creating the RoleBinding fails without it even where every
+# other permission is in place.
+#
+# The chart cannot verify that any of these happened, and does not try. If
+# nothing creates the binding, the install renders clean and task pods fail with
+# Forbidden the first time they run, not at deploy time. If you provision work
+# namespaces yourself, the object you owe each one is a RoleBinding named
+# `<release-ns>-work-ns` in that namespace, with `roleRef` pointing at the
+# ClusterRole of the same name and one `ServiceAccount` subject per Union
+# identity in the release namespace.
+
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
 # the tunnel-service dataplane ingress. Customers must also set

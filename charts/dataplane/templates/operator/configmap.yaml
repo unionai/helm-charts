@@ -109,13 +109,23 @@ data:
     {{- end }}
     {{- with .Values.config.operator.secretsWatcher }}
       secretsWatcher:
-        {{- tpl (toYaml .) $ | nindent 8 }}
-        {{- if and $.Values.low_privilege (not .namespaces) }}
+{{- /*
+Left unset the watcher lists pods in every namespace, which is authorized as a
+cluster-scope check no RoleBinding satisfies, and a pod found where the operator
+holds nothing fails the first Get and takes the process down with it. So the
+namespaces are named here, from the same define the Roles are emitted from.
+
+`namespaces` is omitted from the passthrough and written once below, or an
+explicit list would be emitted twice -- and a duplicate key in this embedded
+config is silent, with the later value winning.
+*/}}
+        {{- tpl (toYaml (omit . "namespaces")) $ | nindent 8 }}
+        {{- $watched := fromYamlArray (include "operator.secretsWatcher.namespaces" $) }}
+        {{- if $watched }}
         namespaces:
-          - {{ $.Release.Namespace }}
-          {{- if $.Values.controlplaneNamespace }}
-          - {{ $.Values.controlplaneNamespace }}
-          {{- end }}
+          {{- toYaml $watched | nindent 10 }}
+        {{- else }}
+        namespaces: []
         {{- end }}
     {{- end }}
     {{- if .Values.imageBuilder.enabled }}
