@@ -1,0 +1,65 @@
+{{/*
+Emits every union component's RBAC from the slots each component declares.
+Pooled slots produce one object holding the union of every enabled declarer's
+rules, bound to every declarer's ServiceAccount. Per-component slots produce one
+object per declarer. See dataplane.rbac.slotSpec.
+
+Rule definitions stay per-component (dataplane.rbac.slots.*) even where the
+object is shared, so it stays clear what each component asked for. Pooling only
+the enabled components is what lets a dataplane running a subset of them get a
+correspondingly narrower work-ns role, rather than the union of everything the
+chart can install.
+*/}}
+{{- $ctx := . -}}
+{{/*
+Both guards are scoped to full privilege, which is where namespaces.static is read
+at all. Under low_privilege the release namespace *is* the work namespace and
+work-ns is bound there deliberately, so the first guard's premise does not hold
+and firing it would report a fault that is not one.
+*/}}
+{{- if not (include "singleNamespace" .) -}}
+{{- if and .Values.namespaces.enabled (has .Release.Namespace (.Values.namespaces.static | default list)) -}}
+{{- fail (printf "namespaces.static must not contain the release namespace (%q). The chart would bind the work-ns role in the release namespace, where union's own components run, so those components would get write access to union's own Deployments and Secrets, with nothing in the render to show it. Remove the release namespace from namespaces.static and list only work namespaces." .Release.Namespace) -}}
+{{- end -}}
+{{- if and .Values.namespaces.enabled (not .Values.namespaces.static) -}}
+{{- fail "namespaces.enabled: true requires a non-empty namespaces.static. With an empty list the chart pre-seeds no work namespaces and creates no work-namespace RoleBindings, so no union component can reach any work namespace: the render looks clean and every task fails at first execution. List your work namespaces in namespaces.static, or set namespaces.enabled: false to have work namespaces and their bindings created as projects are registered." -}}
+{{- end -}}
+{{- end -}}
+{{- $spec := fromYaml (include "dataplane.rbac.slotSpec" .) -}}
+{{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
+{{- range $slot := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
+{{- $slotSpec := index $spec $slot -}}
+{{- if $slotSpec.pooled -}}
+{{/*
+`uniq` drops rules two components declare identically. RBAC unions a role's
+rules, so this only makes the render readable; it changes no access decision.
+*/}}
+{{- $rules := list -}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- $rules = concat $rules (index $decl $slot | default list) -}}
+{{- end -}}
+{{- include "dataplane.rbac.emitSlot" (dict
+      "ctx" $ctx
+      "slot" $slot
+      "rules" ($rules | uniq)
+      "component" ""
+      "subjects" (fromYamlArray (include "dataplane.rbac.slotSubjects" (dict "ctx" $ctx "slot" $slot)))) }}
+{{- else -}}
+{{/*
+This branch passes declared rules through unchanged. clusterresourcesync's bind
+rule is not special-cased here; emitSlot builds it internally, gated on slot and
+component, so it cannot bypass that define's validation.
+*/}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- $rules := index $decl $slot | default list -}}
+{{- include "dataplane.rbac.emitSlot" (dict
+      "ctx" $ctx
+      "slot" $slot
+      "rules" $rules
+      "component" $c.name
+      "subjects" (list $c.sa)) }}
+{{- end -}}
+{{- end -}}
+{{- end -}}

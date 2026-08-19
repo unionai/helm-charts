@@ -93,6 +93,49 @@
   Set `helm.sh/resource-policy: null` to drop the default entirely and let your tooling own
   the namespace lifecycle.
 
+### Union RBAC is split by destination
+
+Union's own grants are partitioned on *where* they apply rather than on which component asked
+for them. In the usual `union` release namespace:
+
+| Role | Kind | Bound by | Holds |
+|---|---|---|---|
+| `union-comp-ns-read`, `union-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what Union components need on Union's *own* objects |
+| `union-work-ns` | `ClusterRole`, or `Role` under `low_privilege: true` | one `RoleBinding` per work namespace — **never** in the release namespace at `low_privilege: false` | what components need on user tasks, apps and builds |
+| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. `list`/`watch` only, and not emitted at all under `low_privilege: true` |
+
+**The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
+once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
+namespace. Because it is never bound in the release namespace at `low_privilege: false`, a
+component that can create any Pod in a work namespace can no longer write Union's own
+Deployments or read its Secrets. Under `low_privilege: true` the release namespace *is* the
+work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
+
+The namespaced roles are **pooled**: one object holding the union of every declaring
+component's rules, bound to every declaring ServiceAccount. Pooling is by destination, not by
+identity, so `commonServiceAccount.enabled: false` does not multiply the object count — and
+does not narrow anything either. Splitting the identities buys one cloud IAM identity per
+component; inside a namespace, each still holds every other declarer's rules for that
+destination. The cluster-scoped roles stay per-component, because their blast radius is
+unbounded and precision is worth paying for there.
+
+**Verb sets.** A pooled slot carries one verb set — `get`, `list`, `watch`, `create`,
+`update`, `patch`, `delete`, `deletecollection` — where the per-component roles it replaces
+each named a shorter list of their own. Wildcards are excluded deliberately: on `roles` a
+wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, and on
+`serviceaccounts` it grants `impersonate`.
+
+**Grants that are gone**, all from the operator:
+
+- `namespaces` and `nodes` left its write rule. Both are cluster-scoped, so the namespaced
+  `Role` that carried them under `low_privilege: true` never conveyed them at all. At
+  `low_privilege: false` the operator keeps cluster-wide `namespaces: [list, watch]` while
+  `imageBuilder.enabled` (the default); it no longer holds `nodes` in any mode, nor write on
+  either.
+- `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
+  `low_privilege: false`, so the default install never had it.
+- `post` left the `flyteworkflows` rule. It is not a Kubernetes verb and authorized nothing.
+
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
@@ -125,16 +168,54 @@ Also, in both modes:
 
 ### Migration / action required
 
+- **BREAKING: something must bind `union-work-ns` in each work namespace at
+  `low_privilege: false`, and the chart cannot check that it happened.** No Union role is
+  bound cluster-wide to reach work namespaces any more, so the binding is what grants
+  access. Two ways to arrange it:
+
+  - **Static** — `namespaces.enabled: true` with a non-empty `namespaces.static`. This chart
+    emits one `RoleBinding` per listed namespace. It is a single pooled role, so the count
+    does not grow with the number of components or with `commonServiceAccount.enabled: false`.
+  - **Your own tooling** — if you provision work namespaces yourself, create the binding
+    alongside each one: a `RoleBinding` named `union-work-ns` in that namespace, `roleRef`
+    pointing at the `ClusterRole` of the same name, with one `ServiceAccount` subject per
+    Union identity in the release namespace.
+
+  If nothing creates it, the install renders clean and task pods fail with `Forbidden` the
+  first time they run, not at deploy time. `low_privilege: true` deployments need no action:
+  the release namespace is the work namespace and the chart binds there itself.
+
+- **BREAKING: the per-component role names `operator-system` and `proxy-system` no longer
+  exist.** Their rules moved into the destination roles above. Any external tooling, audit
+  policy or `RoleBinding` outside this chart that references them by name must be updated.
+
+- **At `low_privilege: false`, the operator no longer reads or writes Secrets and Deployments
+  in the release namespace unless a feature that needs them is on.** It previously held
+  `get`/`list`/`watch`/`create`/`update` on both there, unconditionally. They now sit in
+  `union-comp-ns-read` / `union-comp-ns-write` behind
+  `config.operator.secretsWatcher.enabled` and `config.operator.syncClusterConfig.enabled`,
+  which are both off by default. `low_privilege: true` is unaffected — there the release
+  namespace is the work namespace, and `union-work-ns` covers both.
+
+- **Two new render refusals, both at `low_privilege: false`.** Listing the release namespace
+  in `namespaces.static` is refused: it would bind the work-ns role where Union's own
+  components run, with nothing in the render to show it. `namespaces.enabled: true` with an
+  empty `namespaces.static` is refused too — it creates no bindings and pre-seeds no
+  namespaces, so the render looks clean while every task fails at first execution. Both are
+  ignored under `low_privilege: true`, which does not read `namespaces.static` at all.
+
 - **BREAKING for `namespaces.enabled: false` + `low_privilege: false` — this mode becomes a
   genuine multi-namespace deployment.** If you were running that combination and relying on it
   behaving as single-namespace, it will not any more: task pods are no longer pinned to the
   release namespace (propeller returns to `limit-namespace: all`, and `namespace_mapping`
   falls back to its `{{ project }}-{{ domain }}` default unless you set
   `namespace_mapping.template`), and the single-namespace task PodTemplate, the `union`
-  task ServiceAccount and the image-builder ConfigMap stop being rendered. Union's own
-  RBAC is unchanged — it already keyed on `low_privilege`, which this combination already
-  had set to `false`. ServiceAccounts are unaffected too: `commonServiceAccount.enabled`
-  defaults to `true`, so components keep sharing `union-system`. The one privilege
+  task ServiceAccount and the image-builder ConfigMap stop being rendered. Union's own RBAC
+  does not change *because of this* — it already keyed on `low_privilege`, which this
+  combination already had set to `false`; what does change it is the destination split
+  above, which applies to every privilege mode. ServiceAccounts are unaffected too:
+  `commonServiceAccount.enabled` defaults to `true`, so components keep sharing
+  `union-system`. The one privilege
   increase is `clusterresourcesync` itself: once you enable it (see the next entry) it
   brings a ClusterRole and two ClusterRoleBindings, which is how it creates namespaces.
   **If you actually want single-namespace

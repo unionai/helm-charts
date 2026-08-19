@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Render tests for the dataplane RBAC guards in templates/prometheus/{rbac,validate}.yaml,
-# templates/ingress-nginx/validate.yaml and templates/gateway/validate.yaml.
+# templates/ingress-nginx/validate.yaml, templates/gateway/validate.yaml and
+# templates/common/rbac.yaml.
 #
 # It also covers the values-key combinations no snapshot fixture pins.
 #
@@ -163,13 +164,16 @@ function expect-manifest {
   fi
 }
 
-# expect-binding-subject <description> <binding kind> <binding name> <expected subject name>
+# expect-binding-subject <description> <binding kind> <binding name> <expected subjects>
 #   [helm --set flags...]
-# Asserts the render succeeds and that a named RoleBinding/ClusterRoleBinding binds the
-# identity given. expect-manifest cannot do this: the per-component name also appears on
-# the Deployment, so a plain grep passes even when the binding still names the shared
-# account. Templates that emit `subjects:` separately per privilege branch -- operator's
-# is the only one -- can drift on one branch alone, so the binding has to be read directly.
+# Asserts the render succeeds and that a named RoleBinding/ClusterRoleBinding binds exactly
+# the identities given, in order, as a comma-separated list. expect-manifest cannot do this:
+# the per-component name also appears on the Deployment, so a plain grep passes even when the
+# binding still names the shared account.
+#
+# The whole list matters, not just the first entry: a pooled slot's role is bound to every
+# ServiceAccount that declared into it, so the subject list is what says pooling happened --
+# and, when the identities are shared, that the emitter deduplicated them.
 function expect-binding-subject {
   local desc=$1; shift
   local kind=$1; shift
@@ -184,20 +188,76 @@ function expect-binding-subject {
     failures=$((failures + 1))
     return
   fi
-  # Slice the one document whose kind and metadata.name both match, then read the first
-  # subject name out of it.
+  # Slice the one document whose kind and metadata.name both match, then read every
+  # ServiceAccount subject name out of it, in order.
+  # A pooled role can be bound in several namespaces at once, so stop at the end of the
+  # first matching document rather than accumulating every copy's subjects.
   got=$(awk -v kind="kind: ${kind}" -v name="  name: ${name}" '
-    $0 == "---" { inmatch = 0; sawkind = 0; sawname = 0; insubjects = 0 }
+    $0 == "---" {
+      if (done) { finished = 1 }
+      inmatch = 0; sawkind = 0; sawname = 0; insubjects = 0
+    }
     $0 == kind { sawkind = 1 }
     $0 == name && !insubjects { sawname = 1 }
-    $0 == "subjects:" { insubjects = 1; if (sawkind && sawname) inmatch = 1 }
-    inmatch && /^  - kind: ServiceAccount$/ { getline; sub(/^ *name: /, ""); print; exit }
+    $0 == "subjects:" {
+      insubjects = 1
+      if (sawkind && sawname && !finished) { inmatch = 1; done = 1 }
+    }
+    inmatch && /^  - kind: ServiceAccount$/ {
+      getline; sub(/^ *name: /, "")
+      out = out == "" ? $0 : out "," $0
+    }
+    END { print out }
   ' <<<"${out}")
   if [[ "${got}" != "${want}" ]]; then
     echo "  FAILED   ${desc}"
-    echo "           ${kind}/${name} binds the wrong identity"
+    echo "           ${kind}/${name} binds the wrong identities"
     echo "           want: ${want}"
     echo "           got:  ${got:-<no matching binding in the render>}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
+# expect-binding-namespaces <description> <binding kind> <binding name> <expected namespaces>
+#   [helm --set flags...]
+# Asserts the render succeeds and that every binding of that kind and name lands in exactly
+# the namespaces given -- comma-separated, sorted, empty string for "no such binding".
+#
+# Where a binding is, not just what it says, is the whole point of the work-ns slot: the role
+# is a ClusterRole so its rules are written once, and it is confined by being referenced only
+# from namespaced RoleBindings. A grep cannot tell "bound in the work namespaces" from "bound
+# in the release namespace too", and that difference is exactly what the split buys.
+function expect-binding-namespaces {
+  local desc=$1; shift
+  local kind=$1; shift
+  local name=$1; shift
+  local want=$1; shift
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # metadata.name precedes metadata.namespace, and roleRef carries no namespace, so the
+  # first `namespace:` after a matching kind and name is the object's own.
+  got=$(awk -v kind="kind: ${kind}" -v name="  name: ${name}" '
+    $0 == "---" { sawkind = 0; sawname = 0; emitted = 0 }
+    $0 == kind { sawkind = 1 }
+    $0 == name { sawname = 1 }
+    sawkind && sawname && !emitted && /^  namespace: / {
+      sub(/^  namespace: /, ""); print; emitted = 1
+    }
+  ' <<<"${out}" | sort -u | paste -sd, -)
+  if [[ "${got}" != "${want}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           ${kind}/${name} is bound in the wrong namespaces"
+    echo "           want: ${want:-<nowhere>}"
+    echo "           got:  ${got:-<nowhere>}"
     failures=$((failures + 1))
   else
     echo "  ok       ${desc}"
@@ -498,19 +558,21 @@ expect-manifest "and the shared identity is still the default there" \
   absent "serviceAccountName: operator-system"
 
 # The identity axis is independent of the privilege axis, so the per-component name has to
-# survive the switch to low_privilege: false. Every serviceaccount template emits `subjects:`
-# once, outside the privilege branch -- except operator's, which repeats it under both the
-# RoleBinding (low privilege) and the ClusterRoleBinding (full privilege). Only the second
-# copy can regress to a hardcoded union-system, and only at full privilege, so it gets its
-# own check on each side of the switch.
-expect-binding-subject "operator RoleBinding binds the per-component identity at low privilege" \
-  RoleBinding operator-system operator-system \
+# survive the switch to low_privilege: false. The slot emitter builds every subject list from
+# one component registry, so the risk is no longer per-template drift -- it is that pooling
+# and identity get wired to each other. These pin that they are not: the pooled role's
+# subject list follows commonServiceAccount.enabled on both sides of the privilege switch,
+# and the per-component cluster roles do the same.
+expect-binding-subject "the pooled work-ns role binds every declarer at low privilege" \
+  RoleBinding union-work-ns operator-system,proxy-system \
   --set commonServiceAccount.enabled=false
-expect-binding-subject "and the ClusterRoleBinding does the same at full privilege" \
-  ClusterRoleBinding operator-system operator-system \
+expect-binding-subject "and collapses to one subject when they share an identity" \
+  RoleBinding union-work-ns union-system
+expect-binding-subject "a per-component cluster role binds the per-component identity" \
+  ClusterRoleBinding union-operator-work-ns-cluster-read operator-system \
   --set commonServiceAccount.enabled=false --set low_privilege=false
-expect-binding-subject "the shared identity still reaches that ClusterRoleBinding by default" \
-  ClusterRoleBinding operator-system union-system \
+expect-binding-subject "and the shared identity reaches it by default" \
+  ClusterRoleBinding union-operator-work-ns-cluster-read union-system \
   --set low_privilege=false
 
 # The per-component names are what an operator builds cloud workload-identity bindings
@@ -529,6 +591,63 @@ expect-manifest "and an explicit name override partitions it" \
   present "serviceAccountName: fluentbit-system" \
   --set commonServiceAccount.enabled=false \
   --set fluentbit.serviceAccount.name=fluentbit-system
+
+echo
+echo "- the work-ns role reaches work namespaces and nowhere else"
+
+# The security claim of the slot split, stated as a location: under full privilege the pooled
+# work-ns role is never bound where union's own Deployments and Secrets live. Under low
+# privilege the release namespace *is* the work namespace, so it is bound there on purpose.
+expect-binding-namespaces "work-ns binds only the listed work namespaces at full privilege" \
+  RoleBinding union-work-ns flytesnacks-development,flytesnacks-staging \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={flytesnacks-development,flytesnacks-staging}'
+expect-binding-namespaces "and binds nowhere when the work namespaces are provisioned later" \
+  RoleBinding union-work-ns "" \
+  --set low_privilege=false
+expect-binding-namespaces "under low_privilege it binds the release namespace, which is the work namespace" \
+  RoleBinding union-work-ns union
+
+# work-ns-cluster-read exists because a caller that lists with an empty namespace is
+# authorized as a cluster-scope check. Under low_privilege those caches are namespace-scoped
+# and the pooled Role already covers them, so the slot emits nothing at all.
+expect-manifest "work-ns-cluster-read is emitted at full privilege" \
+  present "name: union-operator-work-ns-cluster-read" \
+  --set low_privilege=false
+expect-manifest "and not at all under low_privilege" \
+  absent "name: union-operator-work-ns-cluster-read"
+
+# comp-ns-write is empty at stock values -- both its declaring features are off by default --
+# so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
+expect-manifest "comp-ns-write appears once a component declares into it" \
+  present "name: union-comp-ns-write" \
+  --set config.operator.secretsWatcher.enabled=true
+expect-manifest "and is absent at stock values, where nothing declares" \
+  absent "name: union-comp-ns-write"
+
+echo
+echo "- namespaces.static and the release namespace"
+
+# Listing the release namespace as a work namespace would bind work-ns where union's own
+# components run, undoing the split above with nothing in the render to show it.
+expect-refusal "listing the release namespace in namespaces.static is refused" \
+  "must not contain the release namespace" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static={union,flytesnacks-development}'
+expect-refusal "an empty namespaces.static with namespaces.enabled is refused" \
+  "requires a non-empty namespaces.static" \
+  --set low_privilege=false --set namespaces.enabled=true \
+  --set 'namespaces.static=null'
+
+# Both guards read namespaces.static, which low_privilege ignores entirely. Firing there
+# would report a fault that is not one: work-ns is bound in the release namespace in that
+# mode by design.
+expect-render "neither guard fires under low_privilege, where namespaces.static is ignored" \
+  --set namespaces.enabled=true \
+  --set 'namespaces.static={union}'
+expect-render "including with an empty list" \
+  --set namespaces.enabled=true \
+  --set 'namespaces.static=null'
 
 echo
 if [[ ${failures} -ne 0 ]]; then
