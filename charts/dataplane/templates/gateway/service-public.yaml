@@ -1,0 +1,44 @@
+{{- if and (include "apps.enabled" .) .Values.gateway.enabled .Values.gateway.publicLoadBalancer.enabled }}
+{{/*
+The generic, tunnelless public entrypoint for app serving on a separate-cluster
+data plane — one that serves apps but has no shared control-plane ingress LB to
+borrow. It exposes the gateway Envoy directly: DNS `*.apps.<dp>.<domain>` -> this
+LB -> Envoy, TLS terminated at Envoy with the letsencrypt wildcard cert; plain
+http on 8081 (80) covers ACME/redirect. Intracluster data planes route apps
+through the shared CP ingress-nginx (ingress.serving.class) and leave this
+disabled.
+
+Shipped as a first-class template rather than dataplane `extraObjects` because
+it is a reusable capability of the serving gateway, not per-environment glue: it
+is toggled by one value (`gateway.publicLoadBalancer.enabled`) and shares the
+gateway's selector/labels, so every serving data plane gets the same wiring
+instead of hand-rolling the Service. Annotations (LB scheme + external-dns
+hostname) are the only per-environment part, supplied via
+`gateway.publicLoadBalancer.annotations`.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gateway.fullname" . }}-public
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: gateway
+    {{- include "gateway.labels" . | nindent 4 }}
+  {{- with .Values.gateway.publicLoadBalancer.annotations }}
+  annotations:
+    {{- tpl (toYaml .) $ | nindent 4 }}
+  {{- end }}
+spec:
+  type: LoadBalancer
+  selector:
+    app: gateway
+  ports:
+    - name: https
+      port: 443
+      protocol: TCP
+      targetPort: 8444
+    - name: http
+      port: 80
+      protocol: TCP
+      targetPort: 8081
+{{- end }}

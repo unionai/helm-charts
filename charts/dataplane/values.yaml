@@ -65,6 +65,18 @@ updateStatus:
     insecure: false
     # -- CP skips cert validation on the TLS handshake (self-signed CP cert envs).
     insecureSkipVerify: false
+    # -- DP-declared app serving. The dataplane reports where it serves apps
+    # (domain) and the TLS posture (insecure); the control plane builds an app's
+    # public_url as {scheme}://{subdomain}.{domain}. The dataplane owns the apps
+    # domain and its Ingress/DNS/TLS. connection_config v2 (apps.domain).
+    apps:
+      # -- Bare apps domain (no scheme, no subdomain) the dataplane serves apps
+      # under, with the dataplane name baked in so the URL routes to the DP
+      # running the app, e.g. "apps.dp-1.mycompany.com". Empty disables (CP falls
+      # back to its global executions.apps.publicURLPattern).
+      domain: ""
+      # -- Serve app URLs over http:// instead of https:// when true. Default https.
+      insecure: false
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -1640,6 +1652,13 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
+    # -- Emit the app-serving nginx Ingress (fronts the gateway via ingressClass).
+    # Default true: intracluster routes apps through the shared control-plane
+    # nginx. Set false on separate-cluster dataplanes, which have no shared nginx
+    # and instead expose the gateway Envoy via gateway.publicLoadBalancer — the
+    # union_extension disables it there so the `<dp>-apps` Ingress isn't left
+    # dangling with no controller.
+    enabled: true
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
@@ -2199,10 +2218,12 @@ serving:
     # -- Disabling is common if not leveraging Union Cloud SSO.
     enabled: true
 
-# Enable the knative operator.  Required for app serving.
-# Note: The operator requires cluster-scoped RBAC (CRDs, ClusterRoles, namespaces, deployments).
+# Legacy app-serving delivery. Superseded by the vendored gateway
+# (`gateway.enabled: true`, the default). Only enable this when running the
+# knative-operator path (`gateway.enabled: false`); it requires cluster-scoped
+# RBAC (CRDs, ClusterRoles, namespaces, deployments).
 knative-operator:
-  enabled: true
+  enabled: false
   # Install into the release namespace rather than the default "knative-operator" namespace.
   # Requires knative-operator >= 2026.4.5 which evaluates this via tpl.
   namespaceOverride: '{{ .Release.Namespace }}'
@@ -2584,9 +2605,30 @@ monitoring:
 # -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
 # `zero_trust.enabled: true`; the templates gate on that flag directly.
 gateway:
+  # -- Deliver app serving via this chart's vendored Knative Serving + Kourier +
+  # Envoy gateway (raw manifests under templates/gateway/*) instead of the
+  # knative-operator subchart. Default delivery. When true and app serving is on
+  # (`apps.enabled`), the vendored control plane renders and `knative-operator`
+  # must be disabled. Zero trust requires this (it layers dataproxy routes on the
+  # Envoy gateway). Set false to fall back to the legacy knative-operator path.
+  enabled: true
   service:
     httpAppsPort: 80
     httpStaticPort: 8888
+
+  # -- Public internet-facing LoadBalancer for app serving. Separate-cluster
+  # dataplanes (not co-located with the control plane) have no shared CP ingress
+  # LB to borrow, so they expose the gateway Envoy directly: DNS
+  # `*.apps.<dp>.<domain>` -> this LB -> Envoy, with TLS terminated at Envoy
+  # (8444) using the letsencrypt wildcard cert. Off by default; the terraform
+  # union_extension enables + annotates it (external-dns hostname, internet-facing
+  # scheme) for separate-cluster DPs. Intracluster apps route through the shared
+  # CP ingress-nginx instead (`ingress.serving.class`), so this stays off there.
+  publicLoadBalancer:
+    enabled: false
+    # -- Annotations for the LoadBalancer Service — cloud LB scheme
+    # (internet-facing) + external-dns hostname. Set by the union_extension.
+    annotations: {}
 
   # -- Enables Union's auth integration across the kourier-gateway.
   auth:
