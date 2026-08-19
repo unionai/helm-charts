@@ -396,10 +396,13 @@ it directly after the Namespace, so a work namespace is reachable by union's
 components from the moment it exists rather than at the end of the pass.
 
 What this ordering is NOT for: clusterresourcesync does not need this binding to
-create the ServiceAccount and ResourceQuota that follow it. Its own ClusterRole
-already grants those cluster-wide, and a template that fails does not abort the rest
-of the pass -- it is retried on the next sync. So reordering this key degrades how
-quickly a new namespace becomes usable; it does not break provisioning.
+create the ServiceAccount and ResourceQuota that follow it. Authority for those comes
+from its own ClusterRole, which grants them cluster-wide at the default
+clusterRoleRules, and a template that fails does not abort the rest of the pass. So
+reordering this key delays when a new namespace becomes usable; it does not break
+provisioning. Recovery from a failed apply is not stated here on purpose: upstream
+caches the template checksum per namespace and file rather than per execution target,
+so with several targets a success on one can suppress the retry on another.
 
 Emitted alongside dataplane.rbac.provisionerBindRule and under the same condition:
 the two halves are one grant, and either alone is useless. Emitted even when

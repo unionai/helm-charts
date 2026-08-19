@@ -141,15 +141,25 @@ wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, a
 same `apiGroups: ['*']`, `resources: ['*']` grant, and it now lives once in the pooled
 `union-work-ns` role rather than twice in roles of their own.
 
-**Two consequences of pooling that rule, both confined to work namespaces.** The pooled role
-carries the slot's verb set, so the wildcard now also grants `deletecollection`, which
-neither component's own rule did. And because a pooled role is bound to every declaring
-ServiceAccount, `commonServiceAccount.enabled: false` no longer keeps the operator and proxy
-to their enumerated resources — on this slot they hold the wildcard too. Both apply **only
-where `union-work-ns` is bound**: the work namespaces, never the release namespace at
-`low_privilege: false`. Union's own Deployments and Secrets are unaffected either way, and at
-the default shared identity nothing changes at all — that one account already held this
-grant, cluster-wide.
+**Two consequences of pooling that rule.** The pooled role carries the slot's verb set, so
+the wildcard now also grants `deletecollection`, which neither component's own rule did. And
+because a pooled role is bound to every declaring ServiceAccount, `commonServiceAccount.enabled: false`
+no longer keeps the operator and proxy to their enumerated resources — on this slot they hold
+the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which differs by mode:
+
+- **At `low_privilege: false`, they are confined to the work namespaces.** `union-work-ns` is
+  never bound in the release namespace in that mode, so Union's own Deployments and Secrets
+  are not reachable through it, however the identities are arranged.
+- **At `low_privilege: true` (the default), the release namespace *is* the work namespace**, so
+  the pooled role is bound there — over Union's own objects. With the default
+  `commonServiceAccount.enabled: true` this changes nothing between components, because that
+  single account already held the wildcard; only `deletecollection` is new.
+  **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system` and
+  `proxy-system` previously held only their own enumerated resources in the release namespace
+  and now hold `apiGroups: ['*'], resources: ['*']` there**, covering Union's own Deployments
+  and Secrets. If you run split identities under `low_privilege`, this is the one change in
+  this release to weigh before upgrading — it is the flip side of pooling by destination, and
+  splitting identities does not narrow a pooled slot.
 
 **Read the raw diff carefully here: this is a narrowing, not a widening.** At
 `low_privilege: false` the released chart bound `<release-ns>-leaseworker` — a wildcard on

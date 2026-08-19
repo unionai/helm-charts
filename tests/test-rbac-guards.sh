@@ -330,7 +330,8 @@ function expect-role-resource {
 # agree today only because both build every field from the same two defines, which is an
 # invariant a later edit to one side can break silently.
 #
-# Compares roleRef and the ordered subject list, which is every field either one sets.
+# Compares the full roleRef triple and the ordered subject triples, which is every field
+# either one sets. Neither emits labels, annotations or anything else on the object.
 function expect-provisioner-matches-chart {
   local desc=$1; shift
   local ns=$1; shift
@@ -344,11 +345,13 @@ function expect-provisioner-matches-chart {
     return
   fi
   # One parser for both sides. Tracks which top-level block each line is under, because
-  # `name:` appears in metadata, in roleRef and in every subject, and they mean different
-  # things. Emits `roleRef=<kind>/<name> subjects=<a,b>` for the RoleBinding named
-  # union-work-ns in namespace NS -- every field either emitter sets.
+  # `kind:`, `name:` and `namespace:` all appear in more than one block and mean different
+  # things in each. For the RoleBinding named union-work-ns in namespace NS it emits every
+  # field either emitter sets: the full roleRef triple and the ordered subject triples.
+  # Comparing only the names would miss a one-sided change to a subject's namespace, which
+  # is a different grant that looks identical at name level.
   local parse='
-    function emit(   i, l, sec, mdname, mdns, rkind, rname, subs, s) {
+    function emit(   i, l, sec, mdname, mdns, rgroup, rkind, rname, subs, s) {
       for (i = 1; i <= n; i++) {
         l = buf[i]
         if (l ~ /^[a-zA-Z]/) sec = l
@@ -358,15 +361,21 @@ function expect-provisioner-matches-chart {
           if (l ~ /^  namespace: /) mdns   = substr(l, 14)
         }
         else if (sec == "roleRef:") {
-          if (l ~ /^  kind: /) rkind = substr(l, 9)
-          if (l ~ /^  name: /) rname = substr(l, 9)
+          if (l ~ /^  apiGroup: /) rgroup = substr(l, 13)
+          if (l ~ /^  kind: /)     rkind  = substr(l, 9)
+          if (l ~ /^  name: /)     rname  = substr(l, 9)
         }
         else if (sec == "subjects:") {
-          if (l ~ /^    name: /) { s = substr(l, 11); subs = subs == "" ? s : subs "," s }
+          if (l ~ /^  - kind: /)      s = substr(l, 11)
+          if (l ~ /^    name: /)      s = s "/" substr(l, 11)
+          if (l ~ /^    namespace: /) {
+            s = s "/" substr(l, 16)
+            subs = subs == "" ? s : subs "," s
+          }
         }
       }
       if (isrb && mdname == "union-work-ns" && mdns == NS)
-        print "roleRef=" rkind "/" rname " subjects=" subs
+        print "roleRef=" rgroup "/" rkind "/" rname " subjects=" subs
       n = 0; isrb = 0
     }
     $0 == "---" { emit(); next }
