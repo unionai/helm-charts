@@ -1,0 +1,33 @@
+# helm-values: examples/values-test-certs.yaml
+#
+# commonServiceAccount.enabled: false at low_privilege: false — per-component
+# identities with no shared `union-system` account anywhere.
+#
+# This is the configuration that most needs a snapshot. Until this release the
+# cluster-wide `union-leaseworker` ClusterRoleBinding was what reached work
+# namespaces, and every component shared the `union-system` identity it named, so
+# nothing else had to. Splitting the identities takes that away: each component now
+# holds only its own bindings, and `union-work-ns` is the one role that reaches a
+# work namespace. So this fixture is where an unbound `union-work-ns` would show up
+# as a real loss of access rather than being masked by a binding some other
+# component happens to hold.
+#
+# Expect `union-work-ns` to be a ClusterRole bound nowhere by this chart, with the
+# binding delegated to clusterresourcesync below: the `ab_work_ns_binding.yaml`
+# entry in `union-clusterresource-template` is what creates it per namespace, and
+# the `bind` rule on `union-clustersync-resource` is what lets it.
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+low_privilege: false
+commonServiceAccount:
+  enabled: false
+
+secrets:
+  admin:
+    create: false
+
+# A full-privilege dataplane needs something creating work namespaces and binding
+# `union-work-ns` in each one. Not incidental here — it is half of what this
+# fixture pins.
+clusterresourcesync:
+  enabled: true

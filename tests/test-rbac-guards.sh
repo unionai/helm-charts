@@ -319,6 +319,93 @@ function expect-role-resource {
   fi
 }
 
+# expect-provisioner-matches-chart <description> <namespace> [helm --set flags...]
+# Asserts that the work-ns RoleBinding this chart writes for a pre-seeded namespace and the one
+# it hands clusterresourcesync to write at runtime are the same object.
+#
+# Both can target the same namespace, so if they disagree on any field Helm and the sync each
+# reconcile the object back to their own version, forever. Nothing else catches that: a
+# snapshot contains both, but nothing compares them, and the two are emitted by different
+# templates -- dataplane.rbac.emitSlot and dataplane.rbac.provisionerBindingTemplate. They
+# agree today only because both build every field from the same two defines, which is an
+# invariant a later edit to one side can break silently.
+#
+# Compares the full roleRef triple and the ordered subject triples, which is every field
+# either one sets. Neither emits labels, annotations or anything else on the object.
+function expect-provisioner-matches-chart {
+  local desc=$1; shift
+  local ns=$1; shift
+  local out chart provisioned
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # One parser for both sides. Tracks which top-level block each line is under, because
+  # `kind:`, `name:` and `namespace:` all appear in more than one block and mean different
+  # things in each. For the RoleBinding named union-work-ns in namespace NS it emits every
+  # field either emitter sets: the full roleRef triple and the ordered subject triples.
+  # Comparing only the names would miss a one-sided change to a subject's namespace, which
+  # is a different grant that looks identical at name level.
+  local parse='
+    function emit(   i, l, sec, mdname, mdns, rgroup, rkind, rname, subs, s) {
+      for (i = 1; i <= n; i++) {
+        l = buf[i]
+        if (l ~ /^[a-zA-Z]/) sec = l
+        if (l == "kind: RoleBinding") isrb = 1
+        else if (sec == "metadata:") {
+          if (l ~ /^  name: /)      mdname = substr(l, 9)
+          if (l ~ /^  namespace: /) mdns   = substr(l, 14)
+        }
+        else if (sec == "roleRef:") {
+          if (l ~ /^  apiGroup: /) rgroup = substr(l, 13)
+          if (l ~ /^  kind: /)     rkind  = substr(l, 9)
+          if (l ~ /^  name: /)     rname  = substr(l, 9)
+        }
+        else if (sec == "subjects:") {
+          if (l ~ /^  - kind: /)      s = substr(l, 11)
+          if (l ~ /^    name: /)      s = s "/" substr(l, 11)
+          if (l ~ /^    namespace: /) {
+            s = s "/" substr(l, 16)
+            subs = subs == "" ? s : subs "," s
+          }
+        }
+      }
+      if (isrb && mdname == "union-work-ns" && mdns == NS)
+        print "roleRef=" rgroup "/" rkind "/" rname " subjects=" subs
+      n = 0; isrb = 0
+    }
+    $0 == "---" { emit(); next }
+    { buf[++n] = $0 }
+    END { emit() }
+  '
+  chart=$(awk -v NS="${ns}" "${parse}" <<<"${out}")
+  # The block handed to the provisioner, dedented out of the ConfigMap and its placeholder
+  # resolved, then run through the same parser.
+  provisioned=$(awk '
+    /^  ab_work_ns_binding\.yaml: \|/ { grab = 1; next }
+    grab && /^  [a-z_0-9]+\.yaml: \|/ { grab = 0 }
+    grab && /^---$/ { grab = 0 }
+    grab { sub(/^    /, ""); print }
+  ' <<<"${out}" | sed "s/{{ namespace }}/${ns}/" | awk -v NS="${ns}" "${parse}")
+  if [[ -z "${chart}" || "${chart}" != *"subjects="?* ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           no chart-emitted union-work-ns RoleBinding found in ${ns}"
+    failures=$((failures + 1))
+  elif [[ "${chart}" != "${provisioned}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           the chart and the provisioner would write different objects into ${ns}"
+    echo "           chart:       ${chart}"
+    echo "           provisioner: ${provisioned}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
 echo "Running RBAC guard tests..."
 
 echo "- supported configurations still render"
@@ -619,7 +706,7 @@ expect-manifest "and the shared identity is still the default there" \
 # subject list follows commonServiceAccount.enabled on both sides of the privilege switch,
 # and the per-component cluster roles do the same.
 expect-binding-subject "the pooled work-ns role binds every declarer at low privilege" \
-  RoleBinding union-work-ns operator-system,proxy-system \
+  RoleBinding union-work-ns leaseworker,operator-system,proxy-system \
   --set commonServiceAccount.enabled=false
 expect-binding-subject "and collapses to one subject when they share an identity" \
   RoleBinding union-work-ns union-system
@@ -658,9 +745,8 @@ expect-binding-namespaces "work-ns binds only the listed work namespaces at full
   --set low_privilege=false --set namespaces.enabled=true \
   --set 'namespaces.static={flytesnacks-development,flytesnacks-staging}'
 # No static list means no namespace is known at render time, so the chart emits no binding
-# at all and whatever provisions the namespaces owes each one. This asserts only that the
-# chart stays out of it; the provisioner's own binding and bind grant arrive with the
-# component that gets wired to dataplane.rbac.provisionerBindingTemplate.
+# at all and whatever provisions the namespaces owes each one. That the chart stays out of it
+# is only half the claim; the provisioner section below pins the other half.
 expect-binding-namespaces "and binds nowhere when no work namespace is known at render time" \
   RoleBinding union-work-ns "" \
   --set low_privilege=false
@@ -709,6 +795,90 @@ expect-manifest "comp-ns-write appears once a component declares into it" \
   --set config.operator.secretsWatcher.enabled=true
 expect-manifest "and is absent at stock values, where nothing declares" \
   absent "name: union-comp-ns-write"
+
+echo
+echo "- the runtime provisioner supplies the work-ns binding the chart cannot"
+
+# Where work namespaces are created at runtime the chart binds nothing itself, so
+# clusterresourcesync has to. Three grants must appear together: the RoleBinding it is told to
+# create per namespace, ordinary authority to create a RoleBinding at all, and the `bind`
+# grant without which the API server refuses to let it reference a role it does not hold.
+# Any one missing leaves a full-privilege install whose work namespaces are unreachable, and
+# no snapshot of the release namespace alone would show it.
+expect-manifest "the work-ns RoleBinding is handed to the provisioner at full privilege" \
+  present "ab_work_ns_binding.yaml" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-role-resource "and the bind grant that lets it reference the pooled role" \
+  present union-clustersync-resource clusterroles \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# expect-role-resource matches a line anywhere in the role, so this pins the resourceNames
+# entry rather than the verb: a bind grant that lost its resourceNames, or aimed at another
+# role, would stop naming union-work-ns here.
+expect-role-resource "confined by resourceNames to the one chart-authored role" \
+  present union-clustersync-resource union-work-ns \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+# clusterRoleRules is an operator override, so the ordinary rolebindings authority is emitted
+# from the template too. Withdrawing it would fail silently: clean render, refused sync.
+expect-role-resource "and ordinary rolebindings authority survives an emptied override" \
+  present union-clustersync-resource rolebindings \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules=null'
+
+# namespaces.static is a pre-seeded SUBSET, not the complement of runtime provisioning:
+# clusterresourcesync still creates a namespace per project as projects are registered. So
+# both halves stay in this posture too. Suppressing them here is the bug that leaves every
+# namespace registered after install unreachable.
+expect-manifest "and both are still handed over when the chart also pre-seeds namespaces" \
+  present "ab_work_ns_binding.yaml" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+expect-role-resource "with the bind grant kept in the same posture" \
+  present union-clustersync-resource clusterroles \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+
+# Both writers can land on the same namespace in that posture, so they must agree exactly or
+# they reconcile against each other forever. Checked with the identities shared and split,
+# since the subject list is the field most likely to diverge.
+expect-provisioner-matches-chart "and the two writers agree on the object, shared identity" \
+  flytesnacks-development \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+expect-provisioner-matches-chart "and with per-component identities and propeller on" \
+  flytesnacks-development \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}' \
+  --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
+
+echo
+echo "- leaseworker and flytepropeller declare into slots instead of owning roles"
+
+# Both components' hand-written roles are gone. union-leaseworker cannot be checked with a
+# grep: a PriorityClass of that name still ships, so the name is in the render either way.
+# What must be absent is the cluster-wide ClusterRoleBinding it used to carry.
+expect-binding-subject "the cluster-wide union-leaseworker ClusterRoleBinding is gone" \
+  ClusterRoleBinding union-leaseworker "" \
+  --set low_privilege=false
+expect-manifest "and flytepropeller-role with it" \
+  absent "name: flytepropeller-role" \
+  --set low_privilege=false --set flytepropeller.enabled=true
+
+# Their wildcards now live in the pooled role, bound per work namespace rather than
+# cluster-wide. The subject list is registry order, and it is what says both components
+# joined the pool rather than keeping a role of their own.
+expect-binding-subject "both join the pooled work-ns role, in registry order" \
+  RoleBinding union-work-ns leaseworker,operator-system,proxy-system,flytepropeller-system \
+  --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
+# Disabling a component drops it from the pool, which is what makes the pooled role track
+# the components actually installed rather than everything the chart can install.
+# That its `*` resource wildcard goes with it is pinned by the
+# dataplane.no-wildcard-components snapshot instead: expect-role-resource greps the whole
+# role document, so it cannot tell a wildcard under `resources` from one under `apiGroups`,
+# and operator declares the latter in this slot either way.
+expect-binding-subject "and drop out of it when disabled" \
+  RoleBinding union-work-ns operator-system,proxy-system \
+  --set commonServiceAccount.enabled=false \
+  --set leaseworker.enabled=false --set flytepropeller.enabled=false
 
 echo
 echo "- the secrets watcher stays inside the namespaces it is granted"

@@ -49,6 +49,22 @@ data:
 {{- range .Values.clusterresourcesync.templates }}
   {{ .key }}.yaml: | {{ .value | nindent 4 }}
 {{- end }}
+{{- /*
+The work-ns RoleBinding is emitted here rather than carried as a
+clusterresourcesync.templates entry. It is the grant that lets union's components
+reach a namespace at all, so it is chart-owned: `templates` is a list, and a values
+override replaces the list wholesale, which would silently drop the binding and
+leave every newly registered project unreachable. Operators extend the set through
+additionalTemplates instead.
+
+No `tpl` runs over the entries above, which is what lets clusterresourcesync's own
+`{{ namespace }}` placeholders through untouched -- so an `include` in a values
+entry would render literally. The define is invoked here instead, and passes its
+own `{{ namespace }}` through the same way.
+*/}}
+{{- with include "dataplane.rbac.provisionerBindingTemplate" . }}
+  ab_work_ns_binding.yaml: | {{ . | nindent 4 }}
+{{- end }}
 {{- range .Values.clusterresourcesync.additionalTemplates }}
   {{ .key }}.yaml: | {{ .value | nindent 4 }}
 {{- end }}
