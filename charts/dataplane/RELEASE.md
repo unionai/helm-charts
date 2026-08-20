@@ -395,8 +395,16 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   Two specific escalation primitives are gone with them: **cluster-wide `pods: create`**,
   which lets its holder schedule a pod under any ServiceAccount in the cluster, and
   **cluster-wide write on `serviceaccounts`, `namespaces` and `customresourcedefinitions`**.
-  `kubernetes.podspec-dryrun` was already pinned `disabled`; it is now unusable rather than
-  merely unused, since dry-run validation is what needed that `pods: create`.
+  `kubernetes.podspec-dryrun` was already pinned `disabled`; it is now unsupported rather than
+  merely unused, because the webhook performs that dry-run by creating a throwaway Pod and now
+  holds `pods: create` in no namespace at all.
+
+  **One grant from that role is kept and re-scoped rather than dropped: `endpoints/restricted`.**
+  It is an OpenShift admission concept — `RestrictedEndpointsAdmission` refuses an `Endpoints`
+  object naming a cluster-network address unless the caller holds `create` on that subresource,
+  and the autoscaler's statforwarder writes exactly such an object for its bucket. It moves from
+  a cluster-wide grant to the release-namespace `comp-ns-write` Role. On any non-OpenShift
+  cluster it conveys nothing.
 
 - **`autoscaling/horizontalpodautoscalers` moves from a cluster-wide write to a namespaced
   one.** `autoscaler-hpa` reconciles an HPA-class PodAutoscaler into a HorizontalPodAutoscaler

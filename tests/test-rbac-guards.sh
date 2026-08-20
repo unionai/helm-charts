@@ -1385,6 +1385,44 @@ EXPECTED
   fi
 }
 
+# expect-only-webhook-cluster-write <description> [helm --set flags...]
+# Asserts that the COMPLETE set of app-serving cluster-write ClusterRoles the emitter produces
+# is exactly one: the webhook's.
+#
+# Everything else in this section checks named roles, which can only ever prove things about
+# roles that already exist. Declaring `cluster-write` on the controller, the autoscaler, the
+# activator or Kourier emits a NEW role, leaves every one of those assertions green, and
+# silently ends the invariant this whole change exists to establish. Enumerating the set is the
+# only shape that catches an addition.
+function expect-only-webhook-cluster-write {
+  local desc=$1; shift
+  local out got
+  local want="union-knative-webhook-cluster-write"
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  # Every ClusterRole whose name marks it an app-serving cluster-write role, in render order.
+  # Anchored on the document's own `kind:` so a roleRef or a subject naming the same string
+  # cannot be mistaken for a role definition.
+  got=$(awk '
+    /^kind: ClusterRole$/ { inrole = 1; next }
+    /^kind: / { inrole = 0 }
+    inrole && /^  name: union-knative-.*-cluster-write$/ { print substr($0, 9); inrole = 0 }
+  ' <<<"${out}" | sort -u | paste -sd, -)
+  if [[ "${got}" == "${want}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           app-serving cluster-write roles are not the expected set"
+    echo "           want: ${want}"
+    echo "           got:  ${got:-<none at all, so even the webhook write role is missing>}"
+    failures=$((failures + 1))
+  fi
+}
+
 # expect-webhook-cluster-write-exact <description> [helm --set flags...]
 # Asserts the one cluster-scoped write role in the whole app-serving set renders EXACTLY as
 # written below.
@@ -1686,6 +1724,21 @@ expect-verb-resources "and no cluster-scoped create anywhere in the app-serving 
 # see it -- so the role is compared as text.
 expect-webhook-cluster-write-exact "and both its rules stay pinned to named objects" "${APPS[@]}"
 expect-webhook-cluster-write-exact "with per-component identities too" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The checks above all name a role, so none of them can see a role that did not exist when they
+# were written. This one enumerates instead, and is what makes "the webhook is the only
+# cluster-scoped writer" an assertion rather than a description.
+expect-only-webhook-cluster-write "and it is the only app-serving cluster-write role there is" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-only-webhook-cluster-write "at the shared identity too" "${APPS[@]}"
+
+# OpenShift's RestrictedEndpointsAdmission refuses an Endpoints object naming a cluster-network
+# address unless the caller holds create on the endpoints/restricted subresource, and the
+# autoscaler's statforwarder writes exactly such an object in the release namespace. RBAC does
+# not derive a subresource from its parent, so `endpoints` alone does not convey it and the
+# vendored role carried both. The failure is invisible on every non-OpenShift cluster.
+expect-verb-resources "the statforwarder can publish its bucket Endpoints on OpenShift" \
+  union-comp-ns-write create "endpoints,endpoints/restricted,leases,secrets,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 
 # Three cluster-scoped reads are load-bearing in a way no other check here can see, so each is

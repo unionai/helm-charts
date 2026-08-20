@@ -97,11 +97,13 @@ can be namespaced is. It is because of what the *images* do:
   lives) and nothing else; upstream ships no namespace-scoped install, and the binaries take
   the shared, unfiltered informers from `knative.dev/pkg` without scoping them to a namespace.
   Those reads go out with an empty namespace, which Kubernetes authorizes as a cluster-scope
-  check, so each binary needs cluster-wide `list`/`watch` on Deployments, Pods, Services,
-  Endpoints and the Knative API groups — and `net-kourier` on Secrets — regardless of how the
-  RBAC is written. A namespaced Role authorizes none of it, and would leave controller,
-  webhook and activator Ready and denied: the same silent shape the prometheus and
-  kube-state-metrics guards exist to prevent, with no values key to guard on.
+  check. Each binary holds only the subset it uses — the webhook watches the two
+  webhook-configuration kinds and nothing else, the activator watches Services, Endpoints and
+  Revisions, the autoscaler adds Pods, Deployments, leases and HPAs — but **every one of those
+  subsets is cluster-scoped**, and `net-kourier`'s includes Secrets. A namespaced Role
+  authorizes none of it, and would leave controller, webhook and activator Ready and denied:
+  the same silent shape the prometheus and kube-state-metrics guards exist to prevent, with no
+  values key to guard on.
 
 So app serving reads every namespace in the cluster, which is the one thing `low_privilege:
 true` promises it does not. The webhook configurations make that concrete from the other
