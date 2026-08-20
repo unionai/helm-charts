@@ -38,15 +38,21 @@ echo "::add-mask::$secret"
 api_key=$("$here/build-api-key.sh" "$host" "$client_id" "$secret" "$org")
 echo "::add-mask::$api_key"
 
-# selfhosted has no app serving -> skip verify_app; all other standing legs run
-# the full suite (k3d runs the full suite incl. best-effort logs).
+# selfhosted has no app serving -> skip the app scenario. (The trigger scenario is
+# no longer skipped: the controlplane appVersion is now 2026.8.0, which carries the
+# artifact-triggers backend change, so its flyteadmin binary matches the migrated DB
+# schema — the earlier "struct doesn't have corresponding row field artifact_name"
+# skew is gone.) Other standing legs run the full suite (k3d too, incl. best-effort logs).
 functional_args=""
-[ "$skip_app" = "true" ] && functional_args="--skip-app"
+[ "$skip_app" = "true" ] && functional_args="--skip app"
 
 {
   echo "CONTROL_PLANE_URL=https://$host"
   echo "ORG_NAME=$org"
   echo "CLUSTER_NAME=$cluster"
+  # Per-leg TaskEnvironment-name suffix (the suite reads ENV_SUFFIX) so concurrent
+  # legs on the shared tenant don't clobber each other's envs.
+  echo "ENV_SUFFIX=$cluster"
   echo "FLYTE_API_KEY=$api_key"
   echo "FUNCTIONAL_ARGS=$functional_args"
   # Standing clusters autoscale, so parallelise the functional scenarios across

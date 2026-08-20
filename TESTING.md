@@ -30,8 +30,9 @@ git add tests/generated && git commit
 A **release PR** additionally runs `.github/workflows/integration-checks.yaml`:
 the candidate charts are installed onto standing canary clusters and exercised
 end-to-end across the full matrix — selfmanaged `aws` / `gcp` / `azure` / `k3d`
-and selfhosted `aws` / `gcp` — with a binary health gate and the pytest
-functional suite (`tests/functional/`).
+and selfhosted `aws` / `gcp` — with a binary health gate and the shared pytest
+functional suite (consumed from [`flyteorg/flyte-sdk`](https://github.com/flyteorg/flyte-sdk)
+`tests/functional/`, no longer vendored here).
 
 **A PR is classified as a release when either:**
 

@@ -15,8 +15,9 @@ register-build-image  (selfhosted) Register the build-image task in
                       system/production and route the system project to this DP.
 teardown              Deregister the cluster (SDK, best-effort).
 
-The functional tests (verify_simple + verify_*) live in tests/functional/ as pytest; this
-module provides the cluster operations they run against.
+The functional tests (verify_simple + verify_*) are the shared pytest suite from
+flyteorg/flyte-sdk (tests/functional/), consumed by the workflow; this module provides
+the cluster operations they run against.
 
 Environment
 -----------
@@ -36,11 +37,28 @@ import os
 import sys
 import time
 
-_REPO = os.environ.get("GITHUB_WORKSPACE") or os.path.abspath(
-    os.path.join(os.path.dirname(__file__), "..", "..")
-)
-sys.path.insert(0, os.path.join(_REPO, "tests", "functional"))
-import flyte_ops  # noqa: E402 - shared flyte helpers (tests/functional/)
+
+async def _init_client(control_plane_url, api_key, project, org="", domain="development"):
+    """Initialise the flyte client against an explicit endpoint. Self-contained here
+    (the functional suite it used to share this with now lives in flyteorg/flyte-sdk),
+    so the ops driver stays independent of the checked-out suite."""
+    import flyte  # type: ignore
+
+    org = org or os.environ.get("ORG_NAME", "")
+    if not control_plane_url.startswith(("https://", "http://")):
+        control_plane_url = "https://" + control_plane_url
+    kwargs = {
+        "endpoint": control_plane_url,
+        "project": project,
+        "domain": domain,
+        "image_builder": "remote",
+    }
+    if org:
+        kwargs["org"] = org
+    if api_key:
+        kwargs["api_key"] = api_key
+    await flyte.init.aio(**kwargs)  # type: ignore[attr-defined]
+
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -76,7 +94,7 @@ async def _wait_healthy_async(
 ) -> str:
     from flyteplugins.union.remote import Cluster  # type: ignore
 
-    await flyte_ops.init_client(control_plane_url, api_key, project=cluster_name)
+    await _init_client(control_plane_url, api_key, project=cluster_name)
     print(
         f"[ci] wait-healthy: polling Cluster.get(name={cluster_name}) (timeout={timeout}s)",
         flush=True,
@@ -131,7 +149,7 @@ async def _setup_routing_async(
     pool_name = cluster_name
     project_id = cluster_name
 
-    await flyte_ops.init_client(control_plane_url, api_key, project=project_id, org=org)
+    await _init_client(control_plane_url, api_key, project=project_id, org=org)
 
     # 1. Create cluster pool. The config kwargs are placeholders — for a
     # single-cluster pool the CP overwrites them from the operator's status upsert.
@@ -264,7 +282,7 @@ async def _register_build_image_async(
     os.environ["APP_VERSION"] = app_version
 
     # 1. Ensure the `system` project exists + is active (build task registers there).
-    await flyte_ops.init_client(control_plane_url, api_key, project="system", org=org)
+    await _init_client(control_plane_url, api_key, project="system", org=org)
     try:
         await Project.create.aio(  # type: ignore
             id="system",
@@ -288,9 +306,7 @@ async def _register_build_image_async(
         )
 
     # 3. Deploy the build-image task env into system/production, pinned to appVersion.
-    await flyte_ops.init_client(
-        control_plane_url, api_key, project="system", org=org, domain="production"
-    )
+    await _init_client(control_plane_url, api_key, project="system", org=org, domain="production")
     import importlib.util
 
     spec = importlib.util.spec_from_file_location("build_image_task", task_file)
@@ -354,7 +370,7 @@ def cmd_teardown(args: argparse.Namespace) -> None:
     async def _teardown_async() -> None:
         from flyteplugins.union.remote import Cluster  # type: ignore
 
-        await flyte_ops.init_client(control_plane_url, api_key, project=cluster_name, org=org)
+        await _init_client(control_plane_url, api_key, project=cluster_name, org=org)
         print(
             f"[ci] teardown: deregistering cluster {cluster_name} (pool/queue/project reused)",
             flush=True,
