@@ -2013,11 +2013,13 @@ low_privilege: true
 # ClusterRole of the same name and one `ServiceAccount` subject per Union
 # identity in the release namespace.
 
-# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
-# gateway (replaces the knative-operator path), the dataproxy backend, and
-# the tunnel-service dataplane ingress. Customers must also set
-# `knative-operator.enabled: false` because Helm evaluates that subchart
-# condition at parse time and can't derive it from this flag.
+# -- Opt-in zero-trust dataplane mode. When true, installs the Envoy gateway,
+# the dataproxy backend and the tunnel-service dataplane ingress. Adding
+# `apps.enabled: true` on top installs the vendored Knative Serving stack and
+# the Kourier controller in front of it, replacing the knative-operator path;
+# with app serving off you get Envoy and no Knative at all. Customers must also
+# set `knative-operator.enabled: false`, because Helm evaluates that subchart
+# condition at parse time and cannot derive it from this flag.
 #
 # This is also the only flag under which *this chart* authors app-serving RBAC.
 # With it off, app serving runs through the `knative-operator` subchart instead,
@@ -2232,8 +2234,10 @@ tunnelService:
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
 # deprecated flag can still take effect — the effective default is `false`.
 #
-# App serving requires `low_privilege: false`, and the chart refuses
-# `enabled: true` alongside `low_privilege: true`. The reason is the Knative
+# Under `zero_trust.enabled: true`, app serving requires `low_privilege: false`,
+# and the chart refuses `enabled: true` alongside `low_privilege: true`. That
+# applies to the zero-trust stack only — on the knative-operator path app serving
+# renders at either privilege setting. The reason is the Knative
 # images, not the manifests: their informers are the shared, unfiltered ones and
 # nothing scopes them to a namespace, so each binary's reads go out with an empty
 # namespace and Kubernetes authorizes them as cluster-scope checks. No way of
@@ -2263,8 +2267,10 @@ tunnelService:
 #
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
-# `knative-operator.enabled` condition evaluated by Helm at parse time — turn
-# that off too on the non-zero-trust path.
+# `knative-operator.enabled` condition evaluated by Helm at parse time. Turn the
+# subchart off on the ZERO-TRUST path, where this chart renders the Knative
+# workloads itself; leave it on otherwise, since it is what reconciles the
+# `KnativeServing` resource into workloads on the operator path.
 apps:
   enabled: null
 
@@ -2982,10 +2988,11 @@ gateway:
       # webhook create a throwaway Pod in the app's namespace. At the default
       # shared account the webhook runs as `union-system`, which the pooled
       # work-ns RoleBinding grants `pods: create` in every work namespace, so the
-      # dry-run would succeed. Under `commonServiceAccount.enabled: false` the
-      # webhook has its own identity and declares into no work-namespace slot, so
-      # every dry-run fails Forbidden. `enabled` runs the check on every revision;
-      # `allowed` only on revisions that opt in by annotation. Setting either
+      # dry-run request is authorized there. Under `commonServiceAccount.enabled:
+      # false` the webhook has its own identity and declares into no
+      # work-namespace slot, so every dry-run fails Forbidden. `enabled` runs the
+      # check for every Knative Service or Configuration submitted; `allowed`
+      # only for those that opt in with an annotation. Setting either
       # still renders — the chart does not refuse it — but a feature that works in
       # one identity mode and not the other is not one to turn on.
       kubernetes.podspec-dryrun: "disabled"

@@ -1745,8 +1745,9 @@ expect-verb-resources "the release-namespace write role carries endpoints/restri
   union-comp-ns-write create "endpoints,endpoints/restricted,leases,secrets,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # And the controller's copy in the pooled work-ns role, asserted with leaseworker and
-# flytepropeller OFF so it proves the grant is the controller's own declaration rather than
-# their wildcard rule -- which is the whole reason it is declared rather than inherited.
+# flytepropeller OFF. A pooled role cannot say which component contributed a rule, so what
+# this proves is narrower and is the part that matters: the grant survives without either
+# wildcard contributor, which is the whole reason it is declared rather than inherited.
 expect-role-resource "and the work-ns role carries it without the wildcard contributors" \
   present union-work-ns "endpoints/restricted" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false \
