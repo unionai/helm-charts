@@ -22,10 +22,12 @@ workload runs in the release namespace, no work namespaces are created by any ro
 
 **`namespaces.enabled` pre-seeds namespaces; it does not change privilege.** It creates
 the Namespace objects named in `namespaces.static` and, at `low_privilege: false`, their
-work-namespace RoleBindings. It grants nothing extra and withdraws nothing. It is ignored
-entirely under `low_privilege: true`.
+work-namespace RoleBindings. It changes no role's rules and widens no role's scope — but
+those bindings are what make the `work-ns` grant effective in each listed namespace, so it
+does decide *where* that grant lands. It is ignored entirely under `low_privilege: true`.
 
-**`commonServiceAccount.enabled` shares identity; it changes no permission.** See
+**`commonServiceAccount.enabled` shares identity; it changes no rule.** The set of roles the
+chart emits is the same either way; which workload can exercise which is not. See
 [Identities](#identities).
 
 Write these as unquoted YAML booleans. A quoted `"false"` is a non-empty string and reads
@@ -51,6 +53,17 @@ one role per slot from those declarations. Two destinations matter:
 | `cluster-read` | `ClusterRole` | `ClusterRoleBinding` | component-declared | unchanged |
 | `cluster-write` | `ClusterRole` | `ClusterRoleBinding` | component-declared | unchanged |
 
+The slots are not the chart's whole RBAC surface, and what sits outside them is outside for
+four different reasons: the destination is a namespace the operator names rather than one the
+emitter binds in (the proxy's Secret Role, the operator's secrets-watcher Role); the role is a
+built-in with no rules of its own to carry (`system:auth-delegator`); the object is a hook
+that outlives nothing (the pre-upgrade cleanup); or the verb has no slot (`use` on a named
+SecurityContextConstraints, for imagebuilder and the Kourier gateway). Some of these do land
+in the release namespace — being outside the model is not the same as being outside the
+release namespace. The authoritative list is the header comment in `templates/_rbac.tpl`,
+which also warns not to audit by grepping for `kind: Role`; read it before treating a slot
+inventory as complete.
+
 Role names are `<release-namespace>-<slot>` for the shared slots and
 `<release-namespace>-<component>-<slot>` for the per-component ones. In the usual `union`
 release namespace that reads as `union-work-ns`, `union-comp-ns-read`,
@@ -62,8 +75,16 @@ the cluster-scoped names are qualified at all.
 chart emits for it is a namespaced `RoleBinding`, and a `RoleBinding` that references a
 `ClusterRole` confines that role's rules to the binding's own namespace. It grants nothing
 in a namespace where no binding exists. Under `low_privilege: false` it is never bound in
-the release namespace, so a component that can create any Pod in a work namespace still
-cannot write Union's own Deployments or read its Secrets.
+the release namespace, so the `work-ns` role itself conveys nothing there — a component that
+can create any Pod in a work namespace gets no reach over Union's own Deployments or Secrets
+*through that role*.
+
+That is a property of the binding, not of the identity. The same ServiceAccount may hold
+release-namespace grants from other roles: at the default `proxy.secretManager` settings the
+proxy's account holds `get,list,create,update,delete` on Secrets in the release namespace
+(`operator/serviceaccount-proxy-secret.yaml`), and at the shared-identity default that
+account is `union-system`. To reason about what an identity can do, enumerate every binding
+naming it — not just the slots it declares into.
 
 The two `cluster-*` slots survive `low_privilege: true`. What they carry is cluster-scoped
 in both modes — `nodes`, for instance — so narrowing them is not possible and refusing to
@@ -124,15 +145,21 @@ it can hand out that role and no other, and never holds the role's own permissio
 
 ### The `union-work-ns` ClusterRole can render present but unbound
 
-**This is the most confusing consequence of the model, and it is not a defect.**
+**This is the most confusing consequence of the model, and on its own it is not a defect.**
 
 At `low_privilege: false` with `namespaces.enabled: false` — the default full-privilege
-posture — the `union-work-ns` ClusterRole renders with **no binding at all**. Nothing is
-wrong: the per-namespace RoleBindings are created at runtime by `clusterresourcesync` as
-it provisions each namespace, and a `helm template` run cannot show an object that does
-not exist yet.
+posture — the `union-work-ns` ClusterRole renders with **no binding at all**. That is
+expected *provided one of the runtime routes above is actually in play*: the per-namespace
+RoleBindings are created as `clusterresourcesync` provisions each namespace, and a
+`helm template` run cannot show an object that does not exist yet.
 
-Two things follow.
+It is not expected when no route is. `clusterresourcesync.enabled` also defaults to `false`,
+so `low_privilege: false` on its own — with `namespaces.enabled` left at `false` and no
+external provisioner — renders exactly the same unbound ClusterRole and never binds it. That
+render is indistinguishable from the healthy one, which is why the check below is on the
+cluster and not on the manifest.
+
+Three things follow.
 
 **Nothing in a render can prove this worked.** The install renders green, a GitOps
 controller reports healthy, and the first sign of trouble is a task execution failing with
@@ -141,14 +168,28 @@ controller reports healthy, and the first sign of trouble is a task execution fa
 ```bash
 kubectl get rolebinding <release-ns>-work-ns -n <work-namespace>
 
+# The subjects are not always union-system — read them off the binding rather
+# than assuming, since they differ under commonServiceAccount.enabled: false.
+kubectl get rolebinding <release-ns>-work-ns -n <work-namespace> \
+  -o jsonpath='{.subjects[*].name}'
+
 kubectl auth can-i create pods -n <work-namespace> \
-  --as=system:serviceaccount:<release-ns>:union-system
+  --as=system:serviceaccount:<release-ns>:<one of those subjects>
 ```
 
 If it is missing, check `clusterresourcesync`'s logs for errors applying
 `ab_work_ns_binding.yaml`. If you provision namespaces yourself, the object you owe each
-one is that RoleBinding, with `roleRef` pointing at the ClusterRole of the same name and
-one `ServiceAccount` subject per Union identity in the release namespace.
+one is that RoleBinding, with `roleRef` pointing at the ClusterRole of the same name.
+
+**Its subjects are not every Union identity.** The chart binds only the accounts that
+declare into the `work-ns` slot, and which those are depends on what is enabled: under split
+identities with apps off it is four, and zero-trust app serving takes it to seven. Never
+compose the list by hand. Copy the subject list from a chart-rendered binding (`helm template --set
+namespaces.enabled=true`, or the `ab_work_ns_binding.yaml` entry in `clusterresourcesync`'s
+ConfigMap) rather than composing it yourself. Adding accounts that do not declare into the
+slot hands them the pooled role's full write set in every work namespace — including
+`clusterresourcesync`, which is deliberately given `bind` on this role precisely so it can
+hand it out *without* holding it.
 
 **A capability audit of this chart is only valid where every pooled slot is bound.** An
 audit that walks bindings to work out what an identity can do will report the entire
@@ -163,7 +204,10 @@ one missing in the *release* namespace.
 ## The cluster-scoped write surface
 
 Most of what this chart grants is namespaced. The cluster-scoped, state-mutating grants
-held by Union identities are these, and no posture holds all of them at once:
+held by Union identities are these. Their conditions are compatible: a full-privilege
+zero-trust install with `clusterresourcesync`, `nodeobserver` and an unmanaged pod-webhook
+config renders all five at once, so treat the whole table as the maximum surface rather
+than assuming some rows exclude others.
 
 | ClusterRole | Rendered when | Grant |
 |---|---|---|
@@ -178,7 +222,16 @@ ResourceQuotas *into a namespace on the sync that creates it*, holding no RoleBi
 there yet, so those rules cannot be namespaced. Its `namespaces` rule gains `delete` only
 under `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace: true`.
 
-Beyond this table, every cluster-scoped grant held by a Union identity is **read-only**,
+That row is also the one you can extend. Anything set in
+`clusterresourcesync.clusterRoleRules` — the escape hatch for resource types your own
+`templates` or `additionalTemplates` entries create — is appended to that same ClusterRole,
+cluster-wide, and the allowlist it passes through permits `create`, `update`, `patch`,
+`delete` and `deletecollection`. It refuses a wildcard *verb* — but not a wildcard `apiGroups`
+or `resources`, so `apiGroups: ["*"], resources: ["*"], verbs: [get]` renders. Audit that key
+alongside this table.
+
+Beyond this table and that key, every cluster-scoped grant held by a Union identity is
+**read-only**,
 with one apparent exception that is not one: `clusterresourcesync` is also bound to the
 built-in `system:auth-delegator` ClusterRole, which conveys `create` on `tokenreviews` and
 `subjectaccessreviews`. Those are read-only authorization checks that mutate no state.
@@ -224,8 +277,19 @@ they always hold dedicated accounts (`nodeobserver-system`, `union-clustersync-s
 **`fluentbit` is the documented exception.** Its account name comes from the subchart key
 `fluentbit.serviceAccount.name`, which this chart pins to `union-system`. That pin wins
 over the per-component fallback, so fluentbit keeps running as `union-system` unless you
-also set that key to a dedicated name. It holds no Kubernetes permissions either way —
-only whatever cloud role is bound to it.
+also set that key to a dedicated name.
+
+It *declares* no Kubernetes permissions — `fluentbit.rbac.create` is `false` and it calls no
+Kubernetes API with this chart's config. But declaring none and holding none are different
+things. **At the `commonServiceAccount.enabled: true` default it holds everything bound to
+`union-system`, including the pooled `work-ns` role.** That matters more here than elsewhere,
+because fluentbit is a DaemonSet on every node.
+
+Splitting identities is what breaks that, not renaming: at `commonServiceAccount.enabled:
+false` the slot bindings name the dedicated accounts, so the `union-system` ServiceAccount
+fluentbit still gets — the pin keeps the name — is the subject of no binding at all and holds
+nothing. If you want it isolated while keeping the shared account, set that key to a
+dedicated name and provision the account yourself.
 
 ### Knative ServiceAccount naming
 
