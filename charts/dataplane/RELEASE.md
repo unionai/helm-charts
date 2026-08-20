@@ -372,9 +372,8 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   | `knative-serving-namespaced-admin` / `-edit` / `-view` | Knative Serving objects to anyone holding the built-in `admin`, `edit` or `view` role in a namespace, by aggregation |
 
   **What replaces them.** Five per-component `<release-ns>-knative-<component>-cluster-read`
-  ClusterRoles — `list`/`watch` informer reads, plus two `get`-only rules: the controller's on
-  `serviceaccounts`/`secrets` for image digest resolution, and the webhook's on the release
-  `Namespace`, `resourceNames`-scoped to that one name — and exactly one cluster-scoped write
+  ClusterRoles — `list`/`watch` informer reads, plus exactly one `get`-only rule: the webhook's
+  on the release `Namespace`, `resourceNames`-scoped to that one name — and exactly one cluster-scoped write
   role, `<release-ns>-knative-webhook-cluster-write`, whose every rule is
   `resourceNames`-scoped: one to the mutating webhook configuration, one to the two validating
   ones, and one to the release namespace's `namespaces/finalizers`. The two configuration kinds
@@ -428,6 +427,32 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   and new app deployments hang at `IngressNotConfigured` with the controller `1/1 Running`. It
   is still narrower than the `net-kourier` ClusterRole it replaces, which also held `get`. Once
   the image can gate that informer, the grant becomes conditional and goes away by default.
+
+- **`knative-controller`'s digest-resolution reads on `serviceaccounts` and `secrets` are now
+  namespaced — the cluster-wide `get` is gone.** Digest resolution reads the ServiceAccount
+  named in the Revision's spec plus the Secrets its `imagePullSecrets` name. That was conveyed
+  by a `ClusterRole` + `ClusterRoleBinding`, which let the identity `get` **any Secret in any
+  namespace on the cluster**, tenant namespaces included — the broadest read grant the
+  app-serving set held. It never needed to be: `reconcileDigest` sets
+  `k8schain.Options.Namespace` to the Revision's own namespace and passes a plain clientset, so
+  these are direct, namespaced `Get`s, which is exactly what a per-namespace `RoleBinding`
+  conveys. The rule now sits in `work-ns`. `resourceNames` is not usable here — both the
+  ServiceAccount name and the Secret names come from the user's Revision spec.
+
+  **Behavior change worth knowing:** digest resolution now depends on the `<release-ns>-work-ns`
+  `RoleBinding` existing in the app's namespace. If it is missing, the Revision is marked
+  `ContainerMissing` rather than resolving anyway — a visible failure in the Revision status,
+  and one more symptom of
+  [the work-namespace binding being absent](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
+  The effective grant does not change at the `commonServiceAccount.enabled: true` default, since
+  `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource wildcard.
+
+  That leaves two cluster-wide Secret reads in the chart, both unchanged and neither narrowable
+  today: the pod `webhook`, whose controller-runtime Secret cache is unscoped unless propeller's
+  `limit-namespace` is set — and it reads the same config key propeller does, so it cannot be
+  scoped without pinning propeller's own informer — and `knative-kourier`, tracked by UN-39.
+  Both are listed with their removal condition in
+  [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
 
 - **The namespaced slots are pooled, and that cuts both ways.** Each of the five also receives
   every other declarer's rules in the shared roles, so `commonServiceAccount.enabled: false`

@@ -99,6 +99,28 @@ cluster-scope check that no number of per-namespace RoleBindings can satisfy. Un
 already covers them, so the slot emits nothing. Every one of these roles is `list`/`watch`
 only.
 
+### Where a `secrets` rule belongs
+
+A cluster slot is a `ClusterRole` plus a `ClusterRoleBinding`, so a `secrets` rule there
+reads every Secret in every namespace on the cluster — tenant namespaces included, and the
+broadest grant this chart can express. Declare one only when the component's read really is
+a namespace-less `LIST` from an unscoped informer, which the API server authorizes at
+cluster scope or not at all.
+
+**A namespace being unknown at render time is not a reason to reach for a cluster slot.**
+That is what `work-ns` is for: a `ClusterRole` bound per namespace, which authorizes an
+ordinary namespaced `Get` in a namespace created long after Helm ran. The distinguishing
+test is *how the read is made*, not *where*. `knative-controller`'s image-digest reads used
+to sit in `cluster-read` for exactly the "unknown namespace" reason and are now in
+`work-ns`, unchanged in what they reach.
+
+Two components hold one and cannot be narrowed today:
+
+| Component | Why | Goes away when |
+|---|---|---|
+| `webhook` | the pod webhook's controller-runtime Secret cache is scoped only when propeller's `limit-namespace` is set to something other than `all` — and the webhook reads the same config key propeller does, so scoping it would pin propeller's own cluster-wide informer. Scoping the cache also breaks the mirroring it exists for: the secret manager reads the mirrored Secret out of the admitted pod's own namespace through that cache | `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: false` drops it today, along with the mirroring |
+| `knative-kourier` | net-kourier registers its Secret informer unconditionally in the shipped image, unfiltered by namespace | UN-39 gates it behind `KOURIER_ENABLE_INGRESS_TLS` |
+
 ### Pooling
 
 A slot is **pooled** when its grant is conveyed by a `RoleBinding`, and per-component when
@@ -221,6 +243,21 @@ than assuming some rows exclude others.
 ResourceQuotas *into a namespace on the sync that creates it*, holding no RoleBinding
 there yet, so those rules cannot be namespaced. Its `namespaces` rule gains `delete` only
 under `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace: true`.
+
+**What that row still leaves, stated plainly.** Its `rolebindings` write is cluster-wide —
+RBAC has no way to confine a namespaced write to a subset of namespaces — and
+`<release-ns>-work-ns` is a resource-wildcard role. So a compromised `clusterresourcesync`
+could plant a `<release-ns>-work-ns` RoleBinding in a namespace this release does not own,
+giving Union's ServiceAccounts admin over it. **It cannot escalate past that ceiling:** the
+`bind` verb is `resourceNames`-pinned to that one role, so no stronger role can be
+substituted, and there is no `delete` on `namespaces` unless `cleanupNamespace` is on — it
+cannot destroy a tenant namespace. This is the accepted cost of provisioning namespaces at
+runtime, not an oversight, and there are two ways to not pay it: pre-seed the work namespaces
+with `namespaces.enabled: true` and `namespaces.static`, which removes the need for the
+runtime route; or, if you need it, constrain the *shape* of what it may create with an
+admission policy (Kyverno, OPA/Gatekeeper) restricting its RoleBinding and Namespace writes to
+your project-namespace naming convention. Re-cutting the RBAC cannot express that constraint —
+only an admission policy can.
 
 That row is also the one you can extend. Anything set in
 `clusterresourcesync.clusterRoleRules` — the escape hatch for resource types your own

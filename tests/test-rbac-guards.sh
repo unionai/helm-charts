@@ -1766,15 +1766,37 @@ expect-role-resource "and the work-ns role carries it without the wildcard contr
 expect-verb-resources "net-kourier's cluster read is exactly its five informers" \
   union-knative-kourier-cluster-read list "endpoints,ingresses,pods,secrets,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-# The controller's digest-resolution rule is `get`-only on purpose: with `list` it could
-# enumerate every Secret in the cluster instead of reading the ones an imagePullSecrets names.
-expect-verb-resources "the controller reads serviceaccounts and secrets by get only" \
-  union-knative-controller-cluster-read get "secrets,serviceaccounts" \
+# Digest resolution is namespaced, so none of it may be here. reconcileDigest sets
+# k8schain.Options.Namespace to the Revision's own namespace and passes a plain clientset, so
+# the ServiceAccount and Secret reads are direct Gets against a named namespace -- which a
+# per-namespace RoleBinding conveys. Held cluster-wide until 2026-08, where it let this
+# identity read any Secret in any namespace on the cluster. `get` is asserted empty rather
+# than absent per-resource, so a get on anything else lands here too.
+expect-verb-resources "the controller gets nothing cluster-wide" \
+  union-knative-controller-cluster-read get "" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-verb-resources "and neither by list" \
+expect-role-resource "and reaches no Secret through this role at all" \
+  absent union-knative-controller-cluster-read secrets \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-role-resource "nor any ServiceAccount" \
+  absent union-knative-controller-cluster-read serviceaccounts \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and its list set is unchanged by that move" \
   union-knative-controller-cluster-read list \
   "'*',deployments,endpoints,namespaces,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The other half: the grant has to still be conveyed, or digest resolution fails and every
+# Revision goes ContainerMissing. Asserted with leaseworker and flytepropeller OFF, as with
+# endpoints/restricted above -- a pooled role cannot say who contributed a rule, so what this
+# proves is that the grant survives without either wildcard contributor, which is the reason
+# it is declared rather than inherited.
+for r in secrets serviceaccounts; do
+  expect-role-resource "digest resolution reaches ${r} through the work-ns role" \
+    present union-work-ns "${r}" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false \
+    --set leaseworker.enabled=false --set flytepropeller.enabled=false \
+    --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+done
 
 # Cluster-wide `pods: create` lets a caller schedule a pod under any ServiceAccount. The
 # vendored knative-serving-core carried it; nothing here may.
