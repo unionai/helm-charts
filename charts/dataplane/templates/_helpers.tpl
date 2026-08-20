@@ -1551,30 +1551,6 @@ net-kourier
 {{- end -}}
 
 {{/*
-Subject list for the two aggregated ClusterRoles upstream binds to the shared
-`controller` ServiceAccount.
-
-The controller, webhook and both autoscalers all ran as `controller` before
-this chart split them, so all three identities have to stay on these bindings
-or the webhook and the autoscalers lose every grant they hold. When the common
-service account is enabled the three names collide, and `uniq` keeps the
-rendered subject list from repeating it.
-
-This is temporary: the vendored knative-serving RBAC is replaced by per-binary
-slot declarations, and these aggregated bindings go with it.
-*/}}
-{{- define "knative.controllerSubjects" -}}
-{{- range $name := list
-      (include "knative.controller.serviceAccountName" .)
-      (include "knative.webhook.serviceAccountName" .)
-      (include "knative.autoscaler.serviceAccountName" .) | uniq }}
-- kind: ServiceAccount
-  name: {{ $name }}
-  namespace: {{ $.Release.Namespace }}
-{{- end }}
-{{- end -}}
-
-{{/*
 Return true when the chart should create the BuildKit OpenShift SCC.
 */}}
 {{- define "imagebuilder.buildkit.openShiftCreateScc" -}}
