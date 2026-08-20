@@ -335,40 +335,69 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ## RBAC
 
-`low_privilege: true` (the default) confines **prometheus and kube-state-metrics** to a
-single namespace: each gets a namespaced Role instead of a ClusterRole. The cost is the
-reduced functionality listed on the `low_privilege` key in `values.yaml` — no Task-Level
-Monitoring, no node-level metrics, less accurate cost data.
+Two documents cover this in full:
 
-To trade that back, set `low_privilege: false`. Those two subcharts and the Union workload
-RBAC listed below follow the flag in either direction. To also collect with that access —
-node metrics, and task pods in project namespaces — layer
+- **[docs/rbac-union.md](docs/rbac-union.md)** — Union's own components: the slot model, who
+  creates the per-namespace bindings, and what to check after registering a project.
+- **[docs/rbac.md](docs/rbac.md)** — the observability subcharts, and what `low_privilege`
+  costs you in metrics.
+
+### Three independent keys
+
+| Key | Default | What it decides |
+| --- | --- | --- |
+| `low_privilege` | `true` | How wide the grant is — namespaced `Role` vs `ClusterRole`. The **only** privilege axis. |
+| `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time. It changes no role's rules; it does decide where the work-namespace role is bound. |
+| `commonServiceAccount.enabled` | `true` | How many identities hold the grants. The rules are the same either way; which workload can use which is not. |
+
+`low_privilege: true` confines Union's own workloads, plus prometheus and
+kube-state-metrics, to the release namespace, and gates app serving, namespace creation and
+priorityclasses. The cost is the reduced functionality listed on the `low_privilege` key in
+`values.yaml` — no Task-Level Monitoring, no node-level metrics, less accurate cost data.
+
+To trade that back, set `low_privilege: false`. To also *collect* with that access, layer
 `examples/values.full-privilege.yaml`, which carries the kube-state-metrics settings Helm
 can't derive from the flag.
 
-**App serving is off by default, and requires `low_privilege: false`.** The vendored Knative
-Serving / Kourier stack at `zero_trust.enabled: true` is 10 ClusterRoles and 4
-ClusterRoleBindings that have no namespaced equivalent, so the chart **refuses to render**
-`apps.enabled: true` alongside `low_privilege: true`. Because `low_privilege` defaults on,
-`apps.enabled` defaults off — a default install never meets that refusal. To run app serving,
-set **both** `apps.enabled: true` and `low_privilege: false`. The Envoy gateway, dataproxy and
-tunnel ingress are unaffected by `apps.enabled` and keep working either way. See
+**App serving is off by default, and under `zero_trust.enabled: true` it requires
+`low_privilege: false`.** On that path this chart provides app serving itself: its RBAC is
+declared per binary like every other component's, and every grant that can be namespaced is —
+but the Knative binaries read cluster-wide however their RBAC is written, so the chart
+**refuses to render** `apps.enabled: true` alongside `low_privilege: true` rather than deploy
+components that start and stay denied. Because `low_privilege` defaults on, `apps.enabled`
+defaults off, and a default install never meets that refusal.
+
+With zero trust off, app serving comes from the `knative-operator` subchart instead, which
+carries its own cluster-scoped RBAC (see the table below) and is not covered by that refusal —
+that combination renders at either `low_privilege` setting. The Envoy gateway, dataproxy and
+tunnel ingress are unaffected by `apps.enabled` and work either way. See
 [docs/rbac.md](docs/rbac.md#app-serving).
 
-**`low_privilege` is still not a whole-chart namespace boundary.** It scopes Union-authored
-workload RBAC (operator, propeller, leaseworker, webhook, nodeobserver) along with prometheus
-and kube-state-metrics, and it gates namespace creation and priorityclasses. It does not
-reach the components below, which hold cluster-scoped permissions in either mode — so a
-namespace-confined install identity will not be enough to deploy the chart:
+### `low_privilege` is not a whole-chart namespace boundary
+
+These hold cluster-scoped permissions in either mode, so a namespace-confined install
+identity is not enough to deploy the chart:
 
 | Component | Default | Cluster-scoped grant |
 | --- | --- | --- |
-| Helm hook cleanup | **on** | a ClusterRole for the webhook-cleanup job |
+| `knative-operator` subchart | **on** | 7 ClusterRoles and 7 ClusterRoleBindings of its own. Turn it off (`knative-operator.enabled: false`) on the zero-trust path, where this chart provides app serving instead. |
+| Helm hook cleanup | **on** | one ClusterRole, pinned by `resourceNames` to a single MutatingWebhookConfiguration |
+| nodeobserver | off | `nodes` get and `update`, plus cluster-wide `pods` list. `nodes` is cluster-scoped by nature; the pod list goes out with an empty namespace and a `spec.nodeName` selector, which the API server authorizes as cluster-scoped too — so neither narrows |
 | opencost | off | cluster-wide read; it prices the whole cluster, and no key narrows it |
 | metrics-server | off | cluster-wide read plus a RoleBinding written into `kube-system` |
 | ingress-nginx | off | one IngressClass ClusterRole (IngressClass has no namespaced form) |
 
-See [docs/rbac.md](docs/rbac.md) for what each subchart gets in each mode, and why.
+### If you run `low_privilege: false`
+
+Something must create a `RoleBinding` for the `<release-ns>-work-ns` ClusterRole in every
+work namespace — this chart when `namespaces.enabled: true`, `clusterresourcesync` as
+projects are registered, or your own tooling. **Nothing about a successful render proves it
+happened**, and at the default `namespaces.enabled: false` that ClusterRole renders with no
+binding at all — which is expected when one of the other two routes is in play, and a broken
+install when none of them is. `clusterresourcesync.enabled` also defaults to `false`, so
+setting `low_privilege: false` and nothing else leaves every route unstaffed. After
+registering a new project, confirm the RoleBinding exists in the new namespace. See
+[docs/rbac-union.md](docs/rbac-union.md#the-union-work-ns-clusterrole-can-render-present-but-unbound).
 
 ---
 

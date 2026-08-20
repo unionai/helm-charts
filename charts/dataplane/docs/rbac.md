@@ -4,6 +4,9 @@ What each dependency subchart is allowed to read, and why. [App serving](#app-se
 here too — it isn't a subchart, but it's the one component the flag governs by refusing to
 render at all.
 
+For Union's own components — the slot model, the work-namespace bindings and the identity
+axis — see [rbac-union.md](rbac-union.md).
+
 ## The rule
 
 `low_privilege: true` — the chart default — confines the observability components to one
