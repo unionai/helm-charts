@@ -1427,16 +1427,14 @@ function expect-only-webhook-cluster-write {
 # Asserts the one cluster-scoped write role in the whole app-serving set renders EXACTLY as
 # written below.
 #
-# Text, not parsed fields, for the reason recorded on expect-cleanup-grant-exact: the property
-# being asserted is that BOTH rules are resourceNames-scoped, and no field-reading helper here
-# can see resourceNames at all. Deleting the two resourceNames blocks -- which turns a pinned
-# `update` on three named webhook configurations into an unrestricted cluster-wide one, and a
-# pinned `update` on the release namespace's finalizers into one on every namespace's --
-# survived every other check in this file, and would have been caught only by someone reading
-# a snapshot diff.
+# Text, not parsed fields, for the reason recorded on expect-cleanup-grant-exact: what is being
+# asserted is that all three rules stay resourceNames-scoped AND that each name stays paired
+# with the right resource, and no field-reading helper here can see resourceNames at all.
+# Dropping the blocks, or merging the two webhook-configuration rules back into one (which
+# re-authorizes the kind/name cross-product), survives every other check in this file.
 #
-# The role is identical in both identity modes; only its ClusterRoleBinding's subject moves,
-# and that is asserted separately above.
+# Role content does not vary by identity mode -- only the binding's subject does, and that is
+# asserted separately -- so one invocation is enough.
 function expect-webhook-cluster-write-exact {
   local desc=$1; shift
   local out got
@@ -1729,24 +1727,31 @@ expect-verb-resources "and no cluster-scoped create anywhere in the app-serving 
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # The resourceNames scoping on those rules is the whole of the claim, and nothing above can
 # see it -- so the role is compared as text.
-expect-webhook-cluster-write-exact "and every rule of it stays pinned to named objects" "${APPS[@]}"
-expect-webhook-cluster-write-exact "with per-component identities too" \
+expect-webhook-cluster-write-exact "and every rule of it stays pinned to named objects" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # The checks above all name a role, so none of them can see a role that did not exist when they
 # were written. This one enumerates instead, and is what makes "the webhook is the only
-# cluster-scoped writer" an assertion rather than a description.
+# cluster-scoped writer" an assertion rather than a description. Like the one above it, what it
+# reads does not vary by identity mode, so it runs once.
 expect-only-webhook-cluster-write "and it is the only app-serving cluster-write role there is" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-only-webhook-cluster-write "at the shared identity too" "${APPS[@]}"
 
 # OpenShift's RestrictedEndpointsAdmission refuses an Endpoints object naming a cluster-network
 # address unless the caller holds create on the endpoints/restricted subresource, and the
 # autoscaler's statforwarder writes exactly such an object in the release namespace. RBAC does
 # not derive a subresource from its parent, so `endpoints` alone does not convey it and the
 # vendored role carried both. The failure is invisible on every non-OpenShift cluster.
-expect-verb-resources "the statforwarder can publish its bucket Endpoints on OpenShift" \
+expect-verb-resources "the release-namespace write role carries endpoints/restricted" \
   union-comp-ns-write create "endpoints,endpoints/restricted,leases,secrets,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
+# And the controller's copy in the pooled work-ns role, asserted with leaseworker and
+# flytepropeller OFF so it proves the grant is the controller's own declaration rather than
+# their wildcard rule -- which is the whole reason it is declared rather than inherited.
+expect-role-resource "and the work-ns role carries it without the wildcard contributors" \
+  present union-work-ns "endpoints/restricted" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false \
+  --set leaseworker.enabled=false --set flytepropeller.enabled=false \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
 # Three cluster-scoped reads are load-bearing in a way no other check here can see, so each is
 # pinned as a COMPLETE resource set -- which fails both on removal and on widening, and reports

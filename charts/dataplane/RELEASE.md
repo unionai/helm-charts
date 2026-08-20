@@ -398,16 +398,21 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   Two specific escalation primitives are gone with them: **cluster-wide `pods: create`**,
   which lets its holder schedule a pod under any ServiceAccount in the cluster, and
   **cluster-wide write on `serviceaccounts`, `namespaces` and `customresourcedefinitions`**.
-  `kubernetes.podspec-dryrun` was already pinned `disabled`; it is now unsupported rather than
-  merely unused, because the webhook performs that dry-run by creating a throwaway Pod and now
-  holds `pods: create` in no namespace at all.
+  `kubernetes.podspec-dryrun` stays pinned `disabled`, and is now identity-mode-dependent
+  rather than merely unused: the dry-run makes the webhook create a throwaway Pod in the app's
+  namespace, which the shared `union-system` account can still do through the pooled work-ns
+  binding, but a per-component `knative-webhook` cannot, since it declares into no
+  work-namespace slot. The chart does not refuse the key; it simply is not a feature to enable
+  when it works in one identity mode and not the other.
 
   **One grant from that role is kept and re-scoped rather than dropped: `endpoints/restricted`.**
   It is an OpenShift admission concept — `RestrictedEndpointsAdmission` refuses an `Endpoints`
   object naming a cluster-network address unless the caller holds `create` on that subresource,
-  and the autoscaler's statforwarder writes exactly such an object for its bucket. It moves from
-  a cluster-wide grant to the release-namespace `comp-ns-write` Role. On any non-OpenShift
-  cluster it conveys nothing.
+  and both the autoscaler's statforwarder and the controller's serverlessservice reconciler
+  write exactly such an object. It moves from one cluster-wide grant to two namespaced ones: the
+  release-namespace `comp-ns-write` Role, where the statforwarder publishes its bucket, and the
+  `work-ns` role, where the controller writes each revision's public Endpoints. On any
+  non-OpenShift cluster it conveys nothing.
 
 - **`autoscaling/horizontalpodautoscalers` moves from a cluster-wide write to a namespaced
   one.** `autoscaler-hpa` reconciles an HPA-class PodAutoscaler into a HorizontalPodAutoscaler

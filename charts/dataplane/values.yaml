@@ -2977,13 +2977,17 @@ gateway:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
       kubernetes.podspec-volumes-emptydir: "enabled"
-      # Pinned off, and now unsupported rather than merely unused. Dry-run
-      # validation is performed by the Knative webhook, which creates a throwaway
-      # Pod in the app's namespace — and the webhook holds `pods: create` in no
-      # namespace at all, by design: it is the one app-serving component that
-      # declares into no work-namespace slot. Setting this key to anything other
-      # than "disabled" still renders, and every revision's dry-run check then
-      # fails Forbidden at admission.
+      # Pinned off, and left off deliberately, because whether it could work at
+      # all depends on the identity mode. Dry-run validation makes the Knative
+      # webhook create a throwaway Pod in the app's namespace. At the default
+      # shared account the webhook runs as `union-system`, which the pooled
+      # work-ns RoleBinding grants `pods: create` in every work namespace, so the
+      # dry-run would succeed. Under `commonServiceAccount.enabled: false` the
+      # webhook has its own identity and declares into no work-namespace slot, so
+      # every dry-run fails Forbidden. `enabled` runs the check on every revision;
+      # `allowed` only on revisions that opt in by annotation. Setting either
+      # still renders — the chart does not refuse it — but a feature that works in
+      # one identity mode and not the other is not one to turn on.
       kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}
