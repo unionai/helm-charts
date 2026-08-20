@@ -1050,6 +1050,171 @@ expect-role-resource "and carries nodes at full privilege too" \
 expect-manifest "nothing renders when nodeobserver is off" \
   absent "name: union-nodeobserver-cluster-read"
 
+# expect-no-dangling-subjects <description> [helm --set flags...]
+# Asserts that every ServiceAccount subject of every RoleBinding and ClusterRoleBinding in the
+# render names a ServiceAccount the same render creates.
+#
+# This is a whole-render invariant rather than an assertion about one object, and it is the
+# one thing that catches renaming a ServiceAccount without renaming the subjects that bind it.
+# A binding pointing at a ServiceAccount that does not exist is valid YAML, passes kubeconform,
+# renders clean and diffs clean against a golden that was regenerated with the same bug -- the
+# component simply gets nothing at runtime. No per-object check can see it, because both halves
+# are individually well-formed; only comparing the two sets can.
+#
+# Subject namespaces are compared, not just names: an identity is (namespace, name), and the
+# chart deliberately binds identities into namespaces it does not own.
+#
+# The two sides are normalised differently, on purpose. A ServiceAccount OBJECT with no
+# metadata.namespace lands in the release namespace, so it is normalised to it -- without that
+# the base branch reports ten false hits, since several templates emit the object unqualified.
+# A SUBJECT gets no such defaulting: RBAC requires name and namespace to be spelled out on a
+# ServiceAccount subject and the API server refuses the binding otherwise, so an absent one is
+# reported as invalid rather than resolved against the release namespace.
+#
+# It also reports the mirror-image defect: the same (namespace, name) emitted by more than one
+# template. Several ServiceAccount names are computed rather than literal, and two templates
+# can resolve the same one -- the app-serving accounts collapse onto the common account when
+# that is enabled, where common/system-serviceaccount.yaml already emits it. A subject then
+# resolves, so the dangling half stays quiet, and the install carries duplicate objects.
+#
+# Fails closed three ways, per the rule that a negative assertion needs more than two states:
+# the render must succeed, at least one ServiceAccount object must be found, and at least one
+# ServiceAccount subject must be found. Without those, deleting every binding -- or breaking
+# the parser -- would satisfy "no dangling subjects" vacuously.
+function expect-no-dangling-subjects {
+  local desc=$1; shift
+  local out report
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # Everything is anchored at column 0 or at the document's own indent. Manifests embedded in
+  # a ConfigMap -- the clusterresource templates carry a ServiceAccount and a RoleBinding --
+  # are indented by four and must not be read as documents of their own.
+  report=$(awk -v rel="${NAMESPACE}" '
+    function val(s) {
+      sub(/^[^:]*:[ \t]*/, "", s); sub(/[ \t]+$/, "", s)
+      gsub(/^["\047]|["\047]$/, "", s)
+      return s
+    }
+    function flush() {
+      if (skind == "ServiceAccount") {
+        n++; sub_doc[n] = doc; sub_name[n] = sname; sub_ns[n] = sns
+      }
+      skind = ""; sname = ""; sns = ""
+    }
+    /^---/ { flush(); doc++; inmeta = 0; insubj = 0; next }
+    /^[A-Za-z]/ {
+      flush(); inmeta = 0; insubj = 0
+      if ($0 ~ /^kind:[ \t]/)   { dkind[doc] = val($0) }
+      if ($0 == "metadata:")    { inmeta = 1 }
+      if ($0 == "subjects:")    { insubj = 1 }
+      next
+    }
+    inmeta && /^  name:[ \t]/      { if (dname[doc] == "") dname[doc] = val($0); next }
+    inmeta && /^  namespace:[ \t]/ { if (dns[doc]  == "") dns[doc]  = val($0); next }
+    insubj && /^[ \t]*-[ \t]/ {
+      flush()
+      line = $0; sub(/^[ \t]*-[ \t]*/, "", line)
+      if (line ~ /^kind:[ \t]/)      skind = val(line)
+      else if (line ~ /^name:[ \t]/) sname = val(line)
+      next
+    }
+    insubj {
+      if ($0 ~ /^[ \t]+kind:[ \t]/)           skind = val($0)
+      else if ($0 ~ /^[ \t]+name:[ \t]/)      sname = val($0)
+      else if ($0 ~ /^[ \t]+namespace:[ \t]/) sns   = val($0)
+      next
+    }
+    END {
+      flush()
+      for (d in dkind)
+        if (dkind[d] == "ServiceAccount" && dname[d] != "")
+          sa[(dns[d] == "" ? rel : dns[d]) "/" dname[d]]++
+      for (d in sa) {
+        sas++
+        if (sa[d] > 1) print "duplicate ServiceAccount object: " d " rendered " sa[d] " times"
+      }
+      for (i = 1; i <= n; i++) {
+        d = sub_doc[i]
+        if (dkind[d] != "RoleBinding" && dkind[d] != "ClusterRoleBinding") continue
+        subjects++
+        # A subject carries no defaulting of its own: RBAC requires name and namespace to be
+        # spelled out on a ServiceAccount subject, and the API server refuses the binding
+        # otherwise. Normalising an absent namespace to the release namespace here -- which is
+        # right for the OBJECT, above -- would let a binding that Kubernetes rejects resolve
+        # against a real account and report nothing.
+        if (sub_name[i] == "" || sub_ns[i] == "")
+          print "invalid subject: " dkind[d] "/" dname[d] " ServiceAccount subject is missing " \
+                (sub_name[i] == "" ? "name" : "namespace")
+        else if (!((sub_ns[i] "/" sub_name[i]) in sa))
+          print "dangling: " dkind[d] "/" dname[d] " -> " sub_ns[i] "/" sub_name[i]
+      }
+      if (sas == 0)      print "parsed no ServiceAccount objects at all"
+      if (subjects == 0) print "parsed no ServiceAccount binding subjects at all"
+    }
+  ' <<<"${out}")
+  if [[ -n "${report}" ]]; then
+    echo "  FAILED   ${desc}"
+    while IFS= read -r line; do echo "           ${line}"; done <<<"${report}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
+# expect-workload-sa <description> <deployment name> <expected serviceAccountName>
+#   [helm --set flags...]
+# Asserts the render succeeds and that one named Deployment's pod spec runs under exactly the
+# given ServiceAccount.
+#
+# expect-manifest cannot express this. It greps the whole render, so "serviceAccountName: X is
+# present" is satisfied by ANY workload using X -- and two Knative workloads deliberately share
+# one name, which makes the weaker form blind to whichever of the pair regresses.
+#
+# Fails closed: a Deployment that is not in the render, or one with no serviceAccountName at
+# all, reports the mismatch rather than passing on an empty string.
+function expect-workload-sa {
+  local desc=$1; shift
+  local deploy=$1; shift
+  local want=$1; shift
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  # Slice the one Deployment document whose metadata.name matches, then read the
+  # serviceAccountName out of its pod spec. metadata.name sits at indent 2; the pod spec's key
+  # sits at indent 6, so neither can be confused with the other, and stopping at the next
+  # document boundary keeps a later workload from answering for this one.
+  got=$(awk -v name="  name: ${deploy}" '
+    $0 == "---" { if (done) finished = 1; iskind = 0; inmatch = 0 }
+    $0 == "kind: Deployment" { iskind = 1 }
+    iskind && $0 == name && !finished { inmatch = 1; done = 1 }
+    inmatch && /^      serviceAccountName:/ {
+      sub(/^ *serviceAccountName: */, ""); gsub(/^["\047]|["\047]$/, "")
+      print; exit
+    }
+  ' <<<"${out}")
+  if [[ "${got}" != "${want}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           Deployment/${deploy} runs under the wrong ServiceAccount"
+    echo "           want: ${want}"
+    echo "           got:  ${got:-<no such Deployment, or it sets no serviceAccountName>}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
 # expect-verb-resources <description> <role name> <verb> <expected resources>
 #   [helm --set flags...]
 # Asserts that within one named role, the complete set of resources granted <verb> is exactly
@@ -1348,6 +1513,85 @@ expect-binding-subject "with per-component identities too, where it would be vis
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set commonServiceAccount.enabled=false \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+
+echo
+echo "App-serving ServiceAccounts"
+
+# App serving needs zero_trust on, apps on and low_privilege off; gateway/validate.yaml
+# refuses anything else. Everything below carries that triple.
+APPS=(--set zero_trust.enabled=true --set apps.enabled=true --set low_privilege=false
+      --set global.ORG_NAME=test-org --set clusterresourcesync.enabled=true)
+
+# The invariant this whole task exists to protect. Both identity modes, because the shared
+# one is what the chart renders by default and the split one is what the five names are for.
+expect-no-dangling-subjects "no binding points at a ServiceAccount that does not exist" \
+  "${APPS[@]}"
+expect-no-dangling-subjects "and none does with per-component identities either" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# Also without app serving, so the check keeps covering the rest of the chart once
+# templates/gateway/rbac.yaml is gone.
+expect-no-dangling-subjects "nor anywhere else in the chart, at either privilege" \
+  --set commonServiceAccount.enabled=false
+expect-no-dangling-subjects "nor at full privilege with per-component identities" \
+  --set commonServiceAccount.enabled=false --set low_privilege=false \
+  --set clusterresourcesync.enabled=true
+
+# The five names. At the default they all collapse onto the common account and no per-binary
+# object is emitted, because common/system-serviceaccount.yaml already emits that one under
+# the same condition; a second copy here would be a duplicate object, not a second identity.
+# That the workloads then run as union-system is what the app-serving snapshots pin -- a grep
+# for it here would pass on any of the dozen other components that share that account.
+expect-manifest "no per-binary ServiceAccount object exists at the default" \
+  absent "name: knative-controller" "${APPS[@]}"
+
+# Per workload, not per name. `autoscaler` and `autoscaler-hpa` deliberately share
+# knative-autoscaler, so a check that the name appears SOMEWHERE in the render is satisfied by
+# `autoscaler` alone and says nothing about `autoscaler-hpa` -- which is the one workload the
+# shared `controller` account covered that is easiest to leave behind. Asserting each
+# Deployment's own serviceAccountName is what distinguishes the two.
+while read -r deploy sa; do
+  expect-workload-sa "${deploy} runs as ${sa} when the common account is off" \
+    "${deploy}" "${sa}" "${APPS[@]}" --set commonServiceAccount.enabled=false
+  expect-workload-sa "and as the common account when it is on: ${deploy}" \
+    "${deploy}" union-system "${APPS[@]}"
+done <<'WORKLOADS'
+controller knative-controller
+webhook knative-webhook
+autoscaler knative-autoscaler
+autoscaler-hpa knative-autoscaler
+activator knative-activator
+net-kourier-controller net-kourier
+WORKLOADS
+
+# The regression the split creates. Upstream runs the controller, the webhook and both
+# autoscalers as one `controller` ServiceAccount, so the two aggregated ClusterRoleBindings
+# it binds carry all three grants at once. Giving each binary its own name without widening
+# these subject lists leaves the webhook and the autoscalers holding nothing at all, which
+# renders clean and fails only at runtime.
+expect-binding-subject "the aggregated admin role binds all three controller identities" \
+  ClusterRoleBinding knative-serving-controller-admin knative-controller,knative-webhook,knative-autoscaler \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-binding-subject "and so does the addressable-resolver role" \
+  ClusterRoleBinding knative-serving-controller-addressable-resolver \
+  knative-controller,knative-webhook,knative-autoscaler \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# With one shared identity the three names are equal, so the list has to dedupe to a single
+# subject rather than repeating it three times.
+expect-binding-subject "and dedupes to one subject when they share an identity" \
+  ClusterRoleBinding knative-serving-controller-admin union-system "${APPS[@]}"
+
+# The activator and Kourier keep an identity of their own in both modes; only the name moves.
+expect-binding-subject "the activator's namespaced binding follows its name" \
+  RoleBinding knative-serving-activator knative-activator \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-binding-subject "as does its cluster binding" \
+  ClusterRoleBinding knative-serving-activator-cluster knative-activator \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-binding-subject "and Kourier's" \
+  ClusterRoleBinding net-kourier net-kourier \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-binding-subject "all of which follow the common account when it is on" \
+  ClusterRoleBinding net-kourier union-system "${APPS[@]}"
 
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"

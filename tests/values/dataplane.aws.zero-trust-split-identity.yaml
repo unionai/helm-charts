@@ -1,0 +1,49 @@
+# helm-values: examples/values-test-certs.yaml,values.aws.yaml
+#
+# dataplane.aws.zero-trust.yaml with per-component identities.
+#
+# This is the only fixture that renders templates/gateway/serviceaccounts.yaml: the five
+# per-binary ServiceAccounts exist only when commonServiceAccount.enabled is false, and
+# every other app-serving fixture leaves it at its `true` default, where all five names
+# collapse onto union-system and common/system-serviceaccount.yaml emits the one object.
+#
+# It is also the only place the widened subject list on the two aggregated knative
+# ClusterRoleBindings is visible. Upstream runs the controller, webhook and both
+# autoscalers under one `controller` ServiceAccount; splitting them means all three
+# identities have to appear on those bindings or the webhook and the autoscalers hold
+# nothing. With the shared identity the three names are equal and dedupe to one, so a
+# snapshot taken at the default cannot tell a correct subject list from an empty one.
+
+global:
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+  CLUSTER_NAME: "test-cluster-name"
+  ORG_NAME: "test-org-name"
+  CLIENT_ID: "test-client-id"
+  METADATA_BUCKET: "test-metadata-bucket"
+  FAST_REGISTRATION_BUCKET: "test-fast-registration-bucket"
+  AWS_ACCOUNT_ID: "123456789012"
+  AWS_REGION: "test-region"
+  BACKEND_IAM_ROLE_ARN: "test-backend-iam-role-arn"
+  WORKER_IAM_ROLE_ARN: "test-worker-iam-role-arn"
+
+storage:
+  type: "s3"
+  s3:
+    region: "test-region"
+
+secrets:
+  admin:
+    clientSecret: "test-not-real-secret"
+
+zero_trust:
+  enabled: true
+
+knative-operator:
+  enabled: false
+
+apps:
+  enabled: true
+low_privilege: false
+
+commonServiceAccount:
+  enabled: false
