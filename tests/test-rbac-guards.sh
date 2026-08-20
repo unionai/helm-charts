@@ -1385,6 +1385,74 @@ EXPECTED
   fi
 }
 
+# expect-webhook-cluster-write-exact <description> [helm --set flags...]
+# Asserts the one cluster-scoped write role in the whole app-serving set renders EXACTLY as
+# written below.
+#
+# Text, not parsed fields, for the reason recorded on expect-cleanup-grant-exact: the property
+# being asserted is that BOTH rules are resourceNames-scoped, and no field-reading helper here
+# can see resourceNames at all. Deleting the two resourceNames blocks -- which turns a pinned
+# `update` on three named webhook configurations into an unrestricted cluster-wide one, and a
+# pinned `update` on the release namespace's finalizers into one on every namespace's --
+# survived every other check in this file, and would have been caught only by someone reading
+# a snapshot diff.
+#
+# The role is identical in both identity modes; only its ClusterRoleBinding's subject moves,
+# and that is asserted separately above.
+function expect-webhook-cluster-write-exact {
+  local desc=$1; shift
+  local out got
+  read -r -d '' want <<'EXPECTED' || true
+kind: ClusterRole
+metadata:
+  name: union-knative-webhook-cluster-write
+rules:
+  - apiGroups:
+    - admissionregistration.k8s.io
+    resourceNames:
+    - webhook.serving.knative.dev
+    - config.webhook.serving.knative.dev
+    - validation.webhook.serving.knative.dev
+    resources:
+    - mutatingwebhookconfigurations
+    - validatingwebhookconfigurations
+    verbs:
+    - get
+    - update
+  - apiGroups:
+    - ""
+    resourceNames:
+    - union
+    resources:
+    - namespaces/finalizers
+    verbs:
+    - update
+EXPECTED
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  got=$(awk '
+    /^kind: ClusterRole$/ { buf = "kind: ClusterRole\n"; inrole = 1; keep = 0; next }
+    inrole && /^---$/ { if (keep) printf "%s", buf; inrole = 0; keep = 0; next }
+    inrole {
+      buf = buf $0 "\n"
+      if ($0 == "  name: union-knative-webhook-cluster-write") keep = 1
+    }
+    END { if (inrole && keep) printf "%s", buf }
+  ' <<<"${out}")
+  if [[ "${got}" == "${want}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           the app-serving cluster-write role is not what it must be:"
+    diff <(echo "${want}") <(echo "${got}") | sed 's/^/             /'
+    failures=$((failures + 1))
+  fi
+}
+
 expect-cleanup-grant-exact "its grant is exactly the four objects its Job deletes"
 expect-cleanup-grant-exact "and at full privilege too" \
   --set low_privilege=false --set clusterresourcesync.enabled=true
@@ -1613,6 +1681,33 @@ expect-verb-resources "the webhook's cluster-write grants update on exactly its 
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 expect-verb-resources "and no cluster-scoped create anywhere in the app-serving set" \
   union-knative-webhook-cluster-write create "" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The resourceNames scoping on those rules is the whole of the claim, and nothing above can
+# see it -- so the role is compared as text.
+expect-webhook-cluster-write-exact "and both its rules stay pinned to named objects" "${APPS[@]}"
+expect-webhook-cluster-write-exact "with per-component identities too" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+
+# Three cluster-scoped reads are load-bearing in a way no other check here can see, so each is
+# pinned as a COMPLETE resource set -- which fails both on removal and on widening, and reports
+# <NO-SUCH-ROLE> rather than passing if the role goes away.
+#
+# net-kourier's `secrets` read is the one whose removal fails SILENTLY: its Secret informer is
+# registered unconditionally in the shipped image, so without a cluster-scoped LIST the
+# reflector never syncs, the reconcilers never start, and the xDS readiness probe stays green
+# while every new app hangs at IngressNotConfigured. It is expected to leave once the image can
+# gate that informer; this check is the prompt to say so deliberately.
+expect-verb-resources "net-kourier's cluster read is exactly its five informers" \
+  union-knative-kourier-cluster-read list "endpoints,ingresses,pods,secrets,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The controller's digest-resolution rule is `get`-only on purpose: with `list` it could
+# enumerate every Secret in the cluster instead of reading the ones an imagePullSecrets names.
+expect-verb-resources "the controller reads serviceaccounts and secrets by get only" \
+  union-knative-controller-cluster-read get "secrets,serviceaccounts" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and neither by list" \
+  union-knative-controller-cluster-read list \
+  "'*',deployments,endpoints,namespaces,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 
 # Cluster-wide `pods: create` lets a caller schedule a pod under any ServiceAccount. The
