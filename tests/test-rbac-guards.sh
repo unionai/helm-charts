@@ -1449,10 +1449,17 @@ rules:
     - admissionregistration.k8s.io
     resourceNames:
     - webhook.serving.knative.dev
+    resources:
+    - mutatingwebhookconfigurations
+    verbs:
+    - get
+    - update
+  - apiGroups:
+    - admissionregistration.k8s.io
+    resourceNames:
     - config.webhook.serving.knative.dev
     - validation.webhook.serving.knative.dev
     resources:
-    - mutatingwebhookconfigurations
     - validatingwebhookconfigurations
     verbs:
     - get
@@ -1722,7 +1729,7 @@ expect-verb-resources "and no cluster-scoped create anywhere in the app-serving 
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # The resourceNames scoping on those rules is the whole of the claim, and nothing above can
 # see it -- so the role is compared as text.
-expect-webhook-cluster-write-exact "and both its rules stay pinned to named objects" "${APPS[@]}"
+expect-webhook-cluster-write-exact "and every rule of it stays pinned to named objects" "${APPS[@]}"
 expect-webhook-cluster-write-exact "with per-component identities too" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # The checks above all name a role, so none of them can see a role that did not exist when they

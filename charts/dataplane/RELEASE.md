@@ -375,9 +375,12 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   ClusterRoles — `list`/`watch` informer reads, plus two `get`-only rules: the controller's on
   `serviceaccounts`/`secrets` for image digest resolution, and the webhook's on the release
   `Namespace`, `resourceNames`-scoped to that one name — and exactly one cluster-scoped write
-  role, `<release-ns>-knative-webhook-cluster-write`, whose two rules are both
-  `resourceNames`-scoped: to the three Knative webhook configurations, and to the release
-  namespace's `namespaces/finalizers`. Everything else the binaries need is namespaced and
+  role, `<release-ns>-knative-webhook-cluster-write`, whose every rule is
+  `resourceNames`-scoped: one to the mutating webhook configuration, one to the two validating
+  ones, and one to the release namespace's `namespaces/finalizers`. The two configuration kinds
+  are separate rules on purpose — Kubernetes applies `resourceNames` across every resource in a
+  rule, so naming both kinds together would have authorized six kind/name pairs instead of the
+  three objects that exist. Everything else the binaries need is namespaced and
   lands in the same pooled `comp-ns-*` and `work-ns` roles the rest of the chart uses.
 
   There is no aggregation left, no cert-manager or CRD grant, and **no cluster-scoped
