@@ -335,22 +335,95 @@ without zero trust, nothing below applies to you and no migration step is needed
   and that is the name its own manifests and issue reports use, so it is the one account whose
   name is unchanged under per-component identities.
 
-- **No binary loses a permission, and no new grant is written.** The vendored knative-serving
-  roles are unchanged — only the subject lists move to follow the names, so every grant that
-  existed before is still held, by the renamed identity. The two aggregated ClusterRoleBindings
-  upstream binds to `controller` now name the controller, webhook and autoscaler identities
-  together, which is exactly what the one shared account conveyed to all three before.
+- **Renaming an identity does not by itself change what it holds.** Splitting one account into
+  five could have left the webhook and the autoscalers unauthorized, since upstream conveys
+  their whole grant through roles bound to the shared `controller` account. It does not: what
+  each binary is granted is set by the section below, which replaces those roles outright.
 
-- **What each binary *gains* depends on the identity mode, and at the chart default it gains
-  a lot.** With `commonServiceAccount.enabled: true` the app-serving pods run as
-  `union-system`, so they hold everything that account already carried for the operator, the
-  proxy, the leaseworker and the rest — and `union-system`, in the other direction, becomes a
-  subject of the knative bindings and picks up the aggregated `knative-serving-admin`
-  ClusterRole. Nothing new is granted to the cluster; the same grants are simply pooled onto
-  one identity. That is the standing trade of a shared service account — one identity per
-  install, so one cloud-side workload-identity binding — reaching app serving for the first
-  time. Set `commonServiceAccount.enabled: false` to split them back out across the five
-  names above, at the cost of a cloud-side binding for each.
+- **What each binary gains from the *identity mode* is separate from that.** With
+  `commonServiceAccount.enabled: true`, the chart default, the app-serving pods run as
+  `union-system` and so hold everything that account already carried for the operator, the
+  proxy, the leaseworker and the rest. Nothing new is granted to the cluster; the grants are
+  pooled onto one identity. That is the standing trade of a shared service account — one
+  identity per install, so one cloud-side workload-identity binding — reaching app serving for
+  the first time. Set `commonServiceAccount.enabled: false` to split them back out across the
+  five names above, at the cost of a cloud-side binding for each.
+
+### App-serving (Knative) RBAC (zero trust only)
+
+**Scope: as above, this applies only when `zero_trust.enabled: true` and `apps.enabled` is not
+`false`.** A dataplane that does not run app serving under zero trust is unaffected by all of
+it, and so is the `knative-operator` path, which installs its own RBAC.
+
+- **BREAKING: the vendored Knative Serving and Kourier RBAC is deleted, and the app-serving
+  binaries declare into this chart's slot framework instead.** 16 hand-vendored objects go —
+  10 ClusterRoles, 4 ClusterRoleBindings, 1 Role and 1 RoleBinding — and app serving becomes
+  the last part of the chart whose permissions are written the same way every other
+  component's are.
+
+  | Retired | What it conveyed |
+  |---|---|
+  | `knative-serving-core` `ClusterRole` | cluster-wide `get,list,create,update,delete,patch,watch` on `pods`, `namespaces`, `secrets`, `configmaps`, `endpoints`, `services`, `events` and `serviceaccounts`; the same seven verbs on `apps/deployments`(+`/finalizers`), both webhook-configuration kinds, `apiextensions` CRDs(+`/status`), `autoscaling` HPAs, `coordination` leases and `caching.internal.knative.dev/images`; those seven plus `deletecollection` across `serving.knative.dev`, `autoscaling.internal.knative.dev` and `networking.internal.knative.dev`; unscoped `update` on `namespaces/finalizers`; `create` on `endpoints/restricted` |
+  | `knative-serving-admin` (aggregation shell) | **any** ClusterRole anywhere in the cluster labelled `serving.knative.dev/controller: "true"`, conveyed to whichever account the controller, webhook and autoscalers ran as |
+  | `knative-serving-aggregated-addressable-resolver` (aggregation shell) | the same, for `duck.knative.dev/addressable: "true"` |
+  | `net-kourier` `ClusterRole` | cluster-wide `get,list,watch` on `pods`, `endpoints`, `services`, `secrets` and `configmaps`; leases CRUD; `patch` on ingresses and `update` on their status; `create,update,patch` on events |
+  | `knative-serving-activator` (`Role`) + `-activator-cluster` (`ClusterRole`) | the activator's namespaced ConfigMap/Secret reads and its cluster-wide `services`, `endpoints` and `revisions` reads |
+  | `knative-serving-addressable-resolver`, `-podspecable-binding` | aggregation *sources*: no union subject, but out-of-chart consumers could aggregate them |
+  | `knative-serving-namespaced-admin` / `-edit` / `-view` | Knative Serving objects to anyone holding the built-in `admin`, `edit` or `view` role in a namespace, by aggregation |
+
+  **What replaces them.** Five per-component `<release-ns>-knative-<component>-cluster-read`
+  ClusterRoles — `list`/`watch` informer reads, plus two `get`-only rules: the controller's on
+  `serviceaccounts`/`secrets` for image digest resolution, and the webhook's on the release
+  `Namespace`, `resourceNames`-scoped to that one name — and exactly one cluster-scoped write
+  role, `<release-ns>-knative-webhook-cluster-write`, whose two rules are both
+  `resourceNames`-scoped: to the three Knative webhook configurations, and to the release
+  namespace's `namespaces/finalizers`. Everything else the binaries need is namespaced and
+  lands in the same pooled `comp-ns-*` and `work-ns` roles the rest of the chart uses.
+
+  There is no aggregation left, no cert-manager or CRD grant, and **no cluster-scoped
+  `create` anywhere in the set** — which is what makes the `resourceNames` scoping meaningful,
+  since a `create` cannot be confined by a name that does not exist yet.
+
+- **Measured: cluster-scoped write grants in an app-serving render drop from 118 to 4 at the
+  chart default, and from 355 to 4 with per-component identities.** Counted as
+  `(ServiceAccount, apiGroup, resource, verb, resourceNames)` tuples over the rendered
+  fixtures, resolving each aggregated ClusterRole to what it actually aggregates. Three of the
+  four are the webhook's rules above; the fourth is the pre-upgrade cleanup hook's pinned
+  `delete`, which predates this and is unrelated to app serving. Every one is
+  `resourceNames`-scoped.
+
+  Two specific escalation primitives are gone with them: **cluster-wide `pods: create`**,
+  which lets its holder schedule a pod under any ServiceAccount in the cluster, and
+  **cluster-wide write on `serviceaccounts`, `namespaces` and `customresourcedefinitions`**.
+  `kubernetes.podspec-dryrun` was already pinned `disabled`; it is now unusable rather than
+  merely unused, since dry-run validation is what needed that `pods: create`.
+
+- **`autoscaling/horizontalpodautoscalers` moves from a cluster-wide write to a namespaced
+  one.** `autoscaler-hpa` reconciles an HPA-class PodAutoscaler into a HorizontalPodAutoscaler
+  beside the revision it scales, so the write belongs in the work namespaces and now lives in
+  the pooled `work-ns` role. A cluster-wide `list`/`watch` remains, because the reconciler
+  takes the shared, unfiltered HPA informer.
+
+- **`net-kourier` keeps a cluster-wide `secrets` `list`/`watch`, deliberately and
+  temporarily.** Kourier registers its Secret informer unconditionally and unfiltered by
+  namespace in the image this chart ships, so a cluster-scoped read is load-bearing today —
+  a namespaced Role cannot authorize a cluster-scoped `LIST`. Withholding it fails silently:
+  the reflector never syncs, the reconcilers never start, the xDS readiness probe stays green,
+  and new app deployments hang at `IngressNotConfigured` with the controller `1/1 Running`. It
+  is still narrower than the `net-kourier` ClusterRole it replaces, which also held `get`. Once
+  the image can gate that informer, the grant becomes conditional and goes away by default.
+
+- **The namespaced slots are pooled, and that cuts both ways.** Each of the five also receives
+  every other declarer's rules in the shared roles, so `commonServiceAccount.enabled: false`
+  separates app serving from union's own components in the **cluster dimension only**. As
+  rendered at full privilege with per-component identities: `knative-controller`,
+  `knative-autoscaler` and `net-kourier` join `<release-ns>-work-ns`, whose first rule is
+  `apiGroups: ["*"], resources: ["*"]`, so they hold unrestricted write in the work namespaces;
+  and in the other direction the operator, proxy, leaseworker and webhook identities gain the
+  Knative API groups there. In the release namespace, every `comp-ns-read` subject now also
+  reads Secrets, because the activator's namespaced Secret informer has nowhere per-component
+  to be declared. `knative-webhook` is the only one of the five that joins no work-namespace
+  slot; `knative-activator` is the only one that joins neither write slot.
 
 ### Third-party subchart RBAC
 
@@ -409,6 +482,44 @@ Also, in both modes:
   Two kinds of install have nothing to do here: `apps.enabled` off, which is the default; and
   app serving without zero trust, where the Knative Operator owns those workloads and their
   accounts are untouched.
+
+- **Under `zero_trust.enabled: true`, this chart no longer supplies the Knative aggregation
+  roles anything outside it may have been consuming.** Three cases, all of which now need
+  supplying yourself:
+
+  - **`knative-serving-addressable-resolver` and `knative-serving-podspecable-binding`.**
+    Neither had a union subject; they exist so other controllers can aggregate Knative
+    Serving's `Addressable` and `PodSpecable` duck types into their own ClusterRoles. A
+    controller of yours whose `aggregationRule` selects `duck.knative.dev/addressable: "true"`
+    or `duck.knative.dev/podspecable: "true"` will find nothing matching after this upgrade and
+    will silently lose those rules — an aggregated role with no matching source is empty, not
+    an error. Ship your own labelled ClusterRole, or name the resources directly.
+  - **`knative-serving-namespaced-admin` / `-edit` / `-view`.** These aggregated into the
+    built-in `admin`, `edit` and `view` roles, so anyone holding one of those in a namespace
+    could read — or, with `admin`/`edit`, write — Knative Serving objects there. After this
+    upgrade they cannot. Grant it explicitly if your users need it; the chart should not be
+    deciding who can create a `Service` in a namespace it does not own.
+  - **Anything relying on `knative-serving-admin`'s aggregation.** It conveyed *any*
+    ClusterRole in the cluster labelled `serving.knative.dev/controller: "true"`, so a
+    third-party add-on that grants itself reach by adding that label to its own role no longer
+    reaches the Knative binaries through it.
+
+- **The webhook's grant narrows sharply, and this is the change to review before upgrading.**
+  Because it ran as the shared `controller` account, `knative-webhook` previously held the
+  whole of `knative-serving-core` by aggregation. It now declares only what its own informers
+  and reconcilers use: ConfigMaps and Secrets in the release namespace, the two
+  webhook-configuration kinds, a `get` on the release Namespace, and the two
+  `resourceNames`-scoped writes. Measured, that is **167 of its 208 capability tuples
+  withdrawn** — every CRD, `pods`, `serviceaccounts`, `namespaces` and Knative-API-group grant
+  it never asked for. The `certificates`, `defaulting`, `validation` and `config-validation`
+  controllers it runs need none of them, and admission review does not require RBAC on the
+  objects being admitted. **Nothing in this chart can confirm that from the image**, and no
+  snapshot can catch it: if a code path we did not find reads one of those, the webhook stays
+  `1/1 Running` and every `serving.knative.dev` write is rejected by its own fail-closed
+  configuration.
+
+  The activator narrows the same way and much less: it loses `get` on `services` and
+  `revisions`, keeping `list`/`watch`, which is what its informers use.
 
 - **BREAKING: `clusterresourcesync.clusterRoleRules` now defaults to `[]`, and a `*` verb in
   it fails the render.** It used to default to twelve resources at `verbs: ['*']`, granted

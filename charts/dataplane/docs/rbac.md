@@ -89,29 +89,28 @@ asking for it. `tests/values/dataplane.aws.zero-trust-serving-enabled.yaml` is t
 catches that.
 
 It is the one component the flag governs by refusing outright rather than by narrowing a
-grant, because there is no narrower grant to write. Its footprint is 10 ClusterRoles and 4
-ClusterRoleBindings vendored from upstream, and three separate things about it have no
-namespaced form:
+grant. That is no longer because the grant is unwritable — app serving's RBAC is declared per
+binary through this chart's slot framework, like every other component's, and every grant that
+can be namespaced is. It is because of what the *images* do:
 
-- **Aggregation.** `controller` receives its entire grant through `knative-serving-admin`,
-  which aggregates everything labelled `serving.knative.dev/controller: "true"`;
-  `knative-serving-aggregated-addressable-resolver` works the same way. `aggregationRule`
-  exists only on ClusterRole. Converting means hand-flattening the set and re-flattening it
-  on every upstream bump, which is the opposite of vendoring.
-- **Cluster-scoped resources.** `knative-serving-core` needs `namespaces`,
-  `namespaces/finalizers`, `customresourcedefinitions` and both `*webhookconfigurations`.
-  Under the rule above those get dropped from a namespaced Role, not converted — but the
-  webhook runs as `controller` and reconciles its own webhook configurations and CA bundles
-  at startup, so dropping them means it never goes Ready and every Knative Service admission
-  fails.
 - **No watch scope.** The deployments take `SYSTEM_NAMESPACE` (where Knative's own config
-  lives) and nothing else; upstream ships no namespace-scoped install, and the informers are
-  cluster-wide. A namespaced Role would leave controller, webhook and activator Ready and
-  denied — the same silent shape the prometheus and kube-state-metrics guards exist to
-  prevent, with no values key to guard on.
+  lives) and nothing else; upstream ships no namespace-scoped install, and the binaries take
+  the shared, unfiltered informers from `knative.dev/pkg` without scoping them to a namespace.
+  Those reads go out with an empty namespace, which Kubernetes authorizes as a cluster-scope
+  check, so each binary needs cluster-wide `list`/`watch` on Deployments, Pods, Services,
+  Endpoints and the Knative API groups — and `net-kourier` on Secrets — regardless of how the
+  RBAC is written. A namespaced Role authorizes none of it, and would leave controller,
+  webhook and activator Ready and denied: the same silent shape the prometheus and
+  kube-state-metrics guards exist to prevent, with no values key to guard on.
 
-The webhook configurations make the last point concrete: every rule is `scope: "*"` with no
-`namespaceSelector`, so admission intercepts cluster-wide regardless of what RBAC says.
+So app serving reads every namespace in the cluster, which is the one thing `low_privilege:
+true` promises it does not. The webhook configurations make that concrete from the other
+direction: every rule is `scope: "*"` with no `namespaceSelector`, so admission intercepts
+cluster-wide regardless of what RBAC says.
+
+The refusal is the whole of what the flag does here; it does not shape the grants. What each
+binary holds is the same in the only posture it renders in. See the release notes for the
+per-component breakdown.
 
 **Why it refuses rather than just dropping the stack.** Silently rendering nothing would be
 the cheaper change, and it would be wrong in a familiar way: `apps.enabled` would still be

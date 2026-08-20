@@ -2019,11 +2019,17 @@ low_privilege: true
 # `knative-operator.enabled: false` because Helm evaluates that subchart
 # condition at parse time and can't derive it from this flag.
 #
+# This is also the only flag that installs app-serving RBAC. With it off, no
+# Knative role, binding or ServiceAccount is created by any route — the
+# `knative-operator` path installs its own and this chart authors none of it.
+#
 # Adding app serving on top (`apps.enabled: true`) also requires
-# `low_privilege: false`: the Knative half needs cluster-scoped RBAC that cannot be
-# narrowed, and the chart refuses the combination. At the `low_privilege: true`
-# default, set `apps.enabled: false` — you keep the Envoy gateway, dataproxy and
-# tunnel ingress and give up app serving. See docs/rbac.md#app-serving.
+# `low_privilege: false`: the Knative binaries read cluster-wide no matter how
+# their RBAC is written, and the chart refuses the combination. At the
+# `low_privilege: true` default, set `apps.enabled: false` — you keep the Envoy
+# gateway, dataproxy and tunnel ingress and give up app serving. What app serving
+# is granted is documented on the `apps` key below; see also
+# docs/rbac.md#app-serving.
 zero_trust:
   enabled: false
 
@@ -2224,9 +2230,30 @@ tunnelService:
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
 # deprecated flag can still take effect — the effective default is `false`.
 #
-# App serving requires `low_privilege: false`: the Knative stack needs
-# cluster-scoped RBAC that cannot be narrowed, so the chart refuses `enabled: true`
-# alongside `low_privilege: true`. Set both to run app serving.
+# App serving requires `low_privilege: false`, and the chart refuses
+# `enabled: true` alongside `low_privilege: true`. The reason is the Knative
+# images, not the manifests: their informers are the shared, unfiltered ones and
+# nothing scopes them to a namespace, so each binary's reads go out with an empty
+# namespace and Kubernetes authorizes them as cluster-scope checks. No way of
+# writing the RBAC avoids that. Set both to run app serving.
+#
+# What that costs you, under `zero_trust.enabled: true`: six workloads across
+# five ServiceAccounts, each with its own `<release-ns>-knative-<component>-cluster-read`
+# ClusterRole. Those hold `list`/`watch` on the Knative API groups and on some of
+# services, endpoints, pods, namespaces, deployments, leases and
+# horizontalpodautoscalers; two `get`-only exceptions (the controller on
+# serviceaccounts and secrets, for image digest resolution; the webhook on the
+# release Namespace, pinned to that one name); and one cluster-wide `list`/`watch`
+# on secrets for `net-kourier`, which registers its Secret informer
+# unconditionally in the image this chart ships. The only cluster-scoped *writes*
+# are the webhook's two, both pinned by `resourceNames` — to the three Knative
+# webhook configurations, and to the release namespace's finalizers.
+#
+# Everything else these binaries need is namespaced, and lands in the same pooled
+# `<release-ns>-comp-ns-*` and `<release-ns>-work-ns` roles every other component
+# uses. Pooled means shared: each of the five also holds every other declarer's
+# rules in those roles, so `commonServiceAccount.enabled: false` separates the
+# five in the cluster dimension only.
 #
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
@@ -2944,6 +2971,10 @@ gateway:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
       kubernetes.podspec-volumes-emptydir: "enabled"
+      # Pinned off, and now unusable rather than merely unused: dry-run validation
+      # needs cluster-wide `pods: create`, and no app-serving component holds that
+      # grant any more. Enabling this key would make every revision's dry-run
+      # check fail Forbidden.
       kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}

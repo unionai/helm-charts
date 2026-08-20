@@ -603,16 +603,21 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
   --set ingress-nginx.rbac.create=false \
   --set ingress-nginx.controller.scope.namespace=elsewhere
 
-# The vendored Knative Serving / Kourier stack under templates/gateway/ holds cluster-scoped
-# RBAC with no namespaced form, so app serving requires low_privilege: false. The snapshot
-# suite covers the rendering; the refusal, and what still renders after it, are asserted here.
+# The Knative binaries take the shared, unfiltered informers and never scope them to a
+# namespace, so app serving reads cluster-wide however its RBAC is written and requires
+# low_privilege: false. The snapshot suite covers the rendering; the refusal, and what still
+# renders after it, are asserted here.
+#
+# These probe the emitter-produced roles, not the vendored objects they replaced. Any name
+# here works only while app serving is a registry component, so a silently dropped registry
+# entry fails this section rather than passing it.
 echo "- app serving and low_privilege are refused together, not silently reconciled"
 # knative-operator must be disabled alongside zero_trust (Helm evaluates that subchart
 # condition at parse time), and orgName is what the Envoy auth filter is keyed on.
 zt=(--set zero_trust.enabled=true --set knative-operator.enabled=false --set orgName=test-org)
-expect-manifest "the stack renders with apps on and low_privilege off" present "name: knative-serving-core" \
+expect-manifest "the stack renders with apps on and low_privilege off" present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set apps.enabled=true --set low_privilege=false
-expect-manifest "and its Kourier half with it" present "name: net-kourier" \
+expect-manifest "and its Kourier half with it" present "name: union-knative-kourier-cluster-read" \
   "${zt[@]}" --set apps.enabled=true --set low_privilege=false
 expect-refusal "apps on at the low_privilege default" \
   "requires low_privilege: false" \
@@ -620,7 +625,7 @@ expect-refusal "apps on at the low_privilege default" \
 
 # App serving is off by default, so a zero-trust deploy that sets nothing else renders.
 expect-manifest "the default zero-trust install renders, with no Knative stack" \
-  absent "name: knative-serving-core" "${zt[@]}"
+  absent "name: union-knative-controller-cluster-read" "${zt[@]}"
 
 # The Envoy gateway gates on zero_trust.enabled alone and holds no cluster-scoped RBAC, so
 # dropping app serving leaves the zero-trust dataplane and its routes intact.
@@ -630,9 +635,9 @@ expect-manifest "and keeps the Envoy gateway" \
 # The deprecated serving.enabled still reaches app serving; values.yaml leaves apps.enabled
 # null so it keeps deciding.
 expect-manifest "the deprecated serving.enabled still turns app serving on" \
-  present "name: knative-serving-core" \
+  present "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true --set low_privilege=false
-expect-manifest "and an explicit apps.enabled still overrides it" absent "name: knative-serving-core" \
+expect-manifest "and an explicit apps.enabled still overrides it" absent "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set low_privilege=false
 
 # low_privilege decides privilege scope, namespaces.enabled decides whether work namespaces
@@ -1563,35 +1568,76 @@ activator knative-activator
 net-kourier-controller net-kourier
 WORKLOADS
 
-# The regression the split creates. Upstream runs the controller, the webhook and both
-# autoscalers as one `controller` ServiceAccount, so the two aggregated ClusterRoleBindings
-# it binds carry all three grants at once. Giving each binary its own name without widening
-# these subject lists leaves the webhook and the autoscalers holding nothing at all, which
-# renders clean and fails only at runtime.
-expect-binding-subject "the aggregated admin role binds all three controller identities" \
-  ClusterRoleBinding knative-serving-controller-admin knative-controller,knative-webhook,knative-autoscaler \
-  "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-binding-subject "and so does the addressable-resolver role" \
-  ClusterRoleBinding knative-serving-controller-addressable-resolver \
-  knative-controller,knative-webhook,knative-autoscaler \
-  "${APPS[@]}" --set commonServiceAccount.enabled=false
-# With one shared identity the three names are equal, so the list has to dedupe to a single
-# subject rather than repeating it three times.
-expect-binding-subject "and dedupes to one subject when they share an identity" \
-  ClusterRoleBinding knative-serving-controller-admin union-system "${APPS[@]}"
+echo
+echo "App-serving RBAC"
 
-# The activator and Kourier keep an identity of their own in both modes; only the name moves.
-expect-binding-subject "the activator's namespaced binding follows its name" \
-  RoleBinding knative-serving-activator knative-activator \
+# Each binary gets its own cluster-read ClusterRole, bound to its own identity. Upstream ran
+# the controller, the webhook and both autoscalers off one aggregated ClusterRole bound to a
+# shared account, so this is where the split becomes real: five roles, five subject lists.
+#
+# Kourier's role is named for the component (union-knative-kourier-cluster-read) while its
+# ServiceAccount keeps the upstream name (net-kourier). Asserting the pair together is what
+# stops the mismatch being "fixed" in either direction.
+while read -r component sa; do
+  expect-binding-subject "${component}'s cluster-read role binds ${sa}" \
+    ClusterRoleBinding "union-knative-${component}-cluster-read" "${sa}" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false
+  expect-binding-subject "and the common account when identities are shared: ${component}" \
+    ClusterRoleBinding "union-knative-${component}-cluster-read" union-system "${APPS[@]}"
+done <<'COMPONENTS'
+controller knative-controller
+webhook knative-webhook
+autoscaler knative-autoscaler
+activator knative-activator
+kourier net-kourier
+COMPONENTS
+
+# The security claim of this whole change: of the five, only the webhook writes at cluster
+# scope. expect-verb-resources asserts the COMPLETE resource set granted a verb and reports
+# <NO-SUCH-ROLE> when the role is missing, so deleting a role fails these rather than
+# satisfying them -- the vacuous-pass shape an `absent` grep has.
+for c in controller webhook autoscaler activator kourier; do
+  for v in create update patch delete deletecollection; do
+    expect-verb-resources "knative-${c}'s cluster-read role grants no ${v}" \
+      "union-knative-${c}-cluster-read" "${v}" "" "${APPS[@]}" --set commonServiceAccount.enabled=false
+  done
+done
+
+# And the webhook's cluster-write holds `update` on exactly three resources and `create` on
+# nothing. A cluster-scoped create cannot be confined by resourceNames -- there is no name to
+# match before the object exists -- so its absence is what makes the resourceNames scoping on
+# the update rules meaningful. The names themselves are pinned by the snapshots.
+expect-verb-resources "the webhook's cluster-write grants update on exactly its three targets" \
+  union-knative-webhook-cluster-write update \
+  "mutatingwebhookconfigurations,namespaces/finalizers,validatingwebhookconfigurations" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-binding-subject "as does its cluster binding" \
-  ClusterRoleBinding knative-serving-activator-cluster knative-activator \
+expect-verb-resources "and no cluster-scoped create anywhere in the app-serving set" \
+  union-knative-webhook-cluster-write create "" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-binding-subject "and Kourier's" \
-  ClusterRoleBinding net-kourier net-kourier \
-  "${APPS[@]}" --set commonServiceAccount.enabled=false
-expect-binding-subject "all of which follow the common account when it is on" \
-  ClusterRoleBinding net-kourier union-system "${APPS[@]}"
+
+# Cluster-wide `pods: create` lets a caller schedule a pod under any ServiceAccount. The
+# vendored knative-serving-core carried it; nothing here may.
+for c in controller webhook autoscaler activator kourier; do
+  expect-verb-resources "knative-${c} cannot create pods cluster-wide" \
+    "union-knative-${c}-cluster-read" create "" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false
+done
+
+# The three that write in app namespaces join the pooled work-ns role; the webhook and the
+# activator must not. No snapshot fixture renders this: the app-serving fixtures leave
+# clusterresourcesync off and namespaces.enabled false, so the pooled role has no binding for
+# a golden to show a subject list on.
+expect-binding-subject "the work-ns pool gains exactly the three app-serving writers" \
+  RoleBinding union-work-ns \
+  leaseworker,operator-system,proxy-system,union-webhook-system,knative-controller,knative-autoscaler,net-kourier \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+# And the object clusterresourcesync is handed for runtime-provisioned namespaces still
+# agrees with the one the chart writes itself, now that app serving contributes subjects.
+expect-provisioner-matches-chart "the provisioner's binding still matches the chart's, with app serving on" \
+  flytesnacks-development \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"

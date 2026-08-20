@@ -7,9 +7,12 @@ emission order downstream.
 
 A component joins this list once it declares dataplane.rbac.slots.<name>. Every
 component with general RBAC now does, so none still owns a hand-written Role for
-its release-namespace, work-namespace or cluster-scope grants. imagebuilder and
-the Kourier gateway declare no slots: their only grant is an OpenShift SCC `use`,
-which is not a slot destination.
+its release-namespace, work-namespace or cluster-scope grants. That includes the
+app-serving binaries, whose vendored Knative Serving and Kourier RBAC this chart
+no longer carries. imagebuilder and the Kourier *gateway* -- the Envoy data plane,
+not the net-kourier controller that declares knative-kourier below -- are the two
+that declare no slots: their only grant is an OpenShift SCC `use`, which is not a
+slot destination.
 
 That is not the same as "the chart writes no RBAC outside this file", and the
 difference matters when auditing. Slots are organized by destination, and three
@@ -30,8 +33,7 @@ kinds of grant have no destination here:
                                    not one of the emitter's verb sets.
 
 Also outside: third-party subchart RBAC this chart authors
-(templates/prometheus/, templates/ingress-nginx/) and the vendored Knative Serving
-grants under templates/gateway/.
+(templates/prometheus/, templates/ingress-nginx/).
 
 If you are auditing, do not enumerate by grepping for `kind: Role`. Some templates
 emit RBAC only through a helper and contain no such literal -- inspect the callers
@@ -69,6 +71,21 @@ component here.
 */}}
 {{- if and .Values.clusterresourcesync.enabled (not (include "singleNamespace" .)) -}}
 {{- $components = append $components (dict "name" "clusterresourcesync" "sa" (printf "union-%s" (include "clusterresourcesync.serviceAccountName" .))) -}}
+{{- end -}}
+{{/*
+The app-serving binaries. Their slot declarations live beside their
+ServiceAccounts in gateway/serviceaccounts.yaml, and they join the registry
+under the same condition every other gateway/ template renders under. The six
+app-serving workloads map onto five entries: autoscaler-hpa runs the same
+reconciler as autoscaler under a different PodAutoscaler class, shares its
+ServiceAccount, and declares no slots of its own.
+*/}}
+{{- if include "zeroTrustApps.enabled" . -}}
+{{- $components = append $components (dict "name" "knative-controller" "sa" (include "knative.controller.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-webhook" "sa" (include "knative.webhook.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-autoscaler" "sa" (include "knative.autoscaler.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-activator" "sa" (include "knative.activator.serviceAccountName" .)) -}}
+{{- $components = append $components (dict "name" "knative-kourier" "sa" (include "knative.kourier.serviceAccountName" .)) -}}
 {{- end -}}
 {{- toYaml $components -}}
 {{- end -}}
