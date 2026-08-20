@@ -303,16 +303,24 @@ are covered in their own sections.
   working: the Job's commands are unchanged, and a leftover under any other name was never
   being deleted.
 
-### App-serving pod identity
+### App-serving pod identity (zero trust only)
+
+**Scope: this section applies only to `zero_trust.enabled: true`.** App serving has two
+implementations. Under zero trust the chart renders the Knative workloads itself, and that is
+what changes here. With zero trust off it instead emits a `KnativeServing` resource and the
+Knative Operator creates those workloads — **that path is unchanged, keeps the upstream
+account names, and cannot adopt these names**, because the `KnativeServing` API has no
+ServiceAccount field to set them through. If you run app serving without zero trust, nothing
+below applies to you and no migration step is needed.
 
 - **BREAKING: the app-serving workloads no longer run as `controller`, `activator` and
-  `net-kourier`.** Upstream Knative ships three ServiceAccounts for five binaries: the
+  `net-kourier`.** Upstream Knative ships three ServiceAccounts for six workloads: the
   controller, the webhook and both autoscalers all ran as one account named `controller`,
   which meant no grant could be expressed for any one of them without giving it to the other
-  three. Each binary now has its own name, and `commonServiceAccount.enabled` decides them
-  the same way it decides every other component's:
+  three. The six now resolve five distinct names, and `commonServiceAccount.enabled` decides
+  them the same way it decides every other component's:
 
-  | Binary | Was | Default (`commonServiceAccount.enabled: true`) | Per-component |
+  | Workload | Was | Default (`commonServiceAccount.enabled: true`) | Per-component |
   |---|---|---|---|
   | `controller` | `controller` | `union-system` | `knative-controller` |
   | `webhook` | `controller` | `union-system` | `knative-webhook` |
@@ -340,8 +348,8 @@ are covered in their own sections.
   ClusterRole. Nothing new is granted to the cluster; the same grants are simply pooled onto
   one identity. That is the standing trade of a shared service account — one identity per
   install, so one cloud-side workload-identity binding — reaching app serving for the first
-  time. Set `commonServiceAccount.enabled: false` to keep the six workloads partitioned, at
-  the cost of a cloud-side binding per name.
+  time. Set `commonServiceAccount.enabled: false` to split them back out across the five
+  names above, at the cost of a cloud-side binding for each.
 
 ### Third-party subchart RBAC
 
@@ -375,15 +383,22 @@ Also, in both modes:
 
 ### Migration / action required
 
-- **The app-serving ServiceAccount names change; rebind anything outside the chart that
-  referenced them.** Nothing inside the chart needs action — the bindings follow the names —
-  but anything that named `controller`, `activator` or `net-kourier` from outside does: a
-  cloud IAM trust policy or workload-identity binding scoped to one of those accounts, an
-  admission policy that matches on the requesting user
+- **Under `zero_trust.enabled: true`, the app-serving ServiceAccount names change; rebind
+  anything outside the chart that referenced them.** Nothing inside the chart needs action —
+  the bindings follow the names — but anything that named `controller`, `activator` or
+  `net-kourier` from outside does: a cloud IAM trust policy or workload-identity binding
+  scoped to one of those accounts, an admission policy that matches on the requesting user
   (`system:serviceaccount:<release-ns>:controller`), or a NetworkPolicy or audit rule keyed
-  on the same. Retarget them at `union-system` at the chart default, or at the per-binary
-  names if you run `commonServiceAccount.enabled: false`. Only app serving is affected, so
-  installs with `apps.enabled` off — the default — have nothing to do here.
+  on the same.
+
+  At the chart default all three become `union-system`. Under
+  `commonServiceAccount.enabled: false`, `controller` becomes `knative-controller` and
+  `activator` becomes `knative-activator`, while **`net-kourier` keeps its name and needs no
+  change**.
+
+  Two kinds of install have nothing to do here: `apps.enabled` off, which is the default; and
+  app serving without zero trust, where the Knative Operator owns those workloads and their
+  accounts are untouched.
 
 - **BREAKING: `clusterresourcesync.clusterRoleRules` now defaults to `[]`, and a `*` verb in
   it fails the render.** It used to default to twelve resources at `verbs: ['*']`, granted
