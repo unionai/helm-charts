@@ -308,17 +308,17 @@ are covered in their own sections.
 **Scope: this section applies only to `zero_trust.enabled: true`.** App serving has two
 implementations. Under zero trust the chart renders the Knative workloads itself, and that is
 what changes here. With zero trust off it instead emits a `KnativeServing` resource and the
-Knative Operator creates those workloads — **that path is unchanged, keeps the upstream
-account names, and cannot adopt these names**, because the `KnativeServing` API has no
-ServiceAccount field to set them through. If you run app serving without zero trust, nothing
-below applies to you and no migration step is needed.
+Knative Operator creates those workloads — **that path is unchanged and keeps the upstream
+account names.** The chart offers no ServiceAccount override there, and the `KnativeServing`
+workload overrides expose no ServiceAccount field to add one through. If you run app serving
+without zero trust, nothing below applies to you and no migration step is needed.
 
-- **BREAKING: the app-serving workloads no longer run as `controller`, `activator` and
-  `net-kourier`.** Upstream Knative ships three ServiceAccounts for six workloads: the
-  controller, the webhook and both autoscalers all ran as one account named `controller`,
-  which meant no grant could be expressed for any one of them without giving it to the other
-  three. The six now resolve five distinct names, and `commonServiceAccount.enabled` decides
-  them the same way it decides every other component's:
+- **BREAKING: the app-serving workloads change ServiceAccount.** Upstream Knative ships three
+  ServiceAccounts for six workloads: the controller, the webhook and both autoscalers all ran
+  as one account named `controller`, which meant no grant could be expressed for any one of
+  them without giving it to the other three. The six now have five per-component identities —
+  and, as for every other component, `commonServiceAccount.enabled` decides whether they are
+  used: with it on, the chart default, all six run as the single common account instead.
 
   | Workload | Was | Default (`commonServiceAccount.enabled: true`) | Per-component |
   |---|---|---|---|
@@ -332,7 +332,8 @@ below applies to you and no migration step is needed.
   `autoscaler-hpa` shares the autoscaler's identity: it is the same reconciler with a
   different PodAutoscaler class, and it held exactly the autoscaler's grants before. Kourier
   keeps its upstream name rather than gaining a `knative-` prefix — it is a separate project
-  and that is the name its own manifests and issue reports use.
+  and that is the name its own manifests and issue reports use, so it is the one account whose
+  name is unchanged under per-component identities.
 
 - **No binary loses a permission, and no new grant is written.** The vendored knative-serving
   roles are unchanged — only the subject lists move to follow the names, so every grant that
@@ -386,15 +387,24 @@ Also, in both modes:
 - **Under `zero_trust.enabled: true`, the app-serving ServiceAccount names change; rebind
   anything outside the chart that referenced them.** Nothing inside the chart needs action —
   the bindings follow the names — but anything that named `controller`, `activator` or
-  `net-kourier` from outside does: a cloud IAM trust policy or workload-identity binding
+  `net-kourier` from outside may: a cloud IAM trust policy or workload-identity binding
   scoped to one of those accounts, an admission policy that matches on the requesting user
   (`system:serviceaccount:<release-ns>:controller`), or a NetworkPolicy or audit rule keyed
   on the same.
 
-  At the chart default all three become `union-system`. Under
-  `commonServiceAccount.enabled: false`, `controller` becomes `knative-controller` and
-  `activator` becomes `knative-activator`, while **`net-kourier` keeps its name and needs no
-  change**.
+  At the chart default all three become `union-system`, so each old reference becomes one new
+  reference.
+
+  Under `commonServiceAccount.enabled: false` the mapping is not one-to-one, and `controller`
+  is the case to watch: it covered four workloads and **fans out to three accounts**, so a
+  single rule keyed on it has to become three or it will stop matching the webhook and the
+  autoscalers.
+
+  | Old account | Becomes, under per-component identities |
+  |---|---|
+  | `controller` | `knative-controller`, `knative-webhook` **and** `knative-autoscaler` |
+  | `activator` | `knative-activator` |
+  | `net-kourier` | `net-kourier` — unchanged, nothing to do |
 
   Two kinds of install have nothing to do here: `apps.enabled` off, which is the default; and
   app serving without zero trust, where the Knative Operator owns those workloads and their
