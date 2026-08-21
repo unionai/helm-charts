@@ -1,5 +1,10 @@
 # dataplane-crds — Release Notes
 
+## 2026.8.3
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.2` → `2026.8.3`).
+No CRD changes in this release.
+
 ## 2026.8.2
 
 Lockstep `version` bump with the `dataplane` chart (`2026.8.1` → `2026.8.2`).

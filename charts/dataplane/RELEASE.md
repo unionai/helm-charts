@@ -1,5 +1,17 @@
 # dataplane — Release Notes
 
+## 2026.8.3
+
+`version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
+`2026.8.3`, picking up the new data-plane images.
+
+- Billing is set to `none` by default for selfhosted deployments
+  ([#548](https://github.com/unionai/helm-charts/pull/548)).
+- Monitoring: the data-plane overview dashboard is reworked for v2 metrics, a
+  v1 overview dashboard is added alongside it, new Karpenter and SLO dashboards
+  ship as opt-in ConfigMaps, and a new alerting rule flags unschedulable pods
+  ([#529](https://github.com/unionai/helm-charts/pull/529)).
+
 ## 2026.8.2
 
 Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
