@@ -5,6 +5,14 @@
 `version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
 `2026.8.3`, picking up the new data-plane images.
 
+Image changes (`2026.8.3`):
+
+- Reusable Ray clusters now correctly share one cluster across tasks in a
+  `TaskEnvironment` that sets a `pod_template`; previously each task got its
+  own cluster ([unionai/cloud#17825](https://github.com/unionai/cloud/pull/17825)).
+
+Chart changes:
+
 - Billing is set to `none` by default for selfhosted deployments
   ([#548](https://github.com/unionai/helm-charts/pull/548)).
 - Monitoring: the data-plane overview dashboard is reworked for v2 metrics, a
