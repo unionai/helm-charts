@@ -1,5 +1,19 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+- Default CPU **requests** for the control-plane services (`actions` and its
+  router, `leasor`, and `scylla`) are lowered to better reflect their
+  steady-state CPU usage. **CPU limits and all memory requests are unchanged**,
+  so every service keeps its full burst headroom under load — only the
+  scheduling *reservation* shrinks. On clusters that were reserving far more CPU
+  than the services use, this improves pod packing density and lets the cluster
+  autoscaler consolidate onto fewer nodes, lowering cost with no change to peak
+  capacity. Because limits stay high, the change carries low risk; if a
+  particular workload needs a larger reservation, override
+  `<service>.resources.requests.cpu` in your values
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+
 ## 2026.8.3
 
 `version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
