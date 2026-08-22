@@ -432,11 +432,10 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   namespaced — the cluster-wide `get` is gone.** Digest resolution reads the ServiceAccount
   named in the Revision's spec plus the Secrets its `imagePullSecrets` name. That was conveyed
   by a `ClusterRole` + `ClusterRoleBinding`, which let the identity `get` **any Secret in any
-  namespace on the cluster**, tenant namespaces included — the broadest read grant the
-  app-serving set held. It never needed to be: `reconcileDigest` sets
-  `k8schain.Options.Namespace` to the Revision's own namespace and passes a plain clientset, so
-  these are direct, namespaced `Get`s, which is exactly what a per-namespace `RoleBinding`
-  conveys. The rule now sits in `work-ns`. `resourceNames` is not usable here — both the
+  namespace on the cluster**, tenant namespaces included. It never needed to be:
+  `reconcileDigest` sets `k8schain.Options.Namespace` to the Revision's own namespace and
+  passes a plain clientset, so these are direct, namespaced `Get`s, which is exactly what a
+  per-namespace `RoleBinding` conveys. The rule now sits in `work-ns`. `resourceNames` is not usable here — both the
   ServiceAccount name and the Secret names come from the user's Revision spec.
 
   **Behavior change worth knowing:** digest resolution now depends on the `<release-ns>-work-ns`
@@ -447,11 +446,14 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   The effective grant does not change at the `commonServiceAccount.enabled: true` default, since
   `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource wildcard.
 
-  That leaves two cluster-wide Secret reads in the chart, both unchanged and neither narrowable
-  today: the pod `webhook`, whose controller-runtime Secret cache is unscoped unless propeller's
-  `limit-namespace` is set — and it reads the same config key propeller does, so it cannot be
-  scoped without pinning propeller's own informer — and `knative-kourier`, tracked by UN-39.
-  Both are listed with their removal condition in
+  **This is not the last cluster-wide Secret read, or even the widest.** Two remain, both
+  unchanged here and neither narrowable today: the pod `webhook`, whose controller-runtime
+  Secret cache is unscoped unless propeller's `limit-namespace` is set — and it reads the same
+  config key propeller does, so it cannot be scoped without pinning propeller's own informer —
+  and `knative-kourier`, tracked by UN-39. Both hold `list`/`watch`, which returns every
+  Secret's contents and enumerates them besides, so each is broader than the named `get` this
+  change removed. If you are auditing what this release still exposes, those are the two rows
+  to read. Both are listed with their removal condition in
   [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
 
 - **The namespaced slots are pooled, and that cuts both ways.** Each of the five also receives

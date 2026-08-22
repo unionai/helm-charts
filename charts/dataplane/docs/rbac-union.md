@@ -248,16 +248,25 @@ under `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.clean
 RBAC has no way to confine a namespaced write to a subset of namespaces — and
 `<release-ns>-work-ns` is a resource-wildcard role. So a compromised `clusterresourcesync`
 could plant a `<release-ns>-work-ns` RoleBinding in a namespace this release does not own,
-giving Union's ServiceAccounts admin over it. **It cannot escalate past that ceiling:** the
-`bind` verb is `resourceNames`-pinned to that one role, so no stronger role can be
-substituted, and there is no `delete` on `namespaces` unless `cleanupNamespace` is on — it
-cannot destroy a tenant namespace. This is the accepted cost of provisioning namespaces at
-runtime, not an oversight, and there are two ways to not pay it: pre-seed the work namespaces
-with `namespaces.enabled: true` and `namespaces.static`, which removes the need for the
-runtime route; or, if you need it, constrain the *shape* of what it may create with an
-admission policy (Kyverno, OPA/Gatekeeper) restricting its RoleBinding and Namespace writes to
-your project-namespace naming convention. Re-cutting the RBAC cannot express that constraint —
-only an admission policy can.
+giving Union's ServiceAccounts admin over it. **The `bind` pin caps what it can grant
+directly, not where that grant leads:** `bind` is `resourceNames`-pinned to that one role, so
+no stronger role can be substituted, and there is no `delete` on `namespaces` unless
+`cleanupNamespace` is on — it cannot destroy a tenant namespace. But `<release-ns>-work-ns`
+carries `pods: create`, and creating a pod in a namespace conveys the permissions of every
+ServiceAccount already in it. Bound into a namespace that holds a stronger identity —
+`kube-system` on a stock cluster — that is a route past the ceiling the pin appears to set.
+Read the pin as closing the direct substitution only.
+
+This is the accepted cost of provisioning namespaces at runtime, not an oversight. There is
+one way to not pay it and one way to bound it. **To not pay it,** `clusterresourcesync` has to
+be off, with namespace provisioning and project mapping handled by something you trust.
+Pre-seeding with `namespaces.enabled: true` and `namespaces.static` is not enough on its own:
+static namespaces are a pre-seeded *subset*, so projects registered after install are still
+provisioned at runtime and both halves of the grant stay. **To bound it while keeping it,**
+constrain the *shape* of what it may create with an admission policy (Kyverno,
+OPA/Gatekeeper) restricting its RoleBinding and Namespace writes to your project-namespace
+naming convention. Re-cutting the RBAC cannot express that constraint — only an admission
+policy can.
 
 That row is also the one you can extend. Anything set in
 `clusterresourcesync.clusterRoleRules` — the escape hatch for resource types your own
