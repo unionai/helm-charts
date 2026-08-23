@@ -111,7 +111,7 @@ declarer is bound to the same role, so a resource that two components both name 
 to the union of their verbs, not to each component's own list (see "Pooling", below, for
 the same property stated at the level of whole rules). A component declaring
 `secrets: [get]` alongside another declaring `secrets: [get, update, delete]` holds all
-four verbs in every namespace the role is bound in.
+three verbs in every namespace the role is bound in.
 
 So a declaration in a pooled slot states what that component **needs**. Only the rendered
 role states what every declarer **gets**. When auditing, read the rendered
