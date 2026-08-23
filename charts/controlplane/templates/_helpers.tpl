@@ -133,6 +133,8 @@ Args: root context (.)
 {{ toYaml .config.nodeSelector }}
 {{- else if and (hasKey .Values "nodeSelector") }}
 {{ toYaml .Values.nodeSelector }}
+{{- else if and (hasKey .Values "scheduling") .Values.scheduling.nodeSelector }}
+{{ toYaml .Values.scheduling.nodeSelector }}
 {{- end }}
 {{- end }}
 
@@ -150,6 +152,8 @@ Args: root context (.)
 {{ toYaml .config.affinity }}
 {{- else if and (hasKey .Values "affinity") }}
 {{ toYaml .Values.affinity }}
+{{- else if and (hasKey .Values "scheduling") .Values.scheduling.affinity }}
+{{ toYaml .Values.scheduling.affinity }}
 {{- end }}
 {{- end }}
 
@@ -158,6 +162,8 @@ Args: root context (.)
 {{ toYaml .config.tolerations }}
 {{- else if and (hasKey .Values "tolerations") }}
 {{ toYaml .Values.tolerations }}
+{{- else if and (hasKey .Values "scheduling") .Values.scheduling.tolerations }}
+{{ toYaml .Values.scheduling.tolerations }}
 {{- end }}
 {{- end }}
 
