@@ -1822,6 +1822,79 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
   "${APPS[@]}" --set commonServiceAccount.enabled=false \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
+# ---------------------------------------------------------------------------
+# Verb sets, pinned per slot.
+#
+# expect-role-resource cannot see verbs at all, so until now nothing in this suite
+# would catch a verb regression. These pin the complete resource set per verb, which
+# fails both on a verb being dropped from a rule and on one being added.
+#
+# Every rule in a slot currently carries that slot's whole verb set, so the expected
+# list is identical across the verbs of a given role. That is the property being
+# frozen: the migration to per-rule verbs must not change it, and any later narrowing
+# must show up here as a deliberate diff.
+# ---------------------------------------------------------------------------
+
+# comp-ns-read at chart defaults. The write verbs must yield nothing: this is the
+# assertion that makes "list/watch only" a property of the chart rather than a claim
+# in the docs.
+for v in get list watch; do
+  expect-verb-resources "comp-ns-read grants ${v} on exactly its two resources" \
+    union-comp-ns-read "${v}" "endpoints,podtemplates"
+done
+for v in create update patch delete deletecollection; do
+  expect-verb-resources "comp-ns-read grants no ${v}" \
+    union-comp-ns-read "${v}" ""
+done
+
+# The pooled work-ns role at chart defaults (low_privilege, so it is a Role in the
+# release namespace). Pinned for all eight verbs.
+for v in get list watch create update patch delete deletecollection; do
+  expect-verb-resources "work-ns grants ${v} on its full default resource set" \
+    union-work-ns "${v}" \
+    "'*',configmaps,deployments,events,flyteworkflows,flyteworkflows/finalizers,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
+done
+
+# And with app serving on, split identities, at full privilege -- where the pooled role
+# is a ClusterRole and picks up the three app-serving writers.
+for v in get create delete; do
+  expect-verb-resources "work-ns grants ${v} on its full app-serving resource set" \
+    union-work-ns "${v}" \
+    "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,endpoints/restricted,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false
+done
+
+# comp-ns-write does not render at chart defaults -- no enabled component declares into
+# it there -- so it is pinned under APPS only.
+for v in get create delete; do
+  expect-verb-resources "comp-ns-write grants ${v} on its full resource set" \
+    union-comp-ns-write "${v}" "endpoints,endpoints/restricted,leases,secrets,services" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false
+done
+
+# Every read slot rejects every write verb. Nine roles x five verbs. These are the
+# invariants the `-read` suffix will enforce at render time from Task 6 onward; pinning
+# them first means the enforcement cannot be the thing that makes them true.
+for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
+         union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
+         union-knative-controller-cluster-read union-knative-webhook-cluster-read \
+         union-knative-autoscaler-cluster-read union-knative-activator-cluster-read \
+         union-knative-kourier-cluster-read; do
+  for v in create update patch delete deletecollection; do
+    expect-verb-resources "${r} grants no ${v}" \
+      "${r}" "${v}" "" \
+      "${APPS[@]}" --set commonServiceAccount.enabled=false
+  done
+done
+
+# flytepropeller is off in the APPS posture, so its read role needs its own case.
+for v in create update patch delete deletecollection; do
+  expect-verb-resources "union-flytepropeller-work-ns-cluster-read grants no ${v}" \
+    union-flytepropeller-work-ns-cluster-read "${v}" "" \
+    "${APPS[@]}" --set commonServiceAccount.enabled=false \
+    --set flytepropeller.enabled=true
+done
+
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"
   exit 1
