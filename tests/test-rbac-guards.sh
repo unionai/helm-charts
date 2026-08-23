@@ -1909,6 +1909,24 @@ else
   checks=$((checks + 1)); failures=$((failures + 1))
 fi
 
+# The migration is complete when the emitter no longer stamps verbs. Asserted against the
+# template rather than a render, because a rule that omits verbs cannot be produced from
+# values -- declarations live in templates.
+if grep -q 'merge (dict "verbs"' "${CHART}/templates/_rbac.tpl"; then
+  echo "  FAILED   emitSlot still stamps verbs onto rules"
+  checks=$((checks + 1)); failures=$((failures + 1))
+else
+  echo "  ok       emitSlot no longer stamps verbs"
+  checks=$((checks + 1))
+fi
+if grep -q 'dataplane.rbac.verbAllowlist' "${CHART}/templates/_rbac.tpl"; then
+  echo "  FAILED   verbAllowlist survives; the read/write split should come from the slot name"
+  checks=$((checks + 1)); failures=$((failures + 1))
+else
+  echo "  ok       verbAllowlist is gone"
+  checks=$((checks + 1))
+fi
+
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"
   exit 1

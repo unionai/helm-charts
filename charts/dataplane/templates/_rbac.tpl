@@ -111,9 +111,20 @@ Under full privilege, work-ns is never bound in the release namespace. Under
 low_privilege it is, because there the release namespace is the work namespace.
 
 Pooling: pooled if granted by a RoleBinding, per-component if granted by a
-ClusterRoleBinding. A RoleBinding is confined to one namespace, while a mistake
-in a ClusterRoleBinding affects the whole cluster. So pooled slots get
-emitter-owned verbs and cluster slots let the component name its own.
+ClusterRoleBinding. A RoleBinding is confined to one namespace, while a mistake in a
+ClusterRoleBinding affects the whole cluster.
+
+Every rule names its own verbs, in every slot. In a pooled slot that makes the
+declaration a statement of what one component needs, not a bound on what it gets: the
+role is the union of every declarer's rules and RBAC unions them, so a resource two
+components name is granted at the union of their verbs to both. Only the rendered role
+is authoritative about grant. See docs/rbac-union.md.
+
+An earlier version of this file had the emitter own the verbs in pooled slots, on the
+reasoning that one component should not set verbs for everyone sharing the role. That
+protection was always partial -- the resource axis was never guarded, and a wildcard rule
+widens the shared role for every declarer regardless of verbs -- while the cost was that
+no rule in a pooled slot could ask for less than the whole set.
 */}}
 
 {{/*
@@ -139,22 +150,17 @@ above.
           carries is cluster-scoped in both, so low_privilege cannot narrow it
           and refusing to render it only moves the failure to runtime.
           `work-cluster` emits nothing under low_privilege.
-  verbs   present -> emitter-owned; declarations must not carry a verbs key
-          absent  -> component-supplied, checked against the allowlist
 */}}
 {{- define "dataplane.rbac.slotSpec" -}}
 comp-ns-read:
   pooled: true
   kind: comp
-  verbs: read
 comp-ns-write:
   pooled: true
   kind: comp
-  verbs: write
 work-ns:
   pooled: true
   kind: work
-  verbs: write
 work-ns-cluster-read:
   pooled: false
   kind: work-cluster
@@ -167,10 +173,15 @@ cluster-write:
 {{- end -}}
 
 {{/*
-Emitter-owned verb sets for pooled slots. Write is a superset of read, so a
-resource in a write slot need not also appear in the read slot. Wildcard verbs
-are excluded: on `roles` a wildcard grants `escalate`, disabling RBAC's
-escalation-prevention check, and on `serviceaccounts` it grants `impersonate`.
+The two verb allowlists. `write` is the base set every slot admits; `read` is the
+narrowing applied to slots whose name ends in -read. Neither contains a wildcard: on
+`roles` a wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check,
+and on `serviceaccounts` it grants `impersonate`. `escalate`, `impersonate` and `bind`
+are likewise absent -- the emitter authors its own bind rule, which never passes through
+a declaration.
+
+Write is a superset of read, so a slot admitting writes admits reads too. A rule may name
+any subset of its slot's allowlist; nothing requires it to use all of them.
 */}}
 {{- define "dataplane.rbac.verbs.read" -}}
 - get
@@ -179,21 +190,6 @@ escalation-prevention check, and on `serviceaccounts` it grants `impersonate`.
 {{- end -}}
 
 {{- define "dataplane.rbac.verbs.write" -}}
-- get
-- list
-- watch
-- create
-- update
-- patch
-- delete
-- deletecollection
-{{- end -}}
-
-{{/*
-Verbs a cluster-slot declaration may name. Excludes wildcards, `escalate` and
-`impersonate`, and `bind` (emitter-authored only, see dataplane.rbac.emitSlot).
-*/}}
-{{- define "dataplane.rbac.verbAllowlist" -}}
 - get
 - list
 - watch
@@ -267,44 +263,30 @@ work-cluster emits nothing rather than failing.
 {{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
 {{- else -}}
 {{- $resolved := list -}}
-{{- if $spec.verbs -}}
-{{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
 {{/*
-Transitional. Rules in these slots are being migrated to carry their own verbs; until
-every one does, a rule may either name them -- checked against the set this slot would
-have stamped -- or omit them and be stamped as before. Both forms render identically
-while the declared verbs equal the stamped set, which is what makes the migration a
-no-op per file. Removed once the last rule is migrated.
+Every rule names its own verbs. The allowlist comes from the slot's name: a slot whose
+name ends in -read admits only reads, everything else admits the base set. The base set
+is the ceiling in both cases -- it excludes `*`, `escalate`, `impersonate` and `bind`,
+which is what stops a declaration from disabling RBAC's escalation check or minting
+tokens, and that ceiling applies to work-ns exactly as it does to the rest.
+
+Deriving this from the name rather than a slotSpec key means the two cannot drift: a
+slot named -read cannot be given a write allowlist by mistake.
 */}}
-{{- range $rule := $rules -}}
-{{- if $rule.verbs -}}
-{{- range $v := $rule.verbs -}}
-{{- if not (has $v $verbs) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. Use one of %v." $.slot $v $verbs) -}}
+{{- $allow := fromYamlArray (include "dataplane.rbac.verbs.write" $ctx) -}}
+{{- if hasSuffix "-read" $.slot -}}
+{{- $allow = fromYamlArray (include "dataplane.rbac.verbs.read" $ctx) -}}
 {{- end -}}
-{{- end -}}
-{{- $resolved = append $resolved $rule -}}
-{{- else -}}
-{{- $resolved = append $resolved (merge (dict "verbs" $verbs) $rule) -}}
-{{- end -}}
-{{- end -}}
-{{- else -}}
-{{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
-{{/*
-No `bind` exemption: it is never valid on a declared rule. The emitter's own
-bind rule never passes through $rules, and is spliced into $resolved below.
-*/}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
-{{- fail (printf "RBAC slot %q needs a verbs key on every rule, and the rule for resources %v has none. Add the verbs that rule needs." $.slot $rule.resources) -}}
+{{- fail (printf "RBAC slot %q requires a verbs key on every rule, and the rule for resources %v has none or an empty one. Name the verbs that rule needs; %q allows %v." $.slot $rule.resources $.slot $allow) -}}
 {{- end -}}
 {{- range $v := $rule.verbs -}}
 {{- if not (has $v $allow) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. Use one of %v. Wildcards, escalate and impersonate are never allowed on a declared rule, and the chart writes its own bind rule." $.slot $v $allow) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. %q allows %v. Wildcards, escalate and impersonate are never allowed on a declared rule, and the chart writes its own bind rule. A rule needing a write verb belongs in a write slot." $.slot $v $.slot $allow) -}}
 {{- end -}}
 {{- end -}}
 {{- $resolved = append $resolved $rule -}}
-{{- end -}}
 {{- end -}}
 {{- if and (eq .slot "cluster-write") (eq (.component | default "") "clusterresourcesync") -}}
 {{/*
