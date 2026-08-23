@@ -97,7 +97,30 @@ that watch objects with an empty namespace, which the API server authorizes as a
 cluster-scope check that no number of per-namespace RoleBindings can satisfy. Under
 `low_privilege` those caches are namespace-scoped instead and the pooled `work-ns` role
 already covers them, so the slot emits nothing. Every one of these roles is `list`/`watch`
-only.
+only, and that is enforced at render time rather than by convention: a slot whose name ends
+in `-read` admits only `get`, `list` and `watch`, and the chart refuses to render if a rule
+in one names a write verb.
+
+### What a declaration tells you, and what it does not
+
+Every rule in every slot names its own verbs. In a **per-component** slot the declaration
+is exact: that component gets a role of its own, carrying those rules and no others.
+
+In a **pooled** slot — `comp-ns-read`, `comp-ns-write` and `work-ns` — it is not: every
+declarer is bound to the same role, so a resource that two components both name is granted
+to the union of their verbs, not to each component's own list (see "Pooling", below, for
+the same property stated at the level of whole rules). A component declaring
+`secrets: [get]` alongside another declaring `secrets: [get, update, delete]` holds all
+four verbs in every namespace the role is bound in.
+
+So a declaration in a pooled slot states what that component **needs**. Only the rendered
+role states what every declarer **gets**. When auditing, read the rendered
+`<namespace>-work-ns` role, not the declarations that feed it.
+
+This is the deliberate cost of pooling. The pooled role means one RoleBinding per work
+namespace: a namespace created at runtime becomes reachable by every union component in a
+single object, rather than in one object per component, any of which could fail
+independently and leave the namespace half-reachable.
 
 ### Where a `secrets` rule belongs
 
@@ -125,10 +148,11 @@ Two components hold one and cannot be narrowed today:
 
 A slot is **pooled** when its grant is conveyed by a `RoleBinding`, and per-component when
 it is conveyed by a `ClusterRoleBinding`. A `RoleBinding` is confined to one namespace,
-while a mistake in a `ClusterRoleBinding` reaches the whole cluster — so the shared slots
-get chart-owned verb sets and only the cluster slots let a component name its own verbs
-(checked against an allowlist that excludes wildcards, `escalate`, `impersonate` and
-`bind`).
+while a mistake in a `ClusterRoleBinding` reaches the whole cluster — which is why the
+distinction between pooled and per-component still matters, even though it no longer
+decides how verbs are checked: every rule in every slot names its own verbs, checked
+against an allowlist that excludes wildcards, `escalate`, `impersonate` and `bind`, and
+narrowed to `get`, `list` and `watch` for a slot whose name ends in `-read`.
 
 **A pooled slot is one role bound to every ServiceAccount that declares into it.** The
 consequence is worth stating plainly: the pooled role holds the *union* of every declaring

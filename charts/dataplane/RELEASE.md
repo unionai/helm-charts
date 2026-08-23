@@ -102,7 +102,18 @@ for them. In the usual `union` release namespace:
 |---|---|---|---|
 | `union-comp-ns-read`, `union-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what Union components need on Union's *own* objects |
 | `union-work-ns` | `ClusterRole`, or `Role` under `low_privilege: true` | one `RoleBinding` per work namespace — **never** in the release namespace at `low_privilege: false` | what components need on user tasks, apps and builds |
-| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. `list`/`watch` only, and not emitted at all under `low_privilege: true` |
+| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. `list`/`watch` only (enforced at render time), and not emitted at all under `low_privilege: true` |
+
+**The `list`/`watch`-only row above is enforced at render time, not by convention.** A slot
+whose name ends in `-read` — `work-ns-cluster-read` included — rejects a write verb on any
+rule declared into it, and the chart refuses to render rather than emitting one.
+
+**Every RBAC rule in the chart now declares its own `verbs`.** Previously the three
+release-namespace and work-namespace slots had the emitter stamp a fixed verb set onto
+every rule and refuse any rule that named its own, so no rule could ask for less than the
+whole set. Rendered permissions are unchanged by this release: each rule declares exactly
+what it was already being granted. Narrowing individual grants is now possible and is
+being done separately.
 
 **The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
 once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
