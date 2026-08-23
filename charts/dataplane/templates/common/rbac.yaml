@@ -27,6 +27,21 @@ and firing it would report a fault that is not one.
 {{- end -}}
 {{- $spec := fromYaml (include "dataplane.rbac.slotSpec" .) -}}
 {{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
+{{/*
+Slot keys are not self-validating. The loop below ranges over slotOrder and indexes each
+declaration, so a key that is not a slot is never read: the component renders with fewer
+permissions than it asked for, and nothing says so. Checked here rather than in emitSlot,
+which only ever sees the keys that matched.
+*/}}
+{{- $known := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- range $k, $v := $decl -}}
+{{- if not (has $k $known) -}}
+{{- fail (printf "Component %q declares RBAC slot %q, which does not exist. Known slots: %v. An unrecognised key is silently ignored, so the component would render with fewer permissions than intended and no error." $c.name $k $known) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range $slot := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
 {{- $slotSpec := index $spec $slot -}}
 {{- if $slotSpec.pooled -}}

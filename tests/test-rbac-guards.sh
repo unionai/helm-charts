@@ -1895,6 +1895,20 @@ for v in create update patch delete deletecollection; do
     --set flytepropeller.enabled=true
 done
 
+# A slot key that is not in slotOrder is indexed by nothing and silently dropped, so a
+# typo costs a component its permissions with a clean render. There is no values path
+# to a bad key -- declarations live in templates -- so this asserts the guard's text is
+# present rather than driving it, and the render still succeeds with all keys valid.
+expect-render "every declared slot key is a known slot" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+if grep -q "does not exist. Known slots:" "${CHART}/templates/common/rbac.yaml"; then
+  echo "  ok       the unknown-slot-key guard is wired in"
+  checks=$((checks + 1))
+else
+  echo "  FAILED   the unknown-slot-key guard is missing from common/rbac.yaml"
+  checks=$((checks + 1)); failures=$((failures + 1))
+fi
+
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"
   exit 1
