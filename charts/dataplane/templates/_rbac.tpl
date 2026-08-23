@@ -238,10 +238,10 @@ Emit one slot's role and its bindings. Emits nothing when rules is empty.
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
-  rules       {apiGroups, resources} maps for pooled slots, or
-              {apiGroups, resources, verbs, resourceNames?} for cluster slots.
-              Chart-derived and operator-supplied declarations look the same
-              here, and both run the validation below.
+  rules       {apiGroups, resources, verbs, resourceNames?} maps, in every slot.
+              The verbs are checked against the slot's allowlist, which its name
+              decides. Chart-derived and operator-supplied declarations look the
+              same here, and both run the validation below.
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
 

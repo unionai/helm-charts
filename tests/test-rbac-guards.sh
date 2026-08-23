@@ -1926,6 +1926,17 @@ else
   echo "  ok       verbAllowlist is gone"
   checks=$((checks + 1))
 fi
+# The two checks above only say the old mechanism is gone; this one says the new one is
+# there. Delete that single line from the emitter and every -read slot silently widens to
+# the base write set. Nothing else catches it: the per-role verb pins above still pass,
+# because no declaration names a write verb in a read slot today, and no golden moves.
+if grep -q 'hasSuffix "-read" $.slot' "${CHART}/templates/_rbac.tpl"; then
+  echo "  ok       a -read slot's allowlist is still derived from its name"
+  checks=$((checks + 1))
+else
+  echo "  FAILED   the -read suffix derivation is gone; read slots now admit write verbs"
+  checks=$((checks + 1)); failures=$((failures + 1))
+fi
 
 if [[ ${failures} -ne 0 ]]; then
   echo "RBAC guard tests: ${failures} of ${checks} checks failed"
