@@ -115,6 +115,13 @@ whole set. Rendered permissions are unchanged by this release: each rule declare
 what it was already being granted. Narrowing individual grants is now possible and is
 being done separately.
 
+No operator-set value changes behavior, so this is not called out with a `BREAKING` banner
+above — but it does break the *declaration contract* for anything defining its own
+`dataplane.rbac.slots.<name>`: a downstream fork of this chart, or an overlay that adds a
+component via that same mechanism. Every rule such a declaration contributes must now carry
+a `verbs` key of its own; the chart refuses to render if one is missing, where it previously
+inferred the verbs from the slot in three of the six cases.
+
 **The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
 once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
 namespace. Because it is never bound in the release namespace at `low_privilege: false`,
@@ -140,9 +147,12 @@ component; inside a namespace, each still holds every other declarer's rules for
 destination. The cluster-scoped roles stay per-component, because their blast radius is
 unbounded and precision is worth paying for there.
 
-**Verb sets.** A pooled slot carries one verb set — `get`, `list`, `watch`, `create`,
-`update`, `patch`, `delete`, `deletecollection` — where the per-component roles it replaces
-each named a shorter list of their own. Wildcards are excluded deliberately: on `roles` a
+**Verb allowlist.** Every rule in a pooled slot names its own verbs, checked against a
+ceiling that the slot's name decides: `get`, `list`, `watch`, `create`, `update`, `patch`,
+`delete`, `deletecollection` for a write slot, narrowed to the first three for one whose
+name ends `-read`. A declaration may name any subset of that ceiling — the per-component
+roles this replaces each named a shorter list of their own, and nothing requires a
+declaration to use the whole thing. Wildcards are excluded deliberately: on `roles` a
 wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, and on
 `serviceaccounts` it grants `impersonate`.
 
@@ -152,9 +162,10 @@ wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, a
 same `apiGroups: ['*']`, `resources: ['*']` grant, and it now lives once in the pooled
 `union-work-ns` role rather than twice in roles of their own.
 
-**Two consequences of pooling that rule.** The pooled role carries the slot's verb set, so
-the wildcard now also grants `deletecollection`, which neither component's own rule did. And
-because a pooled role is bound to every declaring ServiceAccount, `commonServiceAccount.enabled: false`
+**Two consequences of pooling that rule.** The declaration that replaces `leaseworker-role`
+and `flytepropeller-role` names the whole write allowlist on this slot, including
+`deletecollection` — which neither component's own original rule did — so the wildcard now
+grants it too. And because a pooled role is bound to every declaring ServiceAccount, `commonServiceAccount.enabled: false`
 no longer keeps the operator and proxy to their enumerated resources — on this slot they hold
 the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which differs by mode:
 

@@ -46,12 +46,12 @@ one role per slot from those declarations. Two destinations matter:
 
 | Slot | Object | Bound by | Verbs | At `low_privilege: true` |
 |---|---|---|---|---|
-| `comp-ns-read` | `Role` | `RoleBinding`, release ns | chart-owned: `get,list,watch` | unchanged |
-| `comp-ns-write` | `Role` | `RoleBinding`, release ns | chart-owned: read + `create,update,patch,delete,deletecollection` | unchanged |
-| `work-ns` | `ClusterRole` | `RoleBinding` per work namespace | chart-owned: same write set | becomes a `Role` bound in the release namespace |
-| `work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | component-declared | **not emitted** |
-| `cluster-read` | `ClusterRole` | `ClusterRoleBinding` | component-declared | unchanged |
-| `cluster-write` | `ClusterRole` | `ClusterRoleBinding` | component-declared | unchanged |
+| `comp-ns-read` | `Role` | `RoleBinding`, release ns | allows `get,list,watch` | unchanged |
+| `comp-ns-write` | `Role` | `RoleBinding`, release ns | allows `get,list,watch,create,update,patch,delete,deletecollection` | unchanged |
+| `work-ns` | `ClusterRole` | `RoleBinding` per work namespace | allows `get,list,watch,create,update,patch,delete,deletecollection` | becomes a `Role` bound in the release namespace |
+| `work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch` | **not emitted** |
+| `cluster-read` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch` | unchanged |
+| `cluster-write` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch,create,update,patch,delete,deletecollection` | unchanged |
 
 The slots are not the chart's whole RBAC surface, and what sits outside them is outside for
 four different reasons: the destination is a namespace the operator names rather than one the

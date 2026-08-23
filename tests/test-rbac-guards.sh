@@ -1606,6 +1606,14 @@ expect-refusal "nor bind, which only the emitter may write" \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={rbac.authorization.k8s.io}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={clusterroles}' \
   --set 'clusterresourcesync.clusterRoleRules[0].verbs={bind}'
+# A rule with no verbs key at all is refused too, not silently dropped or granted the
+# allowlist by default. clusterRoleRules is the only values-driven path into a rule with no
+# verbs key, since every chart-authored declaration already names its own.
+expect-refusal "an operator-supplied rule with no verbs key at all is refused" \
+  'requires a verbs key on every rule' \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}'
 
 # clusterresourcesync renders nothing under low_privilege, so it must not join the registry
 # there either: its ServiceAccount does not exist, and the emitter would bind rules to a
