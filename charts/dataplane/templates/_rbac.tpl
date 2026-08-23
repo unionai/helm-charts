@@ -269,11 +269,24 @@ work-cluster emits nothing rather than failing.
 {{- $resolved := list -}}
 {{- if $spec.verbs -}}
 {{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
+{{/*
+Transitional. Rules in these slots are being migrated to carry their own verbs; until
+every one does, a rule may either name them -- checked against the set this slot would
+have stamped -- or omit them and be stamped as before. Both forms render identically
+while the declared verbs equal the stamped set, which is what makes the migration a
+no-op per file. Removed once the last rule is migrated.
+*/}}
 {{- range $rule := $rules -}}
 {{- if $rule.verbs -}}
-{{- fail (printf "RBAC slot %q sets the verbs itself, so its rules must not carry a verbs key, and this one has %v. Drop the key: the slot grants %v." $.slot $rule.verbs $verbs) -}}
+{{- range $v := $rule.verbs -}}
+{{- if not (has $v $verbs) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. Use one of %v." $.slot $v $verbs) -}}
 {{- end -}}
+{{- end -}}
+{{- $resolved = append $resolved $rule -}}
+{{- else -}}
 {{- $resolved = append $resolved (merge (dict "verbs" $verbs) $rule) -}}
+{{- end -}}
 {{- end -}}
 {{- else -}}
 {{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
