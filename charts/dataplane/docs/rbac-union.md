@@ -44,14 +44,23 @@ one role per slot from those declarations. Two destinations matter:
 - the **work namespaces** — one per project/domain, holding user tasks, apps and image
   builds.
 
-| Slot | Object | Bound by | Verbs | At `low_privilege: true` |
-|---|---|---|---|---|
-| `comp-ns-read` | `Role` | `RoleBinding`, release ns | allows `get,list,watch` | unchanged |
-| `comp-ns-write` | `Role` | `RoleBinding`, release ns | allows `get,list,watch,create,update,patch,delete,deletecollection` | unchanged |
-| `work-ns` | `ClusterRole` | `RoleBinding` per work namespace | allows `get,list,watch,create,update,patch,delete,deletecollection` | becomes a `Role` bound in the release namespace |
-| `work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch` | **not emitted** |
-| `cluster-read` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch` | unchanged |
-| `cluster-write` | `ClusterRole` | `ClusterRoleBinding` | allows `get,list,watch,create,update,patch,delete,deletecollection` | unchanged |
+| Slot | Object | Bound by | Verbs allowed | Shared? | At `low_privilege: true` |
+|---|---|---|---|---|---|
+| `comp-ns-read` | `Role` | `RoleBinding`, release ns | `get,list,watch` | per component | unchanged |
+| `comp-ns-write` | `Role` | `RoleBinding`, release ns | `get,list,watch,create,update,patch,delete,deletecollection` | per component | unchanged |
+| `work-ns` | `ClusterRole` | `RoleBinding` per work namespace | `get,list,watch,create,update,patch,delete,deletecollection` | **pooled** | becomes a `Role` bound in the release namespace |
+| `work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | `get,list,watch` | per component | **not emitted** |
+| `cluster-read` | `ClusterRole` | `ClusterRoleBinding` | `get,list,watch` | per component | unchanged |
+| `cluster-write` | `ClusterRole` | `ClusterRoleBinding` | `get,list,watch,create,update,patch,delete,deletecollection` | per component | unchanged |
+
+The "verbs allowed" column is a **ceiling, not a grant**. Every rule names the verbs its
+component actually calls, and most sit well below the ceiling: the pod webhook mirrors
+secrets into work namespaces with `get,list,watch,create,update,patch` and no `delete`;
+the proxy declares `get,list,watch` and nothing more; `deletecollection` appears on
+`flyteworkflows` and the Knative API groups and nowhere else. Read the rendered role for
+what is granted. What the ceiling does is refuse a declaration outright — wildcards,
+`escalate`, `impersonate` and `bind` are never admitted, and a `-read` slot admits no
+write verb at all.
 
 The slots are not the chart's whole RBAC surface, and what sits outside them is outside for
 four different reasons: the destination is a namespace the operator names rather than one the
@@ -64,9 +73,9 @@ release namespace. The authoritative list is the header comment in `templates/_r
 which also warns not to audit by grepping for `kind: Role`; read it before treating a slot
 inventory as complete.
 
-Role names are `<release-namespace>-<slot>` for the shared slots and
-`<release-namespace>-<component>-<slot>` for the per-component ones. In the usual `union`
-release namespace that reads as `union-work-ns`, `union-comp-ns-read`,
+Role names are `<release-namespace>-<component>-<slot>`, with one exception: `work-ns` is
+pooled, so its role is `<release-namespace>-work-ns` with no component in the name. In the
+usual `union` release namespace that reads as `union-work-ns`, `union-operator-comp-ns-read`,
 `union-operator-work-ns-cluster-read`, and so on. The `union-` prefix is the namespace,
 not a brand: two releases in different namespaces get different role names, which is why
 the cluster-scoped names are qualified at all.
@@ -103,24 +112,29 @@ in one names a write verb.
 
 ### What a declaration tells you, and what it does not
 
-Every rule in every slot names its own verbs. In a **per-component** slot the declaration
-is exact: that component gets a role of its own, carrying those rules and no others.
+Every rule in every slot names its own verbs. In **every slot but `work-ns`** the
+declaration is exact: that component gets a role of its own, carrying those rules and no
+others. Read the declaration and you have read the grant.
 
-In a **pooled** slot — `comp-ns-read`, `comp-ns-write` and `work-ns` — it is not: every
-declarer is bound to the same role, so a resource that two components both name is granted
-to the union of their verbs, not to each component's own list (see "Pooling", below, for
-the same property stated at the level of whole rules). A component declaring
-`secrets: [get]` alongside another declaring `secrets: [get, update, delete]` holds all
-three verbs in every namespace the role is bound in.
+In `work-ns` it is not: every declarer is bound to the same role, so a resource that two
+components both name is granted to the union of their verbs, not to each component's own
+list (see "Pooling", below, for the same property stated at the level of whole rules). A
+component declaring `secrets: [get]` alongside another declaring `secrets: [get, update,
+delete]` holds all three verbs in every namespace the role is bound in. The proxy is the
+clearest case: it declares `get,list,watch` and is a reader, but it is bound to a role
+that carries a resource wildcard from `leaseworker` and `flytepropeller`.
 
-So a declaration in a pooled slot states what that component **needs**. Only the rendered
-role states what every declarer **gets**. When auditing, read the rendered
+So a `work-ns` declaration states what that component **needs**. Only the rendered role
+states what every declarer **gets**. When auditing, read the rendered
 `<namespace>-work-ns` role, not the declarations that feed it.
 
-This is the deliberate cost of pooling. The pooled role means one RoleBinding per work
-namespace: a namespace created at runtime becomes reachable by every union component in a
-single object, rather than in one object per component, any of which could fail
-independently and leave the namespace half-reachable.
+This is the deliberate cost of pooling that one slot. The pooled role means one
+RoleBinding per work namespace: a namespace created at runtime — by `clusterresourcesync`,
+long after Helm ran — becomes reachable by every union component in a single object,
+rather than in one object per component, any of which could fail independently and leave
+the namespace half-reachable. It also means one `bind` grant to pin by `resourceNames`
+instead of one per component. Nothing else in the model has that problem, which is why
+nothing else is pooled.
 
 ### Where a `secrets` rule belongs
 
@@ -146,13 +160,8 @@ Two components hold one and cannot be narrowed today:
 
 ### Pooling
 
-A slot is **pooled** when its grant is conveyed by a `RoleBinding`, and per-component when
-it is conveyed by a `ClusterRoleBinding`. A `RoleBinding` is confined to one namespace,
-while a mistake in a `ClusterRoleBinding` reaches the whole cluster — which is why the
-distinction between pooled and per-component still matters, even though it no longer
-decides how verbs are checked: every rule in every slot names its own verbs, checked
-against an allowlist that excludes wildcards, `escalate`, `impersonate` and `bind`, and
-narrowed to `get`, `list` and `watch` for a slot whose name ends in `-read`.
+**`work-ns` is the only pooled slot.** Every other slot emits one role per declaring
+component, carrying that component's rules alone.
 
 **A pooled slot is one role bound to every ServiceAccount that declares into it.** The
 consequence is worth stating plainly: the pooled role holds the *union* of every declaring
@@ -163,6 +172,14 @@ each declare a resource wildcard into `work-ns`, so wherever either is enabled e
 namespaces**, because that is the only place the role is bound. At `low_privilege: true`
 the release namespace *is* the work namespace, so it applies there — over Union's own
 objects — which is the trade that mode makes.
+
+The release-namespace slots used to work the same way, and the cost was concrete: the
+Knative activator's namespaced Secret informer — an unconditional `init()` registration in
+that binary, not a configuration choice — put `secrets: get,list,watch` in the shared
+`comp-ns-read` role, which every other declarer was bound to. Under per-component roles
+that read stops at `knative-activator`. If you are comparing against a release before this
+change, the release-namespace roles are where to look: same rules, redistributed across
+one object per component, and named `<release-ns>-<component>-comp-ns-{read,write}`.
 
 ## Who creates the work-namespace binding
 
@@ -237,7 +254,7 @@ slot hands them the pooled role's full write set in every work namespace — inc
 `clusterresourcesync`, which is deliberately given `bind` on this role precisely so it can
 hand it out *without* holding it.
 
-**A capability audit of this chart is only valid where every pooled slot is bound.** An
+**A capability audit of this chart is only valid where the pooled slot is bound.** An
 audit that walks bindings to work out what an identity can do will report the entire
 contents of `union-work-ns` as lost if it runs against a render where that role is unbound
 — which is exactly the default full-privilege render. That reads as a catastrophic

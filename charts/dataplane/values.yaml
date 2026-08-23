@@ -1977,9 +1977,11 @@ low_privilege: true
 #
 # Union's own permissions are split by where they apply, not by which component
 # asked for them. The release namespace, holding Union's own Deployments, Secrets
-# and ConfigMaps, uses the shared `<release-ns>-comp-ns-read` and
-# `-comp-ns-write` Roles. The work namespaces, one per project/domain, holding
-# user tasks, apps and builds, use the shared `<release-ns>-work-ns` role.
+# and ConfigMaps, uses a `<release-ns>-<component>-comp-ns-read` /
+# `-comp-ns-write` Role per component. The work namespaces, one per
+# project/domain, holding user tasks, apps and builds, use one shared
+# `<release-ns>-work-ns` role — the only role in the model that several
+# components are bound to at once.
 #
 # `work-ns` is a ClusterRole only so its rules are written once. Every binding
 # the chart emits for it is a namespaced RoleBinding, and a RoleBinding pointing
@@ -2258,14 +2260,15 @@ tunnelService:
 # and two validating Knative webhook configurations, and to the release
 # namespace's finalizers.
 #
-# Everything else these binaries need is namespaced, and lands in the same pooled
-# `<release-ns>-comp-ns-*` and `<release-ns>-work-ns` roles every other component
-# uses — including the controller's serviceaccounts and secrets reads for image
-# digest resolution, which are direct Gets in the Revision's own namespace and so
-# ride `<release-ns>-work-ns`, not a cluster role.
-# Pooled means shared: each of the five also holds every other declarer's
-# rules in those roles, so `commonServiceAccount.enabled: false` separates the
-# five in the cluster dimension only.
+# Everything else these binaries need is namespaced. Their release-namespace
+# grants are per-binary Roles, `<release-ns>-<component>-comp-ns-*`; their work
+# namespace grants land in the shared `<release-ns>-work-ns` role every other
+# component uses — including the controller's serviceaccounts and secrets reads
+# for image digest resolution, which are direct Gets in the Revision's own
+# namespace and so ride `<release-ns>-work-ns`, not a cluster role.
+# That one role being shared means each of the five also holds every other
+# declarer's rules in work namespaces, so `commonServiceAccount.enabled: false`
+# separates the five everywhere except there.
 #
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own

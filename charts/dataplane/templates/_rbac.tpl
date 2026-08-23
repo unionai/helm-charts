@@ -98,27 +98,35 @@ Grants are split by where they apply: the components namespace (the release
 namespace, where union's own workloads run) versus the work namespaces (per
 project/domain, where user tasks run).
 
-  slot                  object       binding              low_privilege: true
-  --------------------  -----------  -------------------  -------------------
-  comp-ns-read          Role         RoleBinding, rel ns  unchanged
-  comp-ns-write         Role         RoleBinding, rel ns  unchanged
-  work-ns               ClusterRole  RoleBinding per ns   Role + RB, rel ns
-  work-ns-cluster-read  ClusterRole  ClusterRoleBinding   empty, no fail
-  cluster-read          ClusterRole  ClusterRoleBinding   unchanged
-  cluster-write         ClusterRole  ClusterRoleBinding   unchanged
+  slot                  object       binding              pooled  low_privilege: true
+  --------------------  -----------  -------------------  ------  -------------------
+  comp-ns-read          Role         RoleBinding, rel ns  no      unchanged
+  comp-ns-write         Role         RoleBinding, rel ns  no      unchanged
+  work-ns               ClusterRole  RoleBinding per ns   YES     Role + RB, rel ns
+  work-ns-cluster-read  ClusterRole  ClusterRoleBinding   no      empty, no fail
+  cluster-read          ClusterRole  ClusterRoleBinding   no      unchanged
+  cluster-write         ClusterRole  ClusterRoleBinding   no      unchanged
 
 Under full privilege, work-ns is never bound in the release namespace. Under
 low_privilege it is, because there the release namespace is the work namespace.
 
-Pooling: pooled if granted by a RoleBinding, per-component if granted by a
-ClusterRoleBinding. A RoleBinding is confined to one namespace, while a mistake in a
-ClusterRoleBinding affects the whole cluster.
+Pooling: work-ns is the one pooled slot, and it is pooled for a reason that applies to
+no other. Its bindings are per work namespace, and not all of those namespaces exist
+when Helm runs -- clusterresourcesync creates the rest as projects are registered. One
+shared ClusterRole means one RoleBinding per namespace, one `bind` grant to pin by
+resourceName, and one entry in the provisioner's template. Per-component roles there
+would multiply all three, and a namespace where some of those objects landed and others
+did not is reachable by some union components and not others.
 
-Every rule names its own verbs, in every slot. In a pooled slot that makes the
-declaration a statement of what one component needs, not a bound on what it gets: the
-role is the union of every declarer's rules and RBAC unions them, so a resource two
-components name is granted at the union of their verbs to both. Only the rendered role
-is authoritative about grant. See docs/rbac-union.md.
+Every other slot binds in namespaces the chart names itself, so nothing is bought by
+sharing an object: each declaring component gets its own role, carrying its own rules
+and no others.
+
+Every rule names its own verbs. In work-ns that makes the declaration a statement of
+what one component needs, not a bound on what it gets: the role is the union of every
+declarer's rules and RBAC unions them, so a resource two components name is granted at
+the union of their verbs to both. Only the rendered work-ns role is authoritative about
+grant. See docs/rbac-union.md.
 
 An earlier version of this file had the emitter own the verbs in pooled slots, on the
 reasoning that one component should not set verbs for everyone sharing the role. That
@@ -143,7 +151,9 @@ Emission order, fixed so the rendered manifest is stable.
 Per-slot behavior. The objects and bindings each kind produces are in the table
 above.
 
-  pooled  true -> one shared role bound to every declaring SA
+  pooled  true -> one shared role bound to every declaring SA. work-ns only, for
+          the reason given above; this is not a property of `kind`, and comp is
+          namespaced and per-component.
           false -> one role per declaring component
   kind    comp, work, cluster, work-cluster. A `cluster` slot is emitted as a
           ClusterRole plus ClusterRoleBinding in both privilege modes: what it
@@ -153,10 +163,10 @@ above.
 */}}
 {{- define "dataplane.rbac.slotSpec" -}}
 comp-ns-read:
-  pooled: true
+  pooled: false
   kind: comp
 comp-ns-write:
-  pooled: true
+  pooled: false
   kind: comp
 work-ns:
   pooled: true

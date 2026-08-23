@@ -795,11 +795,20 @@ expect-role-resource "and is withheld when cluster permissions are disabled outr
 
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
 # so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
+# The name is per-component: the comp-ns slots are one Role per declarer, so a check written
+# against the old shared `union-comp-ns-write` would now pass vacuously.
 expect-manifest "comp-ns-write appears once a component declares into it" \
-  present "name: union-comp-ns-write" \
+  present "name: union-operator-comp-ns-write" \
   --set config.operator.secretsWatcher.enabled=true
 expect-manifest "and is absent at stock values, where nothing declares" \
-  absent "name: union-comp-ns-write"
+  absent "name: union-operator-comp-ns-write"
+# And the shared object is gone in both directions: no slot emits a role named for the slot
+# alone any more except work-ns, so the un-prefixed name must not appear at all.
+expect-manifest "no component shares a comp-ns Role with another" \
+  absent "name: union-comp-ns-write" \
+  --set config.operator.secretsWatcher.enabled=true
+expect-manifest "nor a comp-ns-read one" \
+  absent "name: union-comp-ns-read"
 
 echo
 echo "- the runtime provisioner supplies the work-ns binding the chart cannot"
@@ -1749,8 +1758,8 @@ expect-only-webhook-cluster-write "and it is the only app-serving cluster-write 
 # autoscaler's statforwarder writes exactly such an object in the release namespace. RBAC does
 # not derive a subresource from its parent, so `endpoints` alone does not convey it and the
 # vendored role carried both. The failure is invisible on every non-OpenShift cluster.
-expect-verb-resources "the release-namespace write role carries endpoints/restricted" \
-  union-comp-ns-write create "endpoints,endpoints/restricted,leases,secrets,services" \
+expect-verb-resources "the autoscaler's release-namespace write role carries endpoints/restricted" \
+  union-knative-autoscaler-comp-ns-write create "endpoints,endpoints/restricted,leases,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # And the controller's copy in the pooled work-ns role, asserted with leaseworker and
 # flytepropeller OFF. A pooled role cannot say which component contributed a rule, so what
@@ -1833,61 +1842,120 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 # ---------------------------------------------------------------------------
 # Verb sets, pinned per slot.
 #
-# expect-role-resource cannot see verbs at all, so until now nothing in this suite
-# would catch a verb regression. These pin the complete resource set per verb, which
-# fails both on a verb being dropped from a rule and on one being added.
+# expect-role-resource cannot see verbs at all, so nothing else in this suite would
+# catch a verb regression. These pin the complete resource set per verb, which fails
+# both on a verb being dropped from a rule and on one being added.
 #
-# Every rule in a slot currently carries that slot's whole verb set, so the expected
-# list is identical across the verbs of a given role. That is the property being
-# frozen: the migration to per-rule verbs must not change it, and any later narrowing
-# must show up here as a deliberate diff.
+# The expected lists differ per verb, and that difference IS the property being frozen.
+# Rules used to carry their slot's whole verb set, so every verb of a role listed the
+# same resources; each rule now names only the verbs its component calls, derived from
+# the roles this model replaced. A rule that regresses to the full set shows up here as
+# a resource appearing under a verb it has no business under.
 # ---------------------------------------------------------------------------
 
-# comp-ns-read at chart defaults. The write verbs must yield nothing: this is the
-# assertion that makes "list/watch only" a property of the chart rather than a claim
-# in the docs.
-for v in get list watch; do
-  expect-verb-resources "comp-ns-read grants ${v} on exactly its two resources" \
-    union-comp-ns-read "${v}" "endpoints,podtemplates"
-done
+# comp-ns-read at chart defaults. One Role per declarer, not one shared object, so the
+# two declaring components are pinned separately -- and each list is one resource long
+# precisely because they are no longer pooled. The write verbs must yield nothing: this
+# is the assertion that makes "list/watch only" a property of the chart rather than a
+# claim in the docs.
+expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
+  union-leaseworker-comp-ns-read get "endpoints"
+expect-verb-resources "and the operator's is its PodTemplate informer" \
+  union-operator-comp-ns-read get "podtemplates"
 for v in create update patch delete deletecollection; do
-  expect-verb-resources "comp-ns-read grants no ${v}" \
-    union-comp-ns-read "${v}" ""
+  expect-verb-resources "leaseworker's comp-ns-read grants no ${v}" \
+    union-leaseworker-comp-ns-read "${v}" ""
+  expect-verb-resources "the operator's comp-ns-read grants no ${v}" \
+    union-operator-comp-ns-read "${v}" ""
 done
 
 # The pooled work-ns role at chart defaults (low_privilege, so it is a Role in the
-# release namespace). Pinned for all eight verbs.
-for v in get list watch create update patch delete deletecollection; do
+# release namespace). Pinned for all eight verbs. The read three cover every resource
+# any declarer names; the write five do not, and the gaps are the point:
+#   patch              only where a component patches -- the wildcard contributors and
+#                      the webhook's mirrored objects. Neither the operator's own
+#                      resources nor the proxy's reads appear.
+#   deletecollection   flyteworkflows alone. The GC deletes workflows by label
+#                      selector; nothing else here is collected that way.
+READ_SET="'*',configmaps,deployments,events,flyteworkflows,flyteworkflows/finalizers,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
+for v in get list watch; do
   expect-verb-resources "work-ns grants ${v} on its full default resource set" \
-    union-work-ns "${v}" \
-    "'*',configmaps,deployments,events,flyteworkflows,flyteworkflows/finalizers,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
+    union-work-ns "${v}" "${READ_SET}"
 done
+for v in create update; do
+  expect-verb-resources "work-ns grants ${v} on the writable subset" \
+    union-work-ns "${v}" \
+    "'*',configmaps,deployments,flyteworkflows,flyteworkflows/finalizers,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
+done
+expect-verb-resources "work-ns grants patch only where something patches" \
+  union-work-ns patch \
+  "'*',flyteworkflows,flyteworkflows/finalizers,pods,replicasets/finalizers,secrets"
+expect-verb-resources "work-ns grants delete on less than it creates" \
+  union-work-ns delete \
+  "'*',configmaps,deployments,flyteworkflows,flyteworkflows/finalizers,pods,podtemplates,resourcequotas,secrets"
+expect-verb-resources "and deletecollection on the one resource collected that way" \
+  union-work-ns deletecollection "flyteworkflows,flyteworkflows/finalizers"
 
 # And with app serving on, split identities, at full privilege -- where the pooled role
-# is a ClusterRole and picks up the three app-serving writers.
-for v in get create delete; do
-  expect-verb-resources "work-ns grants ${v} on its full app-serving resource set" \
-    union-work-ns "${v}" \
-    "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,endpoints/restricted,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
-    "${APPS[@]}" --set commonServiceAccount.enabled=false
-done
+# is a ClusterRole and picks up the three app-serving writers. Three verbs, chosen for
+# what they separate:
+#   get     the widest, and the only one carrying serviceaccounts -- knative's digest
+#           resolution Gets the Revision's ServiceAccount by name and does nothing else
+#           with it, so a serviceaccounts under any other verb is a regression.
+#   create  carries endpoints/restricted, which nothing else may hold, and not
+#           ingresses -- net-kourier reacts to Ingresses, it does not make them.
+#   update  carries ingresses/status but not ingresses, the other half of that split.
+expect-verb-resources "work-ns grants get on its full app-serving resource set" \
+  union-work-ns get \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and create on the subset that is created" \
+  union-work-ns create \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,endpoints/restricted,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and update on the subset that is updated" \
+  union-work-ns update \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
 
 # comp-ns-write does not render at chart defaults -- no enabled component declares into
-# it there -- so it is pinned under APPS only.
-for v in get create delete; do
-  expect-verb-resources "comp-ns-write grants ${v} on its full resource set" \
-    union-comp-ns-write "${v}" "endpoints,endpoints/restricted,leases,secrets,services" \
+# it there -- so it is pinned under APPS only, one role per declarer. The webhook's is
+# the one worth reading twice: its whole release-namespace write grant is the serving
+# certificate it issues to itself, and it neither patches nor deletes it.
+expect-verb-resources "the autoscaler's comp-ns-write covers the statforwarder's objects" \
+  union-knative-autoscaler-comp-ns-write get "endpoints,leases,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "the knative webhook's is one Secret it creates and renews" \
+  union-knative-webhook-comp-ns-write create "secrets" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+for v in patch delete deletecollection; do
+  expect-verb-resources "and it grants no ${v} on it" \
+    union-knative-webhook-comp-ns-write "${v}" "" \
     "${APPS[@]}" --set commonServiceAccount.enabled=false
 done
+expect-verb-resources "the controller's is its leader-election lease alone" \
+  union-knative-controller-comp-ns-write get "leases" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# Splitting the comp-ns slots per component is what makes the two checks above narrow:
+# pooled, either role would have carried the other's rules. Nothing else in this suite
+# would notice them being merged again, because every resource involved would still be
+# granted to every subject.
+expect-verb-resources "and carries no Secret of anyone else's" \
+  union-knative-controller-comp-ns-write get "leases" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false --set config.operator.secretsWatcher.enabled=true
 
-# Every read slot rejects every write verb. Nine roles x five verbs. These are the
-# invariants the `-read` suffix will enforce at render time from Task 6 onward; pinning
-# them first means the enforcement cannot be the thing that makes them true.
+# Every read slot rejects every write verb. The comp-ns-read roles join the list now
+# that each component has its own: they are `-read` slots and the same suffix rule
+# applies to them.
 for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
          union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
          union-knative-controller-cluster-read union-knative-webhook-cluster-read \
          union-knative-autoscaler-cluster-read union-knative-activator-cluster-read \
-         union-knative-kourier-cluster-read; do
+         union-knative-kourier-cluster-read \
+         union-operator-comp-ns-read union-leaseworker-comp-ns-read \
+         union-knative-controller-comp-ns-read union-knative-webhook-comp-ns-read \
+         union-knative-autoscaler-comp-ns-read union-knative-activator-comp-ns-read \
+         union-knative-kourier-comp-ns-read; do
   for v in create update patch delete deletecollection; do
     expect-verb-resources "${r} grants no ${v}" \
       "${r}" "${v}" "" \
