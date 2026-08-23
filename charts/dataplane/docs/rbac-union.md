@@ -106,15 +106,24 @@ that watch objects with an empty namespace, which the API server authorizes as a
 cluster-scope check that no number of per-namespace RoleBindings can satisfy. Under
 `low_privilege` those caches are namespace-scoped instead and the pooled `work-ns` role
 already covers them, so the slot emits nothing. Every one of these roles is `list`/`watch`
-only, and that is enforced at render time rather than by convention: a slot whose name ends
-in `-read` admits only `get`, `list` and `watch`, and the chart refuses to render if a rule
-in one names a write verb.
+only today, but read the enforcement precisely: a slot whose name ends in `-read` admits
+`get`, `list` and `watch`, and the chart refuses to render if a rule in one names a write
+verb. So what is guaranteed at render time is read-only, not `list`/`watch`-only — a `get`
+in a read slot renders, and one does (`knative-webhook`'s `resourceNames`-pinned namespace
+read, in `cluster-read`). If you are auditing, the absence of `get` from these particular
+roles comes from the declarations, and only the rendered role settles it.
 
 ### What a declaration tells you, and what it does not
 
 Every rule in every slot names its own verbs. In **every slot but `work-ns`** the
 declaration is exact: that component gets a role of its own, carrying those rules and no
 others. Read the declaration and you have read the grant.
+
+**One exception, and it is the rule you would least want to miss.** `clusterresourcesync`'s
+`cluster-write` role also carries a `bind` rule the emitter writes itself
+(`dataplane.rbac.provisionerBindRule`), `resourceNames`-pinned to `<release-ns>-work-ns`.
+It is not in that component's declaration and cannot be — a declared rule is not allowed to
+name `bind` at all. See [Who creates the work-namespace binding](#who-creates-the-work-namespace-binding).
 
 In `work-ns` it is not: every declarer is bound to the same role, so a resource that two
 components both name is granted to the union of their verbs, not to each component's own

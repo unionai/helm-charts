@@ -102,22 +102,31 @@ for them. In the usual `union` release namespace:
 |---|---|---|---|
 | `union-<component>-comp-ns-read`, `union-<component>-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what that component needs on Union's *own* objects. One Role per component: nothing is shared here |
 | `union-work-ns` | `ClusterRole`, or `Role` under `low_privilege: true` | one `RoleBinding` per work namespace — **never** in the release namespace at `low_privilege: false` | what components need on user tasks, apps and builds |
-| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. `list`/`watch` only (enforced at render time), and not emitted at all under `low_privilege: true` |
+| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. Read-only (enforced at render time); the chart's own rules here use `list`/`watch` alone, and none is emitted at all under `low_privilege: true` |
 
-**The `list`/`watch`-only row above is enforced at render time, not by convention.** A slot
-whose name ends in `-read` — `work-ns-cluster-read` included — rejects a write verb on any
-rule declared into it, and the chart refuses to render rather than emitting one.
+**Read-only on that row is enforced at render time, not by convention.** A slot whose name
+ends in `-read` — `work-ns-cluster-read` included — admits `get`, `list` and `watch` and
+rejects every write verb, and the chart refuses to render rather than emitting one. What
+is enforced is the absence of writes; that today's `work-ns-cluster-read` rules stop at
+`list` and `watch` is a property of the declarations, not of the check. A `get` in a read
+slot is legitimate and one renders — see the Knative webhook's `resourceNames`-pinned
+namespace read below.
 
 **`union-work-ns` is the only role several components share.** The release-namespace roles
 were shared too in earlier drafts of this model, which meant every component holding every
 other component's release-namespace rules: the Knative activator registers a namespaced
-Secret informer unconditionally, and that one rule gave the operator, proxy, leaseworker
-and the other four app-serving binaries a read of every Secret in the release namespace.
+Secret informer unconditionally, and that one rule gave the operator, leaseworker and the
+other four app-serving binaries a read of every Secret in the release namespace. (Not the
+proxy — it declares into neither `comp-ns` slot, so it was never a subject of that role.
+Its own release-namespace Secret grant comes from `operator/serviceaccount-proxy-secret.yaml`
+and is unaffected by any of this.)
 They are now one Role per component, `union-<component>-comp-ns-read` and
 `-comp-ns-write`. **Anything outside this chart that references `union-comp-ns-read` or
 `union-comp-ns-write` by name — an audit policy, a `RoleBinding`, a Kyverno rule — stops
-matching.** Nothing named `union-comp-ns-*` renders any more; the rules are unchanged and
-redistributed. `work-ns` stays shared, because the namespaces it is bound in are created at
+matching.** Nothing named `union-comp-ns-*` renders any more. The resource declarations are
+redistributed unchanged; their verb sets are narrowed, as the next section describes — so
+this is not a rename you can skim past.
+`work-ns` stays shared, because the namespaces it is bound in are created at
 runtime and one role there means one `RoleBinding` and one `bind` grant per namespace
 instead of one per component.
 
