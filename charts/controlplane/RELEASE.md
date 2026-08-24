@@ -1,5 +1,21 @@
 # controlplane — Release Notes
 
+## 2026.8.3
+
+`version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
+`2026.8.3`, picking up the new control-plane images.
+
+- Service resource names now fall back to the service key instead of the chart
+  name when no `fullnameOverride`/`nameOverride` is set, so multi-service
+  releases render distinct fullnames
+  ([#544](https://github.com/unionai/helm-charts/pull/544)).
+- The console deployment always injects `UNION_ORG_OVERRIDE`, then appends any
+  user-provided `console.env` entries after it
+  ([#536](https://github.com/unionai/helm-charts/pull/536)).
+- Monitoring: the control-plane overview dashboard is reworked for v2 metrics
+  and a new v1 overview dashboard is added alongside it
+  ([#529](https://github.com/unionai/helm-charts/pull/529)).
+
 ## 2026.8.2
 
 Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
