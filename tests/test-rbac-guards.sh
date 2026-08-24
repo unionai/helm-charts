@@ -1775,13 +1775,31 @@ expect-role-resource "and the work-ns role carries it without the wildcard contr
 # pinned as a COMPLETE resource set -- which fails both on removal and on widening, and reports
 # <NO-SUCH-ROLE> rather than passing if the role goes away.
 #
-# net-kourier's `secrets` read is the one whose removal fails SILENTLY: its Secret informer is
-# registered unconditionally in the shipped image, so without a cluster-scoped LIST the
-# reflector never syncs, the reconcilers never start, and the xDS readiness probe stays green
-# while every new app hangs at IngressNotConfigured. It is expected to leave once the image can
-# gate that informer; this check is the prompt to say so deliberately.
-expect-verb-resources "net-kourier's cluster read is exactly its five informers" \
-  union-knative-kourier-cluster-read list "endpoints,ingresses,pods,secrets,services" \
+# net-kourier's set no longer includes `secrets`. The informer that forced it is gated behind
+# ENABLE_INGRESS_TLS as of net-kourier b9fbd869 (unionai/net-kourier#13, in the operator image
+# from unionai/cloud#17870), and the gate defaults to false, so with the env var unset the
+# filtered-informer injectors register no Secret informer and nothing issues the list. This is
+# now a plain no-widening pin: adding `secrets` back here without also setting that env var
+# grants cluster-wide reads over every tenant Secret for a watch that never runs.
+expect-verb-resources "net-kourier's cluster read is exactly its four informers" \
+  union-knative-kourier-cluster-read list "endpoints,ingresses,pods,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# Paired with a resource-absence pin, as the controller's removal below is. The set above is
+# asserted per-verb, so it only sees `secrets` if the rule carries `list` -- a rule granting
+# `watch` alone would pass it. This catches a literal `secrets` under any verb.
+expect-role-resource "and names no literal Secret resource" \
+  absent union-knative-kourier-cluster-read secrets \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The absence pin matches the literal resource name, so it does not see `resources: ["*"]` --
+# which conveys Secrets just as well. The emitter validates a slot's verbs against its name but
+# not its resources, so a wildcard is renderable. `cluster-read` allows only get/list/watch, so
+# pinning the resource set of each closes that route: a wildcard rule under any of the three
+# lands in one of these sets and fails it. `get` is empty because this role has no Get at all.
+expect-verb-resources "nor any Secret through a resource wildcard: it watches only those four" \
+  union-knative-kourier-cluster-read watch "endpoints,ingresses,pods,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and gets nothing cluster-wide" \
+  union-knative-kourier-cluster-read get "" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # Digest resolution is namespaced, so none of it may be here. reconcileDigest sets
 # k8schain.Options.Namespace to the Revision's own namespace and passes a plain clientset, so

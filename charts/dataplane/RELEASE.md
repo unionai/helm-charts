@@ -1,6 +1,6 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.8.4
 
 ### Privilege and namespace axes
 
@@ -478,14 +478,33 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   the pooled `work-ns` role. A cluster-wide `list`/`watch` remains, because the reconciler
   takes the shared, unfiltered HPA informer.
 
-- **`net-kourier` keeps a cluster-wide `secrets` `list`/`watch`, deliberately and
-  temporarily.** Kourier registers its Secret informer unconditionally and unfiltered by
-  namespace in the image this chart ships, so a cluster-scoped read is load-bearing today —
-  a namespaced Role cannot authorize a cluster-scoped `LIST`. Withholding it fails silently:
-  the reflector never syncs, the reconcilers never start, the xDS readiness probe stays green,
-  and new app deployments hang at `IngressNotConfigured` with the controller `1/1 Running`. It
-  is still narrower than the `net-kourier` ClusterRole it replaces, which also held `get`. Once
-  the image can gate that informer, the grant becomes conditional and goes away by default.
+- **BREAKING: `net-kourier` no longer holds a cluster-wide `secrets` `list`/`watch`, and this
+  one has an image floor.** Kourier used to register its Secret informer unconditionally and
+  unfiltered by namespace, which made a cluster-scoped read load-bearing — a namespaced Role
+  cannot authorize a cluster-scoped `LIST`. The image now gates that informer behind
+  `ENABLE_INGRESS_TLS`, which **defaults to false**, and with it off the filtered-informer
+  injectors register no Secret informer at all, so nothing issues the list. The chart does not
+  set the env var, so no workload change accompanies this.
+
+  **`appVersion` moves to `2026.8.4`, and that is a hard floor.** The grant is removed
+  unconditionally, so the operator image must contain net-kourier `b9fbd869`
+  (unionai/net-kourier#13, picked up by unionai/cloud#17870 on 2026-08-23). `2026.8.4` is the
+  first release that does; every earlier build, up to and including `2026.8.3`, does not.
+
+  Against an older image the removal is a **silent outage**: the Secret reflector loops on
+  `secrets is forbidden`, its cache never syncs, the reconcilers never start — but the xDS
+  readiness probe on `:18000` comes up independently, so the controller sits `1/1 Running`
+  with zero restarts while every new app deployment hangs at `IngressNotConfigured`. There is
+  no crash, no restart count, and no failing probe to alert on.
+
+  The chart's own default is safe after this bump, but an **override is not**. The controller
+  runs `gateway.components.kourier-controller.containers.controller.image`, which resolves to
+  `image.union.tag | default .Chart.AppVersion` — so any deployment pinning `image.union.tag`,
+  or overriding that component's `image.tag` directly, to a build older than `2026.8.4` must
+  lift that pin in the same change as this upgrade. Nothing refuses an older tag at render
+  time: the tag can legitimately be a git sha or a dev build, so the chart cannot tell. If
+  you cannot move the image, stay on the previous chart version rather than removing the
+  grant.
 
 - **`knative-controller`'s digest-resolution reads on `serviceaccounts` and `secrets` are now
   namespaced — the cluster-wide `get` is gone.** Digest resolution reads the ServiceAccount
@@ -505,15 +524,15 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   The effective grant does not change at the `commonServiceAccount.enabled: true` default, since
   `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource wildcard.
 
-  **This is not the last cluster-wide Secret read, or even the widest.** Two remain, both
-  unchanged here and neither narrowable today: the pod `webhook`, whose controller-runtime
-  Secret cache is unscoped unless propeller's `limit-namespace` is set — and it reads the same
-  config key propeller does, so it cannot be scoped without pinning propeller's own informer —
-  and `knative-kourier`, tracked by UN-39. Both hold `list`/`watch`, which returns every
-  Secret's contents and enumerates them besides, so each is broader than the named `get` this
-  change removed. If you are auditing what this release still exposes, those are the two rows
-  to read. Both are listed with their removal condition in
+  **This is not the last cluster-wide Secret read, or even the widest.** One remains,
+  unchanged here and not narrowable today: the pod `webhook`, whose controller-runtime Secret
+  cache is unscoped unless propeller's `limit-namespace` is set — and it reads the same config
+  key propeller does, so it cannot be scoped without pinning propeller's own informer. It
+  holds `list`/`watch`, which returns every Secret's contents and enumerates them besides, so
+  it is broader than the named `get` this change removed. If you are auditing what this
+  release still exposes, that is the row to read; it is listed with its removal condition in
   [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
+  `knative-kourier`'s is gone — see the `net-kourier` bullet above.
 
 - **The work-namespace slot is pooled, and that cuts both ways.** Each of the five also
   receives every other declarer's rules in that one role, so `commonServiceAccount.enabled:
