@@ -98,22 +98,41 @@ Grants are split by where they apply: the components namespace (the release
 namespace, where union's own workloads run) versus the work namespaces (per
 project/domain, where user tasks run).
 
-  slot                  object       binding              low_privilege: true
-  --------------------  -----------  -------------------  -------------------
-  comp-ns-read          Role         RoleBinding, rel ns  unchanged
-  comp-ns-write         Role         RoleBinding, rel ns  unchanged
-  work-ns               ClusterRole  RoleBinding per ns   Role + RB, rel ns
-  work-ns-cluster-read  ClusterRole  ClusterRoleBinding   empty, no fail
-  cluster-read          ClusterRole  ClusterRoleBinding   unchanged
-  cluster-write         ClusterRole  ClusterRoleBinding   unchanged
+  slot                  object       binding              pooled  low_privilege: true
+  --------------------  -----------  -------------------  ------  -------------------
+  comp-ns-read          Role         RoleBinding, rel ns  no      unchanged
+  comp-ns-write         Role         RoleBinding, rel ns  no      unchanged
+  work-ns               ClusterRole  RoleBinding per ns   YES     Role + RB, rel ns
+  work-ns-cluster-read  ClusterRole  ClusterRoleBinding   no      empty, no fail
+  cluster-read          ClusterRole  ClusterRoleBinding   no      unchanged
+  cluster-write         ClusterRole  ClusterRoleBinding   no      unchanged
 
 Under full privilege, work-ns is never bound in the release namespace. Under
 low_privilege it is, because there the release namespace is the work namespace.
 
-Pooling: pooled if granted by a RoleBinding, per-component if granted by a
-ClusterRoleBinding. A RoleBinding is confined to one namespace, while a mistake
-in a ClusterRoleBinding affects the whole cluster. So pooled slots get
-emitter-owned verbs and cluster slots let the component name its own.
+Pooling: work-ns is the one pooled slot, and it is pooled for a reason that applies to
+no other. Its bindings are per work namespace, and not all of those namespaces exist
+when Helm runs -- clusterresourcesync creates the rest as projects are registered. One
+shared ClusterRole means one RoleBinding per namespace, one `bind` grant to pin by
+resourceName, and one entry in the provisioner's template. Per-component roles there
+would multiply all three, and a namespace where some of those objects landed and others
+did not is reachable by some union components and not others.
+
+Every other slot binds in namespaces the chart names itself, so nothing is bought by
+sharing an object: each declaring component gets its own role, carrying its own rules
+and no others.
+
+Every rule names its own verbs. In work-ns that makes the declaration a statement of
+what one component needs, not a bound on what it gets: the role is the union of every
+declarer's rules and RBAC unions them, so a resource two components name is granted at
+the union of their verbs to both. Only the rendered work-ns role is authoritative about
+grant. See docs/rbac-union.md.
+
+An earlier version of this file had the emitter own the verbs in pooled slots, on the
+reasoning that one component should not set verbs for everyone sharing the role. That
+protection was always partial -- the resource axis was never guarded, and a wildcard rule
+widens the shared role for every declarer regardless of verbs -- while the cost was that
+no rule in a pooled slot could ask for less than the whole set.
 */}}
 
 {{/*
@@ -132,29 +151,26 @@ Emission order, fixed so the rendered manifest is stable.
 Per-slot behavior. The objects and bindings each kind produces are in the table
 above.
 
-  pooled  true -> one shared role bound to every declaring SA
+  pooled  true -> one shared role bound to every declaring SA. work-ns only, for
+          the reason given above; this is not a property of `kind`, and comp is
+          namespaced and per-component.
           false -> one role per declaring component
   kind    comp, work, cluster, work-cluster. A `cluster` slot is emitted as a
           ClusterRole plus ClusterRoleBinding in both privilege modes: what it
           carries is cluster-scoped in both, so low_privilege cannot narrow it
           and refusing to render it only moves the failure to runtime.
           `work-cluster` emits nothing under low_privilege.
-  verbs   present -> emitter-owned; declarations must not carry a verbs key
-          absent  -> component-supplied, checked against the allowlist
 */}}
 {{- define "dataplane.rbac.slotSpec" -}}
 comp-ns-read:
-  pooled: true
+  pooled: false
   kind: comp
-  verbs: read
 comp-ns-write:
-  pooled: true
+  pooled: false
   kind: comp
-  verbs: write
 work-ns:
   pooled: true
   kind: work
-  verbs: write
 work-ns-cluster-read:
   pooled: false
   kind: work-cluster
@@ -167,10 +183,15 @@ cluster-write:
 {{- end -}}
 
 {{/*
-Emitter-owned verb sets for pooled slots. Write is a superset of read, so a
-resource in a write slot need not also appear in the read slot. Wildcard verbs
-are excluded: on `roles` a wildcard grants `escalate`, disabling RBAC's
-escalation-prevention check, and on `serviceaccounts` it grants `impersonate`.
+The two verb allowlists. `write` is the base set every slot admits; `read` is the
+narrowing applied to slots whose name ends in -read. Neither contains a wildcard: on
+`roles` a wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check,
+and on `serviceaccounts` it grants `impersonate`. `escalate`, `impersonate` and `bind`
+are likewise absent -- the emitter authors its own bind rule, which never passes through
+a declaration.
+
+Write is a superset of read, so a slot admitting writes admits reads too. A rule may name
+any subset of its slot's allowlist; nothing requires it to use all of them.
 */}}
 {{- define "dataplane.rbac.verbs.read" -}}
 - get
@@ -179,21 +200,6 @@ escalation-prevention check, and on `serviceaccounts` it grants `impersonate`.
 {{- end -}}
 
 {{- define "dataplane.rbac.verbs.write" -}}
-- get
-- list
-- watch
-- create
-- update
-- patch
-- delete
-- deletecollection
-{{- end -}}
-
-{{/*
-Verbs a cluster-slot declaration may name. Excludes wildcards, `escalate` and
-`impersonate`, and `bind` (emitter-authored only, see dataplane.rbac.emitSlot).
-*/}}
-{{- define "dataplane.rbac.verbAllowlist" -}}
 - get
 - list
 - watch
@@ -242,10 +248,10 @@ Emit one slot's role and its bindings. Emits nothing when rules is empty.
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
-  rules       {apiGroups, resources} maps for pooled slots, or
-              {apiGroups, resources, verbs, resourceNames?} for cluster slots.
-              Chart-derived and operator-supplied declarations look the same
-              here, and both run the validation below.
+  rules       {apiGroups, resources, verbs, resourceNames?} maps, in every slot.
+              The verbs are checked against the slot's allowlist, which its name
+              decides. Chart-derived and operator-supplied declarations look the
+              same here, and both run the validation below.
   subjects    list of ServiceAccount names to bind
   component   component name for per-component slots; "" for pooled
 
@@ -267,31 +273,30 @@ work-cluster emits nothing rather than failing.
 {{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
 {{- else -}}
 {{- $resolved := list -}}
-{{- if $spec.verbs -}}
-{{- $verbs := fromYamlArray (include (printf "dataplane.rbac.verbs.%s" $spec.verbs) $ctx) -}}
-{{- range $rule := $rules -}}
-{{- if $rule.verbs -}}
-{{- fail (printf "RBAC slot %q sets the verbs itself, so its rules must not carry a verbs key, and this one has %v. Drop the key: the slot grants %v." $.slot $rule.verbs $verbs) -}}
-{{- end -}}
-{{- $resolved = append $resolved (merge (dict "verbs" $verbs) $rule) -}}
-{{- end -}}
-{{- else -}}
-{{- $allow := fromYamlArray (include "dataplane.rbac.verbAllowlist" $ctx) -}}
 {{/*
-No `bind` exemption: it is never valid on a declared rule. The emitter's own
-bind rule never passes through $rules, and is spliced into $resolved below.
+Every rule names its own verbs. The allowlist comes from the slot's name: a slot whose
+name ends in -read admits only reads, everything else admits the base set. The base set
+is the ceiling in both cases -- it excludes `*`, `escalate`, `impersonate` and `bind`,
+which is what stops a declaration from disabling RBAC's escalation check or minting
+tokens, and that ceiling applies to work-ns exactly as it does to the rest.
+
+Deriving this from the name rather than a slotSpec key means the two cannot drift: a
+slot named -read cannot be given a write allowlist by mistake.
 */}}
+{{- $allow := fromYamlArray (include "dataplane.rbac.verbs.write" $ctx) -}}
+{{- if hasSuffix "-read" $.slot -}}
+{{- $allow = fromYamlArray (include "dataplane.rbac.verbs.read" $ctx) -}}
+{{- end -}}
 {{- range $rule := $rules -}}
 {{- if not $rule.verbs -}}
-{{- fail (printf "RBAC slot %q needs a verbs key on every rule, and the rule for resources %v has none. Add the verbs that rule needs." $.slot $rule.resources) -}}
+{{- fail (printf "RBAC slot %q requires a verbs key on every rule, and the rule for resources %v has none or an empty one. Name the verbs that rule needs; %q allows %v." $.slot $rule.resources $.slot $allow) -}}
 {{- end -}}
 {{- range $v := $rule.verbs -}}
 {{- if not (has $v $allow) -}}
-{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. Use one of %v. Wildcards, escalate and impersonate are never allowed on a declared rule, and the chart writes its own bind rule." $.slot $v $allow) -}}
+{{- fail (printf "RBAC slot %q names verb %q, which is not allowed here. %q allows %v. Wildcards, escalate and impersonate are never allowed on a declared rule, and the chart writes its own bind rule. A rule needing a write verb belongs in a write slot." $.slot $v $.slot $allow) -}}
 {{- end -}}
 {{- end -}}
 {{- $resolved = append $resolved $rule -}}
-{{- end -}}
 {{- end -}}
 {{- if and (eq .slot "cluster-write") (eq (.component | default "") "clusterresourcesync") -}}
 {{/*

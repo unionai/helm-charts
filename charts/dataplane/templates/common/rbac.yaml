@@ -1,12 +1,13 @@
 {{/*
 Emits every union component's RBAC from the slots each component declares.
-Pooled slots produce one object holding the union of every enabled declarer's
-rules, bound to every declarer's ServiceAccount. Per-component slots produce one
-object per declarer. See dataplane.rbac.slotSpec.
+Per-component slots -- every slot but work-ns -- produce one object per declarer,
+carrying that declarer's rules alone. work-ns is pooled: one object holding the
+union of every enabled declarer's rules, bound to every declarer's ServiceAccount.
+See dataplane.rbac.slotSpec for why that one is shared.
 
-Rule definitions stay per-component (dataplane.rbac.slots.*) even where the
-object is shared, so it stays clear what each component asked for. Pooling only
-the enabled components is what lets a dataplane running a subset of them get a
+Rule definitions stay per-component (dataplane.rbac.slots.*) even for work-ns,
+so it stays clear what each component asked for. Pooling only the enabled
+components is what lets a dataplane running a subset of them get a
 correspondingly narrower work-ns role, rather than the union of everything the
 chart can install.
 */}}
@@ -27,6 +28,21 @@ and firing it would report a fault that is not one.
 {{- end -}}
 {{- $spec := fromYaml (include "dataplane.rbac.slotSpec" .) -}}
 {{- $components := fromYamlArray (include "dataplane.rbac.components" .) -}}
+{{/*
+Slot keys are not self-validating. The loop below ranges over slotOrder and indexes each
+declaration, so a key that is not a slot is never read: the component renders with fewer
+permissions than it asked for, and nothing says so. Checked here rather than in emitSlot,
+which only ever sees the keys that matched.
+*/}}
+{{- $known := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
+{{- range $c := $components -}}
+{{- $decl := fromYaml (include (printf "dataplane.rbac.slots.%s" $c.name) $ctx) -}}
+{{- range $k, $v := $decl -}}
+{{- if not (has $k $known) -}}
+{{- fail (printf "Component %q declares RBAC slot %q, which does not exist. Known slots: %v. An unrecognised key is silently ignored, so the component would render with fewer permissions than intended and no error." $c.name $k $known) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- range $slot := fromYamlArray (include "dataplane.rbac.slotOrder" .) -}}
 {{- $slotSpec := index $spec $slot -}}
 {{- if $slotSpec.pooled -}}

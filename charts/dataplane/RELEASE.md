@@ -100,9 +100,63 @@ for them. In the usual `union` release namespace:
 
 | Role | Kind | Bound by | Holds |
 |---|---|---|---|
-| `union-comp-ns-read`, `union-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what Union components need on Union's *own* objects |
+| `union-<component>-comp-ns-read`, `union-<component>-comp-ns-write` | `Role` | `RoleBinding` in the release namespace | what that component needs on Union's *own* objects. One Role per component: nothing is shared here |
 | `union-work-ns` | `ClusterRole`, or `Role` under `low_privilege: true` | one `RoleBinding` per work namespace — **never** in the release namespace at `low_privilege: false` | what components need on user tasks, apps and builds |
-| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. `list`/`watch` only, and not emitted at all under `low_privilege: true` |
+| `union-<component>-work-ns-cluster-read` | `ClusterRole` | `ClusterRoleBinding` | reads the API server authorizes as cluster-scope checks, because the caller lists with an empty namespace. Read-only (enforced at render time); the chart's own rules here use `list`/`watch` alone, and none is emitted at all under `low_privilege: true` |
+
+**Read-only on that row is enforced at render time, not by convention.** A slot whose name
+ends in `-read` — `work-ns-cluster-read` included — admits `get`, `list` and `watch` and
+rejects every write verb, and the chart refuses to render rather than emitting one. What
+is enforced is the absence of writes; that today's `work-ns-cluster-read` rules stop at
+`list` and `watch` is a property of the declarations, not of the check. A `get` in a read
+slot is legitimate and one renders — see the Knative webhook's `resourceNames`-pinned
+namespace read below.
+
+**`union-work-ns` is the only role several components share.** The release-namespace roles
+were shared too in earlier drafts of this model, which meant every component holding every
+other component's release-namespace rules: the Knative activator registers a namespaced
+Secret informer unconditionally, and that one rule gave the operator, leaseworker and the
+other four app-serving binaries a read of every Secret in the release namespace. (Not the
+proxy — it declares into neither `comp-ns` slot, so it was never a subject of that role.
+Its own release-namespace Secret grant comes from `operator/serviceaccount-proxy-secret.yaml`
+and is unaffected by any of this.)
+They are now one Role per component, `union-<component>-comp-ns-read` and
+`-comp-ns-write`. **Anything outside this chart that references `union-comp-ns-read` or
+`union-comp-ns-write` by name — an audit policy, a `RoleBinding`, a Kyverno rule — stops
+matching.** Nothing named `union-comp-ns-*` renders any more. The resource declarations are
+redistributed unchanged; their verb sets are narrowed, as the next section describes — so
+this is not a rename you can skim past.
+`work-ns` stays shared, because the namespaces it is bound in are created at
+runtime and one role there means one `RoleBinding` and one `bind` grant per namespace
+instead of one per component.
+
+**Every RBAC rule in the chart now declares its own `verbs`, and they are narrowed.**
+Previously the three release-namespace and work-namespace slots had the emitter stamp a
+fixed verb set onto every rule and refuse any rule that named its own, so no rule could
+ask for less than the whole set. Each rule now names what its component calls, taken from
+the verbs the role it replaced actually granted. What that removes, in the grants an
+operator is most likely to be asked about:
+
+| Grant | Was | Is |
+|---|---|---|
+| proxy, on everything it touches in a work namespace | full write set | `get`, `list`, `watch` — it is a reader and now says so |
+| pod webhook, on `secrets`/`pods` in a work namespace | full write set | `get`, `list`, `watch`, `create`, `update`, `patch`; no `delete` |
+| `knative-controller`, on `serviceaccounts`/`secrets` for image digest resolution | full write set | `get` |
+| `net-kourier`, on `ingresses` | full write set | `get`, `list`, `watch`, `patch`, plus `update` on `ingresses/status` |
+| `deletecollection`, anywhere | every rule in three slots | `flyteworkflows` and the Knative API groups only |
+| `endpoints/restricted` | the surrounding rule's whole verb set | `create`, the one verb the admission plugin checks |
+
+Note the pooled `work-ns` role is the union of its declarers' rules, so narrowing one
+declarer there does not narrow what the others convey to it — the proxy is bound to a role
+that still carries `leaseworker`'s resource wildcard. The release-namespace roles are the
+ones where a narrowed declaration is the whole grant.
+
+No operator-set value changes behavior, so this is not called out with a `BREAKING` banner
+above — but it does break the *declaration contract* for anything defining its own
+`dataplane.rbac.slots.<name>`: a downstream fork of this chart, or an overlay that adds a
+component via that same mechanism. Every rule such a declaration contributes must now carry
+a `verbs` key of its own; the chart refuses to render if one is missing, where it previously
+inferred the verbs from the slot in three of the six cases.
 
 **The split is the point.** `union-work-ns` is a `ClusterRole` only so its rules are written
 once; a `RoleBinding` referencing a `ClusterRole` confines that role to the binding's own
@@ -121,19 +175,21 @@ of the release namespace. With `commonServiceAccount.enabled: true` (the default
 component shares one identity, so each also holds every other component's roles — split the
 identities before reasoning about any component's permissions individually.
 
-The namespaced roles are **pooled**: one object holding the union of every declaring
-component's rules, bound to every declaring ServiceAccount. Pooling is by destination, not by
-identity, so `commonServiceAccount.enabled: false` does not multiply the object count — and
-does not narrow anything either. Splitting the identities buys one cloud IAM identity per
-component; inside a namespace, each still holds every other declarer's rules for that
-destination. The cluster-scoped roles stay per-component, because their blast radius is
-unbounded and precision is worth paying for there.
+The work-namespace role is **pooled**: one object holding the union of every declaring
+component's rules, bound to every declaring ServiceAccount. Pooling there is by destination,
+not by identity, so `commonServiceAccount.enabled: false` does not multiply the object count
+in work namespaces — and does not narrow anything there either. Splitting the identities buys
+one cloud IAM identity per component; in a work namespace, each still holds every other
+declarer's rules. The release-namespace and cluster-scoped roles are per-component, so
+splitting identities does separate those.
 
-**Verb sets.** A pooled slot carries one verb set — `get`, `list`, `watch`, `create`,
-`update`, `patch`, `delete`, `deletecollection` — where the per-component roles it replaces
-each named a shorter list of their own. Wildcards are excluded deliberately: on `roles` a
-wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, and on
-`serviceaccounts` it grants `impersonate`.
+**Verb allowlist.** Every rule in every slot names its own verbs, checked against a
+ceiling that the slot's name decides: `get`, `list`, `watch`, `create`, `update`, `patch`,
+`delete`, `deletecollection` for a write slot, narrowed to the first three for one whose
+name ends `-read`. A declaration may name any subset of that ceiling, and most do — see the
+narrowing table above. Wildcards are excluded deliberately: on `roles` a wildcard verb
+grants `escalate`, disabling RBAC's escalation-prevention check, and on `serviceaccounts` it
+grants `impersonate`.
 
 `leaseworker` and `flytepropeller` are on this model too, so the roles named
 `<release-ns>-leaseworker` and `flytepropeller-role`, and the bindings named
@@ -141,11 +197,13 @@ wildcard verb grants `escalate`, disabling RBAC's escalation-prevention check, a
 same `apiGroups: ['*']`, `resources: ['*']` grant, and it now lives once in the pooled
 `union-work-ns` role rather than twice in roles of their own.
 
-**Two consequences of pooling that rule.** The pooled role carries the slot's verb set, so
-the wildcard now also grants `deletecollection`, which neither component's own rule did. And
-because a pooled role is bound to every declaring ServiceAccount, `commonServiceAccount.enabled: false`
-no longer keeps the operator and proxy to their enumerated resources — on this slot they hold
-the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which differs by mode:
+**One consequence of pooling that rule.** Because a pooled role is bound to every declaring
+ServiceAccount, `commonServiceAccount.enabled: false` no longer keeps the operator and proxy
+to their enumerated resources — on this slot they hold the wildcard too. (The wildcard itself
+grants what the two roles it replaces granted, `get,list,watch,create,update,patch,delete`
+and no `deletecollection`; only `flyteworkflows`, which propeller's garbage collector deletes
+by label selector, carries that verb.) It reaches exactly as far as `union-work-ns` is bound,
+which differs by mode:
 
 - **At `low_privilege: false`, they are confined to the work namespaces.** `union-work-ns` is
   never bound in the release namespace in that mode, so Union's own Deployments and Secrets
@@ -153,7 +211,7 @@ the wildcard too. Both reach exactly as far as `union-work-ns` is bound, which d
 - **At `low_privilege: true` (the default), the release namespace *is* the work namespace**, so
   the pooled role is bound there — over Union's own objects. With the default
   `commonServiceAccount.enabled: true` this changes nothing between components, because that
-  single account already held the wildcard; only `deletecollection` is new.
+  single account already held the wildcard at these verbs.
   **With `commonServiceAccount.enabled: false` it is a real widening: `operator-system`,
   `proxy-system` and `union-webhook-system` previously held only their own enumerated
   resources in the release namespace and now hold `apiGroups: ['*'], resources: ['*']`
@@ -178,7 +236,7 @@ nothing at all on Union's own objects. A new `ClusterRole` appearing in the diff
 looks like; the object that actually granted cluster-wide access is the `ClusterRoleBinding`
 that went away. Under `low_privilege: true` both were namespaced `Role`s bound in the release
 namespace, and the pooled `Role` that replaces them is bound in the same place, so the change
-there is one of packaging plus the two additions noted above.
+there is one of packaging plus the identity consequence noted above.
 
 **Measured cluster-wide, which is what matters on a shared cluster**, this is the set of
 write-capable cluster-scoped grants Union's own identities hold after this release **at the
@@ -379,8 +437,9 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   ones, and one to the release namespace's `namespaces/finalizers`. The two configuration kinds
   are separate rules on purpose — Kubernetes applies `resourceNames` across every resource in a
   rule, so naming both kinds together would have authorized six kind/name pairs instead of the
-  three objects that exist. Everything else the binaries need is namespaced and
-  lands in the same pooled `comp-ns-*` and `work-ns` roles the rest of the chart uses.
+  three objects that exist. Everything else the binaries need is namespaced: a
+  `comp-ns-*` Role of the binary's own in the release namespace, and the pooled `work-ns`
+  role the rest of the chart shares.
 
   There is no aggregation left, no cert-manager or CRD grant, and **no cluster-scoped
   `create` anywhere in the set** — which is what makes the `resourceNames` scoping meaningful,
@@ -456,17 +515,18 @@ it, and so is the `knative-operator` path, which installs its own RBAC.
   to read. Both are listed with their removal condition in
   [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
 
-- **The namespaced slots are pooled, and that cuts both ways.** Each of the five also receives
-  every other declarer's rules in the shared roles, so `commonServiceAccount.enabled: false`
-  separates app serving from union's own components in the **cluster dimension only**. As
-  rendered at full privilege with per-component identities: `knative-controller`,
-  `knative-autoscaler` and `net-kourier` join `<release-ns>-work-ns`, whose first rule is
-  `apiGroups: ["*"], resources: ["*"]`, so they hold unrestricted write in the work namespaces;
-  and in the other direction the operator, proxy, leaseworker and webhook identities gain the
-  Knative API groups there. In the release namespace, every `comp-ns-read` subject now also
-  reads Secrets, because the activator's namespaced Secret informer has nowhere per-component
-  to be declared. `knative-webhook` is the only one of the five that joins no work-namespace
-  slot; `knative-activator` is the only one that joins neither write slot.
+- **The work-namespace slot is pooled, and that cuts both ways.** Each of the five also
+  receives every other declarer's rules in that one role, so `commonServiceAccount.enabled:
+  false` separates app serving from union's own components everywhere except the work
+  namespaces. As rendered at full privilege with per-component identities:
+  `knative-controller`, `knative-autoscaler` and `net-kourier` join `<release-ns>-work-ns`,
+  whose first rule is `apiGroups: ["*"], resources: ["*"]`, so they hold unrestricted write in
+  the work namespaces; and in the other direction the operator, proxy, leaseworker and webhook
+  identities gain the Knative API groups there. The release namespace is not like this: each
+  binary has its own `comp-ns-*` Role, so the activator's unconditional namespaced Secret
+  informer is a Secret read for `knative-activator` and for nothing else. `knative-webhook` is
+  the only one of the five that joins no work-namespace slot; `knative-activator` is the only
+  one that joins neither write slot.
 
 ### Third-party subchart RBAC
 
@@ -648,7 +708,7 @@ Also, in both modes:
 - **At `low_privilege: false`, the operator no longer reads or writes Secrets and Deployments
   in the release namespace unless a feature that needs them is on.** It previously held
   `get`/`list`/`watch`/`create`/`update` on both there, unconditionally. They now sit in
-  `union-comp-ns-read` / `union-comp-ns-write` behind
+  `union-operator-comp-ns-read` / `union-operator-comp-ns-write` behind
   `config.operator.secretsWatcher.enabled` and `config.operator.syncClusterConfig.enabled`,
   which are both off by default. `low_privilege: true` is unaffected — there the release
   namespace is the work namespace, and `union-work-ns` covers both.
