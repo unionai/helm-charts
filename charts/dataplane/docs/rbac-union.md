@@ -160,12 +160,18 @@ test is *how the read is made*, not *where*. `knative-controller`'s image-digest
 to sit in `cluster-read` for exactly the "unknown namespace" reason and are now in
 `work-ns`, unchanged in what they reach.
 
-Two components hold one and cannot be narrowed today:
+One component holds one and cannot be narrowed today:
 
 | Component | Why | Goes away when |
 |---|---|---|
 | `webhook` | the pod webhook's controller-runtime Secret cache is scoped only when propeller's `limit-namespace` is set to something other than `all` — and the webhook reads the same config key propeller does, so scoping it would pin propeller's own cluster-wide informer. Scoping the cache also breaks the mirroring it exists for: the secret manager reads the mirrored Secret out of the admitted pod's own namespace through that cache | `config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled: false` drops it today, along with the mirroring |
-| `knative-kourier` | net-kourier registers its Secret informer unconditionally in the shipped image, unfiltered by namespace | UN-39 gates it behind `KOURIER_ENABLE_INGRESS_TLS` |
+
+`knative-kourier` used to be the second row. net-kourier registered its Secret informer
+unconditionally and unfiltered by namespace, so the cluster-scoped `LIST` was load-bearing.
+The image now gates that informer behind `ENABLE_INGRESS_TLS`, which defaults to false, and
+with it off no Secret informer is registered at all — so the rule is gone. Setting that env
+var on `net-kourier-controller` puts the informer back and needs the grant with it; this
+chart does not set it.
 
 ### Pooling
 

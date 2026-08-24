@@ -103,7 +103,7 @@ can be namespaced is. It is because of what the *images* do:
   check. Each binary holds only the subset it uses — the webhook watches the two
   webhook-configuration kinds and nothing else, the activator watches Services, Endpoints and
   Revisions, the autoscaler adds Pods, Deployments, leases and HPAs — but **every one of those
-  subsets is cluster-scoped**, and `net-kourier`'s includes Secrets. A namespaced Role
+  subsets is cluster-scoped**, `net-kourier` adding Ingresses. A namespaced Role
   authorizes none of it, and would leave controller, webhook and activator Ready and denied:
   the same silent shape the prometheus and kube-state-metrics guards exist to prevent, with no
   values key to guard on.
