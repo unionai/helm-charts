@@ -3,16 +3,18 @@
 ## Unreleased
 
 - Default CPU **requests** for the control-plane services (`actions` and its
-  router, `leasor`, and `scylla`) are lowered to better reflect their
-  steady-state CPU usage. **CPU limits and all memory requests are unchanged**,
-  so every service keeps its full burst headroom under load — only the
-  scheduling *reservation* shrinks. On clusters that were reserving far more CPU
-  than the services use, this improves pod packing density and lets the cluster
-  autoscaler consolidate onto fewer nodes, lowering cost with no change to peak
-  capacity. Because limits stay high, the change carries low risk; if a
-  particular workload needs a larger reservation, override
-  `<service>.resources.requests.cpu` in your values
-  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+  router, `leasor`, and `scylla`) and memory **requests** for `actions`, its
+  router, and `leasor` are lowered to better reflect their steady-state usage.
+  `scylla`'s memory request is kept (memory-resident database). **CPU and memory
+  *limits* are unchanged**, so every service keeps its full burst headroom under
+  load — only the scheduling *reservation* shrinks. On clusters that were
+  reserving far more than the services use, this improves pod packing density and
+  lets the cluster autoscaler consolidate onto fewer nodes, lowering cost with no
+  change to peak capacity. Memory requests were sized to roughly 2.5× the
+  measured 6-day working-set peak, keeping pods well clear of OOM while limits
+  stay high, so the change carries low risk; if a particular workload needs a
+  larger reservation, override `<service>.resources.requests.{cpu,memory}` in
+  your values ([#552](https://github.com/unionai/helm-charts/pull/552)).
 
 ## 2026.8.3
 

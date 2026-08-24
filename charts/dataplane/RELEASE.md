@@ -6,15 +6,19 @@
   image-builder / BuildKit deployment, the operator, the connector, the
   cluster-resource-sync and node-observer controllers, and the Kourier
   gateway/controller) are lowered to better reflect their steady-state CPU
-  usage. **CPU limits and memory requests are unchanged**, so services still
-  burst to their limit under load — in particular BuildKit keeps a high burst
-  ceiling (its request has no CPU limit), so image-build throughput is
-  unaffected. Only the idle scheduling *reservation* shrinks. On clusters that
-  were reserving far more CPU than is used, this improves packing density and
-  lets the autoscaler consolidate onto fewer nodes, lowering cost with no change
-  to peak capacity. Keeping limits high makes this a low-risk change; override
-  `<service>.resources.requests.cpu` if a workload needs a larger reservation
-  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+  usage. Memory **requests** are likewise lowered for `leaseworker`, the
+  operator, the connector, and the Kourier gateway/controller. **CPU and memory
+  *limits* are unchanged**, so services still burst to their limit under load —
+  in particular BuildKit keeps its full memory (no memory limit is set) so
+  image builds are unaffected, and `leaseworker`'s memory request drops from
+  `8Gi` to `512Mi` (still ~9× its measured peak) with the `16Gi` limit intact.
+  Only the idle scheduling *reservation* shrinks. On clusters that were reserving
+  far more than is used, this improves packing density and lets the autoscaler
+  consolidate onto fewer nodes, lowering cost with no change to peak capacity.
+  Memory requests were sized to several times the measured 6-day working-set
+  peak, so pods stay well clear of OOM; override
+  `<service>.resources.requests.{cpu,memory}` if a workload needs a larger
+  reservation ([#552](https://github.com/unionai/helm-charts/pull/552)).
 
 ## 2026.8.3
 
