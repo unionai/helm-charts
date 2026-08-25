@@ -8,6 +8,13 @@
   improving pod packing so the autoscaler consolidates onto fewer nodes. Override
   `<service>.resources.requests.{cpu,memory}` to restore
   ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Add a chart-level **global scheduling** default
+  (`.Values.scheduling.{affinity,nodeSelector,tolerations}`) honored by every
+  control-plane pod, with per-service overrides — steer the whole plane onto a
+  chosen node pool (e.g. Spot) with one value. Per-service `tolerations`/`nodeSelector`
+  **inherit** from the global block (concat / merge, service wins on conflicts);
+  `affinity` fully overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
 
 ## 2026.8.3
 
