@@ -295,6 +295,13 @@ From the operator:
   informer actually runs — `billing.model: Legacy` or `Shadow`, with
   `disableClusterPermissions` unset — so the default `ResourceUsage` install has no `nodes`
   grant at all, and neither has write on either.
+
+  The `nodes` read is carried by a new `<release-namespace>-operator-cluster-read`
+  `ClusterRole` and its `ClusterRoleBinding`, not by `-operator-work-ns-cluster-read`: the
+  informer reads nodes for usage attribution, not to reach across the namespaces tasks run
+  in. Under `low_privilege` neither object is rendered — `low_privilege` forces the
+  operator's `disableClusterPermissions`, so the informer never starts. Anything pinning
+  that grant by role name should follow the move.
 - `nonResourceURLs: [/metrics]` left its `ClusterRole`. It was emitted only at
   `low_privilege: false`, so the default install never had it.
 - `post` left the `flyteworkflows` rule — `flytepropeller`'s rule, not the operator's. It is

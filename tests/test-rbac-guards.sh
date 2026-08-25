@@ -767,31 +767,42 @@ expect-manifest "work-ns-cluster-read is emitted at full privilege" \
 expect-manifest "and not at all under low_privilege" \
   absent "name: union-operator-work-ns-cluster-read"
 
-# Nodes are cluster-scoped, so this slot is the only one that can carry them: a RoleBinding
-# grants nothing cluster-scoped whatever role it points at. The informer runs under two of the
-# four billing models, so the grant is gated the same way -- and withheld under the other two,
-# which is the narrowing the slot exists for.
+# The node informer's grant lives in cluster-read, not work-ns-cluster-read: nodes are read for
+# usage attribution, not to reach across the namespaces tasks run in, and at full privilege the
+# two slots produce the same object anyway. The informer runs under two of the four billing
+# models, so the grant is gated the same way -- and withheld under the other two.
 expect-role-resource "the node informer's grant appears under Legacy billing" \
-  present union-operator-work-ns-cluster-read nodes \
+  present union-operator-cluster-read nodes \
   --set low_privilege=false --set config.operator.billing.model=Legacy
 expect-role-resource "and under Shadow billing" \
-  present union-operator-work-ns-cluster-read nodes \
+  present union-operator-cluster-read nodes \
   --set low_privilege=false --set config.operator.billing.model=Shadow
-expect-role-resource "and not under the default ResourceUsage billing" \
-  absent union-operator-work-ns-cluster-read nodes \
+# The withheld cases assert the whole role is gone, not that it renders without nodes: the
+# node rule is the only thing the operator declares into cluster-read, so emitSlot drops the
+# role and its binding entirely. expect-role-resource refuses a missing role (it would make
+# `absent` vacuous), so these are expect-manifest.
+expect-manifest "and not under the default ResourceUsage billing" \
+  absent "name: union-operator-cluster-read" \
   --set low_privilege=false
 # The operator reaches the same decision from a tpl'd value and a lower-cased one -- the
 # config passes through tpl and its enum parser retries lower-cased -- so a gate comparing
 # the raw string would withhold the grant while the informer starts. That direction fails
 # closed at the API server, not at render.
 expect-role-resource "and follows a lower-cased model, which the operator also accepts" \
-  present union-operator-work-ns-cluster-read nodes \
+  present union-operator-cluster-read nodes \
   --set low_privilege=false --set config.operator.billing.model=legacy
 # disableClusterPermissions stops the informer outright, so the grant goes with it.
-expect-role-resource "and is withheld when cluster permissions are disabled outright" \
-  absent union-operator-work-ns-cluster-read nodes \
+expect-manifest "and is withheld when cluster permissions are disabled outright" \
+  absent "name: union-operator-cluster-read" \
   --set low_privilege=false --set config.operator.billing.model=Legacy \
   --set config.operator.disableClusterPermissions=true
+# cluster-read is emitted in both privilege modes, so unlike work-ns-cluster-read it cannot
+# withhold this grant for us. low_privilege forces the operator's disableClusterPermissions
+# true (operator/configmap.yaml), so the informer never starts here and the grant must be
+# absent -- a gate reading the raw .Values would emit it into every low_privilege install.
+expect-manifest "and is withheld under low_privilege, where the informer never starts" \
+  absent "name: union-operator-cluster-read" \
+  --set config.operator.billing.model=Legacy
 
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
 # so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
