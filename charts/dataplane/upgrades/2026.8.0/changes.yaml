@@ -1,0 +1,273 @@
+# Machine-readable twin of SKILL.md. Lets an agent handling a multi-version jump merge
+# releases without reading each prose document.
+chart: dataplane
+from: "2026.7.2"
+to: "2026.8.0"
+released: "2026-08-11"
+impact: breaking
+
+# Written retroactively rather than at release time, by the agent procedure in
+# skills/author-upgrade-skill/. Flip `reviewed` to true once a platform engineer has
+# checked it against the chart.
+backfilled: true
+reviewed: false
+
+# appVersion is unchanged (2026.7.2) -- no component images move in this hop.
+app_version_changed: false
+
+prerequisites: []   # no CRD changes, no chart dependency bumps
+
+removed_or_renamed:
+  - old_key: executor.task_logs
+    new_key: leaseworker.task_logs
+    since: "2026.8.0"
+    deprecated_in: null
+    migration: Move the block unchanged; same structure, same rendered task_logs.yaml.
+    detect: '^\s*executor:'
+    breaks: >-
+      Still honored on this version -- executor.task_logs takes precedence over
+      leaseworker.task_logs when set -- but the shim is temporary. Custom task-log
+      links stop rendering once it is removed.
+
+  - old_key: executor.*
+    new_key: null
+    since: "2026.8.0"
+    deprecated_in: "2026.6.30 announcement"
+    migration: Delete. Resources, scheduling, raw_config and idl2Executor are no longer read.
+    detect: '^\s*executor:'
+    breaks: Any executor tuning is silently discarded. No error is raised.
+
+  - old_key: executor.raw_config.namespace_mapping
+    new_key: namespace_mapping
+    since: "2026.8.0"
+    deprecated_in: null
+    migration: Use the top-level namespace_mapping key.
+    detect: 'raw_config'
+    breaks: Namespace template override is ignored; namespaces render from the top-level template.
+
+  - old_key: global.CONTROLPLANE_GRPC_ENDPOINT
+    new_key: null
+    since: "2026.8.0"
+    deprecated_in: null
+    migration: Remove. The endpoint derives from global.CONTROLPLANE_HOST.
+    detect: 'CONTROLPLANE_GRPC_ENDPOINT'
+    breaks: Inert if left set.
+
+  - old_key: global.QUEUE_GRPC_ENDPOINT
+    new_key: null
+    since: "2026.8.0"
+    deprecated_in: null
+    migration: Remove. The task-pod endpoint is injected from config.union.connection.
+    detect: 'QUEUE_GRPC_ENDPOINT'
+    breaks: >-
+      Inert if left set. BUT a values file that references the removed queueEndpoint
+      helper -- typically a task-pod default-env-vars entry named _U_EP_OVERRIDE --
+      fails to render rather than being ignored. Remove that entry before upgrading.
+
+  - old_key: config.operator.billableUsageCollector.enabled
+    new_key: config.operator.billing.model
+    since: "2026.8.0"
+    deprecated_in: null
+    migration: Remove. The key had no effect.
+    detect: 'billableUsageCollector'
+    breaks: Nothing; it was already inert.
+
+default_changes:
+  - key: config.catalog.catalog-cache.use-admin-auth
+    old: "false (GCP overlay) / true (AWS, Azure overlays)"
+    new: "true"
+    scope: base
+    effect: >-
+      The cross-cloud inconsistency is resolved in favour of enabled. GCP deployments
+      that relied on the overlay default see a behavior change.
+    preserve_old: |
+      config:
+        catalog:
+          catalog-cache:
+            use-admin-auth: false
+
+  - key: storage.enableMultiContainer
+    old: "false (base) / true (all cloud overlays)"
+    new: "true"
+    scope: base
+    effect: >-
+      No effective change for anyone layering a per-cloud overlay, which already set
+      true. Base-only deployments flip.
+    preserve_old: |
+      storage:
+        enableMultiContainer: false
+
+  - key: config.union.auth.enable
+    old: overlay-set
+    new: "true"
+    scope: base
+    effect: A dataplane authenticates to its control plane by default.
+    preserve_old: null
+
+  - key: secrets.admin.clientId
+    old: standalone placeholder
+    new: derives from global.AUTH_CLIENT_ID
+    scope: base
+    effect: One global resolves the admin client id at every config site.
+    preserve_old: null
+
+  - key: monitoring.kubeControllerManager/kubeScheduler/kubeEtcd/kubeProxy.enabled
+    old: "true"
+    new: "false"
+    scope: base
+    effect: >-
+      Removes false-positive TargetDown alerts. A dataplane cannot scrape the cluster's
+      control-plane components, so these ServiceMonitors never had live targets.
+    preserve_old: null
+
+  - key: monitoring.defaultRules.rules.*
+    old: "true"
+    new: "false"
+    scope: base
+    effect: Same rationale as above -- alerting rules that could not fire correctly.
+    preserve_old: null
+
+  - key: fluentbit serviceAccount name
+    old: fluentbit-system
+    new: union-system
+    scope: base
+    effect: >-
+      In-cluster only. Action required if an external binding -- a cloud IAM trust
+      policy or workload-identity binding -- is scoped to the old name, since log
+      forwarding loses its credentials.
+    preserve_old: null
+
+computed_defaults:
+  - key: app-serving component enablement
+    depends_on: apps.enabled
+    resolution:
+      - when: apps.enabled set
+        value: that value wins
+      - when: only serving.enabled set
+        value: honored, with a deprecation notice rendered in the operator ConfigMap
+      - when: neither set
+        value: "true"
+    effect: >-
+      No rendered-output change at default values. Under zero trust, apps.enabled false
+      additionally drops the vendored knative components, which serving.enabled false
+      left rendered.
+
+workloads:
+  added: []
+  removed:
+    - kind_name: Deployment/executor
+      note: The legacy execution path. Leaseworker was already running alongside it.
+    - kind_name: ConfigMap/executor
+      note: null
+    - kind_name: Service/union-operator-executor
+      note: >-
+        Was a Prometheus scrape target. Any external scrape config or dashboard pointed
+        at it now has a dead target.
+    - kind_name: ClusterRole/union-executor
+      note: Renders as Role/union-executor under low_privilege.
+    - kind_name: ClusterRoleBinding/union-executor
+      note: Renders as RoleBinding/union-executor under low_privilege.
+
+metrics_renamed:
+  - old: "union:dp:executor:active_actions"
+    new: "union:dp:leaseworker:active_actions"
+    note: Update dashboards and alerts that reference the old series.
+
+image_changes:
+  - component: Helm hook Jobs (pre-upgrade, pre-delete)
+    old: "bitnami/kubectl:latest (hardcoded in the template)"
+    new: "docker.io/alpine/k8s:1.32.3 (via the new image.kubectl key)"
+    note: >-
+      Mirror before upgrading on restricted-registry or air-gapped clusters. Used by
+      Helm hooks, so a missing image hangs the upgrade rather than failing it cleanly.
+      Moved off bitnami/kubectl because upstream pruned every version tag but latest.
+  - component: flytepropellerwebhook.legacyWebhookCleanup.image.repository
+    old: alpine/k8s
+    new: docker.io/alpine/k8s
+    note: Registry host made explicit.
+  - component: fluentbit.testFramework.image.repository
+    old: busybox (subchart default)
+    new: docker.io/library/busybox
+    note: Rendered only by `helm test`, but allowed-registry policies apply there too.
+
+deprecations:
+  - old_key: global.UNION_CONTROL_PLANE_HOST
+    new_key: global.CONTROLPLANE_HOST
+    still_honored: true
+    precedence: global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST
+  - old_key: host
+    new_key: global.CONTROLPLANE_HOST
+    still_honored: true
+    precedence: global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST
+  - old_key: serving.enabled
+    new_key: apps.enabled
+    still_honored: true
+    precedence: apps.enabled > serving.enabled > true
+
+optional_features:
+  - id: task-pod-working-dir
+    summary: >-
+      taskPodTemplate.workingDir sets the working directory for task pods directly,
+      instead of overriding the whole pod template to change one field. Useful for
+      images with a read-only root filesystem.
+    values: |
+      taskPodTemplate:
+        workingDir: /tmp
+    caveat: null
+  - id: embedded-secret-init-image
+    summary: >-
+      The embedded-secret init container image is now documented as overridable. Its
+      upstream default lives on a public registry that air-gapped clusters cannot reach.
+      Comment-only change; nothing renders differently.
+    values: |
+      config:
+        core:
+          webhook:
+            embeddedSecretManagerConfig:
+              fileMountInitContainer:
+                image: <YOUR_MIRROR>/busybox:latest
+    caveat: null
+
+subchart_bumps: []
+
+removed_dead_keys:
+  - prometheus.prometheusOperator   # targeted a key the upstream Prometheus chart lacks
+  - flytepropeller                  # empty stubs
+
+unverified: []
+
+verification:
+  - id: chart-version
+    command: |
+      helm list -n "$NS" -o json | jq -r '.[] | select(.name=="'"$REL"'") | .chart'
+    expect: dataplane-2026.8.0
+  - id: pods-running
+    command: |
+      kubectl get pods -n "$NS" --field-selector=status.phase!=Running
+    expect: no resources found
+  - id: deployments-ready
+    command: |
+      kubectl get deploy -n "$NS" -o json \
+        | jq -r '.items[] | select(.status.readyReplicas != .status.replicas) | .metadata.name'
+    expect: no output
+  - id: executor-removed
+    command: |
+      kubectl get deploy,svc,cm,sa -n "$NS" | grep -i executor
+    expect: no output
+  - id: task-log-links
+    command: Run a workflow and open the task in the UI.
+    expect: Custom task-log links appear (only relevant if leaseworker.task_logs is set).
+  - id: end-to-end
+    command: Run one workflow end to end.
+    expect: Reaches success.
+
+rollback:
+  supported: true
+  command: helm rollback "$REL" -n "$NS"
+  caveats:
+    - >-
+      No CRD changes, no schema migrations, no persistent state changes on this hop.
+      The executor Deployment is recreated.
+    - >-
+      Helm does not undo the external side of the fluentbit ServiceAccount rename. If a
+      cloud IAM binding was repointed to union-system, point it back.
