@@ -129,12 +129,9 @@ Args: root context (.)
 {{- end }}
 
 {{- define "unionai.nodeSelector" -}}
-{{- if and (hasKey .config "nodeSelector") }}
-{{ toYaml .config.nodeSelector }}
-{{- else if and (hasKey .Values "nodeSelector") }}
-{{ toYaml .Values.nodeSelector }}
-{{- else if and (hasKey .Values "scheduling") .Values.scheduling.nodeSelector }}
-{{ toYaml .Values.scheduling.nodeSelector }}
+{{- $ns := merge (dict) (.config.nodeSelector | default dict) (.Values.nodeSelector | default dict) ((.Values.scheduling | default dict).nodeSelector | default dict) -}}
+{{- with $ns }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
@@ -158,12 +155,9 @@ Args: root context (.)
 {{- end }}
 
 {{- define "unionai.tolerations" -}}
-{{- if and (hasKey .config "tolerations") }}
-{{ toYaml .config.tolerations }}
-{{- else if and (hasKey .Values "tolerations") }}
-{{ toYaml .Values.tolerations }}
-{{- else if and (hasKey .Values "scheduling") .Values.scheduling.tolerations }}
-{{ toYaml .Values.scheduling.tolerations }}
+{{- $t := concat ((.Values.scheduling | default dict).tolerations | default list) (.Values.tolerations | default list) (.config.tolerations | default list) -}}
+{{- with $t }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
