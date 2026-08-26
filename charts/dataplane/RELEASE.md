@@ -10,6 +10,14 @@
   packing so the autoscaler consolidates onto fewer nodes. Override
   `<service>.resources.requests.{cpu,memory}` to restore
   ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Every data-plane pod now honors the chart-level **global scheduling** default
+  (`.Values.scheduling.*`) — `flyteconnector` and all seven gateway components
+  gained `tolerations`/`nodeSelector` fields so they can schedule onto a tainted
+  pool. **Task-execution pods** inherit it too via the `task-template` PodTemplate
+  (`taskPodTemplate.{nodeSelector,affinity,tolerations}`). Per-service
+  `tolerations`/`nodeSelector` **inherit** from the global block (concat / merge,
+  service wins); `affinity` overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
 
 ## 2026.8.3
 
