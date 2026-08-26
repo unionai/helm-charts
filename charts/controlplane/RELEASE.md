@@ -23,6 +23,12 @@ in the images.
   **inherit** from the global block (concat / merge, service wins on conflicts);
   `affinity` fully overrides. Inert by default
   ([#556](https://github.com/unionai/helm-charts/pull/556)).
+- Fix the generic service Deployment template and the redis-consumer
+  StatefulSet rendering `tolerations` as an error object instead of a list
+  whenever any toleration was set (global or per-service) — [#556]'s
+  `fromYaml` on list YAML — which made `helm upgrade` fail with
+  `cannot unmarshal object into Go struct field PodSpec...tolerations`
+  ([#557](https://github.com/unionai/helm-charts/pull/557)).
 
 ### Schema migrations (run automatically on upgrade)
 
