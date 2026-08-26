@@ -2,23 +2,14 @@
 
 ## Unreleased
 
-- Default CPU **requests** for the data-plane services (`leaseworker`, the
-  image-builder / BuildKit deployment, the operator, the connector, the
-  cluster-resource-sync and node-observer controllers, and the Kourier
-  gateway/controller) are lowered to better reflect their steady-state CPU
-  usage. Memory **requests** are likewise lowered for `leaseworker`, the
-  operator, the connector, and the Kourier gateway/controller. **CPU and memory
-  *limits* are unchanged**, so services still burst to their limit under load —
-  in particular BuildKit keeps its full memory (no memory limit is set) so
-  image builds are unaffected, and `leaseworker`'s memory request drops from
-  `8Gi` to `512Mi` (still ~9× its measured peak) with the `16Gi` limit intact.
-  Only the idle scheduling *reservation* shrinks. On clusters that were reserving
-  far more than is used, this improves packing density and lets the autoscaler
-  consolidate onto fewer nodes, lowering cost with no change to peak capacity.
-  Memory requests were sized to several times the measured 6-day working-set
-  peak, so pods stay well clear of OOM; override
-  `<service>.resources.requests.{cpu,memory}` if a workload needs a larger
-  reservation ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Right-size default CPU/memory **requests** for data-plane services
+  (`leaseworker`, BuildKit image-builder, operator, connector,
+  cluster-resource-sync, node-observer, Kourier). **Limits are unchanged** —
+  BuildKit keeps unlimited memory and `leaseworker` keeps its `16Gi` limit (its
+  request drops `8Gi`→`512Mi`) — so only the idle reservation shrinks, improving
+  packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
 
 ## 2026.8.3
 
