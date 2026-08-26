@@ -347,9 +347,6 @@ data:
           - https://test.example.com
           baseUrl: ""
           metadataUrl: .well-known/oauth-authorization-server
-        subjectClaimNames:
-        - sub
-        - client_id
         thirdPartyConfig:
           flyteClient:
             audience: ""
@@ -385,7 +382,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cloudEvents:
       enable: false
     connection:
@@ -423,7 +420,7 @@ data:
         allowedOrigins:
         - '*'
         secure: false
-        useAuth: true
+        useAuth: false
     sharedService:
       connectPort: 8089
       httpPort: 8088
@@ -561,7 +558,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -1794,7 +1791,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache-server:
       grpcPort: 8089
       grpcServerReflection: true
@@ -1867,17 +1864,13 @@ data:
         retryInterval: 5s
         serviceAccounts: []
       externalClient:
-        failOpen: false
         forwardHeaders:
         - authorization
         - flyte-authorization
-        grpcConfig:
-          host: dns:///my-authz-server.default.svc.cluster.local:50051
-          insecure: true
       internalCommunicationConfig:
         enabled: false
-      type: External
-      useExternalIdentity: 'true'
+      type: Noop
+      useExternalIdentity: 'false'
       userCloudsClient:
         clientID: 'union-authz-client'
         clientSecretName: union/client_secret
@@ -1958,7 +1951,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -2049,7 +2042,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -2241,7 +2234,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -2357,7 +2350,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: true
@@ -2441,7 +2434,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -2532,7 +2525,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -2617,7 +2610,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     billing:
       enable: false
     cache:
@@ -2828,7 +2821,7 @@ data:
           host: dns:///authorizer.union.svc.cluster.local:80
           insecure: true
       type: Authorizer
-      useExternalIdentity: 'true'
+      useExternalIdentity: 'false'
     cache:
       identity:
         enabled: false
@@ -9965,6 +9958,30 @@ spec:
     app.kubernetes.io/instance: release-name
 
 ---
+# Source: controlplane/templates/executions/redis-consumer-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-consumer
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.8.4
+    app.kubernetes.io/name: redis-consumer
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: debug
+      port: 10254
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: redis-consumer
+    app.kubernetes.io/instance: release-name
+
+---
 # Source: controlplane/templates/service.yaml
 ---
 apiVersion: v1
@@ -10322,7 +10339,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ea171f9c54032e868e92c800e9ea07f8bf69aca4c9c7d01e67811818089f2b5"
+        configChecksum: "16e854f21f34e1c31662c7eef8a56b315e7c5b09ff6ee580810cc185d9631ee"
         kubectl.kubernetes.io/default-container: flyteadmin
       labels: 
         app.kubernetes.io/name: flyteadmin
@@ -10982,17 +10999,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -11167,17 +11190,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -11352,17 +11381,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -11537,17 +11572,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -11722,17 +11763,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -11907,17 +11954,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -12092,17 +12145,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -12277,17 +12336,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -12462,17 +12527,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/actions/deployment-shard.yaml
 apiVersion: apps/v1
@@ -12647,17 +12718,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: shard
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 
 ---
 # Source: controlplane/templates/actions/router-deployment.yaml
@@ -12774,17 +12851,23 @@ spec:
               port: admin
             initialDelaySeconds: 5
             periodSeconds: 5
+      nodeSelector:
+        union.ai/node-role: services
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            podAffinityTerm:
-              labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: actions
-                  app.kubernetes.io/instance: release-name
-                  app.kubernetes.io/component: router
-              topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
 
 ---
 # Source: controlplane/templates/cacheservice/deployment.yaml
@@ -12807,7 +12890,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "880ff1f4748db0abe331e78b9e90eea8155dc83db97f0802d5702ca733d5eef"
+        configChecksum: "25d47fd0dfb0a490af6d63b3be3847683d121788052cc3c82fbe1da9bf3d238"
         linkerd.io/inject: disabled
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -12894,6 +12977,8 @@ spec:
       - name: union-secrets
         secret:
           secretName: ''
+      nodeSelector: 
+        union.ai/node-role: services
       affinity: 
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -12901,6 +12986,11 @@ spec:
               matchLabels:
                 app.kubernetes.io/name: cacheservice
             topologyKey: kubernetes.io/hostname
+      tolerations: 
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 
 ---
 # Source: controlplane/templates/console/deployment.yaml
@@ -12971,6 +13061,23 @@ spec:
           requests:
             cpu: 250m
             memory: 250Mi
+      nodeSelector:
+        union.ai/node-role: services
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 
 ---
 # Source: controlplane/templates/deployment.yaml
@@ -13078,16 +13185,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: authorizer
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13209,16 +13323,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: cluster
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13321,16 +13442,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: dataproxy
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13449,16 +13577,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: executions
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13564,16 +13699,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: identity
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13690,16 +13832,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: leasor
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13837,16 +13986,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: organizations
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -13966,16 +14122,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: run-scheduler
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
 # Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
@@ -14081,16 +14244,23 @@ spec:
               port: debug
             initialDelaySeconds: 3
             periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
       affinity:
-        podAntiAffinity:
+        nodeAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchLabels:
-                    app.kubernetes.io/name: usage
-                    app.kubernetes.io/instance: release-name
-                topologyKey: "kubernetes.io/hostname"
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 
 ---
 # Source: controlplane/charts/flyte/templates/admin/hpa.yaml
@@ -14372,6 +14542,121 @@ spec:
 
 
 ---
+# Source: controlplane/templates/executions/redis-consumer-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: redis-consumer
+  labels:
+    helm.sh/chart: controlplane-2026.8.4
+    app.kubernetes.io/name: redis-consumer
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 2
+  serviceName: redis-consumer
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: redis-consumer
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: redis-consumer
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: redis-consumer
+        app.kubernetes.io/instance: release-name
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: executions
+      terminationGracePeriodSeconds: 60
+      volumes:
+        - name: secrets
+          secret:
+            secretName: 
+        - name: config
+          configMap:
+            name: executions
+      containers:
+        - name: redis-consumer
+          image: registry.unionai.cloud/controlplane/services:2026.8.5
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudpropeller
+            - consumer
+            - start
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NUM_CONSUMERS
+              value: "2"
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 250Mi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
+
+---
 # Source: controlplane/charts/ingress-nginx/templates/controller-ingressclass.yaml
 apiVersion: networking.k8s.io/v1
 kind: IngressClass
@@ -14420,11 +14705,6 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
-    nginx.ingress.kubernetes.io/auth-url: https://$host/me
-    nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -14482,29 +14762,6 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
     nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
@@ -14555,11 +14812,6 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
-    nginx.ingress.kubernetes.io/auth-url: https://$host/me
-    nginx.org/websocket-services: dataproxy-service
     nginx.ingress.kubernetes.io/use-regex: "true"
 spec:
   ingressClassName: "controlplane"
@@ -14610,11 +14862,6 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
-    nginx.ingress.kubernetes.io/auth-url: https://$host/me
-    nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -15029,29 +15276,6 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -15780,29 +16004,6 @@ metadata:
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
     nginx.ingress.kubernetes.io/backend-protocol: GRPC
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_authorization$http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-url: http://flyteadmin.union.svc.cluster.local/me
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      auth_request_set $user_id $upstream_http_x_user_subject;
-      proxy_set_header X-User-Subject $user_id;
-      grpc_set_header X-User-Subject $user_id;
-    
-      auth_request_set $user_identitytype $upstream_http_x_user_claim_identitytype;
-      proxy_set_header X-User-Claim-Identitytype $user_identitytype;
-      grpc_set_header X-User-Claim-Identitytype $user_identitytype;
-    
-      auth_request_set $user_handle $upstream_http_x_user_claim_userhandle;
-      proxy_set_header X-User-Claim-userhandle $user_handle;
-      grpc_set_header X-User-Claim-userhandle $user_handle;
-    
-      auth_request_set $groups $upstream_http_x_user_claim_groups;
-      proxy_set_header X-User-Claim-groups $groups;
-      grpc_set_header X-User-Claim-groups $groups;
-    
-      more_set_headers "x-request-id: $request_id";
-      proxy_set_header x-request-id $request_id;
-      grpc_set_header x-request-id $request_id;
 spec:
   ingressClassName: "controlplane"
   tls:
@@ -16533,11 +16734,6 @@ metadata:
       client_header_buffer_size 16k;
       large_client_header_buffers 64 32k;
     nginx.ingress.kubernetes.io/service-upstream: "true"
-    nginx.ingress.kubernetes.io/auth-cache-key: $http_flyte_authorization$http_cookie
-    nginx.ingress.kubernetes.io/auth-response-headers: Set-Cookie,X-User-Subject,X-User-Claim-Identitytype,X-User-Claim-Preferred-Username,X-User-Token
-    nginx.ingress.kubernetes.io/auth-signin: https://$host/login?redirect_url=$escaped_request_uri
-    nginx.ingress.kubernetes.io/auth-url: https://$host/me
-    nginx.org/websocket-services: dataproxy-service
 spec:
   ingressClassName: "controlplane"
   tls:

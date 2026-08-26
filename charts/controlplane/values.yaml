@@ -64,6 +64,18 @@ global:
   AUTH_TOKEN_URL: ""        # OAuth2 token endpoint
   OIDC_S2S_SCOPE: ""        # Okta: leave empty. Entra ID: "api://my-app/.default"
 
+# -- Global kubernetes scheduling constraints applied to control-plane pods.
+# Per-service constraints (services.<name>.nodeSelector / affinity / tolerations)
+# always take precedence. Mirrors the dataplane chart's `scheduling` block so a
+# single value steers both planes (e.g. onto a Spot node pool).
+scheduling:
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  affinity: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  nodeSelector: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration
+  tolerations: []
+
 # Prefer setting the DB password via a K8s secret referenced by
 # global.KUBERNETES_SECRET_NAME; this inline field is here only as a fallback.
 dbPass: ""
@@ -1454,8 +1466,8 @@ services:
         cpu: 2
         memory: 4Gi
       requests:
-        cpu: 1
-        memory: 2Gi
+        cpu: 250m
+        memory: 512Mi
 
 
 # Actions is the stateful coordination layer between the run service and leasor.
@@ -1533,8 +1545,8 @@ actions:
       cpu: 2
       memory: 4Gi
     requests:
-      cpu: 1
-      memory: 2Gi
+      cpu: 150m
+      memory: 512Mi
 
   podAnnotations:
     prometheus.io/path: /metrics
@@ -1607,8 +1619,8 @@ actions:
         cpu: 2
         memory: 2Gi
       requests:
-        cpu: 1
-        memory: 1Gi
+        cpu: 150m
+        memory: 256Mi
     autoscaling:
       enabled: false
       minReplicas: 2
@@ -2379,7 +2391,7 @@ scylla:
           cpu: 2
           memory: 4Gi
         requests:
-          cpu: 1
+          cpu: 250m
           memory: 2Gi
       # Explicitly disable placement constraints (operator adds defaults otherwise)
       # For production with dedicated nodes, configure nodeAffinity and tolerations here
