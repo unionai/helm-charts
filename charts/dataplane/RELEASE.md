@@ -1,5 +1,16 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- Right-size default CPU/memory **requests** for data-plane services
+  (`leaseworker`, BuildKit image-builder, operator, connector,
+  cluster-resource-sync, node-observer, Kourier). **Limits are unchanged** —
+  BuildKit keeps unlimited memory and `leaseworker` keeps its `16Gi` limit (its
+  request drops `8Gi`→`512Mi`) — so only the idle reservation shrinks, improving
+  packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+
 ## 2026.8.3
 
 `version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →

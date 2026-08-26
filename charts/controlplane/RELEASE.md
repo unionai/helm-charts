@@ -1,5 +1,14 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+- Right-size default CPU/memory **requests** for control-plane services (`actions`
+  + its router, `leasor`; `scylla` CPU only) to steady-state usage. **Limits are
+  unchanged**, so burst headroom is intact — only the idle reservation shrinks,
+  improving pod packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+
 ## 2026.8.3
 
 `version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
