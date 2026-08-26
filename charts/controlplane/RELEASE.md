@@ -1,6 +1,14 @@
 # controlplane — Release Notes
 
-## Unreleased
+## 2026.8.4
+
+`version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
+`2026.8.5`, picking up the new control-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+### Chart changes
 
 - Right-size default CPU/memory **requests** for control-plane services (`actions`
   + its router, `leasor`; `scylla` CPU only) to steady-state usage. **Limits are
@@ -15,6 +23,70 @@
   **inherit** from the global block (concat / merge, service wins on conflicts);
   `affinity` fully overrides. Inert by default
   ([#556](https://github.com/unionai/helm-charts/pull/556)).
+- Fix the generic service Deployment template and the redis-consumer
+  StatefulSet rendering `tolerations` as an error object instead of a list
+  whenever any toleration was set (global or per-service) — [#556]'s
+  `fromYaml` on list YAML — which made `helm upgrade` fail with
+  `cannot unmarshal object into Go struct field PodSpec...tolerations`
+  ([#557](https://github.com/unionai/helm-charts/pull/557)).
+
+### Schema migrations (run automatically on upgrade)
+
+- `artifacts`: `artifacts_v2.created_by` moves from a proto-marshaled `bytea`
+  blob to a plain `varchar(255)` subject, with a partial index behind a new
+  `created_by` EQUAL filter on `ListArtifacts`. **Creator attribution on
+  artifacts created before the upgrade is reset to empty** — the blob only ever
+  held the subject. Rolling the image back requires running the migration's
+  rollback too, since the old code unmarshals the column
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833)).
+- `artifacts`: `llm_gateway_gateways` gains
+  `allow_anonymous_access boolean NOT NULL DEFAULT true`; existing gateways keep
+  their current behavior
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `executions`: a backdated `20260101000000_partition_action_events` migration
+  partitions `action_events` by `created_at` **on fresh databases only**. It is
+  triple-guarded — already partitioned → no-op, empty → convert, has rows →
+  no-op with a `NOTICE` — so an existing database upgrading through it is left
+  on the unpartitioned table
+  ([unionai/cloud#17817](https://github.com/unionai/cloud/pull/17817)).
+
+### Behavior
+
+- Artifacts resolve `created_by` into a full `EnrichedIdentity` (name, email) at
+  read time, degrading to a subject-only identity when the identity cache is
+  unavailable. **This chart leaves `services.artifacts.configMap.cache.identity`
+  at the global `enabled: false` default**, so the console keeps rendering the
+  raw OIDC subject until it is turned on for the artifacts service
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833),
+  [unionai/cloud#17866](https://github.com/unionai/cloud/pull/17866)).
+- LLM gateway: anonymous access on the backing app is now a user-settable
+  gateway option instead of a hardcoded `true`. It still defaults to on, so
+  OpenAI-compatible clients keep authenticating with the virtual key alone
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `cluster`: additive IDL for the cluster drain lifecycle (`ClusterState`,
+  `UpdateClusterState`, `InternalClusterService.ReportClusterWorkloadDrained`)
+  and a `GetLifecycleStatus` RPC. The drain RPC is stubbed `Unimplemented` — no
+  behavior change yet ([unionai/cloud#17763](https://github.com/unionai/cloud/pull/17763),
+  [unionai/cloud#17834](https://github.com/unionai/cloud/pull/17834)).
+
+### Console (`unionconsole`)
+
+- The launch form's Settings tab gains a **Timeout** field (overall task-attempt
+  timeout, in seconds). An existing task timeout is prefilled on launch and
+  rerun, and can be edited or cleared before submit
+  ([unionai/cloud#16525](https://github.com/unionai/cloud/pull/16525)).
+- Cluster details renders a red error banner carrying `unhealthyReasons` when an
+  enabled cluster is unhealthy
+  ([unionai/cloud#17831](https://github.com/unionai/cloud/pull/17831)).
+- The LLM gateway deploy form and detail page expose the anonymous-access
+  setting (the Throughput card becomes a Configuration card)
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- Flag-gated, off by default and inert for this chart: ClickHouse-backed org
+  dashboards and the new `/overview` org page
+  ([unionai/cloud#17663](https://github.com/unionai/cloud/pull/17663),
+  [unionai/cloud#17905](https://github.com/unionai/cloud/pull/17905)), and
+  self-serve onboarding tutorial cards on `/home`
+  ([unionai/cloud#17827](https://github.com/unionai/cloud/pull/17827)).
 
 ## 2026.8.3
 
