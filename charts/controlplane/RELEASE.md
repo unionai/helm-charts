@@ -3,8 +3,26 @@
 ## 2026.8.4
 
 `version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
-`2026.8.5`, picking up the new control-plane images. **No chart template or
-values changes in this release** — everything below ships in the images.
+`2026.8.5`, picking up the new control-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+### Chart changes
+
+- Right-size default CPU/memory **requests** for control-plane services (`actions`
+  + its router, `leasor`; `scylla` CPU only) to steady-state usage. **Limits are
+  unchanged**, so burst headroom is intact — only the idle reservation shrinks,
+  improving pod packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Add a chart-level **global scheduling** default
+  (`.Values.scheduling.{affinity,nodeSelector,tolerations}`) honored by every
+  control-plane pod, with per-service overrides — steer the whole plane onto a
+  chosen node pool (e.g. Spot) with one value. Per-service `tolerations`/`nodeSelector`
+  **inherit** from the global block (concat / merge, service wins on conflicts);
+  `affinity` fully overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
 
 ### Schema migrations (run automatically on upgrade)
 
