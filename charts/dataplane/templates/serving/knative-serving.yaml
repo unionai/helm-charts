@@ -1,12 +1,14 @@
-{{- if .Values.serving.enabled }}
+{{- if and (include "apps.enabled" .) (not .Values.zero_trust.enabled) }}
 apiVersion: operator.knative.dev/v1beta1
 kind: KnativeServing
 metadata:
   name: {{ include "serving.fullname" . }}
   namespace: {{ .Release.Namespace }}
+  {{- if .Values.serving.knativeServingHook.enabled }}
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
+  {{- end }}
   labels:
     {{- include "serving.labels" . | nindent 4 }}
 spec:
@@ -30,6 +32,10 @@ spec:
       kubernetes.podspec-dnspolicy: "enabled"
       kubernetes.podspec-schedulername: "enabled"
       kubernetes.podspec-securitycontext: "enabled"
+      # Allow adding a capability subset to the user container's securityContext
+      # (e.g. CAP_SYS_ADMIN, which PodTemplate.allow_fuse() sets so apps/tasks can
+      # mount a FUSE filesystem such as a flyteplugins-union Volume).
+      kubernetes.containerspec-addcapabilities: "enabled"
       {{- if .Values.serving.extraConfig.features }}
       {{- tpl (.Values.serving.extraConfig.features | toYaml) . | nindent 6 }}
       {{- end }}
@@ -77,11 +83,11 @@ spec:
     - container: kourier-gateway
       envVars:
       - name: UNION_AUTHZ_TENANTAUTHURL
-        value: "https://{{ tpl .Values.host . }}/me"
+        value: "https://{{ include "dataplane.cp.host" . }}/me"
       - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
-        value: "https://{{ tpl .Values.host . }}/login"
+        value: "https://{{ include "dataplane.cp.host" . }}/login"
       - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
-        value: "https://{{ tpl .Values.host . }}"
+        value: "https://{{ include "dataplane.cp.host" . }}"
     {{- with index .Values.serving.resources "3scale-kourier-gateway" }}
     resources:
     {{- range $container, $resources := . }}

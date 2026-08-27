@@ -64,6 +64,17 @@ spec:
       - name: config
         configMap:
           name: {{ include "unionai.fullname" $service }}
+      {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
+      {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+      - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
+        secret:
+          secretName: {{ $entry.existingSecret.name }}
+          items:
+          - key: {{ include "controlplane.apiKeyOverride.clientIdKey" $entry }}
+            path: client_id
+          - key: {{ include "controlplane.apiKeyOverride.clientSecretKey" $entry }}
+            path: client_secret
+      {{- end }}
       {{- with $service.config.initContainers }}
       initContainers:
         {{- range . }}
@@ -127,6 +138,12 @@ spec:
               mountPath: /etc/secrets/union
             - name: config
               mountPath: /etc/config/
+            {{- range $entry := ($service.config.apiKeyOverrides | default list) }}
+            {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+            - name: {{ include "controlplane.apiKeyOverride.volumeName" $ident }}
+              mountPath: {{ include "controlplane.apiKeyOverride.mountDir" $ident }}
+              readOnly: true
+            {{- end }}
           {{- $env := include "unionai.env" $service }}
           {{- if $env }}
           env:
@@ -172,7 +189,7 @@ spec:
       {{- $tolerations := include "unionai.tolerations" $service }}
       {{- if $tolerations }}
       tolerations:
-        {{- $tolerations | fromYaml | toYaml | nindent 8 }}
+        {{- $tolerations | fromYamlArray | toYaml | nindent 8 }}
       {{- end }}
 {{- end }}
 {{- end }}

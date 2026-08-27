@@ -11,23 +11,9 @@ spec:
 {{ .Files.Get "files/recording-rules.yml" | indent 2 }}
 {{- end }}
 ---
-{{- if .Values.prometheus.enabled }}
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-recording-rules
-  namespace: {{ .Release.Namespace }}
-  labels:
-    release: {{ .Release.Name }}
-data:
-  recording_rules.yml: |
-{{- if .Values.cost.enabled }}
-{{ .Files.Get "files/recording-rules.yml" | indent 4 }}
-{{- else }}
-    groups: []
-{{- end }}
-{{- end }}
----
+{{- /* The standalone prometheus subchart loads these same recording rules via the
+       recording_rules.yml key injected into the override config ConfigMap; see
+       templates/prometheus/configmap.yaml. */ -}}
 {{- if and .Values.monitoring.prometheusRules.enabled (.Capabilities.APIVersions.Has "monitoring.coreos.com/v1") }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -72,9 +58,15 @@ spec:
               namespace="{{ .Release.Namespace }}"
             }[5m])
 
-        - record: union:dp:executor:active_actions
+        - record: union:dp:leaseworker:active_actions
           expr: |
-            executor::v2:active_actions_count{namespace="{{ .Release.Namespace }}"}
+            leaseworker:active_run_leases{namespace="{{ .Release.Namespace }}"}
+
+        - record: union:dp:pods_unschedulable:sum
+          expr: |
+            sum by (namespace) (
+              kube_pod_status_unschedulable
+            )
 
     {{- if .Values.monitoring.alerting.enabled }}
     # --- Operational alerts (opt-in) ---
@@ -101,14 +93,15 @@ spec:
           annotations:
             summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
 
-        - alert: UnionDPHandlerPanic
+        - alert: UnionDPPodsUnschedulable
           expr: |
-            increase(executor:handler_panic{namespace="{{ .Release.Namespace }}"}[1h]) > 0
-          for: 0m
+            sum by (namespace) (kube_pod_status_unschedulable) > 0
+          for: 15m
           labels:
-            severity: critical
+            severity: warning
           annotations:
-            summary: "Handler panic detected in DP executor"
+            summary: "{{ "{{" }} $labels.namespace {{ "}}" }} has pods that cannot be scheduled (insufficient capacity or taints) for 15m"
+
     {{- end }}
 
     {{- if .Values.monitoring.slos.enabled }}
@@ -140,18 +133,12 @@ spec:
               quantile="0.99"
             } / 1000
 
-        - record: union:dp:slo:executor_success_rate
-          expr: |
-            (
-              sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}", phase="Succeeded"}[5m]))
-              / sum(rate(executor::v2:actions_terminated{namespace="{{ .Release.Namespace }}"}[5m]))
-            ) or vector(1)
-
+        # Tracks propeller round health only. Action terminal outcomes are
+        # deliberately excluded: bad user code fails actions, and that must not
+        # burn the error budget or page anyone — it is not a platform fault.
         - record: union:dp:slo:execution_success_rate
           expr: |
-            (
-              (union:dp:slo:propeller_success_rate + union:dp:slo:executor_success_rate) / 2
-            ) or vector(1)
+            union:dp:slo:propeller_success_rate or vector(1)
 
         - record: union:dp:slo:error_budget_remaining
           expr: |

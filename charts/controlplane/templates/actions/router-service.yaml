@@ -1,0 +1,35 @@
+{{- if and (index .Values "controlplane" | default dict).enabled .Values.actions.enabled }}
+{{- if gt (int (include "actions.shardCount" .)) 1 }}
+{{/*
+Front Service for actions (named "actions"): sibling services reach this via
+configMap.union.internalConnectionConfig. It selects the Envoy router pods,
+which hash each request to the owning shard. When unsharded this Service is
+produced by service-shard.yaml pointing straight at the single pod instead.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "actions.fullname" . }}
+  namespace: {{ include "actions.namespace" . }}
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    {{- include "actions.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.actions.service.type }}
+  ports:
+    - name: admin
+      port: 9901
+      protocol: TCP
+      targetPort: 9901
+    - name: grpc
+      port: {{ .Values.actions.service.grpcport }}
+      protocol: TCP
+      targetPort: 8080
+    - name: http
+      port: {{ .Values.actions.service.httpport }}
+      protocol: TCP
+      targetPort: 8089
+  selector:
+    {{- include "actions.router.selectorLabels" . | nindent 4 }}
+{{- end }}
+{{- end }}

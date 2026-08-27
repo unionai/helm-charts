@@ -30,22 +30,24 @@ the stow based options to provide additional configuration flexibility.
       endpoint: {{ . }}
 {{- end }}
 {{- else if eq .Values.storage.provider "aws" }}
-  type: s3
-  connection:
-    auth-type: {{ .Values.storage.authType }}
-    region: {{ .Values.storage.region }}
-    {{- if eq .Values.storage.authType "accesskey" }}
-    {{- if .Values.storage.credentialsSecretRef.name }}
-    {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
-    {{- if $secret }}
-    access-key: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
-    secret-key: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
-    {{- end }}
-    {{- else }}
-    access-key: {{ .Values.storage.accessKey }}
-    secret-key: {{ .Values.storage.secretKey }}
-    {{- end }}
-    {{- end }}
+  type: stow
+  stow:
+    kind: s3
+    config:
+      auth_type: {{ .Values.storage.authType }}
+      region: {{ .Values.storage.region }}
+      {{- if eq .Values.storage.authType "accesskey" }}
+      {{- if .Values.storage.credentialsSecretRef.name }}
+      {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+      {{- if $secret }}
+      access_key_id: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
+      secret_key: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
+      {{- end }}
+      {{- else }}
+      access_key_id: {{ .Values.storage.accessKey }}
+      secret_key: {{ .Values.storage.secretKey }}
+      {{- end }}
+      {{- end }}
 {{- else if eq .Values.storage.provider "gcs" }}
   type: stow
   stow:
@@ -55,17 +57,41 @@ the stow based options to provide additional configuration flexibility.
         project_id: {{ required "GCP project required for GCS storage provider" .Values.storage.gcp.projectId }}
         scopes: https://www.googleapis.com/auth/cloud-platform
 {{- else if eq .Values.storage.provider "custom" }}
-{{- with .Values.storage.custom -}}
-  {{ tpl (toYaml .) $ | nindent 2 }}
-{{- end }}
+  {{- $custom := deepCopy (default dict .Values.storage.custom) -}}
+  {{- $customType := default "" $custom.type -}}
+  {{- $stow := default dict $custom.stow -}}
+  {{- $stowKind := default "" $stow.kind -}}
+  {{- $stowConfig := default dict $stow.config -}}
+
+  {{- if and .Values.storage.credentialsSecretRef.name (eq $customType "stow") (eq $stowKind "s3") -}}
+    {{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name -}}
+    {{- if $secret -}}
+      {{- $secretCreds := dict
+        "access_key_id" (index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec)
+        "secret_key" (index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec)
+      -}}
+      {{- $mergedStowConfig := mergeOverwrite (deepCopy $stowConfig) $secretCreds -}}
+      {{- $_ := set $stow "config" $mergedStowConfig -}}
+      {{- $_ := set $custom "stow" $stow -}}
+    {{- end -}}
+  {{- end -}}
+
+  {{- if $custom }}
+  {{- tpl (toYaml $custom) $ | nindent 2 }}
+  {{- end }}
 {{- else }}
 {{- fail "invalid provider" }}
 {{- end }}
 {{- end }}
 
 {{- define "storage" -}}
+{{- /* A custom provider block may carry its own container key; rendering the default alongside it would emit a
+       duplicate mapping key, which strict YAML parsers reject. The custom value wins. */}}
+{{- $customHasContainer := and (eq .Values.storage.provider "custom") (hasKey (default dict .Values.storage.custom) "container") -}}
 storage:
+{{- if not $customHasContainer }}
   container: {{ tpl .Values.storage.bucketName . | quote }}
+{{- end }}
 {{- include "storage.base" . }}
   enable-multicontainer: {{ .Values.storage.enableMultiContainer }}
   limits:
@@ -76,8 +102,11 @@ storage:
 {{- end }}
 
 {{- define "fast-registration-storage" -}}
+{{- $customHasContainer := and (eq .Values.storage.provider "custom") (hasKey (default dict .Values.storage.custom) "container") -}}
 fastRegistrationStorage:
+{{- if not $customHasContainer }}
   container: {{ .Values.storage.fastRegistrationBucketName | quote}}
+{{- end }}
 {{- include "storage.base" .}}
 {{- end }}
 

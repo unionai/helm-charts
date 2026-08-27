@@ -17,15 +17,6 @@ global:
   ARTIFACTS_BUCKET_NAME: ""   # S3 bucket for artifacts
   KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
 
-  # --- DP entrypoint (CP -> DP) ---
-  DATAPLANE_HOST: ""          # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
-
-  # --- Images ---
-  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
-
-  # --- Ingress ---
-  INGRESS_PROVIDER: nginx     # nginx | envoy | both
-
   # --- AWS IAM (IRSA) ---
   ARTIFACT_IAM_ROLE_ARN: ""   # IAM role for the artifacts service
   FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role shared by flyteadmin, datacatalog, cacheservice
@@ -49,64 +40,31 @@ flyte:
     adminServer:
       connection:
         region: '{{ .Values.global.AWS_REGION }}'
-
-      # --- OIDC Authentication ---
-      # Fill in the IdP-specific fields below. Defaults beyond these (claims,
-      # cookie settings, etc.) live in base values.yaml's
-      # `flyte.configmap.adminServer.auth` block.
-      auth:
-        appAuth:
-          externalAuthServer:
-            # OIDC issuer base URL.
-            #   Okta:      https://dev-123456.okta.com/oauth2/default
-            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
-            baseUrl: ""
-            # OIDC metadata discovery path (relative to baseUrl).
-            #   Okta:      .well-known/oauth-authorization-server  (default)
-            #   Entra ID:  .well-known/openid-configuration
-            metadataUrl: ".well-known/oauth-authorization-server"
-          thirdPartyConfig:
-            flyteClient:
-              # CLI / SDK PKCE client.
-              #   Okta:      "0oa..."
-              #   Entra ID:  "<app-uuid>"
-              clientId: ""
-              # Entra ID only — leave empty for Okta.
-              audience: ""
-        userAuth:
-          openId:
-            # Browser login.
-            #   Okta:      https://dev-123456.okta.com/oauth2/default
-            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
-            baseUrl: ""
-            #   Okta:      "0oa..."
-            #   Entra ID:  "<app-uuid>"
-            clientId: ""
+      # OIDC auth (appAuth / userAuth) is IdP-specific, not cloud-specific — it
+      # lives in base values.yaml under flyte.configmap.adminServer.auth (with
+      # the Okta/Entra fill-in guidance). Set it there or at the env layer.
 
   # --- AWS IRSA Annotations ---
+  # Override global.AWS_POD_IDENTITY_ANNOTATION_PREFIX if your AWS pod identity
+  # webhook uses a custom --annotation-prefix.
   flyteadmin:
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
   datacatalog:
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
   cacheservice:
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
+        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
 
 services:
   artifacts:
     serviceAccount:
       annotations:
-        eks.amazonaws.com/role-arn: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
-  dataproxy:
-    configMap:
-      dataproxy:
-        # Falls back to DATAPLANE_HOST when DATAPLANE_ENDPOINT is unset.
-        secureTunnelTenantURLPattern: '{{ default .Values.global.DATAPLANE_HOST .Values.global.DATAPLANE_ENDPOINT }}'
+        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
 
 scylla:
   storageClass:

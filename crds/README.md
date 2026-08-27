@@ -36,8 +36,8 @@ background on the failure mode.
 | `kube-prometheus-stack/`   | `prometheus-community/kube-prometheus-stack`        | `controlplane`, `dataplane` |
 | `scylla-operator/`         | `scylla/scylla-operator`                            | `controlplane`            |
 | `envoy-gateway/`           | `oci://docker.io/envoyproxy/gateway-helm`           | `controlplane`            |
-| `flyte-v1/`                | Union-maintained; mirror of `charts/dataplane/crds/` | `dataplane` (FlyteWorkflow); replaces `charts/dataplane-crds` |
-| `knative-operator/`        | `knative/serving` + `knative/operator` releases     | App Serving; replaces `charts/knative-operator-crds` |
+| `dataplane/`               | `knative/serving` release (12 serving CRDs) + Union-maintained FlyteWorkflow CRD; full mirror of `charts/dataplane/crds/` | `dataplane` chart (always): FlyteWorkflow CRD + Knative Serving CRDs (needed by both the zero-trust gateway and the legacy knative-operator path). Replaces `charts/dataplane-crds`. |
+| `knative-operator/`        | `knative/operator` release (2 `operator.knative.dev` CRDs only); mirror of `charts/knative-operator/crds/` | `knative-operator` subchart (legacy / non-zero-trust path). Knative serving CRDs live in `dataplane/` and are pulled from there, not duplicated here. Delete this dir + the subchart when zero-trust becomes the only mode. Replaces `charts/knative-operator-crds`. |
 
 The corresponding parent chart's subchart `crds/` directory is NOT rendered
 by ArgoCD — the parent ApplicationSet sets `helm.skipCrds: true` on its
@@ -54,24 +54,26 @@ crds/<name>/
   crd-*.yaml                # vendored CRDs with an "AUTO-GENERATED — do not edit" header
 ```
 
-Each directory falls into one of two subtypes — both end up as
-byte-identical `crd-*.yaml` plus a `scripts/` pair, so `make vendor-crds`
-and `make check-vendored-crds` iterate over them uniformly.
+Each directory falls into one of two subtypes — all have `scripts/sync.sh`
++ `scripts/check.sh` and are picked up uniformly by `make vendor-crds` /
+`make check-vendored-crds`:
 
-**Upstream-tracked** (KPS / scylla / envoy-gateway): `scripts/sync.sh`
-pulls from the upstream chart at the version declared in
-`charts/controlplane/Chart.yaml`, writes that version to `VERSION`, and
-re-emits the `crd-*.yaml` files. Hand edits are overwritten on the next
-sync; patch downstream (kustomize on the ArgoCD source, or a helm
-post-render), not `crd-*.yaml` directly.
+**Upstream-only** (KPS / scylla / envoy-gateway): `sync.sh` pulls from the
+upstream chart at the version declared in `charts/controlplane/Chart.yaml`,
+writes that version to `VERSION`, and emits `crd-*.yaml` into this dir.
+Hand edits are overwritten on the next sync; patch downstream (kustomize on
+the ArgoCD source, or a helm post-render), not `crd-*.yaml` directly.
 
-**Chart-mirrored** (`flyte-v1/`): the source of truth is a CRD file inside
-a chart's Helm-native `crds/` directory (e.g.
-`charts/dataplane/crds/crd-flyteworkflows.yaml`). `scripts/sync.sh` copies
-that file here so the mirror can be installed via SSA by a dedicated
-ArgoCD `Application` (when the customer runs `helm install --skip-crds`).
-No `VERSION` file — there's no upstream version to track. Edit the
-chart-dir file, then `make vendor-crds`.
+**Chart-mirrored, upstream-tracked** (`dataplane/`, `knative-operator/`):
+`sync.sh` pulls from upstream at the version pinned in `VERSION`, writes
+upstream-sourced CRDs to the corresponding chart's `crds/` dir
+(`charts/dataplane/crds/` or `charts/knative-operator/crds/`) AND mirrors
+EVERY file in that chart dir (including Union-maintained CRDs not pulled
+from upstream — e.g. `crd-flyteworkflows.yaml`) into this dir for SSA
+install via a dedicated ArgoCD `Application` (when the customer runs
+`helm install --skip-crds`). The chart dir is the single source of truth
+for "what CRDs does this chart need"; this mirror is its byte-identical
+SSA-install copy.
 
 ## Adding a new vendored CRD set
 

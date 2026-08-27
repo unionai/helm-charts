@@ -7,7 +7,10 @@ metadata:
   labels:
     {{- include "leaseworker.labels" . | nindent 4 }}
 data:
-  {{- with .Values.executor.task_logs }}
+  {{- /* Canonical task-log-link config is leaseworker.task_logs. The deprecated
+       executor.task_logs key wins when an overlay sets it, so overlays that
+       predate the executor removal keep their custom log links. */}}
+  {{- with (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs }}
   task_logs.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
   {{- end }}
   webhook.yaml: |
@@ -30,15 +33,11 @@ data:
     {{- with (index .Values.config.core.propeller "accelerated-inputs") }}
     {{- $_ = set $leaseworkerConfig "acceleratedInputs" . }}
     {{- end }}
-    {{- if and (include "singleNamespace" $) (not (index $leaseworkerConfig "namespace-template")) }}
-    {{- $_ = set $leaseworkerConfig "namespace-template" $.Release.Namespace }}
+    {{- if include "singleNamespace" $ }}
+    {{- $_ = set $leaseworkerConfig "namespace-template" (include "dataplane.namespaceTemplate" $) }}
     {{- else if not (index $leaseworkerConfig "namespace-template") }}
-    {{- with dig "namespace_mapping" "template" "" .Values.config.namespace_config }}
+    {{- with include "dataplane.namespaceTemplate" $ }}
     {{- $_ = set $leaseworkerConfig "namespace-template" . }}
-    {{- else }}
-    {{- with .Values.namespace_mapping.template }}
-    {{- $_ = set $leaseworkerConfig "namespace-template" . }}
-    {{- end }}
     {{- end }}
     {{- end }}
     {{- if and (include "singleNamespace" $) (not (index $leaseworkerConfig "limit-namespace")) }}

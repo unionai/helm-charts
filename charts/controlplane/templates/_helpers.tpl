@@ -42,6 +42,74 @@ Notes:
 {{- end }}
 {{- end }}
 
+{{/*
+Cluster-local FQDN default for connection.rootTenantURLPattern. Originally just
+CP↔CP gRPC routing; scope has since expanded — EAGER_API_KEY bootstrapping mints
+this endpoint into the api-key, and dataplane task pods dial it. Switches between
+envoy and nginx based on the ingress provider.
+*/}}
+{{- define "controlPlaneLibrary.ingressFqdn" -}}
+{{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" -}}
+{{ .Values.global.ENVOY_INGRESS_FQDN | default "envoy-controlplane.envoy-gateway.svc.cluster.local" }}
+{{- else -}}
+controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local
+{{- end -}}
+{{- end -}}
+
+{{/*
+Validate a connection endpoint (rootTenantURLPattern). It is minted into eager
+api-keys and dialed by both control-plane services and dataplane task pods.
+Control-plane services strip the dns:/// prefix and dial the bare host, and the
+key codec shifts its decoded fields when the endpoint carries a trailing :port —
+so require a dns:/// gRPC target with no port. The {{`{{ organization }}`}}
+placeholder is substituted by the services at runtime (not a helm template), so
+neutralize it before rendering the rest of the value.
+Args: dict "ep" <raw endpoint, may be a tpl string> "ctx" <root context>
+"name" <field name for the error message>.
+*/}}
+{{- define "controlPlaneLibrary.validateGrpcEndpoint" -}}
+{{- $raw := .ep | toString | replace "{{ organization }}" "organization" -}}
+{{- $resolved := trim (tpl $raw .ctx) -}}
+{{- if $resolved -}}
+{{- if not (hasPrefix "dns:///" $resolved) -}}
+{{- fail (printf "controlplane: %s = %q must be a dns:/// gRPC target — control-plane services strip the dns:/// prefix and dial the bare host" .name $resolved) -}}
+{{- end -}}
+{{- $host := trimPrefix "dns:///" $resolved -}}
+{{- if regexMatch ":[0-9]+$" $host -}}
+{{- fail (printf "controlplane: %s = %q must not carry a trailing :port (a port shifts the eager-api-key codec's decoded fields)" .name $resolved) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Enforce that rootTenantURLPattern is identical across every connection in the
+chart. The endpoint is minted into the operator EAGER_API_KEY and dialed by
+dataplane task pods: the control-plane services read the top-level
+configMap.connection, while flyteadmin-private reads
+flyte.configmap.adminServer.connection — a separate values path the flyte
+subchart owns, which cannot share the value through a helm `include`. If the two
+diverge, flyteadmin dials a different control-plane host than every other service
+and the minted key points somewhere the task pods can't reach. Resolve each (tpl)
+and fail on any mismatch. Both default to dns:///<global.UNION_HOST>; override
+them together (e.g. for intracluster svc-FQDN or internal-VPC routing).
+Args: root context (.)
+*/}}
+{{- define "controlPlaneLibrary.validateRootTenantConsistency" -}}
+{{- $tl := index (index (.Values.configMap | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $fa := index (index (index (index (.Values.flyte | default dict) "configmap" | default dict) "adminServer" | default dict) "connection" | default dict) "rootTenantURLPattern" -}}
+{{- $sources := dict "configMap.connection.rootTenantURLPattern" $tl "flyte.configmap.adminServer.connection.rootTenantURLPattern" $fa -}}
+{{- $byValue := dict -}}
+{{- range $field, $raw := $sources -}}
+{{- if $raw -}}
+{{- $resolved := trim (tpl ($raw | toString | replace "{{ organization }}" "organization") $) -}}
+{{- $_ := set $byValue $resolved (append (index $byValue $resolved | default list) $field) -}}
+{{- end -}}
+{{- end -}}
+{{- if gt (len (keys $byValue)) 1 -}}
+{{- fail (printf "controlplane: rootTenantURLPattern must be identical across all connections (it is minted into the operator EAGER_API_KEY and dialed by dataplane task pods), but got divergent values %v — set configMap.connection and flyte.configmap.adminServer.connection consistently (both default to dns:///<global.UNION_HOST>)" $byValue) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "unionai.imagePullSecrets" -}}
 {{- if and (hasKey .config "imagePullSecrets") }}
 {{ toYaml .config.imagePullSecrets }}
@@ -61,10 +129,9 @@ Notes:
 {{- end }}
 
 {{- define "unionai.nodeSelector" -}}
-{{- if and (hasKey .config "nodeSelector") }}
-{{ toYaml .config.nodeSelector }}
-{{- else if and (hasKey .Values "nodeSelector") }}
-{{ toYaml .Values.nodeSelector }}
+{{- $ns := merge (dict) (.config.nodeSelector | default dict) (.Values.nodeSelector | default dict) ((.Values.scheduling | default dict).nodeSelector | default dict) -}}
+{{- with $ns }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
@@ -82,14 +149,15 @@ Notes:
 {{ toYaml .config.affinity }}
 {{- else if and (hasKey .Values "affinity") }}
 {{ toYaml .Values.affinity }}
+{{- else if and (hasKey .Values "scheduling") .Values.scheduling.affinity }}
+{{ toYaml .Values.scheduling.affinity }}
 {{- end }}
 {{- end }}
 
 {{- define "unionai.tolerations" -}}
-{{- if and (hasKey .config "tolerations") }}
-{{ toYaml .config.tolerations }}
-{{- else if and (hasKey .Values "tolerations") }}
-{{ toYaml .Values.tolerations }}
+{{- $t := concat ((.Values.scheduling | default dict).tolerations | default list) (.Values.tolerations | default list) (.config.tolerations | default list) -}}
+{{- with $t }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
@@ -130,9 +198,9 @@ false
 
 {{- define "unionai.serviceAccount.annotations" -}}
 {{- if and (hasKey .config "serviceAccount") (hasKey .config.serviceAccount "annotations") }}
-{{- toYaml .config.serviceAccount.annotations }}
+{{- tpl (toYaml .config.serviceAccount.annotations) . }}
 {{- else if and (hasKey .Values "serviceAccount") (hasKey .Values.serviceAccount "annotations") }}
-{{- toYaml .Values.serviceAccount.annotations }}
+{{- tpl (toYaml .Values.serviceAccount.annotations) . }}
 {{- else }}
 {}
 {{- end }}
@@ -235,7 +303,7 @@ null
 {{- if .config.fullnameOverride }}
 {{- .config.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" $.Release.Name .key | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 
@@ -406,6 +474,67 @@ IfNotPresent
 
 {{- $merged := (include "unionai.deepMerge" (dict "dest" $global "source" $svc) | fromYaml) }}
 
+{{- /* v2-actions CreateRun routing is unconditional: this deployment's own
+       UNION_ORG goes through the v2 actions service and sub-2.0.4 SDK
+       CreateRun is hard-rejected. The legacy queue service is gone from this
+       chart, so there is no fallback path and no toggle (.Values.actionsLeasor
+       is a deprecated no-op). The run service reads useActionsServiceForOrgs +
+       rejectLegacySDKVersions out of the executions configmap
+       (services.executions.configMap.executions.task in values.yaml), so we
+       patch that path before rendering. */}}
+{{- if eq .key "executions" }}
+  {{- $executions := index $merged "executions" | default dict }}
+  {{- $task := index $executions "task" | default dict }}
+  {{- $_ := set $task "useActionsServiceForOrgs" (list .Values.global.UNION_ORG) }}
+  {{- $_ := set $task "rejectLegacySDKVersions" true }}
+  {{- $_ := set $executions "task" $task }}
+  {{- $_ := set $merged "executions" $executions }}
+{{- end }}
+
+{{- /* apiKeyOverrides: render identity.app.apiKeyOverrides file locations from the
+       seeded-secret references on services.identity (mounted by deployment.yaml,
+       paths from controlplane.apiKeyOverride.mountDir). Reference-only. */}}
+{{- if and (eq .key "identity") .config.apiKeyOverrides }}
+  {{- $identity := index $merged "identity" | default dict }}
+  {{- $app := index $identity "app" | default dict }}
+  {{- /* Backend config (identity.config.ApiKeyOverride) is a flat list of
+         {org, key, clusterName, clientIdLocation, clientSecretLocation}. Render it
+         from the seeded-secret references on services.identity (mounted by
+         deployment.yaml). Each entry is scoped to this deployment's org; an empty
+         clusterName is the default that serves any cluster without its own entry. */}}
+  {{- $org := .Values.global.UNION_ORG | default "" }}
+  {{- $overrides := list }}
+  {{- range $entry := .config.apiKeyOverrides }}
+    {{- $ident := dict "key" $entry.key "clusterName" ($entry.clusterName | default "") }}
+    {{- $dir := include "controlplane.apiKeyOverride.mountDir" $ident }}
+    {{- $overrides = append $overrides (dict "org" $org "key" $entry.key "clusterName" ($entry.clusterName | default "") "clientIdLocation" (printf "%s/client_id" $dir) "clientSecretLocation" (printf "%s/client_secret" $dir)) }}
+  {{- end }}
+  {{- $_ := set $app "apiKeyOverrides" $overrides }}
+  {{- $_ := set $identity "app" $app }}
+  {{- $_ := set $merged "identity" $identity }}
+{{- end }}
+
+{{- /* Guard the eager-api-key / CP↔CP endpoint against misconfiguration: a
+       supported scheme and no trailing :port. Runs for every service's merged
+       connection. */}}
+{{- $mergedRootPattern := index (index $merged "connection" | default dict) "rootTenantURLPattern" }}
+{{- if $mergedRootPattern }}
+  {{- include "controlPlaneLibrary.validateGrpcEndpoint" (dict "ep" $mergedRootPattern "ctx" . "name" (printf "services.%s connection.rootTenantURLPattern" (.key | default "*"))) }}
+{{- end }}
+
+{{- /* dataproxy: default union.connection.host to the in-cluster control-plane
+       endpoint (connection.rootTenantURLPattern) so it isn't duplicated in values. */}}
+{{- if eq .key "dataproxy" }}
+  {{- $rootPattern := index (index $merged "connection" | default dict) "rootTenantURLPattern" }}
+  {{- if $rootPattern }}
+    {{- $union := index $merged "union" | default dict }}
+    {{- $unionConn := index $union "connection" | default dict }}
+    {{- $_ := set $unionConn "host" $rootPattern }}
+    {{- $_ := set $union "connection" $unionConn }}
+    {{- $_ := set $merged "union" $union }}
+  {{- end }}
+{{- end }}
+
 {{- if hasKey .Values "logging" }}
   {{- $_ := set $merged "logger" (omit .Values.logging "pythonLevel") }}
 {{- end }}
@@ -413,6 +542,60 @@ IfNotPresent
 {{- $rendered := tpl ($merged | toYaml) . }}
 {{- $rendered }}
 {{- end }}
+
+{{/*
+apiKeyOverrides helpers — secret-by-reference overrides for system API keys.
+apiKeyOverrides is a LIST; each entry references a pre-created K8s Secret holding
+the OAuth client_id + client_secret and is identified by (key, optional
+clusterName). The chart mounts each one and renders identity.app.apiKeyOverrides
+with the resulting file paths. Mount dir and config locations both derive from
+controlplane.apiKeyOverride.slug so they cannot drift.
+
+slug: stable per-entry identifier. Cluster-nameless entries slug to just the key;
+cluster-scoped entries append the cluster so distinct dataplanes get distinct
+seeded clients (and distinct mount paths) under the same system key. Input dict:
+{ key, clusterName }.
+*/}}
+{{- define "controlplane.apiKeyOverride.slug" -}}
+{{- .key }}{{- if .clusterName }}-{{ .clusterName }}{{- end -}}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.mountDir" -}}
+/etc/secrets/apikey/{{ include "controlplane.apiKeyOverride.slug" . }}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.volumeName" -}}
+apikey-{{ include "controlplane.apiKeyOverride.slug" . | lower | replace "_" "-" }}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.clientIdKey" -}}
+{{- default "client_id" .existingSecret.clientIdKey -}}
+{{- end -}}
+
+{{- define "controlplane.apiKeyOverride.clientSecretKey" -}}
+{{- default "client_secret" .existingSecret.clientSecretKey -}}
+{{- end -}}
+
+{{/* Fail fast on a malformed apiKeyOverrides list: each entry needs a key and an
+     existingSecret.name, and (key, clusterName) must be unique per service. */}}
+{{- define "controlplane.apiKeyOverrides.validate" -}}
+{{- range $svcKey, $svc := .Values.services -}}
+{{- $seen := dict -}}
+{{- range $entry := ($svc.apiKeyOverrides | default list) -}}
+{{- if not $entry.key -}}
+{{- fail (printf "services.%s.apiKeyOverrides: each entry requires 'key'" $svcKey) -}}
+{{- end -}}
+{{- if not (($entry.existingSecret).name) -}}
+{{- fail (printf "services.%s.apiKeyOverrides[key=%s]: existingSecret.name is required (reference-only, no inline secret)" $svcKey $entry.key) -}}
+{{- end -}}
+{{- $dedup := printf "%s\x00%s" $entry.key ($entry.clusterName | default "") -}}
+{{- if hasKey $seen $dedup -}}
+{{- fail (printf "services.%s.apiKeyOverrides: duplicate entry for key %q clusterName %q" $svcKey $entry.key ($entry.clusterName | default "")) -}}
+{{- end -}}
+{{- $_ := set $seen $dedup true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 
 {{/*
 Renders a complete tree, even values that contains template.
@@ -456,13 +639,15 @@ storage:
 {{- if eq .Values.flyte.storage.type "s3" }}
   type: s3
   container: {{ .Values.flyte.storage.bucketName | quote }}
-  connection:
-    auth-type: {{ .Values.flyte.storage.s3.authType }}
-    region: {{ .Values.flyte.storage.s3.region }}
-    {{- if eq .Values.flyte.storage.s3.authType "accesskey" }}
-    access-key: {{ .Values.flyte.storage.s3.accessKey }}
-    secret-key: {{ .Values.flyte.storage.s3.secretKey }}
-    {{- end }}
+  stow:
+    kind: s3
+    config:
+      auth_type: {{ .Values.flyte.storage.s3.authType }}
+      region: {{ .Values.flyte.storage.s3.region }}
+      {{- if eq .Values.flyte.storage.s3.authType "accesskey" }}
+      access_key_id: {{ .Values.flyte.storage.s3.accessKey }}
+      secret_key: {{ .Values.flyte.storage.s3.secretKey }}
+      {{- end }}
 {{- else if eq .Values.flyte.storage.type "gcs" }}
   type: stow
   stow:
@@ -643,31 +828,6 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ toYaml .Values.strategy }}
 {{- end }}
 {{- end }}
-
-{{/*
-Queue service database host helper - returns ScyllaDB host if scylla.enabled, otherwise uses external ScyllaDB
-NOTE: This is ONLY for the queue service. All other services use Postgres (globals.DB_HOST).
-ScyllaDB is required for the queue service, Postgres is required for all other services.
-*/}}
-{{- define "controlplane.dbHost" -}}
-{{- if .Values.scylla.enabled -}}
-{{ printf "%s.%s.svc.cluster.local" (default "scylla" .Values.scylla.fullnameOverride) .Release.Namespace }}
-{{- else -}}
-{{ .Values.global.DB_HOST }}
-{{- end -}}
-{{- end -}}
-
-{{/*
-Queue service database port helper - returns ScyllaDB CQL port if scylla.enabled, otherwise uses 5432 (postgres default)
-NOTE: This is ONLY for the queue service. All other services use Postgres on port 5432.
-*/}}
-{{- define "controlplane.dbPort" -}}
-{{- if .Values.scylla.enabled -}}
-9042
-{{- else -}}
-5432
-{{- end -}}
-{{- end -}}
 
 {{/*
 Start of union.authz helpers.

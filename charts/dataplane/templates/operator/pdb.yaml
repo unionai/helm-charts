@@ -1,0 +1,19 @@
+{{- if .Values.operator.podDisruptionBudget.enabled }}
+# PodDisruptionBudget for the singleton union-operator. Opt-in (default off): with
+# replicas=1, minAvailable=1 blocks ALL voluntary eviction of the operator, so it
+# is meant for ephemeral/CI clusters (e.g. helm-charts-ci) where a mid-run node
+# drain must not evict the operator (which hosts DP<->CP wiring) and flap the
+# cluster. Leave disabled on long-running envs so their nodes stay drainable and
+# auto-patchable (this blocks node-pool upgrades, not just Karpenter consolidation).
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "union-operator.fullname" . }}
+  labels:
+    {{- include "operator.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.operator.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "operator.selectorLabels" . | nindent 6 }}
+{{- end }}

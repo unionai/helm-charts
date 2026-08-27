@@ -13,10 +13,11 @@ class VersionBumper:
         key: str = "version",
         version: str = None,
         next: bool = True,
+        prerelease: str = None,
     ) -> None:
         if version is None:
             fetcher = VersionFetcher()
-            version = fetcher.run(file=file, key=key, next=next)
+            version = fetcher.run(file=file, key=key, next=next, prerelease=prerelease)
 
         chart = self.get_chart(file=file)
         if key not in chart:

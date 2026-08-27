@@ -82,13 +82,13 @@ kind: ServiceAccount
 automountServiceAccountToken: true
 metadata:
   labels:    
-    helm.sh/chart: kube-state-metrics-5.25.1
+    helm.sh/chart: kube-state-metrics-5.27.0
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.13.0"
+    app.kubernetes.io/version: "2.14.0"
   name: release-name-kube-state-metrics
   namespace: union
 ---
@@ -100,9 +100,8 @@ metadata:
     app.kubernetes.io/component: server
     app.kubernetes.io/name: prometheus
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: v2.54.1
-    helm.sh/chart: prometheus-25.27.0
-    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: v2.55.1
+    helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
   name: union-operator-prometheus
   namespace: union
@@ -140,14 +139,6 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-# SA and RBAC are regular release resources (not hooks) so they exist when the pre-delete Job runs.
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-pre-delete
-  namespace: union
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -346,20 +337,3331 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
 data: {}
 ---
-# Source: dataplane/charts/prometheus/templates/cm.yaml
+# Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  labels:
-    app.kubernetes.io/component: server
-    app.kubernetes.io/name: prometheus
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: v2.54.1
-    helm.sh/chart: prometheus-25.27.0
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/part-of: prometheus
-  name: union-operator-prometheus
+  name: fluentbit-system
   namespace: union
+  labels:
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  custom_parsers.conf: |
+    [PARSER]
+        Name docker_no_time
+        Format json
+        Time_Keep Off
+        Time_Key time
+        Time_Format %Y-%m-%dT%H:%M:%S.%L
+  fluent-bit.conf: |
+    [SERVICE]
+        Parsers_File /fluent-bit/etc/parsers.conf
+        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
+        HTTP_Server On
+        HTTP_Listen 0.0.0.0
+        Health_Check On
+    [INPUT]
+        Name                tail
+        Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
+        Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
+        Path                /var/log/containers/*.log
+        DB                  /var/log/flb_kube.db
+        multiline.parser    docker, cri
+        Mem_Buf_Limit       5MB
+        Skip_Long_Lines     On
+        Refresh_Interval    10
+    
+    
+    [OUTPUT]
+        Name s3
+        Match *
+        upload_timeout 1m
+        s3_key_format /persisted-logs/$TAG
+        static_file_path true
+        json_date_key false
+        region us-east-1
+        bucket 
+
+---
+# Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-image-config
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  storage.yaml: | 
+    storage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  default-repository: "union-dataplane"
+  authentication-type: "noop"
+
+---
+# Source: dataplane/templates/imagebuilder/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name : union-operator-buildkit
+data:
+  buildkitd.toml: |
+    debug = false
+
+    [log]
+      format = "text"
+
+    [worker.oci]
+      enabled = true
+      snapshotter = "auto"
+      gc = true
+      max-parallelism = 0
+
+      # Should not be used if Policies are defined
+      gckeepstorage = "10%"
+      [[worker.oci.gcpolicy]]
+        # Remove COPY/ADD and git checkout files
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "type==source.local", "type==source.git.checkout" ]
+      [[worker.oci.gcpolicy]]
+        # Remove locally cached image layers after it's unused for 24 hours
+        keepBytes = "10%"
+        keepDuration = "24h"
+        filters = [ "regular" ]
+      [[worker.oci.gcpolicy]]
+        # Remove shared cache mounts. E.G. Pip cache
+        keepBytes = "10%"
+        keepDuration = "72h"
+        filters = [ "type==exec.cachemount" ]
+      [[worker.oci.gcpolicy]]
+        # Remove everything else to keep the cache size under total file system limit
+        all = true
+        keepBytes = "80%"
+---
+# Source: dataplane/templates/leaseworker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: leaseworker
+  namespace: union
+  labels:
+    app: leaseworker
+data:
+  task_logs.yaml: | 
+    plugins:
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+  webhook.yaml: |
+
+    
+    propeller:
+      limit-namespace: union
+    webhook:
+      certDir: /etc/webhook/certs
+      disableCreateMutatingWebhookConfig: true
+      embeddedSecretManagerConfig:
+        clusterName: ''
+        imagePullSecrets:
+          enabled: true
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+      listenPort: '9443'
+      localCert: true
+      secretManagerTypes:
+      - Embedded
+      - K8s
+      secretName: union-pod-webhook
+      serviceName: union-pod-webhook
+      servicePort: '443'
+  enabled_plugins.yaml: |
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+    tasks:
+      task-plugins:
+        default-for-task-types:
+          actor: fast-task
+          container: container
+          container_array: k8s-array
+          sidecar: sidecar
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+  config.yaml: |
+    leaseworker:
+      capacity: 100000
+      cluster: ''
+      dispatcherCount: 512
+      limit-namespace: union
+      namespace-template: union
+      organization: ''
+      refreshInterval: 10s
+      task_resources:
+        defaults:
+          cpu: 100m
+          memory: 500Mi
+        limits:
+          cpu: 4096
+          gpu: 256
+          memory: 2Ti
+      unionAuth:
+        injectSecret: true
+        secretName: EAGER_API_KEY
+      workerName: '--worker1'
+    union:
+      connection:
+        host: 'dns:///test-controlplane-host'
+        http2KeepAlive:
+          pingTimeout: 10s
+          readIdleTimeout: 30s
+        insecureSkipVerify: false
+        unaryRPCTimeout: 30s
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: ''
+        clientSecretLocation: /etc/union/secret/client_secret
+        enable: true
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+    admin:
+      clientId: ''
+      clientSecretLocation: /etc/union/secret/client_secret
+      endpoint: 'dns:///test-controlplane-host'
+      insecure: false
+      insecureSkipVerify: false
+    authorizer:
+      authorizerClient:
+        credentials: ServiceCredentials
+        grpcConfig:
+          host: 'dns:///test-controlplane-host'
+          insecure: false
+          insecureSkipVerify: false
+      type: Authorizer
+    catalog-cache:
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
+      insecure: false
+      insecure-skip-verify: false
+      type: cacheservicev2
+      use-admin-auth: true
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+    sharedService:
+      metrics:
+        scope: 'leaseworker:'
+      security:
+        allowCors: true
+        allowLocalhostAccess: true
+        allowedHeaders:
+        - Content-Type
+        allowedOrigins:
+        - '*'
+        secure: false
+        useAuth: false
+    fasttask:
+      additional-worker-args:
+      - --last-ack-grace-period-seconds
+      - "120"
+      callback-uri: http://union-operator-leaseworker.union.svc.cluster.local:15605
+      grace-period-status-not-found: 2m
+    plugins:
+      ioutils:
+        remoteFileOutputPaths:
+          deckFilename: report.html
+      k8s:
+        co-pilot:
+          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          name: flyte-copilot-
+          start-timeout: 30s
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+        disable-inject-owner-references: true
+        inject-finalizer: true
+    storage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+
+---
+# Source: dataplane/templates/monitoring/dashboard-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-dataplane-overview
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  union-dataplane-overview.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "Union Dataplane health and service metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [
+        {
+          "title": "Karpenter",
+          "type": "dashboards",
+          "tags": [
+            "union-karpenter"
+          ],
+          "asDropdown": true,
+          "includeVars": true,
+          "keepTime": true,
+          "targetBlank": false,
+          "icon": "external link"
+        }
+      ],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "title": "Health",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 0.5
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "percentunit",
+              "min": 0,
+              "max": 1
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 12,
+            "x": 0,
+            "y": 1
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "auto"
+          },
+          "title": "Service Availability",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "avg(kube_deployment_status_replicas_available{namespace=~\"$namespace\"} / kube_deployment_spec_replicas{namespace=~\"$namespace\"})",
+              "legendFormat": "Availability",
+              "refId": "A"
+            }
+          ],
+          "description": "Percentage of deployments with all requested replicas available. 1.0 = all healthy."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 3
+                  },
+                  {
+                    "color": "red",
+                    "value": 10
+                  }
+                ]
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 12,
+            "x": 12,
+            "y": 1
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "auto"
+          },
+          "title": "Pod Restarts (1h)",
+          "type": "stat",
+          "targets": [
+            {
+              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[1h]))",
+              "legendFormat": "Restarts",
+              "refId": "A"
+            }
+          ],
+          "description": "Total container restarts in the last hour. Non-zero indicates crashlooping or OOM kills."
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "unit": "short"
+            }
+          },
+          "gridPos": {
+            "h": 6,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "id": 10,
+          "options": {
+            "legend": {
+              "calcs": [
+                "min",
+                "max",
+                "lastNotNull"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "title": "Active Executions",
+          "type": "timeseries",
+          "targets": [
+            {
+              "expr": "sum(flyte:propeller:all:execstats:active_workflow_executions{namespace=~\"$namespace\"})",
+              "legendFormat": "Workflows",
+              "refId": "A"
+            },
+            {
+              "expr": "sum(flyte:propeller:all:execstats:active_node_executions{namespace=~\"$namespace\"})",
+              "legendFormat": "Nodes",
+              "refId": "B"
+            },
+            {
+              "expr": "sum(flyte:propeller:all:execstats:active_task_executions{namespace=~\"$namespace\"})",
+              "legendFormat": "Tasks",
+              "refId": "C"
+            }
+          ],
+          "description": "Current count of active workflow, node, and task executions tracked by FlyteAdmin."
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "id": 200,
+          "title": "Union Operator",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 10
+              },
+              "id": 201,
+              "title": "Work Queue Operations",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(union_operator:work_queue:operations_processed{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Processed",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(union_operator:work_queue:operations_failed{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Failed",
+                  "refId": "B"
+                }
+              ],
+              "description": "Operator execution operation processing rate and failure rate.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 10
+              },
+              "id": 202,
+              "title": "Background Process Runs / Errors",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(union_operator:heartbeat_updater:runs{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Heartbeat runs",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(union_operator:heartbeat_updater:run_errors{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Heartbeat errors",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(union_operator:status_updater:runs{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Status runs",
+                  "refId": "C"
+                },
+                {
+                  "expr": "rate(union_operator:status_updater:run_errors{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Status errors",
+                  "refId": "D"
+                },
+                {
+                  "expr": "rate(union_operator:prometheus_health_checker:run_errors{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Prom health errors",
+                  "refId": "E"
+                }
+              ],
+              "description": "FlyteAdmin error rates: propeller communication failures, model transform errors, notification publish failures.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ms"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 10
+              },
+              "id": 203,
+              "title": "Heartbeat Latency",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "union_operator:heartbeat:compute_capabilities_ms{namespace=~\"$namespace\", quantile=\"0.9\"}",
+                  "legendFormat": "Capabilities p90",
+                  "refId": "A"
+                },
+                {
+                  "expr": "union_operator:heartbeat:compute_usages_ms{namespace=~\"$namespace\", quantile=\"0.9\"}",
+                  "legendFormat": "Usages p90",
+                  "refId": "B"
+                },
+                {
+                  "expr": "union_operator:heartbeat:list_workflows_ms{namespace=~\"$namespace\", quantile=\"0.9\"}",
+                  "legendFormat": "List WFs p90",
+                  "refId": "C"
+                }
+              ],
+              "description": "Breakdown of operator heartbeat computation: capabilities, usages, list workflows.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 0,
+                "y": 18
+              },
+              "id": 204,
+              "title": "Config Syncer",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(union_operator:config_syncer:runs{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Sync runs",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(union_operator:config_syncer:run_errors{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Sync errors",
+                  "refId": "B"
+                },
+                {
+                  "expr": "rate(union_operator:config_syncer:propeller_configmap_updated{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Propeller CM updated",
+                  "refId": "C"
+                }
+              ],
+              "description": "Config sync cycle rate, errors, and propeller ConfigMap update count.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "ops"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 8,
+                "y": 18
+              },
+              "id": 205,
+              "title": "Billable Usage Collector",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "rate(union_operator:billable_usage_collector:runs{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Runs",
+                  "refId": "A"
+                },
+                {
+                  "expr": "rate(union_operator:billable_usage_collector:run_errors{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "Errors",
+                  "refId": "B"
+                }
+              ],
+              "description": "Billing collection cycle rate and errors. Failures mean billing data may be delayed.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "thresholds": {
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "red",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "unit": "bool_yes_no"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 8,
+                "x": 16,
+                "y": 18
+              },
+              "id": 206,
+              "title": "Work Queue Paused",
+              "type": "stat",
+              "options": {
+                "colorMode": "background",
+                "graphMode": "area",
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ]
+                },
+                "textMode": "auto"
+              },
+              "targets": [
+                {
+                  "expr": "union_operator:work_queue:paused{namespace=~\"$namespace\"}",
+                  "legendFormat": "Paused",
+                  "refId": "A"
+                }
+              ],
+              "description": "1 when operator paused due to resource limits (FlyteWorkflow count or storage exceeded)."
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 12
+          },
+          "id": 400,
+          "title": "gRPC Client (DP → CP)",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 13
+              },
+              "id": 401,
+              "title": "gRPC Client Request Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (grpc_service, grpc_method) (rate(grpc_client_handled_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{ grpc_service }}/{{ grpc_method }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "DP→CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent).",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "reqps"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 13
+              },
+              "id": 402,
+              "title": "gRPC Client Error Rate",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (grpc_service, grpc_method, grpc_code) (rate(grpc_client_handled_total{namespace=~\"$namespace\", grpc_code!=\"OK\"}[$__rate_interval]))",
+                  "legendFormat": "{{ grpc_method }} {{ grpc_code }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "DP→CP gRPC errors by method and code. Non-OK responses from the control plane.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "s"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 21
+              },
+              "id": 403,
+              "title": "gRPC Client Latency (p95)",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "histogram_quantile(0.95, sum by (le, grpc_method) (rate(grpc_client_handling_seconds_bucket{namespace=~\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "{{ grpc_method }} p95",
+                  "refId": "A"
+                }
+              ],
+              "description": "DP→CP gRPC call latency at p95. High latency = slow control plane or network issues.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 13
+          },
+          "id": 1100,
+          "title": "Infrastructure",
+          "type": "row",
+          "panels": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "none"
+                    }
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 14
+              },
+              "id": 1101,
+              "title": "CPU Usage by Service",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\", container!=\"\", container!=\"POD\"}[$__rate_interval]))",
+                  "legendFormat": "{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "CPU usage in cores per container, stacked. Identifies resource-heavy services.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "fillOpacity": 10,
+                    "lineWidth": 1,
+                    "showPoints": "never",
+                    "stacking": {
+                      "mode": "none"
+                    }
+                  },
+                  "unit": "bytes"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 14
+              },
+              "id": 1102,
+              "title": "Memory Usage by Service",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=~\"$namespace\", container!=\"\", container!=\"POD\"})",
+                  "legendFormat": "{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Working set memory per container. Watch for approaching limits.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "bars",
+                    "fillOpacity": 80,
+                    "lineWidth": 1,
+                    "showPoints": "never"
+                  },
+                  "unit": "short"
+                }
+              },
+              "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 22
+              },
+              "id": 1103,
+              "title": "Pod Restart Count by Container",
+              "type": "timeseries",
+              "targets": [
+                {
+                  "expr": "increase(kube_pod_container_status_restarts_total{namespace=~\"$namespace\"}[$__rate_interval])",
+                  "legendFormat": "{{ pod }}/{{ container }}",
+                  "refId": "A"
+                }
+              ],
+              "description": "Per-container restart events. Spikes indicate crashes or OOM kills.",
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "min",
+                    "max",
+                    "lastNotNull"
+                  ]
+                }
+              }
+            },
+            {
+              "id": 1104,
+              "title": "MIG Partitions In Use",
+              "type": "stat",
+              "gridPos": {
+                "h": 4,
+                "w": 6,
+                "x": 0,
+                "y": 30
+              },
+              "description": "MIG GPU partitions currently in use (framebuffer allocated) vs total configured. Requires dcgm-exporter with MIG monitoring enabled.",
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "orientation": "auto",
+                "textMode": "auto",
+                "colorMode": "background",
+                "graphMode": "none",
+                "justifyMode": "center"
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "thresholds"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "yellow",
+                        "value": 0.7
+                      },
+                      {
+                        "color": "red",
+                        "value": 0.9
+                      }
+                    ]
+                  },
+                  "unit": "percentunit",
+                  "min": 0,
+                  "max": 1,
+                  "mappings": []
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "count(DCGM_FI_DEV_FB_USED{GPU_I_ID!=\"\"} > 0) / count(DCGM_FI_DEV_FB_FREE{GPU_I_ID!=\"\"})",
+                  "legendFormat": "Used / Total",
+                  "refId": "A",
+                  "instant": true
+                }
+              ],
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            },
+            {
+              "id": 1105,
+              "title": "MIG Partitions: Used vs Total by Profile",
+              "type": "bargauge",
+              "gridPos": {
+                "h": 4,
+                "w": 10,
+                "x": 6,
+                "y": 30
+              },
+              "description": "Used and total MIG partition count per profile type (e.g. 1g.5gb, 3g.20gb, 7g.40gb). Only visible when MIG partitions are configured.",
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "orientation": "horizontal",
+                "displayMode": "gradient",
+                "showUnfilled": true,
+                "minVizWidth": 0,
+                "minVizHeight": 10
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "short",
+                  "min": 0,
+                  "mappings": []
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "count by (GPU_I_PROFILE) (DCGM_FI_DEV_FB_USED{GPU_I_ID!=\"\"} > 0)",
+                  "legendFormat": "Used – {{GPU_I_PROFILE}}",
+                  "refId": "A",
+                  "instant": true
+                },
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "count by (GPU_I_PROFILE) (DCGM_FI_DEV_FB_FREE{GPU_I_ID!=\"\"})",
+                  "legendFormat": "Total – {{GPU_I_PROFILE}}",
+                  "refId": "B",
+                  "instant": true
+                }
+              ],
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            },
+            {
+              "id": 1106,
+              "title": "MIG Partition Usage Over Time",
+              "type": "timeseries",
+              "gridPos": {
+                "h": 8,
+                "w": 24,
+                "x": 0,
+                "y": 34
+              },
+              "description": "Number of in-use MIG partitions over time, broken down by profile. A partition counts as in use when DCGM_FI_DEV_FB_USED > 0.",
+              "options": {
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "none"
+                },
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom"
+                }
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 2,
+                    "fillOpacity": 10,
+                    "stacking": {
+                      "mode": "normal",
+                      "group": "A"
+                    },
+                    "spanNulls": false,
+                    "showPoints": "auto",
+                    "pointSize": 5
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      }
+                    ]
+                  },
+                  "unit": "short",
+                  "min": 0,
+                  "mappings": []
+                },
+                "overrides": []
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "count by (GPU_I_PROFILE) (DCGM_FI_DEV_FB_USED{GPU_I_ID!=\"\"} > 0)",
+                  "legendFormat": "{{GPU_I_PROFILE}}",
+                  "refId": "A"
+                }
+              ],
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              }
+            }
+          ]
+        },
+        {
+          "id": 1208,
+          "type": "row",
+          "collapsed": true,
+          "title": "Self-Report Migration",
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 21
+          },
+          "panels": [
+            {
+              "id": 1209,
+              "type": "timeseries",
+              "title": "Self-report status over time (by source)",
+              "description": "union_operator:connection_config_self_reported is 1 on the active source. Shows when this dataplane migrated to self_reported (from none / legacy).",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 0,
+                "y": 44
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineWidth": 2,
+                    "fillOpacity": 20
+                  },
+                  "unit": "short",
+                  "min": 0
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "list",
+                  "placement": "bottom"
+                },
+                "tooltip": {
+                  "mode": "multi"
+                }
+              },
+              "targets": [
+                {
+                  "expr": "max by (source) (union_operator:connection_config_self_reported{namespace=~\"$namespace\"})",
+                  "legendFormat": "{{source}}",
+                  "refId": "A"
+                }
+              ]
+            },
+            {
+              "id": 1210,
+              "type": "stat",
+              "title": "Migrated (self-reporting)?",
+              "description": "1 when this dataplane self-reports its connection_config (source=self_reported) rather than relying on the legacy admin-set URL.",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "gridPos": {
+                "h": 7,
+                "w": 12,
+                "x": 12,
+                "y": 44
+              },
+              "fieldConfig": {
+                "defaults": {
+                  "unit": "short",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "yellow",
+                        "value": null
+                      },
+                      {
+                        "color": "green",
+                        "value": 1
+                      }
+                    ]
+                  },
+                  "mappings": [
+                    {
+                      "type": "value",
+                      "options": {
+                        "1": {
+                          "text": "self_reported",
+                          "color": "green",
+                          "index": 1
+                        },
+                        "0": {
+                          "text": "legacy",
+                          "color": "yellow",
+                          "index": 0
+                        }
+                      }
+                    }
+                  ]
+                },
+                "overrides": []
+              },
+              "options": {
+                "reduceOptions": {
+                  "calcs": [
+                    "lastNotNull"
+                  ],
+                  "fields": "",
+                  "values": false
+                },
+                "colorMode": "background",
+                "graphMode": "none",
+                "textMode": "auto"
+              },
+              "targets": [
+                {
+                  "expr": "max (union_operator:connection_config_self_reported{namespace=~\"$namespace\", source=\"self_reported\"})",
+                  "refId": "A"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 22
+          },
+          "id": 2000,
+          "panels": [],
+          "title": "Scheduling & Capacity",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Task pods in Pending/Unknown, per namespace. Task pods run in per-project namespaces (not the dataplane namespace), so this is cluster-wide.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 23
+          },
+          "id": 2001,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (namespace) (kube_pod_status_phase{phase=~\"Pending|Unknown\"}) > 0",
+              "legendFormat": "{{namespace}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Pending pods by namespace",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Task pods the scheduler cannot place (insufficient node capacity or untolerated taints), per namespace. The definitive 'which project's tasks are Pending'.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 23
+          },
+          "id": 2002,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (namespace) (kube_pod_status_unschedulable) > 0",
+              "legendFormat": "{{namespace}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Unschedulable pods by namespace",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "flytepropeller time from a task node being queued to its pod running — i.e. pod scheduling time. A spike (minutes) means pods are sitting Pending.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "ms",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 60000
+                  },
+                  {
+                    "color": "red",
+                    "value": 300000
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 23
+          },
+          "id": 2003,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.5\"}",
+              "legendFormat": "p50",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.9\"}",
+              "legendFormat": "p90",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.99\"}",
+              "legendFormat": "p99",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Node queueing latency (queued -> running)",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 31
+          },
+          "id": 4000,
+          "panels": [],
+          "title": "V2 — leaseworker",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Runs and finalizes leaseworker is holding.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 32
+          },
+          "id": 4001,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:active_run_leases{namespace=~\"$namespace\"}",
+              "legendFormat": "run",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:active_finalize_leases{namespace=~\"$namespace\"}",
+              "legendFormat": "finalize",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Active leases",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Spare lease capacity on this leaseworker fleet. Near 0 => at capacity.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  },
+                  {
+                    "color": "green",
+                    "value": 5
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 32
+          },
+          "id": 4002,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:available_capacity{namespace=~\"$namespace\"}",
+              "legendFormat": "available",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Available capacity",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Actions queued in the leaseworker dispatcher.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 32
+          },
+          "id": 4003,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:dispatcher:queue_depth{namespace=~\"$namespace\"}",
+              "legendFormat": "depth",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Dispatcher queue depth",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Dispatcher round outcomes.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 40
+          },
+          "id": 4004,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:dispatcher:round_success{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "success",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:dispatcher:round_errors{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "errors",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Dispatcher rounds: success vs errors",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Pending fast-task backlog against its limit. Backlog pinned at the limit = the v2 'can't place work' signal.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 40
+          },
+          "id": 4005,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:core_plugins:fast_task:backlog{namespace=~\"$namespace\"}",
+              "legendFormat": "backlog",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "leaseworker:core_plugins:fast_task:backlog_limit{namespace=~\"$namespace\"}",
+              "legendFormat": "limit",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "FastTask backlog vs limit",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Fast-task assignment failures: no capacity or no workers available => tasks wait.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 40
+          },
+          "id": 4006,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:core_plugins:fast_task:task_no_capacity_available{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "no capacity",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(rate(leaseworker:core_plugins:fast_task:task_no_workers_available{namespace=~\"$namespace\"}[$__rate_interval]))",
+              "legendFormat": "no workers",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Task assignment (no capacity / no workers)",
+          "type": "timeseries"
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": [
+        "union",
+        "dataplane"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "query": {
+              "query": "label_values(kube_pod_info, namespace)",
+              "refId": "namespace"
+            },
+            "refresh": 2,
+            "includeAll": true,
+            "multi": true,
+            "allValue": ".*",
+            "current": {
+              "selected": true,
+              "text": "union",
+              "value": "union"
+            },
+            "sort": 1,
+            "hide": 0
+          }
+        ]
+      },
+      "time": {
+        "from": "now-3h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union Dataplane Overview",
+      "uid": "union-dataplane-overview",
+      "version": 4
+    }
+---
+# Source: dataplane/templates/monitoring/dashboard-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-dataplane-v1-overview
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  union-dataplane-v1-overview.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "V1 (flytepropeller) execution view for the Union dataplane: reconcile queue, execution health, and pod scheduling/capacity. Answers 'why are tasks Pending?'.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [
+        {
+          "title": "Karpenter",
+          "type": "dashboards",
+          "tags": [
+            "union-karpenter"
+          ],
+          "asDropdown": true,
+          "includeVars": true,
+          "keepTime": true,
+          "targetBlank": false,
+          "icon": "external link"
+        }
+      ],
+      "tags": [
+        "union",
+        "dataplane",
+        "v1"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "name": "namespace",
+            "label": "Namespace",
+            "type": "query",
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "query": {
+              "query": "label_values(kube_pod_info, namespace)",
+              "refId": "namespace"
+            },
+            "refresh": 2,
+            "includeAll": true,
+            "multi": true,
+            "allValue": ".*",
+            "current": {
+              "selected": true,
+              "text": "union",
+              "value": "union"
+            },
+            "sort": 1,
+            "hide": 0
+          }
+        ]
+      },
+      "time": {
+        "from": "now-3h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union Dataplane \u2014 Execution Overview (v1)",
+      "uid": "union-dp-v1-overview",
+      "schemaVersion": 39,
+      "version": 2,
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 100,
+          "panels": [],
+          "title": "flytepropeller \u2014 reconcile queue (depth / latency / retries)",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "flytepropeller reconcile work-queue depth. Rising = propeller backing up.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "id": 101,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:main_depth{namespace=~\"$namespace\"}",
+              "legendFormat": "main",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:sub_depth{namespace=~\"$namespace\"}",
+              "legendFormat": "sub",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Queue depth",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Rate of items added to the reconcile queue.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "id": 102,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "rate(flyte:propeller:all:main_adds{namespace=~\"$namespace\"}[$__rate_interval])",
+              "legendFormat": "main adds",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Queue add rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Per-round processing time. Low/stable => propeller compute healthy; the delay is downstream (scheduling).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "ms",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "id": 103,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:round:round_time_ms{namespace=~\"$namespace\", quantile=\"0.99\"}",
+              "legendFormat": "p99",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Round time (p99)",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 9
+          },
+          "id": 110,
+          "panels": [],
+          "title": "flytepropeller \u2014 execution health",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Available reconcile workers. >0 => not worker-starved.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 10
+          },
+          "id": 111,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:free_workers_count{namespace=~\"$namespace\"}",
+              "legendFormat": "free workers",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Free workers",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Reconcile round outcomes. Errors spike while pods cannot be placed.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 10
+          },
+          "id": 112,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "rate(flyte:propeller:all:round:success_count{namespace=~\"$namespace\"}[$__rate_interval])",
+              "legendFormat": "success",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "rate(flyte:propeller:all:round:error_count{namespace=~\"$namespace\"}[$__rate_interval])",
+              "legendFormat": "error",
+              "range": true,
+              "refId": "B"
+            }
+          ],
+          "title": "Round success / error rate",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Workflows propeller is actively reconciling.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 10
+          },
+          "id": 113,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum(flyte:propeller:all:execstats:active_workflow_executions{namespace=~\"$namespace\"})",
+              "legendFormat": "active",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Active workflow executions",
+          "type": "timeseries"
+        },
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 18
+          },
+          "id": 120,
+          "panels": [],
+          "title": "Scheduling & Capacity",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Task pods in Pending/Unknown per namespace (cluster-wide; task pods run in project namespaces).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 19
+          },
+          "id": 121,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (namespace) (kube_pod_status_phase{phase=~\"Pending|Unknown\"}) > 0",
+              "legendFormat": "{{namespace}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Pending pods by namespace",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Task pods the scheduler cannot place (insufficient capacity or untolerated taints), per namespace.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "short",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 19
+          },
+          "id": 122,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "sum by (namespace) (kube_pod_status_unschedulable) > 0",
+              "legendFormat": "{{namespace}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Unschedulable pods by namespace",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "flytepropeller time from task node queued to pod running = pod scheduling time. A spike (minutes) = pods sitting Pending.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "showPoints": "never"
+              },
+              "min": 0,
+              "unit": "ms",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 60000
+                  },
+                  {
+                    "color": "red",
+                    "value": 300000
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 19
+          },
+          "id": 123,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "right"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.5\"}",
+              "legendFormat": "p50",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.9\"}",
+              "legendFormat": "p90",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "editorMode": "code",
+              "expr": "flyte:propeller:all:node:queueing_latency_ms{namespace=~\"$namespace\", quantile=\"0.99\"}",
+              "legendFormat": "p99",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "Node queueing latency (queued -> running)",
+          "type": "timeseries"
+        }
+      ]
+    }
+    
+
+---
+# Source: dataplane/templates/operator/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-operator
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  k8s.yaml: | 
+    plugins:
+      k8s:
+        default-cpus: 100m
+        default-env-vars: []
+        default-memory: 100Mi
+        default-pod-template-name: task-template
+  config.yaml: |
+    union:
+      connection:
+        host: 'dns:///test-controlplane-host'
+        http2KeepAlive:
+          pingTimeout: 10s
+          readIdleTimeout: 30s
+        insecureSkipVerify: false
+        unaryRPCTimeout: 30s
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: ''
+        clientSecretLocation: /etc/union/secret/client_secret
+        enable: true
+        tokenRefreshWindow: 5m
+        type: ClientSecret
+    sharedService:
+      features:
+        gatewayV2: true
+      port: 8081
+    authorizer:
+      authorizerClient:
+        credentials: ServiceCredentials
+        grpcConfig:
+          host: 'dns:///test-controlplane-host'
+          insecure: false
+          insecureSkipVerify: false
+      type: Authorizer
+    operator:
+      enabled: true
+      enableTunnelService: true
+      #  enableDepot: false
+      tunnel:
+        enableDirectToAppIngress: true
+        deploymentToRestart: union-operator-proxy
+        appIngressOriginURL: "http://kourier-internal"
+      limitNamespace: union
+      disableClusterPermissions: true
+      apps:
+        enabled: 'true'
+      syncClusterConfig:
+        enabled: false
+      clusterId:
+        name: ''
+        organization: ''
+      clusterData:
+        appId: ''
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test-controlplane-host'
+        cloudProvider: ''
+        gcpProjectId: ''
+        metadataBucketPrefix: 's3://'
+        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+        userRoleKey: 'eks.amazonaws.com/role-arn'
+      collectUsages:
+        enabled: false
+      billing:
+        model: 'ResourceUsage'
+      dependenciesHeartbeat:
+        proxy:
+          endpoint: 'http://union-operator-proxy:10254'
+      org:
+        namespaceTemplate: "union"
+      secretsWatcher:
+        dryRun: true
+        enabled: false
+        namespaces:
+          - union
+      imageBuilder:
+        enabled: true
+        executionNamespaceLabels:
+          union.ai/namespace-type: flyte
+        referenceConfigmapName: union-operator
+        targetConfigMapName: "build-image-config"
+    proxy:
+      persistedLogs:
+        objectStore:
+          pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
+          prefix: persisted-logs
+        sourceType: ObjectStore
+      smConfig:
+        enabled: 'true'
+        k8sConfig:
+          namespace: 'union'
+        type: 'K8s'
+        webhookHostTemplate: union-pod-webhook-headless.%s.svc
+  logger.yaml: |
+    logger:
+      formatter:
+        type: json
+      level: 4
+      show-source: true
+  config-overrides.yaml: | 
+    cache:
+      identity:
+        enabled: false
+    connection:
+      rootTenantURLPattern: 'dns:///test-controlplane-host'
+  storage.yaml: | 
+    storage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+  fast_registration_storage.yaml: | 
+    fastRegistrationStorage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+  image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  image-builder.default-repository: "union-dataplane"
+  image-builder.authentication-type: "noop"
+
+---
+# Source: dataplane/templates/prometheus/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-prometheus
+  namespace: union
+  labels:
+    helm.sh/chart: dataplane-2026.8.4
+    app.kubernetes.io/name: release-name-dataplane
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
   alerting_rules.yml: |
@@ -726,6 +4028,14 @@ data:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
+        - action: labeldrop
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -825,1997 +4135,26 @@ data:
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_ip]
+          regex: '(.*)'
+          target_label: __address__
+          replacement: '${1}:9400'
+          action: replace
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
+          action: keep
     
-  recording_rules.yml: |
-    {}
-  rules: |
-    {}
----
-# Source: dataplane/templates/fluent-bit/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: fluentbit-system
-  namespace: union
-  labels:
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  custom_parsers.conf: |
-    [PARSER]
-        Name docker_no_time
-        Format json
-        Time_Keep Off
-        Time_Key time
-        Time_Format %Y-%m-%dT%H:%M:%S.%L
-  fluent-bit.conf: |
-    [SERVICE]
-        Parsers_File /fluent-bit/etc/parsers.conf
-        Parsers_File /fluent-bit/etc/conf/custom_parsers.conf
-        HTTP_Server On
-        HTTP_Listen 0.0.0.0
-        Health_Check On
-    [INPUT]
-        Name                tail
-        Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
-        Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
-        Path                /var/log/containers/*.log
-        DB                  /var/log/flb_kube.db
-        multiline.parser    docker, cri
-        Mem_Buf_Limit       5MB
-        Skip_Long_Lines     On
-        Refresh_Interval    10
-    
-    
-    [OUTPUT]
-        Name s3
-        Match *
-        upload_timeout 1m
-        s3_key_format /persisted-logs/$TAG
-        static_file_path true
-        json_date_key false
-        region us-east-1
-        bucket 
-
----
-# Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: build-image-config
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  storage.yaml: | 
-    storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: "union-dataplane"
-  authentication-type: "noop"
-
----
-# Source: dataplane/templates/imagebuilder/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name : union-operator-buildkit
-data:
-  buildkitd.toml: |
-    debug = false
-
-    [log]
-      format = "text"
-
-    [worker.oci]
-      enabled = true
-      snapshotter = "auto"
-      gc = true
-      max-parallelism = 0
-
-      # Should not be used if Policies are defined
-      gckeepstorage = "10%"
-      [[worker.oci.gcpolicy]]
-        # Remove COPY/ADD and git checkout files
-        keepBytes = "10%"
-        keepDuration = "24h"
-        filters = [ "type==source.local", "type==source.git.checkout" ]
-      [[worker.oci.gcpolicy]]
-        # Remove locally cached image layers after it's unused for 24 hours
-        keepBytes = "10%"
-        keepDuration = "24h"
-        filters = [ "regular" ]
-      [[worker.oci.gcpolicy]]
-        # Remove shared cache mounts. E.G. Pip cache
-        keepBytes = "10%"
-        keepDuration = "72h"
-        filters = [ "type==exec.cachemount" ]
-      [[worker.oci.gcpolicy]]
-        # Remove everything else to keep the cache size under total file system limit
-        all = true
-        keepBytes = "80%"
----
-# Source: dataplane/templates/leaseworker/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: leaseworker
-  namespace: union
-  labels:
-    app: leaseworker
-data:
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            linkType: ide
-            templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
-        - wandb-execution-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .podName }}'
-        - wandb-custom-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .taskConfig.id }}'
-        - comet-ml-execution-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
-              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
-        - comet-ml-custom-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
-        - neptune-scale-run:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .podName }}
-        - neptune-scale-custom-id:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .taskConfig.id }}
-        kubernetes-enabled: false
-  webhook.yaml: |
-
-    
-    propeller:
-      limit-namespace: union
-    webhook:
-      certDir: /etc/webhook/certs
-      disableCreateMutatingWebhookConfig: true
-      embeddedSecretManagerConfig:
-        imagePullSecrets:
-          enabled: true
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-      listenPort: '9443'
-      localCert: true
-      secretManagerTypes:
-      - Embedded
-      - K8s
-      secretName: union-pod-webhook
-      serviceName: union-pod-webhook
-      servicePort: '443'
-  enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-  config.yaml: |
-    leaseworker:
-      actionsServiceAddress: http://actions-service:8089
-      capacity: 100000
-      cluster: ''
-      dispatcherCount: 512
-      leasorAddress: http://leasor-service:8090
-      limit-namespace: union
-      namespace-template: union
-      organization: ''
-      refreshInterval: 10s
-      task_resources:
-        defaults:
-          cpu: 100m
-          memory: 500Mi
-        limits:
-          cpu: 4096
-          gpu: 256
-          memory: 2Ti
-      unionAuth:
-        injectSecret: true
-        secretName: EAGER_API_KEY
-      workerName: '--worker1'
-    union:
-      connection:
-        host: dns:///
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
-        clientSecretLocation: /etc/union/secret/client_secret
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-    admin:
-      clientId: 'dataplane-operator'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
-      insecure: false
-    authorizer:
-      type: noop
-    catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
-      insecure: false
-      type: cacheservicev2
-      use-admin-auth: true
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-    sharedService:
-      metrics:
-        scope: 'leaseworker:'
-      security:
-        allowCors: true
-        allowLocalhostAccess: true
-        allowedHeaders:
-        - Content-Type
-        allowedOrigins:
-        - '*'
-        secure: false
-        useAuth: false
-    fasttask:
-      additional-worker-args:
-      - --last-ack-grace-period-seconds
-      - "120"
-      callback-uri: http://union-operator-leaseworker.union.svc.cluster.local:15605
-      grace-period-status-not-found: 2m
-    plugins:
-      ioutils:
-        remoteFileOutputPaths:
-          deckFilename: report.html
-      k8s:
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
-          name: flyte-copilot-
-          start-timeout: 30s
-        default-cpus: 100m
-        default-env-vars: []
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-        disable-inject-owner-references: true
-        inject-finalizer: true
-    storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-
----
-# Source: dataplane/templates/monitoring/dashboard-configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: release-name-dashboard-union-dataplane-overview
-  namespace: union
-  labels:
-    grafana_dashboard: "1"
-    app.kubernetes.io/managed-by: Helm
-data:
-  union-dataplane-overview.json: |-
-    {
-      "annotations": {
-        "list": []
-      },
-      "description": "Union Dataplane health and service metrics",
-      "editable": true,
-      "fiscalYearStartMonth": 0,
-      "graphTooltip": 1,
-      "links": [],
-      "panels": [
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 0
-          },
-          "id": 1,
-          "title": "Health",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "red",
-                    "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 0.5
-                  },
-                  {
-                    "color": "green",
-                    "value": 1
-                  }
-                ]
-              },
-              "unit": "percentunit",
-              "min": 0,
-              "max": 1
-            }
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 0,
-            "y": 1
-          },
-          "id": 2,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "auto"
-          },
-          "title": "Service Availability",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
-              "legendFormat": "Availability",
-              "refId": "A"
-            }
-          ],
-          "description": "Percentage of deployments with all requested replicas available. 1.0 = all healthy."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 3
-                  },
-                  {
-                    "color": "red",
-                    "value": 10
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 6,
-            "y": 1
-          },
-          "id": 3,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "auto"
-          },
-          "title": "Pod Restarts (1h)",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "sum(increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[1h]))",
-              "legendFormat": "Restarts",
-              "refId": "A"
-            }
-          ],
-          "description": "Total container restarts in the last hour. Non-zero indicates crashlooping or OOM kills."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 12,
-            "x": 0,
-            "y": 5
-          },
-          "id": 10,
-          "options": {
-            "legend": {
-              "calcs": [
-                "min",
-                "max",
-                "lastNotNull"
-              ],
-              "displayMode": "table",
-              "placement": "bottom"
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "title": "Active Executions",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "sum(flyte:propeller:all:execstats:active_workflow_executions{namespace=\"$namespace\"})",
-              "legendFormat": "Workflows",
-              "refId": "A"
-            },
-            {
-              "expr": "sum(flyte:propeller:all:execstats:active_node_executions{namespace=\"$namespace\"})",
-              "legendFormat": "Nodes",
-              "refId": "B"
-            },
-            {
-              "expr": "sum(flyte:propeller:all:execstats:active_task_executions{namespace=\"$namespace\"})",
-              "legendFormat": "Tasks",
-              "refId": "C"
-            }
-          ],
-          "description": "Current count of active workflow, node, and task executions tracked by FlyteAdmin."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 1
-                  }
-                ]
-              },
-              "unit": "short"
-            }
-          },
-          "gridPos": {
-            "h": 4,
-            "w": 6,
-            "x": 12,
-            "y": 1
-          },
-          "id": 11,
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value_and_name"
-          },
-          "title": "Handler Panics",
-          "type": "stat",
-          "targets": [
-            {
-              "expr": "sum(executor:handler_panic{namespace=\"$namespace\"})",
-              "legendFormat": "Total",
-              "refId": "A"
-            }
-          ],
-          "description": "Total handler panics in DP services. Any non-zero value indicates a service caught a panic during request handling."
-        },
-        {
-          "collapsed": false,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 9
-          },
-          "id": 1200,
-          "title": "SLOs",
-          "type": "row"
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "red",
-                    "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 0.99
-                  },
-                  {
-                    "color": "green",
-                    "value": 0.999
-                  }
-                ]
-              },
-              "unit": "percentunit",
-              "decimals": 3
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 6,
-            "x": 0,
-            "y": 10
-          },
-          "id": 1201,
-          "title": "Service Availability",
-          "type": "stat",
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value"
-          },
-          "targets": [
-            {
-              "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
-              "refId": "A"
-            }
-          ],
-          "description": "Current service availability across all DP deployments."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": -999
-                  },
-                  {
-                    "color": "orange",
-                    "value": 0
-                  },
-                  {
-                    "color": "green",
-                    "value": 0.5
-                  }
-                ]
-              },
-              "unit": "percentunit",
-              "decimals": 1,
-              "noValue": "N/A"
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 6,
-            "x": 6,
-            "y": 10
-          },
-          "id": 1202,
-          "title": "Error Budget Remaining",
-          "type": "stat",
-          "options": {
-            "colorMode": "background",
-            "graphMode": "area",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value"
-          },
-          "targets": [
-            {
-              "expr": "union:dp:slo:error_budget_remaining",
-              "refId": "A"
-            }
-          ],
-          "description": "Fraction of error budget remaining. Requires monitoring.slos.enabled."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "red",
-                    "value": 0
-                  },
-                  {
-                    "color": "orange",
-                    "value": 0.95
-                  },
-                  {
-                    "color": "green",
-                    "value": 0.999
-                  }
-                ]
-              },
-              "unit": "percentunit",
-              "decimals": 2,
-              "noValue": "N/A"
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 6,
-            "x": 12,
-            "y": 10
-          },
-          "id": 1203,
-          "title": "Execution Success Rate",
-          "type": "stat",
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value"
-          },
-          "targets": [
-            {
-              "expr": "union:dp:slo:execution_success_rate or (union:dp:slo:propeller_success_rate + union:dp:slo:executor_success_rate) / 2 or union:dp:slo:propeller_success_rate or vector(1)",
-              "refId": "A"
-            }
-          ],
-          "description": "Combined V1 (propeller) and V2 (executor) task success rate. Falls back to propeller-only or 100% when idle."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "thresholds": {
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": null
-                  },
-                  {
-                    "color": "orange",
-                    "value": 2
-                  },
-                  {
-                    "color": "red",
-                    "value": 5
-                  }
-                ]
-              },
-              "unit": "s",
-              "decimals": 2
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 6,
-            "x": 18,
-            "y": 10
-          },
-          "id": 1204,
-          "title": "Executor Evaluate Duration p99",
-          "type": "stat",
-          "options": {
-            "colorMode": "background",
-            "graphMode": "none",
-            "reduceOptions": {
-              "calcs": [
-                "lastNotNull"
-              ]
-            },
-            "textMode": "value"
-          },
-          "targets": [
-            {
-              "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-              "legendFormat": "p99",
-              "refId": "A",
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              }
-            }
-          ],
-          "description": "Propeller round p99 latency in seconds. Falls back to raw metric if SLO rules not enabled."
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "percentunit"
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 12,
-            "x": 0,
-            "y": 16
-          },
-          "id": 1205,
-          "title": "Availability Over Time",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "avg(kube_deployment_status_replicas_available{namespace=\"$namespace\"} / kube_deployment_spec_replicas{namespace=\"$namespace\"})",
-              "legendFormat": "Availability",
-              "refId": "A"
-            },
-            {
-              "expr": "vector(0.999)",
-              "legendFormat": "Target (99.9%)",
-              "refId": "B"
-            }
-          ],
-          "description": "DP service availability over time with SLO target line.",
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "min",
-                "max",
-                "lastNotNull"
-              ]
-            }
-          }
-        },
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "${datasource}"
-          },
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 10,
-                "lineWidth": 1,
-                "showPoints": "never"
-              },
-              "unit": "percentunit",
-              "max": 1,
-              "min": -0.5
-            }
-          },
-          "gridPos": {
-            "h": 6,
-            "w": 12,
-            "x": 12,
-            "y": 16
-          },
-          "id": 1206,
-          "title": "Error Budget Burn Rate",
-          "type": "timeseries",
-          "targets": [
-            {
-              "expr": "union:dp:slo:error_budget_remaining",
-              "legendFormat": "Budget remaining",
-              "refId": "A"
-            },
-            {
-              "expr": "vector(0)",
-              "legendFormat": "Exhausted",
-              "refId": "B"
-            }
-          ],
-          "description": "DP error budget remaining over time. Requires monitoring.slos.enabled.",
-          "options": {
-            "legend": {
-              "displayMode": "table",
-              "placement": "bottom",
-              "calcs": [
-                "min",
-                "max",
-                "lastNotNull"
-              ]
-            }
-          }
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 31
-          },
-          "id": 200,
-          "title": "Union Operator",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 10
-              },
-              "id": 201,
-              "title": "Work Queue Operations",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(union_operator:work_queue:operations_processed{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Processed",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(union_operator:work_queue:operations_failed{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Failed",
-                  "refId": "B"
-                }
-              ],
-              "description": "Operator execution operation processing rate and failure rate.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 10
-              },
-              "id": 202,
-              "title": "Background Process Runs / Errors",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(union_operator:heartbeat_updater:runs{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Heartbeat runs",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(union_operator:heartbeat_updater:run_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Heartbeat errors",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(union_operator:status_updater:runs{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Status runs",
-                  "refId": "C"
-                },
-                {
-                  "expr": "rate(union_operator:status_updater:run_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Status errors",
-                  "refId": "D"
-                },
-                {
-                  "expr": "rate(union_operator:prometheus_health_checker:run_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Prom health errors",
-                  "refId": "E"
-                }
-              ],
-              "description": "FlyteAdmin error rates: propeller communication failures, model transform errors, notification publish failures.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 10
-              },
-              "id": 203,
-              "title": "Heartbeat Latency",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "union_operator:heartbeat:compute_capabilities_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "Capabilities p90",
-                  "refId": "A"
-                },
-                {
-                  "expr": "union_operator:heartbeat:compute_usages_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "Usages p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "union_operator:heartbeat:list_workflows_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "List WFs p90",
-                  "refId": "C"
-                }
-              ],
-              "description": "Breakdown of operator heartbeat computation: capabilities, usages, list workflows.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 18
-              },
-              "id": 204,
-              "title": "Config Syncer",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(union_operator:config_syncer:runs{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Sync runs",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(union_operator:config_syncer:run_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Sync errors",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(union_operator:config_syncer:propeller_configmap_updated{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Propeller CM updated",
-                  "refId": "C"
-                }
-              ],
-              "description": "Config sync cycle rate, errors, and propeller ConfigMap update count.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 18
-              },
-              "id": 205,
-              "title": "Billable Usage Collector",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(union_operator:billable_usage_collector:runs{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Runs",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(union_operator:billable_usage_collector:run_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Errors",
-                  "refId": "B"
-                }
-              ],
-              "description": "Billing collection cycle rate and errors. Failures mean billing data may be delayed.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "thresholds"
-                  },
-                  "thresholds": {
-                    "steps": [
-                      {
-                        "color": "green",
-                        "value": null
-                      },
-                      {
-                        "color": "red",
-                        "value": 1
-                      }
-                    ]
-                  },
-                  "unit": "bool_yes_no"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 18
-              },
-              "id": 206,
-              "title": "Work Queue Paused",
-              "type": "stat",
-              "options": {
-                "colorMode": "background",
-                "graphMode": "area",
-                "reduceOptions": {
-                  "calcs": [
-                    "lastNotNull"
-                  ]
-                },
-                "textMode": "auto"
-              },
-              "targets": [
-                {
-                  "expr": "union_operator:work_queue:paused{namespace=\"$namespace\"}",
-                  "legendFormat": "Paused",
-                  "refId": "A"
-                }
-              ],
-              "description": "1 when operator paused due to resource limits (FlyteWorkflow count or storage exceeded)."
-            }
-          ]
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 32
-          },
-          "id": 300,
-          "title": "Executor (V2)",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 11
-              },
-              "id": 301,
-              "title": "Active Actions & Capacity",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "executor::v2:active_actions_count{namespace=\"$namespace\"}",
-                  "legendFormat": "Active actions",
-                  "refId": "A"
-                },
-                {
-                  "expr": "executor::v2:available_capacity{namespace=\"$namespace\"}",
-                  "legendFormat": "Available capacity",
-                  "refId": "B"
-                }
-              ],
-              "description": "V2 executor active actions vs available capacity. Capacity=0 means executor is saturated.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 11
-              },
-              "id": 302,
-              "title": "Cache Discovery",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(executor::v2:discovery_miss_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Miss",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(executor::v2:discovery_put_success_count{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Put success",
-                  "refId": "B"
-                }
-              ],
-              "description": "V2 executor cache discovery miss/put rates for task output caching.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never",
-                    "stacking": {
-                      "mode": "normal"
-                    }
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 0,
-                "y": 19
-              },
-              "id": 303,
-              "title": "Actions Terminated by Phase",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (phase) (rate(executor::v2:actions_terminated{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "{{ phase }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "Task completion rate by outcome: succeeded, failed, aborted. Key V2 SLI for task health. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ms"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 8,
-                "y": 19
-              },
-              "id": 304,
-              "title": "Evaluator Duration (pod creation)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.5\"}",
-                  "legendFormat": "Evaluate p50",
-                  "refId": "A"
-                },
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.9\"}",
-                  "legendFormat": "Evaluate p90",
-                  "refId": "B"
-                },
-                {
-                  "expr": "executor::v2:evaluator:evaluate_duration_ms{namespace=\"$namespace\", quantile=\"0.99\"}",
-                  "legendFormat": "Evaluate p99",
-                  "refId": "C"
-                }
-              ],
-              "description": "Time spent in RecursiveNodeHandler (pod creation). Dominant component of V2 task latency. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "ops"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 8,
-                "x": 16,
-                "y": 19
-              },
-              "id": 305,
-              "title": "System Failures & Invalid Leases",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "rate(executor::v2:system_failures{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "System failures",
-                  "refId": "A"
-                },
-                {
-                  "expr": "rate(executor::v2:system_failures_exhausted{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Exhausted retries",
-                  "refId": "B"
-                },
-                {
-                  "expr": "rate(executor::v2:invalid_leases{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Invalid leases",
-                  "refId": "C"
-                },
-                {
-                  "expr": "rate(executor::v2:evaluator:evaluate_errors{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "Evaluate errors",
-                  "refId": "D"
-                }
-              ],
-              "description": "Executor error rates. System failures retry; exhausted means task permanently failed. Invalid leases = malformed from queue service. [Metrics pending: requires cloud service instrumentation to be deployed]",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 34
-          },
-          "id": 400,
-          "title": "gRPC Client (DP \u2192 CP)",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "reqps"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 13
-              },
-              "id": 401,
-              "title": "gRPC Client Request Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (grpc_service, grpc_method) (rate(grpc_client_handled_total{namespace=\"$namespace\"}[$__rate_interval]))",
-                  "legendFormat": "{{ grpc_service }}/{{ grpc_method }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "DP\u2192CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent).",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "reqps"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 13
-              },
-              "id": 402,
-              "title": "gRPC Client Error Rate",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (grpc_service, grpc_method, grpc_code) (rate(grpc_client_handled_total{namespace=\"$namespace\", grpc_code!=\"OK\"}[$__rate_interval]))",
-                  "legendFormat": "{{ grpc_method }} {{ grpc_code }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "DP\u2192CP gRPC errors by method and code. Non-OK responses from the control plane.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "s"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 24,
-                "x": 0,
-                "y": 21
-              },
-              "id": 403,
-              "title": "gRPC Client Latency (p95)",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "histogram_quantile(0.95, sum by (le, grpc_method) (rate(grpc_client_handling_seconds_bucket{namespace=\"$namespace\"}[$__rate_interval])))",
-                  "legendFormat": "{{ grpc_method }} p95",
-                  "refId": "A"
-                }
-              ],
-              "description": "DP\u2192CP gRPC call latency at p95. High latency = slow control plane or network issues.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        {
-          "collapsed": true,
-          "gridPos": {
-            "h": 1,
-            "w": 24,
-            "x": 0,
-            "y": 35
-          },
-          "id": 1100,
-          "title": "Infrastructure",
-          "type": "row",
-          "panels": [
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never",
-                    "stacking": {
-                      "mode": "none"
-                    }
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 0,
-                "y": 14
-              },
-              "id": 1101,
-              "title": "CPU Usage by Service",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (container) (rate(container_cpu_usage_seconds_total{namespace=\"$namespace\", container!=\"\", container!=\"POD\"}[$__rate_interval]))",
-                  "legendFormat": "{{ container }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "CPU usage in cores per container, stacked. Identifies resource-heavy services.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "line",
-                    "fillOpacity": 10,
-                    "lineWidth": 1,
-                    "showPoints": "never",
-                    "stacking": {
-                      "mode": "none"
-                    }
-                  },
-                  "unit": "bytes"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 12,
-                "x": 12,
-                "y": 14
-              },
-              "id": 1102,
-              "title": "Memory Usage by Service",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "sum by (container) (container_memory_working_set_bytes{namespace=\"$namespace\", container!=\"\", container!=\"POD\"})",
-                  "legendFormat": "{{ container }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "Working set memory per container. Watch for approaching limits.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            },
-            {
-              "datasource": {
-                "type": "prometheus",
-                "uid": "${datasource}"
-              },
-              "fieldConfig": {
-                "defaults": {
-                  "color": {
-                    "mode": "palette-classic"
-                  },
-                  "custom": {
-                    "drawStyle": "bars",
-                    "fillOpacity": 80,
-                    "lineWidth": 1,
-                    "showPoints": "never"
-                  },
-                  "unit": "short"
-                }
-              },
-              "gridPos": {
-                "h": 8,
-                "w": 24,
-                "x": 0,
-                "y": 22
-              },
-              "id": 1103,
-              "title": "Pod Restart Count by Container",
-              "type": "timeseries",
-              "targets": [
-                {
-                  "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"$namespace\"}[$__rate_interval])",
-                  "legendFormat": "{{ pod }}/{{ container }}",
-                  "refId": "A"
-                }
-              ],
-              "description": "Per-container restart events. Spikes indicate crashes or OOM kills.",
-              "options": {
-                "legend": {
-                  "displayMode": "table",
-                  "placement": "bottom",
-                  "calcs": [
-                    "min",
-                    "max",
-                    "lastNotNull"
-                  ]
-                }
-              }
-            }
-          ]
-        }
-      ],
-      "schemaVersion": 39,
-      "tags": [
-        "union",
-        "dataplane"
-      ],
-      "templating": {
-        "list": [
-          {
-            "current": {},
-            "hide": 0,
-            "includeAll": false,
-            "label": "Data Source",
-            "multi": false,
-            "name": "datasource",
-            "options": [],
-            "query": "prometheus",
-            "refresh": 1,
-            "type": "datasource"
-          },
-          {
-            "current": {
-              "selected": true,
-              "text": "union",
-              "value": "union"
-            },
-            "hide": 2,
-            "label": "Namespace",
-            "name": "namespace",
-            "options": [
-              {
-                "selected": true,
-                "text": "union",
-                "value": "union"
-              }
-            ],
-            "query": "union",
-            "type": "constant"
-          }
-        ]
-      },
-      "time": {
-        "from": "now-3h",
-        "to": "now"
-      },
-      "timepicker": {},
-      "timezone": "browser",
-      "title": "Union Dataplane Overview",
-      "uid": "union-dataplane-overview",
-      "version": 1
-    }
-    
-
----
-# Source: dataplane/templates/monitoring/prometheusrule.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-recording-rules
-  namespace: union
-  labels:
-    release: release-name
-data:
   recording_rules.yml: |
     groups:
       - name: cost_calculations_15s
@@ -3527,323 +4866,9 @@ data:
           - record: node_type:uptime_hours:sum15m
             expr: |
               sum_over_time(node_type:uptime_hours:sum[15m:15s])
----
-# Source: dataplane/templates/nodeexecutor/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-data:
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            linkType: ide
-            templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
-        - wandb-execution-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .podName }}'
-        - wandb-custom-id:
-            displayName: Weights & Biases
-            linkType: dashboard
-            templateUris:
-            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
-              }}/runs/{{ .taskConfig.id }}'
-        - comet-ml-execution-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
-              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
-        - comet-ml-custom-id:
-            displayName: Comet
-            linkType: dashboard
-            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
-              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
-        - neptune-scale-run:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .podName }}
-        - neptune-scale-custom-id:
-            displayName: Neptune Run
-            linkType: dashboard
-            templateUris:
-            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
-              .taskConfig.id }}
-        kubernetes-enabled: false
-  enabled_plugins.yaml: |
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-  config.yaml: |
-    executor:
-      cluster: ''
-      evaluatorCount: 64
-      maxActions: 2000
-      organization: ''
-      unionAuth:
-        injectSecret: true
-        secretName: EAGER_API_KEY
-      workerName: worker1
-      task_resources:
-        defaults:
-          cpu: 100m
-          memory: 500Mi
-        limits:
-          cpu: 4096
-          gpu: 256
-          memory: 2Ti
-    namespace_mapping:
-      template: union
-    union:
-      connection:
-        host: dns:///
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
-        clientSecretLocation: /etc/union/secret/client_secret
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-    admin:
-      clientId: 'dataplane-operator'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: dns:///
-      insecure: false
-    authorizer:
-      type: noop
-    catalog-cache:
-      cache-endpoint: dns:///
-      endpoint: dns:///
-      insecure: false
-      type: cacheservicev2
-      use-admin-auth: true
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-    sharedService:
-      metrics:
-        scope: 'executor:'
-      security:
-        allowCors: true
-        allowLocalhostAccess: true
-        allowedHeaders:
-        - Content-Type
-        allowedOrigins:
-        - '*'
-        secure: false
-        useAuth: false
-    propeller:
-      limit-namespace: union
-      node-config:
-        disable-input-file-writes: true
-    plugins:
-      fasttask:
-        additional-worker-args:
-        - --last-ack-grace-period-seconds
-        - "120"
-        callback-uri: http://union-operator-executor.union.svc.cluster.local:15605
-        grace-period-status-not-found: 2m
-      ioutils:
-        remoteFileOutputPaths:
-          deckFilename: report.html
-      k8s:
-        disable-inject-owner-references: true
-        default-cpus: 100m
-        default-env-vars: []
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
-          name: flyte-copilot-
-          start-timeout: 30s
-    storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-
----
-# Source: dataplane/templates/operator/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-operator
-  labels:
-    app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  k8s.yaml: | 
-    plugins:
-      k8s:
-        default-cpus: 100m
-        default-env-vars: []
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-  config.yaml: |
-    union:
-      connection:
-        host: dns:///
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'dataplane-operator'
-        clientSecretLocation: /etc/union/secret/client_secret
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-    sharedService:
-      features:
-        gatewayV2: true
-      port: 8081
-    authorizer:
-      type: noop
-    operator:
-      enabled: true
-      enableTunnelService: true
-      #  enableDepot: false
-      tunnel:
-        enableDirectToAppIngress: true
-        deploymentToRestart: union-operator-proxy
-      limitNamespace: union
-      disableClusterPermissions: true
-      apps:
-        enabled: 'true'
-      syncClusterConfig:
-        enabled: false
-      clusterId:
-        organization: ''
-      clusterData:
-        appId: 'dataplane-operator'
-        bucketName: ''
-        bucketRegion: 'us-east-1'
-        cloudHostName: ''
-        cloudProvider: ''
-        gcpProjectId: ''
-        metadataBucketPrefix: 's3://'
-        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-        userRoleKey: 'eks.amazonaws.com/role-arn'
-      collectUsages:
-        enabled: false
-      billing:
-        model: Shadow
-      dependenciesHeartbeat:
-        executor:
-          endpoint: 'http://union-operator-executor:10254'
-        proxy:
-          endpoint: 'http://union-operator-proxy:10254'
-      secretsWatcher:
-        dryRun: true
-        enabled: false
-        namespaces:
-          - union
-      org:
-        namespaceTemplate: union
-      imageBuilder:
-        enabled: true
-        executionNamespaceLabels:
-          union.ai/namespace-type: flyte
-        referenceConfigmapName: union-operator
-        targetConfigMapName: "build-image-config"
-    proxy:
-      persistedLogs:
-        objectStore:
-          pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
-          prefix: persisted-logs
-        sourceType: ObjectStore
-      smConfig:
-        enabled: 'true'
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-  logger.yaml: |
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-  config-overrides.yaml: | 
-    cache:
-      identity:
-        enabled: false
-  storage.yaml: | 
-    storage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-      enable-multicontainer: false
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
-  fast_registration_storage.yaml: | 
-    fastRegistrationStorage:
-      container: ""
-      type: stow
-      stow:
-        kind: s3
-        config:
-          auth_type: accesskey
-          access_key_id: 
-          secret_key: 
-          disable_ssl: false
-          endpoint: 
-          region: us-east-1
-  image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: "union-dataplane"
-  image-builder.authentication-type: "noop"
-
+    
+  rules: |
+    {}
 ---
 # Source: dataplane/templates/serving/bootstrap-configmap.yaml
 # We need to copy the default configmap here since knative-operator does not automatically update the
@@ -5089,59 +6114,6 @@ rules:
   - delete
   - update
 ---
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-rules:
-# Allow RO access to PODS
-- apiGroups:
-  - ""
-  resources:
-  - pods
-  verbs:
-  - get
-  - list
-  - watch
-# Allow Event recording access
-- apiGroups:
-  - ""
-  resources:
-  - events
-  verbs:
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access All plugin objects
-- apiGroups:
-  - '*'
-  resources:
-  - '*'
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - update
-  - delete
-  - patch
-# Allow Access to CRD
-- apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-  - create
-  - delete
-  - update
----
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -5383,17 +6355,6 @@ rules:
     resources: ["volumeattachments"]
     verbs: ["list", "watch"]
 ---
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-rules:
-- apiGroups: ["operator.knative.dev"]
-  resources: ["knativeservings"]
-  verbs: ["get", "list", "watch", "delete"]
----
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: Role
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5482,23 +6443,6 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-leaseworker
-subjects:
-- kind: ServiceAccount
-  name: union-system
-  namespace: union
-
----
-# Source: dataplane/templates/nodeexecutor/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: union-executor
-  labels:
-    app: executor
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: union-executor
 subjects:
 - kind: ServiceAccount
   name: union-system
@@ -5600,21 +6544,6 @@ roleRef:
   kind: Role
   name: union-operator-prometheus-rbac
 
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: release-name-pre-delete
-subjects:
-- kind: ServiceAccount
-  name: release-name-pre-delete
-  namespace: union
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 # Create a binding from Role -> ServiceAccount
@@ -5745,13 +6674,13 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:    
-    helm.sh/chart: kube-state-metrics-5.25.1
+    helm.sh/chart: kube-state-metrics-5.27.0
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.13.0"
+    app.kubernetes.io/version: "2.14.0"
   annotations:
     prometheus.io/scrape: 'true'
 spec:
@@ -5775,9 +6704,8 @@ metadata:
     app.kubernetes.io/component: server
     app.kubernetes.io/name: prometheus
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: v2.54.1
-    helm.sh/chart: prometheus-25.27.0
-    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: v2.55.1
+    helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
   name: union-operator-prometheus
   namespace: union
@@ -5884,30 +6812,6 @@ spec:
       name: debug
   selector:
     app: leaseworker
-
-
----
-# Source: dataplane/templates/nodeexecutor/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: union-operator-executor
-  labels:
-    platform.union.ai/prometheus-group: "union-services"
-    app: executor
-spec:
-  type: ClusterIP
-  ports:
-    - port: 15605
-      targetPort: 15605
-      protocol: TCP
-      name: fasttask
-    - port: 10254
-      targetPort: debug
-      protocol: TCP
-      name: debug
-  selector:
-    app: executor
 
 
 ---
@@ -6103,6 +7007,8 @@ spec:
               fieldPath: spec.nodeName
         - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
           value: uid
+        - name: NVIDIA_MIG_MONITOR_DEVICES
+          value: all
         ports:
         - name: "metrics"
           containerPort: 9400
@@ -6418,13 +7324,13 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:    
-    helm.sh/chart: kube-state-metrics-5.25.1
+    helm.sh/chart: kube-state-metrics-5.27.0
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: metrics
     app.kubernetes.io/part-of: kube-state-metrics
     app.kubernetes.io/name: kube-state-metrics
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2.13.0"
+    app.kubernetes.io/version: "2.14.0"
 spec:
   selector:
     matchLabels:      
@@ -6437,13 +7343,13 @@ spec:
   template:
     metadata:
       labels:        
-        helm.sh/chart: kube-state-metrics-5.25.1
+        helm.sh/chart: kube-state-metrics-5.27.0
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: metrics
         app.kubernetes.io/part-of: kube-state-metrics
         app.kubernetes.io/name: kube-state-metrics
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: "2.13.0"
+        app.kubernetes.io/version: "2.14.0"
     spec:
       automountServiceAccountToken: true
       hostNetwork: false
@@ -6462,7 +7368,7 @@ spec:
         - --resources=certificatesigningrequests,configmaps,cronjobs,daemonsets,deployments,endpoints,horizontalpodautoscalers,ingresses,jobs,leases,limitranges,mutatingwebhookconfigurations,namespaces,networkpolicies,nodes,persistentvolumeclaims,persistentvolumes,poddisruptionbudgets,pods,replicasets,replicationcontrollers,resourcequotas,secrets,services,statefulsets,storageclasses,validatingwebhookconfigurations,volumeattachments
         - --namespaces=union
         imagePullPolicy: IfNotPresent
-        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+        image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.14.0
         ports:
         - containerPort: 8080
           name: "http"
@@ -6482,7 +7388,7 @@ spec:
           httpGet:
             httpHeaders:
             path: /readyz
-            port: 8080
+            port: 8081
             scheme: HTTP
           initialDelaySeconds: 5
           periodSeconds: 10
@@ -6506,9 +7412,8 @@ metadata:
     app.kubernetes.io/component: server
     app.kubernetes.io/name: prometheus
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: v2.54.1
-    helm.sh/chart: prometheus-25.27.0
-    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: v2.55.1
+    helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
   name: union-operator-prometheus
   namespace: union
@@ -6532,16 +7437,15 @@ spec:
         app.kubernetes.io/component: server
         app.kubernetes.io/name: prometheus
         app.kubernetes.io/instance: release-name
-        app.kubernetes.io/version: v2.54.1
-        helm.sh/chart: prometheus-25.27.0
-        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/version: v2.55.1
+        helm.sh/chart: prometheus-25.30.2
         app.kubernetes.io/part-of: prometheus
     spec:
       enableServiceLinks: true
       serviceAccountName: union-operator-prometheus
       containers:
         - name: prometheus-server-configmap-reload
-          image: "quay.io/prometheus-operator/prometheus-config-reloader:v0.76.0"
+          image: "quay.io/prometheus-operator/prometheus-config-reloader:v0.78.1"
           imagePullPolicy: "IfNotPresent"
           args:
             - --watched-dir=/etc/config
@@ -6569,8 +7473,13 @@ spec:
               readOnly: true
 
         - name: prometheus-server
-          image: "quay.io/prometheus/prometheus:v2.54.1"
+          image: "quay.io/prometheus/prometheus:v2.55.1"
           imagePullPolicy: "IfNotPresent"
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           args:
             - --storage.tsdb.retention.time=3d
             - --config.file=/etc/config/prometheus.yml
@@ -6578,6 +7487,7 @@ spec:
             - --web.console.libraries=/etc/prometheus/console_libraries
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
+            - --enable-feature=expand-external-labels
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -6615,10 +7525,10 @@ spec:
             - name: storage-volume
               mountPath: /data
               subPath: ""
-            - name: server-recording-rules
-              mountPath: /etc/config/recording
+            - name: prometheus-remote-write-secret
+              mountPath: /etc/prometheus/secrets
               subPath: 
-              readOnly: 
+              readOnly: true
       dnsPolicy: ClusterFirst
       securityContext:
         fsGroup: 65534
@@ -6629,10 +7539,11 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: union-operator-prometheus
-        - name: server-recording-rules
-          configMap:
-            name: union-recording-rules
+            name: release-name-prometheus
+        - name: prometheus-remote-write-secret
+          secret:
+            secretName: union-secret-auth
+            optional: true
         - name: storage-volume
           emptyDir:
             sizeLimit: 10Gi
@@ -6695,9 +7606,9 @@ spec:
               ephemeral-storage: 100Mi
               memory: 1500Mi
             requests:
-              cpu: "1"
+              cpu: 100m
               ephemeral-storage: 100Mi
-              memory: 1000Mi
+              memory: 384Mi
       serviceAccountName: flyteconnector
 
 ---
@@ -6797,7 +7708,7 @@ spec:
             privileged: true
           resources:
             requests:
-              cpu: 4
+              cpu: 200m
               ephemeral-storage: 50Gi
               memory: 4Gi
       volumes:
@@ -6831,7 +7742,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ad8008098a5dfe09cea3612433ce65a56dfa7c9578f9d9e00a1a4b96beb525c"
+        configChecksum: "22d3c6af27857484a6667d9642c003718906d93486c55cdc7ba46d5ab6da3f4"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6856,7 +7767,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -6904,8 +7815,8 @@ spec:
               cpu:    "8"
               memory: "16Gi"
             requests:
-              cpu:    "4"
-              memory: "8Gi"
+              cpu:    "300m"
+              memory: "512Mi"
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
@@ -6914,109 +7825,6 @@ spec:
             - name: auth
               mountPath: /etc/secrets/
       
-      
-
----
-# Source: dataplane/templates/nodeexecutor/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: executor
-  namespace: union
-  labels:
-    app: executor
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: executor
-  template:
-    metadata:
-      annotations:
-        configChecksum: "841817ea8873e0592d093d9f564f22eb6a316a7cac8d611afc2582a4856dc7a"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        app: executor
-        app.kubernetes.io/instance: 'release-name'
-        app.kubernetes.io/name: executor
-    spec:
-      securityContext:
-        fsGroup: 1337
-      serviceAccountName: union-system
-      volumes:
-        - name: config-volume
-          configMap:
-            name: executor
-        - name: secret-volume
-          secret:
-            secretName: union-secret-auth
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      containers:
-        - name: executor
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
-          imagePullPolicy: IfNotPresent
-          command:
-            - executorv2
-            - serve
-            - --config
-            - /etc/config/*.yaml
-          ports:
-            - name: http
-              containerPort: 8089
-              protocol: TCP
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-          env:
-            - name: POD_NAME
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.name
-            - name: POD_NAMESPACE
-              valueFrom:
-                fieldRef:
-                  fieldPath: metadata.namespace
-            - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.memory
-            - name: GOMAXPROCS
-              valueFrom:
-                resourceFieldRef:
-                  divisor: 1
-                  resource: limits.cpu
-            - name: CLUSTER_NAME
-              valueFrom:
-                secretKeyRef:
-                  name: operator-cluster-name
-                  key: cluster_name
-            - name: DEPLOYMENT_NAME
-              value: operator
-            - name: PROXY_SERVICE_URL
-              value: http://union-operator-proxy:8080
-            - name: PROMETHEUS_SERVICE_URL
-              value: http://union-operator-prometheus:80
-            - name: KNATIVE_PROXY_SERVICE_URL
-              value: http://kourier-internal
-          resources:
-            limits:
-              cpu:    "4"
-              memory: "8Gi"
-            requests:
-              cpu:    "1"
-              memory: "1Gi"
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/config
-            - name: secret-volume
-              mountPath: /etc/union/secret
-            - name: auth
-              mountPath: /etc/secrets/
       
 
 ---
@@ -7040,7 +7848,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "620d01a342f32769b036c4e87ecf59cc0a097424b2effc178b3b2c6c9fdb5ef"
+        configChecksum: "c3f4e63719c9e742bd16274f83a8722f617c961ef7e8ef26de2855bd01470f6"
         
       labels:
         
@@ -7065,7 +7873,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -7133,7 +7941,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -7178,7 +7986,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "620d01a342f32769b036c4e87ecf59cc0a097424b2effc178b3b2c6c9fdb5ef"
+        configChecksum: "c3f4e63719c9e742bd16274f83a8722f617c961ef7e8ef26de2855bd01470f6"
         
       labels:
         
@@ -7201,7 +8009,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -7209,8 +8017,8 @@ spec:
               cpu: "2"
               memory: 3Gi
             requests:
-              cpu: "1"
-              memory: 1Gi
+              cpu: 150m
+              memory: 384Mi
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
@@ -7218,9 +8026,9 @@ spec:
               name: secret-volume
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.6.1"
+              value: "2026.8.4"
             - name: HELM_APP_VERSION
-              value: "2026.6.0"
+              value: "2026.8.5"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -7304,7 +8112,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "ad8008098a5dfe09cea3612433ce65a56dfa7c9578f9d9e00a1a4b96beb525c"
+        configChecksum: "22d3c6af27857484a6667d9642c003718906d93486c55cdc7ba46d5ab6da3f4"
         
     spec:
       securityContext:
@@ -7315,7 +8123,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.6.0"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -7589,40 +8397,11 @@ metadata:
 spec:
   containers:
     - name: wget
-      image: "busybox:latest"
+      image: "docker.io/library/busybox:latest"
       imagePullPolicy: Always
       command: ["sh"]
       args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
   restartPolicy: Never
-
----
-# Source: dataplane/templates/serving/pre-delete-hook.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: release-name-pre-delete
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-delete
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-spec:
-  ttlSecondsAfterFinished: 120
-  template:
-    spec:
-      serviceAccountName: release-name-pre-delete
-      restartPolicy: Never
-      containers:
-      - name: cleanup
-        image: bitnami/kubectl:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          kubectl delete knativeserving \
-            union-operator-serving \
-            --ignore-not-found=true \
-            -n union
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
@@ -7642,7 +8421,7 @@ spec:
       serviceAccountName: flyte-webhook-cleanup
       containers:
         - name: cleanup
-          image: "alpine/k8s:1.32.3"
+          image: "docker.io/alpine/k8s:1.32.3"
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -7666,10 +8445,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.6.1
+    helm.sh/chart: dataplane-2026.8.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.6.0"
+    app.kubernetes.io/version: "2026.8.5"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -7691,6 +8470,10 @@ spec:
       kubernetes.podspec-dnspolicy: "enabled"
       kubernetes.podspec-schedulername: "enabled"
       kubernetes.podspec-securitycontext: "enabled"
+      # Allow adding a capability subset to the user container's securityContext
+      # (e.g. CAP_SYS_ADMIN, which PodTemplate.allow_fuse() sets so apps/tasks can
+      # mount a FUSE filesystem such as a flyteplugins-union Volume).
+      kubernetes.containerspec-addcapabilities: "enabled"
     network:
       ingress-class: "kourier.ingress.networking.knative.dev"
   high-availability:
@@ -7716,10 +8499,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.6.1
+      helm.sh/chart: dataplane-2026.8.4
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.6.0"
+      app.kubernetes.io/version: "2026.8.5"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:
@@ -7738,19 +8521,19 @@ spec:
     - container: kourier-gateway
       envVars:
       - name: UNION_AUTHZ_TENANTAUTHURL
-        value: "https:///me"
+        value: "https://test-controlplane-host/me"
       - name: UNION_AUTHZ_TENANTAUTHSIGNINURL
-        value: "https:///login"
+        value: "https://test-controlplane-host/login"
       - name: UNION_AUTHZ_TENANTCONTROLPLANEURL
-        value: "https://"
+        value: "https://test-controlplane-host"
     resources:
       - container: kourier-gateway
         limits:
           cpu: "2"
           memory: 2Gi
         requests:
-          cpu: "1"
-          memory: 1Gi
+          cpu: 100m
+          memory: 256Mi
   - name: activator
     affinity:
       podAntiAffinity:
@@ -7827,8 +8610,8 @@ spec:
           cpu: "1"
           memory: 1Gi
         requests:
-          cpu: 500m
-          memory: 500Mi
+          cpu: 100m
+          memory: 256Mi
   - name: webhook
     affinity:
       podAntiAffinity:

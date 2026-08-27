@@ -1,0 +1,92 @@
+# ============================================================================
+# Authless dataplane example
+# ============================================================================
+# Shared-cluster deployment that SKIPS auth and routes DP -> CP traffic directly
+# to in-cluster Kubernetes Services, bypassing the control-plane nginx ingress
+# and OAuth entirely. This is the historical "shared cluster, skip auth, route
+# to k8s services" topology.
+#
+# Only safe when the control plane and data plane share a cluster and the CP
+# Services are not reachable from outside it — the control plane trusts these
+# in-cluster requests via identity claims instead of an OAuth token.
+#
+# How it works:
+#   - The single host global CONTROLPLANE_HOST still names the CP for the
+#     serving / app-callback URLs and cloudHostName.
+#   - The DP -> CP gRPC connection is overridden to the in-cluster Service on
+#     :80 with insecure transport. The `…svc.cluster.local:80` + insecure
+#     combination is exactly what selects the control plane's trusted-identity
+#     (no-OAuth) code path — so no token is required.
+#   - Auth is turned off explicitly via config.union.auth.enable (and the
+#     sibling toggles), NOT derived from the host. These are the individual
+#     auth toggles the interface exposes.
+#
+# Replace `union-cp` with the actual CP release namespace, and the Service names
+# with the CP's exposed gRPC Services, if they differ in your deployment.
+#
+# Apply on top of values.yaml + a cloud overlay:
+#   helm template charts/dataplane \
+#     -f charts/dataplane/values.yaml \
+#     -f charts/dataplane/values.gcp.yaml \
+#     -f charts/dataplane/examples/values.authless.yaml ...
+# ============================================================================
+
+global:
+  # CP host for serving / app-callback URLs + cloudHostName. In a shared
+  # cluster this is the CP nginx Service FQDN.
+  CONTROLPLANE_HOST: "controlplane-nginx-controller.union-cp.svc.cluster.local"
+
+# Every DP -> CP client must be pointed at the CP's in-cluster gRPC Service on
+# :80 with `insecure: true`, and have its auth turned off. Each block below is a
+# separate client. Replace the Service names with the CP's actual in-cluster
+# gRPC Services (flyteadmin / cacheservice / authorizer) and `union-cp` with the
+# CP release namespace. The `…svc.cluster.local:80` + insecure combination is
+# what selects the CP's trusted-in-cluster-identity path (no OAuth, no nginx).
+config:
+  # union.connection — operator / leaseworker -> flyteadmin.
+  union:
+    auth:
+      enable: false
+    connection:
+      host: "dns:///flyteadmin.union-cp.svc.cluster.local:80"
+      insecure: true
+
+  # admin client — same flyteadmin gRPC API.
+  admin:
+    admin:
+      endpoint: "dns:///flyteadmin.union-cp.svc.cluster.local:80"
+      insecure: true
+
+  # catalog cache — reuse-admin-auth off, dial the cacheservice directly.
+  catalog:
+    catalog-cache:
+      use-admin-auth: false
+      insecure: true
+      endpoint: "dns:///cacheservice.union-cp.svc.cluster.local:80"
+      cache-endpoint: "dns:///cacheservice.union-cp.svc.cluster.local:80"
+
+  # authorizer client.
+  authorizer:
+    authorizerClient:
+      grpcConfig:
+        host: "dns:///authorizer.union-cp.svc.cluster.local:80"
+        insecure: true
+
+# clusterresourcesync (union-syncresources) -> flyteadmin, same authless path.
+clusterresourcesync:
+  config:
+    union:
+      auth:
+        enable: false
+      connection:
+        host: "dns:///flyteadmin.union-cp.svc.cluster.local:80"
+        insecure: true
+
+# App serving / zero-trust gateway auth — disable ONLY if served apps must not
+# require auth. Omit these two blocks to keep app auth on while DP->CP is authless.
+serving:
+  auth:
+    enabled: false
+gateway:
+  auth:
+    enable: false

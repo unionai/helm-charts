@@ -5,6 +5,7 @@
 
 global:
   UNION_HOST: "test.example.com"
+  UNION_ORG: "test-org"
   INTERNAL_CLIENT_ID: "test-internal-client-id"
   AUTH_TOKEN_URL: "https://idp.example.com/oauth2/v2.0/token"
   OIDC_BASE_URL: "https://idp.example.com/oauth2/v2.0"
@@ -12,8 +13,8 @@ global:
   CLI_CLIENT_ID: "55555555-6666-7777-8888-999999999999"
   OIDC_METADATA_URL: ".well-known/openid-configuration"
   OIDC_ALLOWED_AUDIENCE:
-  - "api://my-app"
-  - "00000000-1111-2222-3333-444444444444"
+    - "api://my-app"
+    - "00000000-1111-2222-3333-444444444444"
   OIDC_APP_SCOPE: "api://my-app/all"
   OIDC_APP_AUDIENCE: "api://my-app"
 
@@ -43,6 +44,32 @@ flyte:
       tls:
         secretName: fake-host-tls-secret
       host: fake-host.domain
+  # Read the browser-login OIDC client secret from a dedicated, single-writer
+  # Secret mounted at /etc/secrets/oauth (see examples/values.oidc-client-secret.yaml)
+  # instead of merging it into the init-container-managed flyte-admin-secrets.
+  # additionalVolumes/Mounts are list-valued (Helm replaces), so the chart's own
+  # union-secrets / private-config entries are repeated here alongside the new one.
+  flyteadmin:
+    additionalVolumes:
+      - name: union-secrets
+        secret:
+          secretName: '{{ .Values.global.KUBERNETES_SECRET_NAME }}'
+      - name: private-config
+        configMap:
+          name: flyte-admin-private-config
+      - name: oauth-client-secret
+        secret:
+          secretName: flyteadmin-oidc-client-secret
+    additionalVolumeMounts:
+      - name: union-secrets
+        mountPath: /etc/secrets/union
+        readOnly: true
+      - name: private-config
+        mountPath: /etc/flyte/private
+        readOnly: true
+      - name: oauth-client-secret
+        mountPath: /etc/secrets/oauth
+        readOnly: true
   configmap:
     admin:
       admin:
@@ -55,4 +82,24 @@ flyte:
           # This is set in values overlay, not via a global.
           identityTypeClaimsForApps:
             idtyp:
-            - app
+              - app
+        userAuth:
+          openId:
+            clientSecretFile: /etc/secrets/oauth/client_secret
+
+# Eager-key secret-by-reference override on the identity service: CreateKey reads
+# seeded OAuth client creds from a mounted Secret instead of registering an IdP app.
+# Exercises a custom client-secret data key to cover the key-name default-override path.
+      connection:
+        rootTenantURLPattern: dns:///fake-host.domain
+services:
+  identity:
+    apiKeyOverrides:
+      - key: EAGER_API_KEY
+        existingSecret:
+          name: eager-client-creds
+          clientSecretKey: oauth_client_secret
+      - key: EAGER_API_KEY
+        clusterName: dp-1
+        existingSecret:
+          name: eager-dp1-creds

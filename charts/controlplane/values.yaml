@@ -15,9 +15,37 @@ global:
   ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
-  # --- DP entrypoint (CP -> DP) ---
-  DATAPLANE_HOST: ""        # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
-  DATAPLANE_ENDPOINT: ""    # Deprecated alias — falls back to DATAPLANE_HOST when unset.
+  # --- Leasor: attached dataplane cluster identifier (DEPRECATED, static-only) ---
+  # DEPRECATED: leave empty. The default queueSync.source is now `crud` — leasor
+  # reads queues from the control-plane queue CRUD API (the cluster service),
+  # which auto-seeds a `default` + per-cluster queue on dataplane registration —
+  # so this knob is unused in the default configuration and can be dropped from
+  # env overlays. It survives only as the static escape hatch below.
+  #
+  # Only consulted when services.leasor.configMap.leasor.queueSync.source is
+  # explicitly set to `static`.
+  #
+  # In static mode this is the cluster identifier — same value the corresponding
+  # dataplane chart install sets in its own global.CLUSTER_NAME, which is what
+  # leaseworker reports on StreamLeases and what leasor matches queues against.
+  # It auto-generates services.leasor.configMap.leasor.queueSync.queues (one
+  # `default` queue + one per-cluster queue, both containing this name). For the
+  # rare multi-DP static case, override that queues list directly to enumerate
+  # every dataplane.
+  #
+  # NOT the same as flyte.configmap.clusters.clusterConfigs. That is
+  # flyteadmin's routing registry (name + endpoint + auth per cluster) used
+  # by RandomClusterSelector for v1 execution dispatch; populate that only
+  # when you actually need flyteadmin v1 multi-cluster routing. This knob is
+  # leasor-only and just carries a name. The leasor configmap static
+  # auto-queue-gen is a no-op when this is empty (see
+  # templates/leasor/configmap.yaml).
+  DATAPLANE_CLUSTER_NAME: ""
+
+  # NOTE: global.DATAPLANE_HOST + global.DATAPLANE_ENDPOINT were removed in
+  # the Phase 2 DP self-registration cleanup. CP→DP routing now reads the
+  # DP's self-reported endpoint from cluster.Spec.ConnectionConfig (the
+  # operator self-reports on every UpdateStatus). See cloud #16362.
 
   # --- Images ---
   # Customer-facing registry default; internal deployments override to private ECR/GCR.
@@ -26,12 +54,27 @@ global:
   # --- Ingress ---
   INGRESS_PROVIDER: nginx   # nginx | envoy | both
 
+  # --- AWS IAM ---
+  AWS_POD_IDENTITY_ANNOTATION_PREFIX: eks.amazonaws.com
+
   # --- Service-to-Service OAuth2 ---
   # Full IdP config lives in flyte.configmap.adminServer.auth below; these
   # three globals feed into that block plus a few service ConfigMaps.
   INTERNAL_CLIENT_ID: ""    # client_credentials client ID for S2S calls
   AUTH_TOKEN_URL: ""        # OAuth2 token endpoint
   OIDC_S2S_SCOPE: ""        # Okta: leave empty. Entra ID: "api://my-app/.default"
+
+# -- Global kubernetes scheduling constraints applied to control-plane pods.
+# Per-service constraints (services.<name>.nodeSelector / affinity / tolerations)
+# always take precedence. Mirrors the dataplane chart's `scheduling` block so a
+# single value steers both planes (e.g. onto a Spot node pool).
+scheduling:
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  affinity: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  nodeSelector: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration
+  tolerations: []
 
 # Prefer setting the DB password via a K8s secret referenced by
 # global.KUBERNETES_SECRET_NAME; this inline field is here only as a fallback.
@@ -113,10 +156,17 @@ secrets: {}
 # without operators running `flyte deploy` manually after every helm upgrade.
 imageBuilder:
   bootstrap:
-    # When false, the bootstrap Job + ConfigMap are not rendered (use this
-    # if the operator prefers to manage build-image registration themselves
-    # or has an existing registration that must not be overwritten).
-    enabled: true
+    # Disabled by default. When enabled, the bootstrap Job registers the
+    # build-image task in the system/production project, which resolves to a
+    # data plane through queue -> cluster-pool -> cluster routing and uploads
+    # the code bundle to that cluster's fast-registration bucket. This requires
+    # the system project to map to a functional cluster through queue ->
+    # cluster-pool -> cluster configuration, and that cluster's write role to
+    # hold the bucket's KMS/S3 permissions; otherwise the Job fails. Operators
+    # should opt in once that routing and those bucket permissions are in
+    # place, or manage build-image registration themselves. Set true to render
+    # the bootstrap Job + ConfigMap.
+    enabled: false
 
     # Container image the bootstrap Job runs in. Must provide `flyte` (Python
     # SDK CLI) and the `kubernetes` Python client on PATH. Defaults to the
@@ -253,12 +303,17 @@ ingress:
   # namespace (typically provisioned by cert-manager via extraObjects, or by
   # an external-secrets ExternalSecret in your environment overlay).
   #
-  # Example — one secret covering the public host and the in-cluster alias:
+  # Split TLS by trust domain — one secret can't cover both. A public ACME /
+  # Let's Encrypt issuer can't mint a cert for non-resolvable in-cluster names,
+  # and in-cluster clients still verify the hostname/SAN, so the public host and
+  # the svc FQDN each need their own cert (selected by SNI):
   # tls:
-  #   - hosts:
+  #   - hosts:                                    # public — Let's Encrypt cert
   #       - '{{ .Values.global.UNION_HOST }}'
+  #     secretName: my-controlplane-public-tls-secret
+  #   - hosts:                                    # intracluster — self-signed cert
   #       - 'controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
-  #     secretName: my-controlplane-tls-secret
+  #     secretName: my-controlplane-internal-tls-secret
   tls: []
 
   # Host to use for all ingress objects.
@@ -460,8 +515,10 @@ configMap:
   connection:
     environment: "staging"
     region: ""  # Cloud-specific: set in overlay (e.g. AWS_REGION)
-    # Use controlplane ingress controller for gRPC routing.
-    rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+    # Operator eager-key (CreateAPI) bootstrap + CP↔CP dial. Converged with
+    # flyteadmin's connection on global.UNION_HOST; override per-env for
+    # intracluster svc-FQDN or internal-VPC routing.
+    rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
   otel:  # Ref: https://github.com/flyteorg/flyte/blob/master/flytestdlib/otelutils/config.go
     type: noop
   sharedService:
@@ -635,10 +692,18 @@ services:
           # Organization identifier for this deployment.
           organization: '{{ .Values.global.UNION_ORG }}'
 
-          # Dataplane clusters to bootstrap as authz cluster resources under the org
+          # Dataplane clusters to bootstrap as authz cluster resources. Each entry is
+          # a bare cluster name (legacy) or an object granting per-cluster roles to
+          # OAuth apps by client ID (the IdP `sub`); org Admin does not inherit onto
+          # cluster resources, so grants are explicit:
+          #   operators — cluster-manager role (union-operator Heartbeat/UpdateStatus, ACTION_MANAGE_CLUSTER).
+          #   viewers   — viewer role (internal service-to-service GetCluster-by-name, ACTION_VIEW_FLYTE_EXECUTIONS).
           dataplaneClusters: []
           # Example:
-          # - dp-1
+          #   - dp-1                                   # legacy: resource only
+          #   - name: "dp-1"                           # object: with role grants
+          #     operators: ["<union-operator sub>"]
+          #     viewers: ["<service-to-service sub>"]
 
           # Authorization domains to create. Each domain is an isolation boundary
           # for workflow executions (e.g. dev vs prod).
@@ -757,8 +822,16 @@ services:
         metrics:
           scope: "dataproxy:"
       dataproxy:
-        secureTunnelTenantURLPattern: http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80 # http://ingress-nginx-internal.ingress-nginx.svc.cluster.local
+        # CP→DP secure tunnel URL. Selfhosted overrides via global.DATAPLANE_HOST.
+        secureTunnelTenantURLPattern: '{{ default "http://ingress-nginx-internal.ingress-nginx.svc.cluster.local:80" .Values.global.DATAPLANE_HOST }}'
         clusterSelector:
+          # `local` (default) is the data-plane-only self-resolver — backwards
+          # compatible. Set `direct` to route across dataplanes by cluster pool and
+          # dial each dataplane's self-reported connection_config directly (no
+          # Cloudflare tunnel), for multi-dataplane support. `direct` requires the
+          # dataplanes to self-report: pair it with the dataplane chart's
+          # `updateStatus.connectionConfig.enabled: true`. A future release will
+          # make `direct` the default.
           type: local
         # Task metrics query templates for GetActionAttemptMetrics / GetAppMetrics RPCs.
         # Migrated from usage service to dataproxy in cloud #15357.
@@ -833,16 +906,16 @@ services:
                   sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
               EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
@@ -934,6 +1007,24 @@ services:
       - serve
       - --config
       - /etc/config/*.yaml
+    redisConsumer:
+      # V2 notifications are produced onto Redis streams by actions and drained
+      # by this consumer. Keep disabled by default to preserve the historical
+      # self-hosted behavior unless Redis-backed notifications are explicitly
+      # configured.
+      enabled: false
+      fullnameOverride: "redis-consumer"
+      replicaCount: 2
+      args:
+        - cloudpropeller
+        - consumer
+        - start
+        - --config
+        - /etc/config/*.yaml
+      service:
+        type: ClusterIP
+        debugport: 10254
+      terminationGracePeriodSeconds: 60
     configMap:
       workspace:
         enable: false
@@ -993,10 +1084,35 @@ services:
           # When true and no identity service is reachable, all runs display "Unknown"
           # even when created_by is populated in the DB.
           enrichIdentities: false
+          # v2-actions routing is unconditional: templates/_helpers.tpl
+          # (unionai.configMap) always injects
+          # useActionsServiceForOrgs=[global.UNION_ORG] and
+          # rejectLegacySDKVersions=true here. The legacy queue service was
+          # removed from this chart, so every CreateRun goes through the v2
+          # actions service and sub-2.0.4 SDK CreateRun is hard-rejected.
+          # Overlay values for those two keys are overwritten by the helper.
           clusterCacheConfig:
             ttl: 10m
   identity:
     fullnameOverride: "identity"
+    # apiKeyOverrides: secret-by-reference overrides for system API keys. By
+    # default the identity service mints these by registering an OAuth client on
+    # the IdP; use this when the control plane can't register clients on an
+    # operator-controlled IdP (selfhosted Okta/Entra). An out-of-band process
+    # seeds the pre-created OAuth client credentials as a K8s Secret, and the
+    # identity service reads them instead of contacting the IdP. Scope an entry to
+    # a single dataplane cluster to give different dataplanes different seeded
+    # clients; omit clusterName for one client shared across all clusters.
+    # Reference-only: never put a client secret inline here — this file renders
+    # into a committed overlay.
+    apiKeyOverrides: []
+    #   - key: EAGER_API_KEY               # system key name (required)
+    #     clusterName: dp-1                # optional; scope to one dataplane cluster.
+    #                                      # Omit for the client shared across all clusters.
+    #     existingSecret:
+    #       name: eager-dp1-creds          # pre-created Secret (required)
+    #       clientIdKey: client_id         # optional; data key, defaults to client_id
+    #       clientSecretKey: client_secret # optional; data key, defaults to client_secret
     service:
       type: ClusterIP
       grpcport: 80
@@ -1143,16 +1259,16 @@ services:
                   sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
               EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_UTILIZATION: |
-                sum by (gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
               EXECUTION_METRIC_GPU_SM_ACTIVE: |
-                sum by (gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
-                sum by (gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
@@ -1224,40 +1340,296 @@ services:
           maxOpenConnections: 20
           maxConnectionLifetime: 1m
 
-  queue:
-    fullnameOverride: "queue"
-
-    # Queue service must only run a single replica.
+  # Leasor is the lease-based scheduler that hands actions to the data-plane
+  # leaseworker. It is the authoritative in-memory lease store, so it runs as a
+  # single replica with a Recreate strategy (two pods would split-brain).
+  #
+  # Internally leasor is sharded across many tenants behind an Envoy router. A
+  # self-hosted deployment is single-tenant, so one shard owns everything and no
+  # router is needed — leasor rides the generic services renderer like the
+  # other services.
+  #
+  # ConfigMap special-cased: leasor's ConfigMap is NOT produced by the generic
+  # services renderer. templates/leasor/configmap.yaml builds it instead so it
+  # can inject per-queue defaults onto each entry of queueSync.queues — see
+  # below for the supported shape and the QueueSpec field reference.
+  #
+  # queueSync.queues — list of leasor.config.QueueSpec entries
+  # (cloud/leasor/config/config.go:121). Each entry routes Actions queued
+  # under (org, project, domain) to one or more dataplane clusters.
+  #
+  # Per-entry defaults (template-injected when the field is absent):
+  #
+  #   org:               global.UNION_ORG     (single-tenant CP convention)
+  #   name:              "default"
+  #   priority:          50  (PriorityMedium — 0=Low, 50=Medium, 100=High)
+  #   fairnessAlgorithm: 1   (FairnessRoundRobin; 0=None=FIFO, 2=Shuffle)
+  #
+  # Caller-owned fields:
+  #
+  #   clusters:         REQUIRED — list of DP cluster_name strings this queue
+  #                     dispatches to. ["*"] matches every connected DP.
+  #
+  # Optional fields (omit unless you need to scope or shape the queue):
+  #
+  #   project:          scope to a single Flyte project (default: "" = all)
+  #   domain:           scope to a single Flyte domain (default: "" = all)
+  #   status:           0=Active (default), 1=Draining, 2=Drained
+  #   maxDepth:         max queued leases (0 = unlimited)
+  #   maxActionConcurrency: max concurrent in-flight actions (0 = unlimited)
+  #   maxRunConcurrency:    max concurrent runs (0 = unlimited)
+  #
+  # Single-DP example (matches what DATAPLANE_CLUSTER_NAME auto-generated):
+  #
+  #   services:
+  #     leasor:
+  #       configMap:
+  #         leasor:
+  #           queueSync:
+  #             source: static
+  #             queues:
+  #               - { clusters: [dp-1] }            # → name=default
+  #               - { name: dp-1, clusters: [dp-1] }
+  #
+  # Multi-DP example (one default that fans out + one per-cluster):
+  #
+  #   queues:
+  #     - { clusters: [dp-east, dp-west] }
+  #     - { name: dp-east, clusters: [dp-east] }
+  #     - { name: dp-west, clusters: [dp-west] }
+  #
+  # Backward compat: if queues is empty AND global.DATAPLANE_CLUSTER_NAME
+  # is set, the template auto-generates the 2-entry single-DP shape. This
+  # path is DEPRECATED — migrate to explicit `queues` above.
+  leasor:
+    fullnameOverride: "leasor"
     replicaCount: 1
     autoscaling:
       enabled: false
-
+    strategy:
+      type: Recreate
     args:
-      - queue
+      - leasor
       - serve
-      - '--config'
+      - --config
       - /etc/config/*.yaml
     initContainers:
       - name: migrate
         args:
-          - queue
+          - leasor
           - migrate
           - --config
           - "/etc/config/*.yaml"
     configMap:
       sharedService:
         metrics:
-          scope: "queue:"
-      queue:
+          scope: "leasor:"
+      leasor:
         db:
+          type: CQL
+          cql:
+            hosts:
+              - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
+            keyspace: leasor
+        # Single tenant => one shard owns all partitions. With totalPartitions=1
+        # every org hashes to partition 0, so this lone shard ([0]) serves every
+        # request and no Envoy router is required. shardIndex must be set
+        # explicitly because the generic renderer does not inject SHARD_INDEX.
+        totalPartitions: 1
+        partitions:
+          - [0]
+        shardIndex: 0
+        # The ScyllaDB cluster key is ((partition_id, bucket_id), id). partition_id
+        # is constant for a single tenant, so bucket_id (0..numBuckets-1) is the
+        # only spread dimension. Set numBuckets ≥ ~10× the ScyllaDB shard
+        # (vCPU) count across all nodes so writes/reads spread evenly across
+        # the ring. Self-hosted Union deployments typically point at Scylla
+        # Cloud; 256 gives a ~10× margin up to ~24 total shards (e.g. 3-node
+        # x 8 vCPU). Bump to 512+ if your cluster exceeds ~32 total vCPU.
+        # This is pure configuration — the table schema is unchanged — but it is a
+        # hash modulus, so it must stay fixed after the first deploy.
+        numBuckets: 256
+        # No router fronts this single shard, so nothing sets the
+        # leasor-partition-id routing header. Skip the validation that would
+        # otherwise reject every request for the missing header.
+        skipPartitionCheckForDevbox: true
+        # Where leasor learns its queues. `crud` (default) reads them from the
+        # cluster service's queue CRUD API — the cluster service auto-seeds a
+        # `default` + per-cluster queue on dataplane registration, and
+        # UI-created queues are picked up automatically. Set `static` for the
+        # ship-without-CRUD fallback that derives queues from
+        # global.DATAPLANE_CLUSTER_NAME (see templates/leasor/configmap.yaml).
+        queueSync:
+          source: crud
+    resources:
+      limits:
+        cpu: 2
+        memory: 4Gi
+      requests:
+        cpu: 250m
+        memory: 512Mi
+
+
+# Actions is the stateful coordination layer between the run service and leasor.
+# It is sharded by action partition (fnv32a("org:project:domain:run:parentAction")
+# % 1024) and fronted by an Envoy router that hashes each request to the owning
+# shard via the actions-shard-id header — the same routing semantics used in
+# Union's managed control plane.
+#
+# actionsLeasor: DEPRECATED, no-op. v2-actions CreateRun routing is now
+# unconditional — templates/_helpers.tpl (unionai.configMap) always injects
+# useActionsServiceForOrgs=[global.UNION_ORG] and rejectLegacySDKVersions=true
+# into the executions config. The key is kept only so existing overlays that
+# set it don't look load-bearing; it is ignored and will be removed in a
+# future release. Drop it from overlays.
+#
+# DEPRECATION TIMELINE
+#   2026-06-30 — queue + executor services formally deprecated. SDK <2.0.4 still
+#                works through the legacy path but customers should migrate.
+#   2026-07-31 — complete switch-over. Chart default flips to `enabled: true`;
+#                every deployment routes CreateRun through the v2 actions
+#                service and rejects sub-2.0.4 SDK CreateRun.
+#   2026-07-28 — queue service templates removed from this chart (2026.8.0);
+#                this knob became a no-op. SDK <2.0.4 CreateRun hard-fails.
+#                Deployments that need the legacy path must pin chart <= 2026.7.2.
+actionsLeasor:
+  enabled: true
+
+# Self-hosted runs 10 fixed shards (the same count Union's managed control
+# planes run). Each shard is its own single-replica Deployment owning a
+# contiguous slice of the 1024 partitions. The Watch endpoint is heavy, so this
+# count was chosen to spread that load. Because it needs per-shard Deployments
+# plus the router, actions has its own templates (templates/actions/) and is
+# configured here, NOT under .Values.services.
+actions:
+  enabled: true
+
+  # Service name is fixed to "actions" so sibling services can reach it by name
+  # via configMap.union.internalConnectionConfig (_SERVICE_.<ns>.svc...:80).
+  fullnameOverride: "actions"
+
+  # Container image. Empty repository/tag fall back to the shared control-plane
+  # services image (.Values.image).
+  image:
+    repository: ""
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # Init-container image used by the wait-for-non-peers script on sharded
+  # deployments. alpine/k8s pins kubectl to the cluster's k8s minor; override
+  # in air-gapped/customer-mirrored installs where docker.io isn't reachable.
+  coordination:
+    image:
+      repository: docker.io/alpine/k8s
+      tag: "1.32.3"
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+
+  serviceAccount:
+    create: true
+    annotations: {}
+    name: ""
+
+  service:
+    type: ClusterIP
+    grpcport: 80
+    httpport: 81
+
+  resources:
+    limits:
+      cpu: 2
+      memory: 4Gi
+    requests:
+      cpu: 150m
+      memory: 512Mi
+
+  podAnnotations:
+    prometheus.io/path: /metrics
+    prometheus.io/port: "10254"
+  podSecurityContext: {}
+  securityContext: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  # Spread shards across zones (best-effort).
+  spreadConstraints:
+    enabled: true
+
+  configMap:
+    sharedService:
+      metrics:
+        scope: "actions:"
+    actions:
+      db:
+        type: CQL
+        cql:
           hosts:
             - "{{ .Values.scylla.fullnameOverride }}-client.{{ .Release.Namespace }}.svc.cluster.local"
-          threadCount: 64
-          type: cql
-        eventer:
-          recordActionThreadCount: 16
-          type: runservice
-          updateActionStatusThreadCount: 16
+          keyspace: actions
+      # Replicate to leasor + run service over gRPC (no Redis dependency in
+      # self-hosted). Targets are resolved by service name via the global
+      # configMap.union.internalConnectionConfig urlPattern.
+      replicatorType: GRPCService
+      # Fixed 10-shard layout: each shard owns a contiguous ~1/10 of the 1024
+      # partitions (four shards get 103, six get 102; total 1024). Keep the
+      # ranges contiguous, gapless and covering [0, 1023]; changing a range
+      # re-hashes that shard's Deployment name and rolls it.
+      partitions:
+        - startPartition: 0
+          endPartition: 102
+        - startPartition: 103
+          endPartition: 205
+        - startPartition: 206
+          endPartition: 308
+        - startPartition: 309
+          endPartition: 411
+        - startPartition: 412
+          endPartition: 513
+        - startPartition: 514
+          endPartition: 615
+        - startPartition: 616
+          endPartition: 717
+        - startPartition: 718
+          endPartition: 819
+        - startPartition: 820
+          endPartition: 921
+        - startPartition: 922
+          endPartition: 1023
+
+  # Envoy router. Runs the actions-service-router Go HTTP filter, which requires
+  # an Envoy image that bundles the compiled /lib/actions-service-router.so
+  # plugin. The image is named `envoy-router` and is published through the same
+  # path as the other control-plane images: private ECR `union-cp/envoy-router`
+  # (mirrored to private GAR `union-public-images/union-cp/envoy-router` and to
+  # Harbor `controlplane/envoy-router`). repository defaults to
+  # <IMAGE_REPOSITORY_PREFIX>/envoy-router; override here only if needed.
+  router:
+    replicaCount: 2
+    image:
+      repository: ""
+      tag: ""
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 2
+        memory: 2Gi
+      requests:
+        cpu: 150m
+        memory: 256Mi
+    autoscaling:
+      enabled: false
+      minReplicas: 2
+      maxReplicas: 5
+      targetCPUUtilizationPercentage: 60
+      # targetMemoryUtilizationPercentage: 60
+    podAnnotations:
+      prometheus.io/path: /stats/prometheus
+      prometheus.io/port: "9901"
 
 
 # Union console configuration.
@@ -1311,10 +1683,10 @@ console:
       cpu: 250m
       memory: 250Mi
 
-  # Environment variables
-  env:
-    - name: UNION_ORG_OVERRIDE
-      value: '{{ .Values.global.UNION_ORG }}'
+  # Environment variables. UNION_ORG_OVERRIDE is injected unconditionally by the
+  # deployment template (from global.UNION_ORG), ahead of this list, so a consumer
+  # override of console.env can't drop it. Entries here are appended after it.
+  env: []
 
   # Additional environment variables from ConfigMap
   envFrom: []
@@ -1428,6 +1800,15 @@ flyte:
       - name: private-config
         configMap:
           name: flyte-admin-private-config
+      # -- OPTIONAL: give flyteadmin the browser-login OIDC client secret via its
+      # own dedicated, single-writer Secret, decoupled from flyte-admin-secrets
+      # (which the generate-secrets init container manages for signing/cookie keys).
+      # Create the Secret yourself (or via ExternalSecrets) with a `client_secret`
+      # key, mount it here, and point flyteadmin at the file with
+      # `configmap.adminServer.auth.userAuth.openId.clientSecretFile` (see below).
+      # - name: oauth-client-secret
+      #   secret:
+      #     secretName: flyteadmin-oidc-client-secret
     # Override configPath to include both config directories
     configPath: /etc/flyte/*/*.yaml
     additionalVolumeMounts:
@@ -1437,6 +1818,11 @@ flyte:
       - name: private-config
         mountPath: /etc/flyte/private
         readOnly: true
+      # -- OPTIONAL: mount for the dedicated OIDC client secret above. flyteadmin
+      # then reads it via userAuth.openId.clientSecretFile: /etc/secrets/oauth/client_secret
+      # - name: oauth-client-secret
+      #   mountPath: /etc/secrets/oauth
+      #   readOnly: true
   flytescheduler:
     image:
       repository: "registry.unionai.cloud/controlplane/services"
@@ -1759,6 +2145,13 @@ flyte:
             # Entra ID example: "f0b2667d-5e99-45f2-ae4a-2ab47cb5fa12"
             baseUrl: ""
             clientId: ""
+            # -- OPTIONAL: read the browser-login client secret from a mounted file
+            # instead of the default secret-manager lookup (`oidc_client_secret` in
+            # flyte-admin-secrets at /etc/secrets/). Use this with a dedicated
+            # `flyteadmin.additionalVolumes`/`additionalVolumeMounts` entry (see above)
+            # so the OIDC secret has its own single-writer Secret and never collides
+            # with the init-container-managed signing/cookie keys.
+            # clientSecretFile: /etc/secrets/oauth/client_secret
             # Browser login scopes.
             # Okta: ["profile", "openid", "offline_access"] (default)
             # Entra ID: ["profile", "openid", "offline_access", "api://my-app/all"]
@@ -1772,8 +2165,9 @@ flyte:
           idpQueryParameter: "idp"
 
       admin:
-        # CP-internal: through controlplane ingress controller for gRPC routing.
-        endpoint: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        # CP-internal: all CP services dial each other via gRPC through the ingress.
+        # Switches between envoy and nginx based on global.INGRESS_PROVIDER.
+        endpoint: 'dns:///{{ include "controlPlaneLibrary.ingressFqdn" . }}{{- if eq (default "nginx" .Values.global.INGRESS_PROVIDER) "envoy" }}:443{{- end }}'
         insecure: true
         clientId: '{{ .Values.global.INTERNAL_CLIENT_ID }}'
         clientSecretLocation: "/etc/secrets/client_secret"
@@ -1797,7 +2191,7 @@ flyte:
       connection:
         environment: "staging"
         region: ""  # Cloud-specific: set in overlay
-        rootTenantURLPattern: 'dns:///controlplane-nginx-controller.{{ .Release.Namespace }}.svc.cluster.local'
+        rootTenantURLPattern: 'dns:///{{ .Values.global.UNION_HOST }}'
       flyteadmin:
         metricsKeys:
           - phase
@@ -1910,11 +2304,9 @@ ingress-nginx:
         http: 80
         https: 443
 
-    # TLS certificate for all HTTPS connections.
-    # The nginx-ingress subchart does not support Helm templating in extraArgs,
-    # so the TLS secret reference must be set as a literal value in your
-    # environment-specific values overlay.
-    # Example: default-ssl-certificate: "controlplane/controlplane-selfsigned-tls-secret"
+    # Extra args for the ingress-nginx controller. The subchart does not support
+    # Helm templating here, so any values must be literals. Per-host TLS is
+    # configured via `ingress.tls` above.
     extraArgs: {}
 
     admissionWebhooks:
@@ -1945,10 +2337,11 @@ ingress-nginx:
       controllerValue: union.ai/controlplane
 
 # ScyllaDB configuration
-# REQUIRED: ScyllaDB is used exclusively by the queue service for high-performance message queueing
-# Postgres (configured above) is used by all other control plane services
+# REQUIRED: ScyllaDB backs the leasor and actions services (keyspaces `leasor`
+# and `actions`). Postgres (configured above) is used by all other control
+# plane services
 #
-# When enabled, deploys ScyllaDB Operator and Cluster as the queue service backend
+# When enabled, deploys ScyllaDB Operator and Cluster as the leasor/actions backend
 #
 # IMPORTANT: Before enabling ScyllaDB, you MUST manually install the CRDs:
 #   Run the helper script: ./scripts/install-scylla-crds.sh
@@ -1998,7 +2391,7 @@ scylla:
           cpu: 2
           memory: 4Gi
         requests:
-          cpu: 1
+          cpu: 250m
           memory: 2Gi
       # Explicitly disable placement constraints (operator adds defaults otherwise)
       # For production with dedicated nodes, configure nodeAffinity and tolerations here
@@ -2006,9 +2399,15 @@ scylla:
         nodeAffinity: {}
         tolerations: []
 
-  # ScyllaDB version
+  # ScyllaDB version. Upstream defaults both repositories to a bare
+  # `scylladb/...`, which resolves against the implicit docker.io default and
+  # fails on clusters that pin an allowed-registry policy. These land in the
+  # ScyllaCluster CR, so the operator — not the kubelet — does the pull.
   scyllaImage:
+    repository: docker.io/scylladb/scylla
     tag: 2025.1.5
+  agentImage:
+    repository: docker.io/scylladb/scylla-manager-agent
 
   # Developer mode (disable for production)
   developerMode: true
@@ -2025,6 +2424,12 @@ scylla:
 scylla-operator:
 
   fullnameOverride: scylla-operator
+
+  # Upstream sets this to a bare `scylladb` (org only — the chart appends
+  # `/scylla-operator`), which resolves against the implicit docker.io default
+  # and fails on clusters that pin an allowed-registry policy.
+  image:
+    repository: docker.io/scylladb
 
   # Webhook configuration
   webhook:

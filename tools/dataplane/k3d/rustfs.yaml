@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rustfs
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rustfs
+  template:
+    metadata:
+      labels:
+        app: rustfs
+    spec:
+      containers:
+        - name: rustfs
+          # Pinned to a specific version + digest for reproducible CI runs — a
+          # floating :latest can change the storage backend under us mid-PR.
+          # Bump deliberately; digest is the multi-arch index for 1.0.0-beta.8.
+          image: rustfs/rustfs:1.0.0-beta.8@sha256:fa19210ac4697c79d7ccca1ec9b0eb91aebacc6691991ffb14014bb3c67e6cc3
+          # RustFS is MinIO-API-compatible. Set both prefixes for compatibility.
+          env:
+            - name: RUSTFS_ACCESS_KEY
+              value: rustfsadmin
+            - name: RUSTFS_SECRET_KEY
+              value: rustfsadmin
+            - name: MINIO_ROOT_USER
+              value: rustfsadmin
+            - name: MINIO_ROOT_PASSWORD
+              value: rustfsadmin
+          args:
+            - server
+            - /data
+            - --address
+            - ":9000"
+            - --console-address
+            - ":9001"
+          ports:
+            - name: s3api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /health/live
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 24   # up to 2 minutes
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rustfs
+spec:
+  selector:
+    app: rustfs
+  ports:
+    - name: s3api
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001

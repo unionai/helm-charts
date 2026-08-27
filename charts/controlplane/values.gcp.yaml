@@ -18,15 +18,6 @@ global:
   ARTIFACTS_BUCKET_NAME: ""   # GCS bucket for artifacts
   KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
 
-  # --- DP entrypoint (CP -> DP) ---
-  DATAPLANE_HOST: ""          # e.g. "http://dataplane-nginx-controller.dataplane.svc.cluster.local:80"
-
-  # --- Images ---
-  IMAGE_REPOSITORY_PREFIX: "registry.unionai.cloud/controlplane"
-
-  # --- Ingress ---
-  INGRESS_PROVIDER: nginx     # nginx | envoy | both
-
   # --- GCP IAM (Workload Identity) ---
   ARTIFACT_IAM_ROLE_ARN: ""   # SA for artifacts (e.g. "artifacts@PROJECT.iam.gserviceaccount.com")
   FLYTEADMIN_IAM_ROLE_ARN: "" # SA shared by flyteadmin, datacatalog, cacheservice
@@ -50,33 +41,9 @@ flyte:
     adminServer:
       connection:
         region: '{{ .Values.global.GCP_REGION }}'
-
-      # --- OIDC Authentication ---
-      # Fill in the IdP-specific fields below. Defaults beyond these (claims,
-      # cookie settings, etc.) live in base values.yaml's
-      # `flyte.configmap.adminServer.auth` block.
-      auth:
-        appAuth:
-          externalAuthServer:
-            # OIDC issuer base URL.
-            #   Okta:      https://dev-123456.okta.com/oauth2/default
-            #   Entra ID:  https://login.microsoftonline.com/{tenant-id}/v2.0
-            baseUrl: ""
-            # OIDC metadata discovery path (relative to baseUrl).
-            #   Okta:      .well-known/oauth-authorization-server  (default)
-            #   Entra ID:  .well-known/openid-configuration
-            metadataUrl: ".well-known/oauth-authorization-server"
-          thirdPartyConfig:
-            flyteClient:
-              # CLI / SDK PKCE client.
-              clientId: ""
-              # Entra ID only — leave empty for Okta.
-              audience: ""
-        userAuth:
-          openId:
-            # Browser login.
-            baseUrl: ""
-            clientId: ""
+      # OIDC auth (appAuth / userAuth) is IdP-specific, not cloud-specific — it
+      # lives in base values.yaml under flyte.configmap.adminServer.auth (with
+      # the Okta/Entra fill-in guidance). Set it there or at the env layer.
 
   # --- GCP Workload Identity Annotations ---
   flyteadmin:
@@ -107,12 +74,6 @@ services:
               config:
                 projectId: '{{ .Values.global.GOOGLE_PROJECT_ID }}'
             type: stow
-
-  dataproxy:
-    configMap:
-      dataproxy:
-        # Falls back to DATAPLANE_HOST when DATAPLANE_ENDPOINT is unset.
-        secureTunnelTenantURLPattern: '{{ default .Values.global.DATAPLANE_HOST .Values.global.DATAPLANE_ENDPOINT }}'
 
 scylla:
   storageClass:

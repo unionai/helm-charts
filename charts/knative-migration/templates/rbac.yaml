@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+---
+# Namespaced Role for the only namespaced resource the Job touches —
+# the KnativeServing CR. Splitting this off the ClusterRole keeps the
+# permission bound to .Release.Namespace; a CR in any other namespace
+# cannot be touched by this SA.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["operator.knative.dev"]
+    resources: ["knativeservings"]
+    verbs: ["get", "list", "watch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "knative-migration.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "knative-migration.fullname" . }}
+    namespace: {{ .Release.Namespace }}
+---
+# ClusterRole for the cluster-scoped resources the Job touches: the two
+# operator-binary CRDs (deleted in step 3), and optionally the 12 Knative
+# Serving CRDs (patched for Helm-ownership adoption in step 2).
+#
+# This is a one-shot migration Job; CRD verbs are not scoped by
+# resourceNames. The chart is installed deliberately by an operator,
+# auto-cleaned via helm hooks on success, and runs once per cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "knative-migration.fullname" . }}
+  labels:
+    {{- include "knative-migration.labels" . | nindent 4 }}
+  {{- with (include "knative-migration.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "knative-migration.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "knative-migration.fullname" . }}
+    namespace: {{ .Release.Namespace }}

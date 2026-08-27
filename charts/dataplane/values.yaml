@@ -2,8 +2,16 @@
 # live in values.{aws,gcp,azure}.yaml — start there for new deployments.
 
 global:
+  # --- Control plane (configure first) ---
+  # The single control-plane host. Everything derives from it: the DP->CP gRPC
+  # endpoint (dns:///<host>) and the app-callback URL (https://<host>). To
+  # enable/disable auth or route authless (direct in-cluster service, no nginx),
+  # use the config.union.auth / config.union.connection toggles — not a host
+  # override (see examples/values.authless.yaml).
+  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
+  UNION_CONTROL_PLANE_HOST: ""  # DEPRECATED legacy alias for CONTROLPLANE_HOST (still honored)
+
   # --- Identity ---
-  UNION_CONTROL_PLANE_HOST: ""  # Public CP hostname for Knative app auth callbacks (e.g. "mycompany.union.ai")
   CLUSTER_NAME: ""              # Unique cluster identifier within your org
   ORG_NAME: ""                  # Organization name (must match controlplane)
 
@@ -11,19 +19,13 @@ global:
   METADATA_BUCKET: ""           # Bucket for workflow metadata
   FAST_REGISTRATION_BUCKET: ""  # Bucket for code uploads (can be same as METADATA_BUCKET)
 
-  # --- IAM ---
-  # IAM identity for backend services. Cloud-specific format:
-  #   AWS:  arn:aws:iam::<account>:role/<role-name>
-  #   GCP:  <sa-name>@<project>.iam.gserviceaccount.com
-  BACKEND_IAM_ROLE_ARN: ""
-  WORKER_IAM_ROLE_ARN: ""
+  # Backend/worker cloud identity globals are cloud-specific and live in the
+  # per-cloud overlays: values.aws.yaml + values.gcp.yaml use
+  # BACKEND_IAM_ROLE_ARN / WORKER_IAM_ROLE_ARN (IRSA role ARN / Workload
+  # Identity SA); values.azure.yaml uses AZURE_BACKEND_CLIENT_ID /
+  # AZURE_WORKER_CLIENT_ID (managed-identity client IDs).
 
-  # --- DP -> CP routing ---
-  CONTROLPLANE_HOST: ""         # Bare CP hostname (no scheme, no port)
-  CONTROLPLANE_GRPC_ENDPOINT: "" # Override; defaults to dns:///{CONTROLPLANE_HOST}:443
-  QUEUE_GRPC_ENDPOINT: ""       # Override for task-pod queue path (see values.{cloud}.yaml)
-
-  # --- Service-to-Service OAuth2 ---
+  # --- Dataplane to Controlplane Auth ---
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
@@ -31,12 +33,38 @@ global:
 nameOverride: ""
 # -- Override the chart fullname.
 fullnameOverride: ""
-# -- Public CP hostname used by Knative serving auth callbacks (e.g. /me, /login).
-host: "{{ .Values.global.UNION_CONTROL_PLANE_HOST }}"
+# -- DEPRECATED: top-level control-plane host. This is the pre-globals way to
+# -- set the CP host and is still honored as a fallback, but migrate to
+# -- global.CONTROLPLANE_HOST. Precedence in dataplane.cp.host:
+# -- global.CONTROLPLANE_HOST > host > global.UNION_CONTROL_PLANE_HOST.
+host: ""
 # -- Cluster identifier (shared with Union).
 clusterName: "{{ .Values.global.CLUSTER_NAME }}"
 # -- Organization name (provided by Union).
 orgName: "{{ .Values.global.ORG_NAME }}"
+
+# -- Self-reported CP-client-construction data the operator ships in every
+# UpdateStatus call (UpdateStatusRequest.connection_config). The controlplane
+# prefers this over the legacy admin-set DataplaneIngressURL when present.
+updateStatus:
+  connectionConfig:
+    # -- Opt in to self-reporting. Off by default: the connection_config
+    # ConfigMap, operator `connectionConfigPath`, volume, and mount only
+    # render when this is true, keeping the chart compatible with operator
+    # images that predate connection_config support. Enable only when the
+    # deployed operator image understands `connectionConfigPath`.
+    enabled: false
+    # -- DP-reachable hostname the CP should dial back. e.g.
+    # "dp-1.internal.<full_domain>". Bare hostname only — no scheme, no port.
+    # Chart helper derives the gRPC endpoint as `dns:///<host>`.
+    # Empty falls back to `Values.ingress.host` (the dataplane's own ingress
+    # hostname), so most installs don't need to set this explicitly —
+    # the chart already knows where the DP is reachable.
+    host: ""
+    # -- CP dials this DP with plain HTTP/2 (no TLS) when true. Default false.
+    insecure: false
+    # -- CP skips cert validation on the TLS handshake (self-signed CP cert envs).
+    insecureSkipVerify: false
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -52,6 +80,11 @@ additionalPodLabels: { }
 #  label2: "value2"
 # -- Define additional PodSpec values for all of the Union pods.
 additionalPodSpec: { }
+
+# -- Service account settings for task pods in single-namespace mode.
+serviceAccount:
+  # -- Image pull secrets to assign to the task pod service account.
+  imagePullSecrets: []
 
 # -- Define additional serviceAccountAnnotations to be added to all system-created service accounts
 additionalServiceAccountAnnotations: { }
@@ -95,7 +128,12 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 
 # -- clusterresourcesync contains the configuration information for the syncresources service.
 clusterresourcesync:
-  # -- Enable or disable the syncresources service
+  # -- Enable or disable the syncresources service. Required in multi-namespace
+  # mode (namespaces.enabled=true and low_privilege=false) to provision the
+  # per-domain namespaces + RBAC that task pods land in; its namespace_mapping.yaml
+  # is driven by the top-level namespace_mapping. Its configmap is gated off under
+  # singleNamespace, where task pods run in the release namespace and no per-domain
+  # namespaces are needed.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -197,14 +235,14 @@ clusterresourcesync:
       connection:
         # This is the defacto configuration for Union managed control planes.
         # -- Host to connect to
-        host: 'dns:///{{ tpl .Values.host . }}'
+        host: '{{ include "dataplane.cp.endpoint" . }}'
 
         # -- Whether to connect over insecure channel
         # insecure: false
 
         # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
         # Caution: shouldn't be used for production use cases
-        # insecureSkipVerify: false
+        insecureSkipVerify: false
 
         # -- Minimum timeout for establishing a connection
         # minConnectTimeout: "10s"
@@ -240,11 +278,14 @@ clusterresourcesync:
         # -- Maximum size of a message in bytes of a gRPC message
         # maxRecvMsgSize: 67108864  # 64MB
       auth:
+        enable: true
         type: ClientSecret
         clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
         clientSecretLocation: /etc/union/secret/client_secret
         authorizationMetadataKey: "flyte-authorization"
         tokenRefreshWindow: 5m
+        scopes:
+        - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
   # -- The templates that are used to create and/or update kubernetes resources for Union projects.
   templates:
     # -- Template for namespaces resources
@@ -294,14 +335,14 @@ clusterresourcesync:
       cpu: "1"
       memory: "500Mi"
     requests:
-      cpu: "500m"
+      cpu: "100m"
       memory: "100Mi"
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
 
-# -- Central logging configuration. All services (propeller, operator, node-executor,
+# -- Central logging configuration. All services (propeller, operator, leaseworker,
 # clusterresourcesync, nodeobserver, flyteconnector) pull their log level from here.
 # Go services use level 1–6 (1=least verbose, 6=most verbose; 4=INFO).
 # Python services (FlyteConnector) use stdlib scale: pythonLevel (10=DEBUG, 20=INFO, 30=WARNING).
@@ -322,19 +363,27 @@ config:
       rate: 500
       capacity: 1000
     admin:
-      endpoint: 'dns:///{{ tpl .Values.host . }}'
+      endpoint: '{{ include "dataplane.cp.endpoint" . }}'
       clientId: '{{ tpl .Values.secrets.admin.clientId . }}'
       clientSecretLocation: /etc/union/secret/client_secret
       insecure: false
+      insecureSkipVerify: false
   authorizer:
-    type: noop
+    type: Authorizer
+    authorizerClient:
+      grpcConfig:
+        host: '{{ include "dataplane.cp.endpoint" . }}'
+        insecure: false
+        insecureSkipVerify: false
+      credentials: ServiceCredentials
   # -- Catalog Client configuration [structure](https://pkg.go.dev/github.com/flyteorg/flytepropeller/pkg/controller/nodes/task/catalog#Config)
   # Additional advanced Catalog configuration [here](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/catalog#Config)
   catalog:
     catalog-cache:
-      cache-endpoint: 'dns:///{{ tpl .Values.host . }}'
-      endpoint: 'dns:///{{ tpl .Values.host . }}'
+      cache-endpoint: '{{ include "dataplane.cp.endpoint" . }}'
+      endpoint: '{{ include "dataplane.cp.endpoint" . }}'
       insecure: false
+      insecure-skip-verify: false
       type: cacheservicev2
       use-admin-auth: true
   # -- Optional catalog cache configuration, rendered as catalog_cache.yaml for propeller.
@@ -342,10 +391,6 @@ config:
   clusters:
     labelClusterMap: { }
     clusterConfigs: [ ]
-  # -- Optional namespace configuration, rendered as namespace_config.yaml.
-  namespace_config: {}
-  # -- Optional namespace mapping override (preferred over top-level namespace_mapping).
-  namespace_mapping: {}
   # -- Optional Qubole plugin configuration.
   qubole: {}
   # -- Override any configuration settings.
@@ -354,6 +399,12 @@ config:
       # Overrides identity caching which is not available in the dataplane.
       identity:
         enabled: false
+    connection:
+      # -- Root-tenant (control plane) gRPC dial URL. Defaults to the derived CP
+      # -- endpoint (dns:///<host>; grpc/https default the port to 443).
+      # -- To override, set this same key — it is authoritative (Helm deep-merge
+      # -- replaces this leaf before template rendering).
+      rootTenantURLPattern: '{{ include "dataplane.cp.endpoint" . }}'
   # -- Copilot configuration
   copilot:
     plugins:
@@ -411,10 +462,21 @@ config:
       - K8s
       embeddedSecretManagerConfig:
         type: "{{ .Values.proxy.secretManager.type }}"
+        # -- Cluster identifier used to qualify per-cluster secret storage names
+        # -- (e.g. the eager API key) so dataplanes that share a secret backend do
+        # -- not overwrite each other's credential (FAB-241).
+        clusterName: '{{ include "getClusterName" . }}'
         k8sConfig:
           namespace: '{{ include "proxy.secretsNamespace" . }}'
         imagePullSecrets:
           enabled: true
+        # -- Init container used to mount embedded secrets as files into task pods.
+        # -- Uncomment and override `image` to repoint the default upstream busybox
+        # -- image (public.ecr.aws/docker/library/busybox:latest) at a private or
+        # -- mirrored registry — required for air-gapped clusters that cannot reach
+        # -- public.ecr.aws. Maps to webhook.embeddedSecretManagerConfig.fileMountInitContainer.
+        # fileMountInitContainer:
+        #   image: <your-registry>/busybox:latest
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -466,28 +528,35 @@ config:
     limitNamespace: ""
     # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
     disableClusterPermissions: false
+    # -- Eager API key bootstrap. When enabled, the operator mints the eager API
+    # key on the control plane and writes it to the task-pod secret store.
+    # Requires the secret manager (proxy.secretManager.enabled).
+    apiKey:
+      enabled: false
     # -- Compute resource manager configuration.
     computeResourceManager: {}
     # -- Organization namespace template override.
     org: {}
     # -- Enable app serving
     apps:
-      enabled: "{{ .Values.serving.enabled }}"
+      enabled: '{{ if include "apps.enabled" . }}true{{ else }}false{{ end }}'
     # -- Sync the configuration from the control plane. This will overwrite any configuration values set as part of the deploy.
     syncClusterConfig:
       enabled: false
-    # -- Enable the cloudflare tunnel service for secure communication with the control plane.
-    enableTunnelService: true
     # -- Set the cluster information for the operator service
     clusterId:
       # -- The organization name for the cluster.  This should match your organization name that you were provided.
       organization: "{{ tpl .Values.orgName . }}"
+      # -- The cluster name. Cluster-scopes the eager API key (its OAuth client and
+      # -- secret storage name) so dataplanes in a multi-dataplane org do not share
+      # -- and rotate/overwrite one credential (FAB-241 / ENG26-933).
+      name: '{{ include "getClusterName" . }}'
     # -- Dataplane cluster configuration.
     clusterData:
       # -- The client id used to authenticate to the control plane.  This will be provided by Union.
       appId: "{{ tpl .Values.secrets.admin.clientId . }}"
       # -- The hose name for control plane access. This will be provided by Union.
-      cloudHostName: "{{ tpl .Values.host . }}"
+      cloudHostName: "{{ include \"dataplane.cp.host\" . }}"
       # -- The prefix for constructing object storage URLs.
       metadataBucketPrefix: '{{ include "storage.metadata-prefix" . }}'
       # -- The bucket name for object storage.
@@ -507,17 +576,16 @@ config:
     collectUsages:
       # -- Enable usage collection in the operator service.
       enabled: true
-    # -- Billing model: None, Legacy, Shadow, or ResourceUsage.
+    # -- Billing model: None, Legacy, Shadow, or ResourceUsage. Defaults to ResourceUsage when reporting to a
+    # Union-hosted control plane and to None for self-hosted control planes (`operator.enableTunnelService: false`),
+    # which run with billing disabled and reject usage reports.
     billing:
-      model: "Shadow"
+      model: '{{ ternary "ResourceUsage" "None" .Values.operator.enableTunnelService }}'
     # -- Heartbeat check configuration.
     dependenciesHeartbeat:
       # -- Define the propeller health check endpoint.
       propeller:
         endpoint: '{{ include "propeller.health.url" . }}'
-      # -- Define the propeller health check endpoint.
-      executor:
-        endpoint: '{{ include "executor.health.url" . }}'
       # -- Define the operator proxy health check endpoint.
       proxy:
         endpoint: '{{ include "proxy.health.url" . }}'
@@ -538,6 +606,8 @@ config:
       enabled: "{{ .Values.proxy.secretManager.enabled }}"
       # -- The type of secret manager to use.
       type: "{{ .Values.proxy.secretManager.type }}"
+      # -- Template for the union-pod-webhook headless service host used for secret cache invalidation. %s is replaced with the operator pod namespace.
+      webhookHostTemplate: "union-pod-webhook-headless.%s.svc"
       # -- Kubernetes specific secret manager configuration.
       k8sConfig:
         namespace: '{{ include "proxy.secretsNamespace" . }}'
@@ -606,14 +676,22 @@ config:
     connection:
       # This is the defacto configuration for Union managed control planes.
       # -- Host to connect to
-      host: 'dns:///{{ tpl .Values.host . }}'
+      host: '{{ include "dataplane.cp.endpoint" . }}'
 
       # -- Whether to connect over insecure channel
       # insecure: false
 
       # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
       # Caution: shouldn't be used for production use cases
-      # insecureSkipVerify: false
+      insecureSkipVerify: false
+
+      # -- Per-unary RPC client-side deadline for control-plane Connect clients. 0 disables it, letting a half-open connection (e.g. an idle-dropped load-balancer flow on a separate-cluster dataplane) hang the leaseworker's claim/heartbeat RPC indefinitely.
+      unaryRPCTimeout: 30s
+
+      # -- HTTP/2 keepalive for the Connect transport. Pings an idle control-plane connection so it stays warm (below a load balancer's idle timeout) and closes it if a ping goes unanswered, forcing a reconnect. Unlike unaryRPCTimeout this also protects the leaseworker's server-streaming StreamLeases receive path; 0 (default) disables it and lets a half-open connection go undetected.
+      http2KeepAlive:
+        readIdleTimeout: 30s
+        pingTimeout: 10s
 
       # -- Minimum timeout for establishing a connection
       # minConnectTimeout: "10s"
@@ -649,6 +727,7 @@ config:
       # -- Maximum size of a message in bytes of a gRPC message
       # maxRecvMsgSize: 67108864  # 64MB
     auth:
+      enable: true
       type: ClientSecret
       clientId: "{{ tpl .Values.secrets.admin.clientId . }}"
       clientSecretLocation: /etc/union/secret/client_secret
@@ -671,10 +750,10 @@ databricks:
   plugin_config: { }
 
 # -- Namespace mapping template for mapping Union runs to Kubernetes namespaces.
-# This is the canonical source of truth. All dataplane services (propeller,
-# clusterresourcesync, operator, executor) will inherit this value unless
-# explicitly overridden in their service-specific config sections
-# (config.namespace_config, config.operator.org, executor.raw_config).
+# This is the canonical source of truth (see the selfmanaged namespace-mapping
+# docs). All dataplane services (propeller, clusterresourcesync, operator,
+# leaseworker) inherit this value via the "dataplane.namespaceTemplate" helper,
+# which pins to the release namespace under singleNamespace.
 namespace_mapping: {}
   # template: "{{`{{ project }}`}}-{{`{{ domain }}`}}"
 
@@ -695,11 +774,21 @@ dcgm-exporter:
   # Support a very high memory usage as dcgm-exporter can spike
   # depending on GPU count.
   resources: {}
+  # -- Namespace where dcgm-exporter is deployed. Used by Prometheus scrape config.
+  # Override if dcgm-exporter runs outside kube-system (e.g. gpu-operator namespace).
+  namespace: "kube-system"
+
   extraEnv:
     # Required to map GPUs to the actual Kubernetes pods that used them.
     # TLM uses this to map GPU metrics to task pods
     - name: DCGM_EXPORTER_KUBERNETES_GPU_ID_TYPE
       value: "uid"
+    # Required for MIG (Multi-Instance GPU) partition profiling on A100/H100.
+    # Allows DCGM to access per-partition profiling counters (DCGM_FI_PROF_*).
+    # Without this, DCGM_FI_PROF_SM_ACTIVE and related metrics return no data
+    # for MIG slices.
+    - name: NVIDIA_MIG_MONITOR_DEVICES
+      value: "all"
 
   # Based on default metrics list at
   # https://github.com/NVIDIA/dcgm-exporter/blob/3446595fbb31e22e45a8dbcd63ade14e3da49810/deployment/templates/metrics-configmap.yaml#L13
@@ -835,6 +924,16 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # Upstream defaults this to a bare `busybox`, which resolves against the
+  # implicit docker.io/library/ default and fails on clusters that pin an
+  # allowed-registry policy. Only rendered by `helm test`, but the policy
+  # applies there too. `library/` is spelled out — that is the namespace
+  # official images actually live in on Docker Hub.
+  testFramework:
+    image:
+      repository: docker.io/library/busybox
+  # -- Path to Fluent Bit's tail input state database.
+  tailDBPath: /var/log/flb_kube.db
   # Allow fluentbit to run on all nodes to be able to push all logs.
   tolerations:
     - operator: Exists
@@ -859,35 +958,46 @@ flyteagent:
   enabled: false
   plugin_config: { }
 
-executor:
+leaseworker:
   enabled: true
-  idl2Executor: true
   raw_config: {}
   config:
     organization: "{{ tpl .Values.orgName . }}"
     cluster: "{{ tpl .Values.clusterName . }}"
-    workerName: worker1
+    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
+    # Leaseworker dials leasor + actions via the URL set in the union.connection
+    # block on the controlplane chart (see `union.connection.host`); the
+    # leasor/actions endpoints are not separately configurable on the
+    # leaseworker today.
     unionAuth:
       injectSecret: true
       secretName: EAGER_API_KEY
-    maxActions: 2000
-    evaluatorCount: 64
+  capacity: 100000
+  dispatcherCount: 512
+  refreshInterval: 10s
+  terminationGracePeriodSeconds: 75
   serviceAccount:
     annotations: { }
+  podSecurityContext:
+    fsGroup: 1337
   resources:
     limits:
-      cpu: 4
-      memory: 8Gi
+      cpu: 8
+      memory: 16Gi
     requests:
-      cpu: 1
-      memory: 1Gi
+      cpu: 300m
+      memory: 512Mi
   podLabels:
-    app: executor
-    app.kubernetes.io/name: executor
+    app: leaseworker
+    app.kubernetes.io/name: leaseworker
     app.kubernetes.io/instance: "{{ .Release.Name }}"
+  podAnnotations: { }
   selector:
     matchLabels:
-      app: executor
+      app: leaseworker
+  # -- Task log link templates surfaced by the UI for task pods (rendered into
+  # the leaseworker ConfigMap as task_logs.yaml). The deprecated executor.task_logs
+  # key, if set by an overlay, takes precedence — see templates/leaseworker/configmap.yaml.
   task_logs:
     plugins:
       logs:
@@ -936,85 +1046,6 @@ executor:
                 - "https://scale.neptune.ai/{{`{{ .taskConfig.project }}`}}/-/run/?customId={{`{{ .taskConfig.id }}`}}"
   sharedService:
     metrics:
-      scope: "executor:"
-    security:
-      secure: false
-      useAuth: false
-      allowCors: true
-      allowedOrigins:
-        # Accepting all domains for Sandbox installation
-        - "*"
-      allowedHeaders:
-        - "Content-Type"
-      allowLocalhostAccess: true
-  propeller:
-    node-config:
-      disable-input-file-writes: true
-  plugins:
-    ioutils:
-      remoteFileOutputPaths:
-        deckFilename: report.html
-    # -- Configuration section for all K8s specific plugins [Configuration structure](https://pkg.go.dev/github.com/lyft/flyteplugins/go/tasks/pluginmachinery/flytek8s/config)
-    fasttask:
-      additional-worker-args:
-        - "--last-ack-grace-period-seconds"
-        - "120"
-      callback-uri: "http://union-operator-executor.{{.Release.Namespace}}.svc.cluster.local:15605"
-      grace-period-status-not-found: 2m
-    k8s:
-      disable-inject-owner-references: true
-  # -- Appends additional volumes to the deployment spec. May include template values.
-  additionalVolumes: []
-  # -- Appends additional volume mounts to the main container's spec. May include template values.
-  additionalVolumeMounts: []
-  # -- Appends additional environment variables to the executor container's spec.
-  podEnv: []
-  # -- nodeSelector for executor deployment
-  nodeSelector: { }
-  # -- tolerations for executor deployment
-  tolerations: [ ]
-  # -- affinity for executor deployment
-  affinity: { }
-  # -- topologySpreadConstraints for executor deployment
-  topologySpreadConstraints: { }
-  # -- nodeName constraints for executor deployment
-  nodeName: ""
-
-leaseworker:
-  enabled: true
-  raw_config: {}
-  config:
-    organization: "{{ tpl .Values.orgName . }}"
-    cluster: "{{ tpl .Values.clusterName . }}"
-    workerName: "{{ tpl .Values.orgName . }}-{{ tpl .Values.clusterName . }}-worker1"
-    leasorAddress: http://leasor-service:8090
-    actionsServiceAddress: http://actions-service:8089
-    unionAuth:
-      injectSecret: true
-      secretName: EAGER_API_KEY
-  capacity: 100000
-  dispatcherCount: 512
-  refreshInterval: 10s
-  terminationGracePeriodSeconds: 75
-  serviceAccount:
-    annotations: { }
-  resources:
-    limits:
-      cpu: 8
-      memory: 16Gi
-    requests:
-      cpu: 4
-      memory: 8Gi
-  podLabels:
-    app: leaseworker
-    app.kubernetes.io/name: leaseworker
-    app.kubernetes.io/instance: "{{ .Release.Name }}"
-  podAnnotations: { }
-  selector:
-    matchLabels:
-      app: leaseworker
-  sharedService:
-    metrics:
       scope: "leaseworker:"
     security:
       secure: false
@@ -1044,6 +1075,25 @@ leaseworker:
   additionalVolumeMounts: []
   # -- Appends additional environment variables to the leaseworker container's spec.
   podEnv: []
+  # -- PriorityClass the leaseworker pod runs under. The leaseworker is a Recreate
+  # singleton; a priority class keeps leases flowing when a replacement pod would
+  # otherwise sit Pending behind node scale-up. Defaults to the chart-managed class
+  # below. To bring your own existing class, set this to its name and
+  # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
+  # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
+  # ResourceQuota restricts those to kube-system. The pod still references this class
+  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
+  priorityClassName: union-leaseworker
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
+  # priorityClassName above. Skipped under low_privilege (namespace-only installs
+  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # create: false to bring your own class, or in multi-dataplane-per-cluster setups
+  # (the PriorityClass would otherwise be created once per dataplane). value is used
+  # only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- nodeSelector for leaseworker deployment
   nodeSelector: { }
   # -- tolerations for leaseworker deployment
@@ -1058,7 +1108,20 @@ leaseworker:
 # -- Flytepropeller configuration
 flytepropeller:
   enabled: false
-  priorityClassName: "system-cluster-critical"
+  # -- PriorityClass the flytepropeller pod runs under. Defaults to the chart-managed
+  # class below. Set to your own existing class to bring your own, or "" for none. Do
+  # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
+  # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
+  # references this class under low_privilege when it is externally managed
+  # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
+  priorityClassName: "union-flytepropeller"
+  # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
+  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
+  # installs can't create cluster resources). Set create: false to bring your own class,
+  # or in multi-dataplane-per-cluster setups. value is used only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- Replicas count for Flytepropeller deployment
   replicaCount: 1
   # -- Default resources requests and limits for Flytepropeller deployment
@@ -1130,7 +1193,10 @@ flytepropellerwebhook:
     # THIS IS MOSTLY NEEDED FOR UPGRADES FROM PRE 2026.24.7 VERSIONS.  IT DOESN'T ACT ON NEW INSTALLS.
     enabled: true
     image:
-      repository: alpine/k8s
+      # Registry host spelled out — an unqualified repository resolves against
+      # the implicit docker.io default and fails on clusters that pin an
+      # allowed-registry policy.
+      repository: docker.io/alpine/k8s
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
@@ -1315,9 +1381,9 @@ flyteconnector:
       ephemeral-storage: 100Mi
       memory: 1500Mi
     requests:
-      cpu: "1"
+      cpu: "100m"
       ephemeral-storage: 100Mi
-      memory: 1000Mi
+      memory: 384Mi
   # -- Default glob string for searching configuration files
   configPath: /etc/flyteconnector/config/*.yaml
   # -- Service settings for flyteconnector
@@ -1367,6 +1433,21 @@ image:
     repository: public.ecr.aws/p0i0a9q8/unionoperator
     tag: ""
     pullPolicy: IfNotPresent
+  # -- Kubectl image configuration for Helm hook cleanup jobs.
+  # Registry host is spelled out: an unqualified repository resolves against the
+  # implicit docker.io default, which clusters with an allowed-registry policy
+  # reject with ErrImagePull. alpine/k8s (rather than bitnami/kubectl) because
+  # upstream pruned every version tag from bitnami/kubectl, leaving only
+  # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
+  kubectl:
+    # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
+    repository: docker.io/alpine/k8s
+    # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
+    tag: "1.32.3"
+    # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
+    pullPolicy: ""
+    # -- Optional imagePullSecrets for dataplane Helm hook cleanup jobs.
+    imagePullSecrets: []
   # -- Kubestatemetrics repository and tag.
   kubeStateMetrics:
     repository: registry.k8s.io/kube-state-metrics/kube-state-metrics
@@ -1377,11 +1458,56 @@ image:
     repository: "cr.flyte.org/flyteorg/flytecopilot"
     tag: "v1.14.1"
     pullPolicy: IfNotPresent
+  # -- Union envoy build for the zero-trust gateway.
+  envoy:
+    repository: public.ecr.aws/p0i0a9q8/envoy
+    tag: ""
+    pullPolicy: IfNotPresent
 
 metrics-server:
   enabled: false
 
 # -- nodeobserver contains the configuration information for the node observer service.
+fuseDevicePlugin:
+  # -- Enable the FUSE device-plugin DaemonSet. Advertises host /dev/fuse as an
+  # extended resource so unprivileged pods that request it (smarter-devices/fuse)
+  # can perform in-pod FUSE mounts with only CAP_SYS_ADMIN — no privileged pod.
+  # Opt-in: disabled by default; enable per cluster where unprivileged FUSE is wanted.
+  enabled: false
+  image:
+    repository: registry.gitlab.com/arm-research/smarter/smarter-device-manager
+    tag: v1.20.11
+    pullPolicy: IfNotPresent
+  # -- Devices the manager advertises (smarter-device-manager conf.yaml format).
+  # One entry per extended resource; nummaxdevices is the per-node claim count.
+  devices:
+    - devicematch: ^fuse$
+      nummaxdevices: 1000
+  # -- The plugin itself needs SYS_ADMIN to read host devices and register with
+  # kubelet; the workloads it serves stay unprivileged.
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ "ALL" ]
+      add: [ "SYS_ADMIN" ]
+  # -- Run only where unprivileged FUSE is wanted; empty = all nodes.
+  nodeSelector: { }
+  # -- Tolerate everything so it lands on every (selected) node, incl. tainted.
+  tolerations:
+    - operator: Exists
+  affinity: { }
+  # -- Override the priorityClass (defaults to operator.priorityClassName).
+  priorityClassName: ""
+  # -- Additional pod annotations.
+  podAnnotations: { }
+  resources:
+    limits:
+      cpu: 100m
+      memory: 15Mi
+    requests:
+      cpu: 10m
+      memory: 15Mi
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
@@ -1423,7 +1549,7 @@ nodeobserver:
       cpu: "1"
       memory: "500Mi"
     requests:
-      cpu: "500m"
+      cpu: "100m"
       memory: "100Mi"
   config:
     criticalDaemonSets: []
@@ -1457,6 +1583,12 @@ operator:
   replicas: 1
   podAnnotations: { }
   podLabels: { }
+  # Opt-in PodDisruptionBudget for the singleton operator. Default off; enable on
+  # ephemeral/CI clusters to stop a mid-run node drain from evicting the operator.
+  # See templates/operator/pdb.yaml.
+  podDisruptionBudget:
+    enabled: false
+    minAvailable: 1
   priorityClassName: ""
   imagePullSecrets: []
   podEnv: { }
@@ -1471,6 +1603,11 @@ operator:
   # -- nodeName constraints for the operator pods
   nodeName: ""
   podSecurityContext: { }
+  # -- Enable the Cloudflare tunnel service for secure data-plane ↔ control-plane
+  # communication. Canonical toggle — read by both the operator config
+  # (config.yaml) and the operator-proxy tunnel container. Enabled by default
+  # (used by everyone except self-hosted / intra-cluster deployments, which set
+  # this to false).
   enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
@@ -1479,8 +1616,8 @@ operator:
       cpu: "2"
       memory: "3Gi"
     requests:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: "150m"
+      memory: "384Mi"
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
@@ -1498,7 +1635,7 @@ ingress:
     # -- Ingress host
     hostOverride: "" # Can references Kubernetes service DNS, e.g. dataproxy-service.{{ .Release.Namespace }}.svc.cluster.local
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1506,10 +1643,10 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
-    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.{{ .Values.host }}.
-    hostOverride: ""
+    # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
+    hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
-    class: ""
+    class: "dataplane"
     # -- Annotations to apply to the ingress resource.
     annotations: {}
     # -- Ingress TLS configuration
@@ -1539,6 +1676,26 @@ prometheus:
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
+
+    configMapOverrideName: "prometheus"
+    extraFlags:
+      - web.enable-lifecycle
+      - enable-feature=expand-external-labels
+    env:
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    # Mounted for the zero-trust remote_write oauth2 client_secret_file. The whole
+    # secret is mounted (not a subPath) and marked optional so non-zero-trust installs
+    # — where remote_write is not rendered and the admin secret may be disabled or
+    # externally managed — do not get a Pod that fails to schedule on a missing secret.
+    extraSecretMounts:
+      - name: prometheus-remote-write-secret
+        secretName: union-secret-auth
+        mountPath: /etc/prometheus/secrets
+        readOnly: true
+        optional: true
 
     service:
       servicePort: 80
@@ -1572,13 +1729,6 @@ prometheus:
       requests:
         cpu: "1"
         memory: "1Gi"
-
-    # Mount the recording rules ConfigMap generated by this chart
-    extraConfigmapMounts:
-      - name: recording-rules
-        mountPath: /etc/config/recording
-        configMap: union-recording-rules
-        readonly: true
 
   # Scrape configs to replace ServiceMonitor CRDs.
   # NOTE: This is a top-level key in the community prometheus chart, not nested under server.
@@ -1633,6 +1783,14 @@ prometheus:
         - source_labels: [__name__]
           regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
           action: keep
+        # Drop node-label bloat (NFD/azure/karpenter feature labels, noisiest NVIDIA
+        # GFD timestamp) so kube_node_labels stays under AMP's per-series size limit.
+        # providerID and nvidia_com_gpu_deploy_* are intentionally kept: dropping the
+        # flapping providerID collapses opencost's two kube_node_labels variants onto
+        # one identity and triggers AMP "duplicate sample … NaN" 400s. Keep this regex
+        # in sync with the control plane's corresponding labeldrop.
+        - action: labeldrop
+          regex: "label_(feature_node_kubernetes_io_.+|kubernetes_azure_com_.+|karpenter_k8s_aws_.+|nvidia_com_gfd_timestamp)"
     - job_name: 'union-services'
       metrics_path: /metrics
       scrape_interval: 1m
@@ -1728,10 +1886,29 @@ prometheus:
         - role: pod
           namespaces:
             names:
-              - kube-system
+              - {{ with index .Values "dcgm-exporter" }}{{ .namespace | default "kube-system" }}{{ else }}kube-system{{ end }}
           selectors:
             - role: pod
               label: app.kubernetes.io/name=dcgm-exporter
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_ip]
+          regex: '(.*)'
+          target_label: __address__
+          replacement: '${1}:9400'
+          action: replace
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          action: replace
+          target_label: node
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
+          action: keep
 
   alertmanager:
     enabled: false
@@ -1784,18 +1961,36 @@ prometheus:
 #   identified.
 low_privilege: true
 
+# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# gateway (replaces the knative-operator path), the dataproxy backend, and
+# the tunnel-service dataplane ingress. Customers must also set
+# `knative-operator.enabled: false` because Helm evaluates that subchart
+# condition at parse time and can't derive it from this flag.
+zero_trust:
+  enabled: false
+
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.
 controlplaneNamespace: ""
 
 # -- When enabled, creates a single shared ServiceAccount for all components
-# (operator, executor, proxy, webhook, fluentbit) instead of individual ones.
+# (operator, leaseworker, proxy, webhook, fluentbit) instead of individual ones.
 # Automatically enabled when singleNamespace mode is active.
 commonServiceAccount:
   enabled: true
   name: union-system
   annotations: {}
   imagePullSecrets: []
+
+taskPodTemplate:
+  workingDir: ""
+  # -- nodeSelector applied to all task pods (via the task-template PodTemplate).
+  nodeSelector: {}
+  # -- affinity applied to all task pods (e.g. a preferred Spot nodeAffinity).
+  affinity: {}
+  # -- tolerations applied to all task pods (e.g. a Spot taint toleration).
+  tolerations: []
+
 # -- Union operator proxy configuration
 proxy:
   serviceAccount:
@@ -1831,7 +2026,6 @@ proxy:
   # -- nodeName constraint for the proxy pods
   nodeName: ""
   podSecurityContext: { }
-  enableTunnelService: true
   secretName: union-secret-auth
   securityContext: { }
   resources:
@@ -1866,8 +2060,11 @@ secrets:
     create: true
     # -- The client secret used to authenticate to the control plane.  This will be provided by Union.
     clientSecret: ""
-    # -- The client id used to authenticate to the control plane.  This will be provided by Union.
-    clientId: dataplane-operator
+    # -- The client id used to authenticate to the control plane. There is one
+    # -- admin client id for the dataplane; it derives from global.AUTH_CLIENT_ID
+    # -- (set per-cloud by the terraform env), and the config.* clientId sites
+    # -- reference this single source via `{{ tpl .Values.secrets.admin.clientId . }}`.
+    clientId: '{{ .Values.global.AUTH_CLIENT_ID }}'
 
 sparkoperator:
   enabled: false
@@ -1897,7 +2094,9 @@ storage:
   endpoint: ""
   # -- Use path style instead of domain style urls to access the object storage service.
   s3ForcePathStyle: true
-  enableMultiContainer: false
+  # -- Allow the metadata and fast-registration buckets to differ (all cloud
+  # -- overlays run multi-container).
+  enableMultiContainer: true
   # -- Internal service limits for object storage access.
   limits:
     maxDownloadMBs: 1024
@@ -1937,14 +2136,49 @@ storage:
   gcp:
     projectId: ""
 
+# -- Tunnel-service ingress config consumed by the union-operator's tunnel sidecar.
+# The dataplane ingress is gated by `zero_trust.enabled` (templates evaluate
+# that flag directly); only the origin URL override is configurable here.
+tunnelService:
+  dataplane:
+    originURL: ""
+  apps:
+    enableGlobalIngress: true
+    originURL: ""
+
+# -- Union app serving (Knative Serving). Supersedes the deprecated
+# `serving.enabled`; when both are set this one wins. Left unset (null) so the
+# deprecated flag can still take effect — the effective default is `true`.
+#
+# Does NOT gate the Envoy gateway, which serves the static dataplane routes
+# zero trust depends on, nor the `knative-operator` subchart, which has its own
+# `knative-operator.enabled` condition evaluated by Helm at parse time — turn
+# that off too on the non-zero-trust path.
+apps:
+  enabled: null
+
 # -- Configure app serving and knative.
 serving:
-  # -- Enables the serving components. Installs Knative Serving. Knative-Operator must be running in the cluster for this to work. Enables app serving in operator.
-  enabled: true
+  # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
+  # unset. Left unset (null) so an explicit value is distinguishable from the
+  # default. Installs Knative Serving — knative-operator must be running in the
+  # cluster for the non-zero-trust path to work.
+  enabled: null
   # -- The number of replicas to create for all components for high availability.
   replicas: 2
   # -- Enables scraping of metrics from the serving component
   metrics: true
+  # -- Controls legacy Helm hook annotations on the KnativeServing CR.
+  knativeServingHook:
+    enabled: true
+  # -- OpenShift-specific configuration for Knative Serving components.
+  openShift:
+    kourierGatewayScc:
+      enabled: false
+      create: true
+      name: ""
+      serviceAccountName: default
+      uid: 65534
   # -- Additional configuration for Knative serving
   extraConfig:
     deployment:
@@ -1957,16 +2191,16 @@ serving:
           cpu: "2"
           memory: 2Gi
         requests:
-          cpu: "1"
-          memory: 1Gi
+          cpu: "100m"
+          memory: 256Mi
     net-kourier-controller:
       controller:
         limits:
           cpu: "1"
           memory: 1Gi
         requests:
-          cpu: 500m
-          memory: 500Mi
+          cpu: 100m
+          memory: 256Mi
 
   # -- Union authentication and authorization configuration.
   auth:
@@ -2038,6 +2272,9 @@ imageBuilder:
       name: "union-imagebuilder"
       annotations: {}
       imagePullSecret: ""
+      # -- Force buildkit to use this dedicated service account even when
+      # commonServiceAccount or single-namespace mode would normally use union-system.
+      forceDedicated: false
 
     # -- The name to use for the buildkit deployment, service, configmap, etc.
     fullnameOverride: ""
@@ -2047,6 +2284,11 @@ imageBuilder:
 
     # -- Replicas count for Buildkit deployment
     replicaCount: 1
+
+    # -- Sets pod.spec.hostUsers for the BuildKit pod when specified. On
+    # OpenShift, false runs the pod in a user namespace for rootless UID/GID
+    # mapping.
+    # hostUsers: false
 
     # -- buildkit HPA configuration
     autoscaling:
@@ -2076,6 +2318,21 @@ imageBuilder:
     # -- kernel >= 5.11 with unprivileged user namespace support.
     rootless: false
 
+    # -- Overrides the buildkit container securityContext. Leave empty to use the
+    # chart defaults for privileged or rootless mode.
+    securityContext: {}
+
+    # -- OpenShift-specific configuration for buildkit.
+    openShift:
+      enabled: false
+      securityContextConstraints:
+        create: true
+        name: ""
+        existingName: ""
+        allowPrivilegeEscalation: true
+        defaultAllowPrivilegeEscalation: true
+        pinRequiredSCC: true
+
     # -- Enable debug logging
     log:
       debug: false
@@ -2085,6 +2342,15 @@ imageBuilder:
     oci:
       # -- maxParalelism limits the number of concurrent builds, default is 0 (unbounded)
       maxParallelism: 0
+
+    # -- Extra TOML configuration appended verbatim to buildkitd.toml.
+    # -- Use to configure insecure registries, mirrors, etc.
+    # -- Example:
+    # --   extraConfig: |
+    # --     [registry."myregistry:5001"]
+    # --       http = true
+    # --       insecure = true
+    extraConfig: ""
 
     pdb:
       # -- Minimum available pods
@@ -2106,7 +2372,7 @@ imageBuilder:
     # -- Resource definitions
     resources:
       requests:
-        cpu: 4
+        cpu: 200m
         memory: 4Gi
         ephemeral-storage: 50Gi
 
@@ -2128,8 +2394,16 @@ imageBuilder:
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
+  fullnameOverride: "dataplane-nginx"
 
   controller:
+    service:
+      # ClusterIP for intra-cluster (selfhosted); terraform overrides the type +
+      # annotations per DP lb_mode (e.g. InternalLoadBalancer) when it enables this.
+      type: "ClusterIP"
+      ports:
+        http: 80
+        https: 443
 
     # Disable admission webhooks for simplicity
     admissionWebhooks:
@@ -2158,6 +2432,9 @@ namespaces:
   enabled: false
 
 monitoring:
+  # kube-prometheus-stack subchart; disabled by default, as the monitoring stack
+  # is commonly managed outside this chart. Enable as needed.
+  # TODO: consider defaulting to true.
   enabled: false
 
   # The following flags control Union monitoring resources independently
@@ -2167,6 +2444,20 @@ monitoring:
   # (e.g., selfhosted mode where the controlplane owns the stack).
 
   # Dashboard ConfigMaps are auto-discovered by Grafana sidecar (NAMESPACE=ALL).
+  #
+  # Datasource / "No data": every panel reads the datasource selected by the
+  # dashboard $datasource variable — point it at whichever Prometheus scrapes
+  # this cluster. Some panels read core Kubernetes / kube-state metrics that a
+  # given deployment may scrape with an external stack (e.g. Google Cloud Managed
+  # Prometheus on GKE, or Azure Monitor managed Prometheus) rather than the
+  # embedded monitoring Prometheus. Against a datasource that does not carry
+  # those metrics such panels show "No data" — this is expected; point
+  # $datasource at the source that has them. Per-cloud specifics are documented
+  # in the values.{aws,gcp,azure}.yaml overlays.
+  #
+  # Optional dashboards ship only when their inputs exist:
+  #   - union-dataplane-karpenter — requires the karpenter.sh/v1 CRD.
+  #   - union-dataplane-slo       — requires prometheusRules.enabled AND slos.enabled.
   dashboards:
     enabled: true
     # Label and value used by the Grafana sidecar to discover dashboard ConfigMaps.
@@ -2234,16 +2525,28 @@ monitoring:
     enabled: true
   defaultRules:
     create: true
+    rules:
+      kubeControllerManager: false
+      kubeSchedulerAlerting: false
+      kubeSchedulerRecording: false
+      kubeProxy: false
+      etcd: false
   kubeApiServer:
     enabled: true
+  # These ServiceMonitors + alerting rules (defaultRules.rules above) cover the
+  # Kubernetes control-plane components (controller-manager, scheduler, etcd,
+  # kube-proxy). A managed Kubernetes provider (EKS/GKE/AKS) owns those and does
+  # not expose their metrics endpoints to workloads, so they are disabled by
+  # default to avoid false-positive TargetDown alerts. Enable per component if you
+  # are confident your Kubernetes provider allows access to these metrics.
   kubeControllerManager:
-    enabled: true
+    enabled: false
   kubeEtcd:
-    enabled: true
+    enabled: false
   kubeProxy:
-    enabled: true
+    enabled: false
   kubeScheduler:
-    enabled: true
+    enabled: false
   nodeExporter:
     enabled: true
   kubelet:
@@ -2286,3 +2589,297 @@ monitoring:
         requests:
           cpu: "500m"
           memory: "1Gi"
+
+# -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
+# `zero_trust.enabled: true`; the templates gate on that flag directly.
+gateway:
+  service:
+    httpAppsPort: 80
+    httpStaticPort: 8888
+
+  # -- Enables Union's auth integration across the kourier-gateway.
+  auth:
+    enable: true
+    tenantAuthURL: ""
+    tenantAuthSignInURL: ""
+    tenantControlPlaneURL: ""
+    organization: ""
+
+  components:
+    envoy:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: gateway
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        envoy:
+          image:
+            repository: '{{ .Values.image.envoy.repository }}'
+            tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "2"
+              memory: 2Gi
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    kourier-controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - net-kourier-controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image:
+            repository: '{{ .Values.image.union.repository }}'
+            tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+
+    activator:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - activator
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        activator:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 20
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+    controller:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - controller
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        controller:
+          image: {}
+
+    autoscaler:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler:
+          image: {}
+
+    autoscaler-hpa:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - autoscaler-hpa
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        autoscaler-hpa:
+          image: {}
+
+    webhook:
+      replicas: 2
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - webhook
+                topologyKey: topology.kubernetes.io/zone
+              weight: 100
+      containers:
+        webhook:
+          image: {}
+      hpa:
+        minReplicas: 2
+        maxReplicas: 10
+        metrics:
+          - type: Resource
+            resource:
+              name: cpu
+              target:
+                type: Utilization
+                averageUtilization: 70
+          - type: Resource
+            resource:
+              name: memory
+              target:
+                type: Utilization
+                averageUtilization: 70
+
+  config:
+    defaults:
+      max-revision-timeout-seconds: "6000"
+    deployment:
+      progress-deadline: "30m"
+      queue-sidecar-cpu-request: "25m"
+      queue-sidecar-cpu-limit: "1000m"
+      queue-sidecar-memory-request: "400Mi"
+      queue-sidecar-memory-limit: "800Mi"
+      queue-sidecar-ephemeral-storage-request: "512Mi"
+      queue-sidecar-ephemeral-storage-limit: "1024Mi"
+      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,{{ include \"imagebuilder.defaultRegistry\" . }}"
+    features:
+      kubernetes.podspec-affinity: "enabled"
+      kubernetes.podspec-dnsconfig: "enabled"
+      kubernetes.podspec-dnspolicy: "enabled"
+      kubernetes.podspec-fieldref: "enabled"
+      kubernetes.podspec-hostaliases: "enabled"
+      kubernetes.podspec-init-containers: "enabled"
+      kubernetes.podspec-nodeselector: "enabled"
+      kubernetes.podspec-persistent-volume-claim: "enabled"
+      kubernetes.podspec-persistent-volume-write: "enabled"
+      kubernetes.podspec-priorityclassname: "enabled"
+      kubernetes.podspec-runtimeclassname: "enabled"
+      kubernetes.podspec-schedulername: "enabled"
+      kubernetes.podspec-securitycontext: "enabled"
+      # Allow adding a capability subset to the user container's securityContext
+      # (e.g. CAP_SYS_ADMIN from PodTemplate.allow_fuse(), used to mount a FUSE
+      # filesystem such as a flyteplugins-union Volume).
+      kubernetes.containerspec-addcapabilities: "enabled"
+      kubernetes.podspec-shareprocessnamespace: "enabled"
+      kubernetes.podspec-tolerations: "enabled"
+      kubernetes.podspec-topologyspreadconstraints: "enabled"
+      kubernetes.podspec-volumes-emptydir: "enabled"
+    network:
+      ingress-class: "kourier.ingress.networking.knative.dev"
+    kourier: {}
+    autoscaler: {}
+    certmanager: {}
+    domain: {}
+    gc: {}
+    leader-election: {}
+    logging: {}
+    observability: {}
+    tracing: {}
+
+# -- union-dataproxy backend. Rendered when `zero_trust.enabled: true`; the
+# templates gate on that flag directly.
+dataproxy:
+  serviceAccount:
+    create: true
+    name: dataproxy-system
+    annotations: {}
+  replicas: 1
+  service:
+    # Connect/gRPC server (HTTP/2). Catch-all "/" gateway route -> dataproxy cluster.
+    port: 8080
+    # HTTP/1.1 gateway server. Browser-facing reverse-proxy routes
+    # (/spark-history-server/, /dataplane/, /prometheus/cluster/) -> dataproxy-http cluster.
+    httpPort: 8089
+  podAnnotations: { }
+  podLabels: { }
+  priorityClassName: ""
+  imagePullSecrets: []
+  podEnv: { }
+  # -- nodeSelector constraints for the dataproxy pods
+  nodeSelector: { }
+  # -- topologySpreadConstraints for the dataproxy pods
+  topologySpreadConstraints: { }
+  # -- tolerations for the dataproxy pods
+  tolerations: [ ]
+  # -- affinity configurations for the dataproxy pods
+  affinity: { }
+  # -- nodeName constraint for the dataproxy pods
+  nodeName: ""
+  podSecurityContext: { }
+  securityContext: { }
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 250Mi
+  # -- Appends additional volumes to the deployment spec. May include template values.
+  additionalVolumes: []
+  # -- Appends additional volume mounts to the main container's spec. May include template values.
+  additionalVolumeMounts: []

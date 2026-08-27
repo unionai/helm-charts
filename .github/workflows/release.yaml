@@ -37,6 +37,30 @@ jobs:
         env:
           CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
 
+      # A chart version with a SemVer pre-release suffix (-alpha.N / -beta.N) is
+      # not a stable release: flag its GitHub release as a pre-release so it is
+      # excluded from "latest". Helm's repo index already hides pre-release
+      # versions from `helm pull` unless --devel is passed, so stable consumers
+      # are unaffected. chart-releaser's mark_as_latest is run-level, so this is
+      # done per-chart here instead.
+      - name: Flag pre-release versions as not latest
+        env:
+          GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        run: |
+          for f in charts/*/Chart.yaml; do
+            name=$(basename "$(dirname "$f")")
+            ver=$(grep '^version:' "$f" | awk '{print $2}' | tr -d '"')
+            case "$ver" in
+              *-alpha.*|*-beta.*)
+                tag="${name}-${ver}"
+                if gh release view "$tag" >/dev/null 2>&1; then
+                  echo "Flagging $tag as pre-release"
+                  gh release edit "$tag" --prerelease --latest=false
+                fi
+                ;;
+            esac
+          done
+
       - name: Generate release notes
         env:
           GH_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

@@ -1,0 +1,32 @@
+# Example: enable the FUSE device-plugin DaemonSet on a dataplane.
+#
+# Advertises the host /dev/fuse character device as a Kubernetes extended
+# resource (smarter-devices/fuse) via the device-plugin API. An unprivileged
+# task pod that requests the resource then gets /dev/fuse injected into its
+# devices-cgroup allowlist by kubelet, so it can perform an in-pod FUSE mount
+# with only CAP_SYS_ADMIN — no privileged container and no /dev/fuse hostPath
+# (which surfaces the node but cannot grant cgroup access).
+#
+# Layer this onto your platform values, e.g.:
+#   helm upgrade ... -f values.aws.yaml -f examples/values-fuse-device-plugin.yaml
+#
+# A workload then opts in by requesting the resource on its pod template:
+#   resources:
+#     limits:   { smarter-devices/fuse: "1" }
+#     requests: { smarter-devices/fuse: "1" }
+#   securityContext:
+#     capabilities: { add: ["SYS_ADMIN"] }
+
+fuseDevicePlugin:
+  enabled: true
+
+  # Restrict to nodes where unprivileged FUSE is wanted (label them
+  # `union.ai/fuse=true`). Omit to run on every node.
+  nodeSelector:
+    union.ai/fuse: "true"
+
+  # Advertise additional devices by adding more entries (smarter-device-manager
+  # conf.yaml format). The default advertises only /dev/fuse.
+  # devices:
+  #   - devicematch: ^fuse$
+  #     nummaxdevices: 1000
