@@ -1,5 +1,52 @@
 # dataplane — Release Notes
 
+## 2026.8.4
+
+`version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
+`2026.8.5`, picking up the new data-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+Chart changes:
+
+- Right-size default CPU/memory **requests** for data-plane services
+  (`leaseworker`, BuildKit image-builder, operator, connector,
+  cluster-resource-sync, node-observer, Kourier). **Limits are unchanged** —
+  BuildKit keeps unlimited memory and `leaseworker` keeps its `16Gi` limit (its
+  request drops `8Gi`→`512Mi`) — so only the idle reservation shrinks, improving
+  packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Every data-plane pod now honors the chart-level **global scheduling** default
+  (`.Values.scheduling.*`) — `flyteconnector` and all seven gateway components
+  gained `tolerations`/`nodeSelector` fields so they can schedule onto a tainted
+  pool. **Task-execution pods** inherit it too via the `task-template` PodTemplate
+  (`taskPodTemplate.{nodeSelector,affinity,tolerations}`). Per-service
+  `tolerations`/`nodeSelector` **inherit** from the global block (concat / merge,
+  service wins); `affinity` overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
+
+Image changes (`2026.8.3` → `2026.8.5`):
+
+- **Apps no longer freeze on "Deploying / Initializing" after an OOM kill or
+  crash.** When a container terminates non-zero *after* its revision became
+  ready, Knative's sticky `ContainerHealthy` condition leaves the revision
+  `Ready=False, reason=ExitCode<N>` while the KService reports only a generic
+  `RevisionMissing`, so the operator wrote a substate-less `PENDING` that the
+  status updater's anti-churn guard then dropped — the app's status stuck on a
+  stale condition with no path to recovery short of a redeploy. The reconciler
+  now reads the Revision reason and classifies it: `ExitCode137` (and a literal
+  `OOMKilled`) → `OOM_KILLED`, any other `ExitCode<N>` → `CRASH_LOOP`, each with
+  a short summary such as `Container exited with code 137 (out of memory)`
+  ([unionai/cloud#17871](https://github.com/unionai/cloud/pull/17871)).
+- **Kourier stops watching every Secret in the cluster.** The bundled
+  `net-kourier` build is bumped to pick up
+  [unionai/net-kourier#13](https://github.com/unionai/net-kourier/pull/13),
+  cutting the Serving ingress controller's apiserver watch load and cache
+  footprint on clusters with many Secrets
+  ([unionai/cloud#17870](https://github.com/unionai/cloud/pull/17870)).
+
 ## 2026.8.3
 
 `version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →

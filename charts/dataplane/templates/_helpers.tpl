@@ -131,7 +131,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropeller.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropeller.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropeller.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -144,7 +144,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.tolerations" -}}
-{{- with .Values.flytepropeller.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropeller.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -193,7 +193,7 @@ affinity:
 {{- end }}
 
 {{- define "leaseworker.scheduling.nodeSelector" -}}
-{{- with .Values.leaseworker.nodeSelector }}
+{{- with (merge (dict) (.Values.leaseworker.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -206,7 +206,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "leaseworker.scheduling.tolerations" -}}
-{{- with .Values.leaseworker.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.leaseworker.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -274,7 +274,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropellerwebhook.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropellerwebhook.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -287,7 +287,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.tolerations" -}}
-{{- with .Values.flytepropellerwebhook.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropellerwebhook.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -391,7 +391,7 @@ affinity:
 {{- end }}
 
 {{- define "nodeobserver.scheduling.nodeSelector" -}}
-{{- with .Values.nodeobserver.nodeSelector }}
+{{- with (merge (dict) (.Values.nodeobserver.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -404,7 +404,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.tolerations" -}}
-{{- with .Values.nodeobserver.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.nodeobserver.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -486,7 +486,7 @@ affinity:
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.nodeSelector" -}}
-{{- with .Values.clusterresourcesync.nodeSelector }}
+{{- with (merge (dict) (.Values.clusterresourcesync.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -499,7 +499,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.tolerations" -}}
-{{- with .Values.clusterresourcesync.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.clusterresourcesync.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -585,7 +585,7 @@ affinity:
 {{- end }}
 
 {{- define "operator.scheduling.nodeSelector" -}}
-{{- with .Values.operator.nodeSelector }}
+{{- with (merge (dict) (.Values.operator.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -598,7 +598,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "operator.scheduling.tolerations" -}}
-{{- with .Values.operator.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.operator.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -796,7 +796,7 @@ affinity:
 {{- end }}
 
 {{- define "proxy.scheduling.nodeSelector" -}}
-{{- with .Values.proxy.nodeSelector }}
+{{- with (merge (dict) (.Values.proxy.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -809,7 +809,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "proxy.scheduling.tolerations" -}}
-{{- with .Values.proxy.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.proxy.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}

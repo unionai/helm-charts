@@ -601,6 +601,7 @@ data:
         - echo
         - fast-task
         - connector-service
+        - artifact-trigger
   config.yaml: |
     leaseworker:
       capacity: 100000
@@ -624,7 +625,11 @@ data:
     union:
       connection:
         host: 'dns:///union.us-west-2.union.ai'
+        http2KeepAlive:
+          pingTimeout: 10s
+          readIdleTimeout: 30s
         insecureSkipVerify: false
+        unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'my-client-id'
@@ -3851,7 +3856,11 @@ data:
     union:
       connection:
         host: 'dns:///union.us-west-2.union.ai'
+        http2KeepAlive:
+          pingTimeout: 10s
+          readIdleTimeout: 30s
         insecureSkipVerify: false
+        unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
         clientId: 'my-client-id'
@@ -3984,10 +3993,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.3
+    helm.sh/chart: dataplane-2026.8.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.3"
+    app.kubernetes.io/version: "2026.8.5"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -7665,7 +7674,7 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: "IfNotPresent"
           name: sync-cluster-resources
           resources:
@@ -7673,7 +7682,7 @@ spec:
               cpu: "1"
               memory: 500Mi
             requests:
-              cpu: 500m
+              cpu: 100m
               memory: 100Mi
           volumeMounts:
             - name: auth
@@ -7759,9 +7768,9 @@ spec:
               ephemeral-storage: 100Mi
               memory: 1500Mi
             requests:
-              cpu: "1"
+              cpu: 100m
               ephemeral-storage: 100Mi
-              memory: 1000Mi
+              memory: 384Mi
       serviceAccountName: flyteconnector
 
 ---
@@ -7861,7 +7870,7 @@ spec:
             privileged: true
           resources:
             requests:
-              cpu: 4
+              cpu: 200m
               ephemeral-storage: 50Gi
               memory: 4Gi
       volumes:
@@ -7895,7 +7904,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9d5b1847a145e107d6c32a8d1602f58302bb96fb0de972f642804e8bc11f2ea"
+        configChecksum: "7d35d2c03f222cc28158ebbd7876aec65e16567241b828876daaff9d5e7e0a4"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -7921,7 +7930,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -7969,8 +7978,8 @@ spec:
               cpu:    "8"
               memory: "16Gi"
             requests:
-              cpu:    "4"
-              memory: "8Gi"
+              cpu:    "300m"
+              memory: "512Mi"
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
@@ -8002,7 +8011,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b3c43634ee38c8dc956f5baddedf692f5ec62eacd06f4421bdcc4341326c3c8"
+        configChecksum: "feb10e58ecb1d00f4a26cc2ced6be057a87212589e3c5043aaef0cee75fda02"
         
       labels:
         
@@ -8029,7 +8038,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -8097,7 +8106,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -8142,7 +8151,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "b3c43634ee38c8dc956f5baddedf692f5ec62eacd06f4421bdcc4341326c3c8"
+        configChecksum: "feb10e58ecb1d00f4a26cc2ced6be057a87212589e3c5043aaef0cee75fda02"
         
       labels:
         
@@ -8165,7 +8174,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -8173,8 +8182,8 @@ spec:
               cpu: "2"
               memory: 3Gi
             requests:
-              cpu: "1"
-              memory: 1Gi
+              cpu: 150m
+              memory: 384Mi
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
@@ -8182,9 +8191,9 @@ spec:
               name: secret-volume
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.8.3"
+              value: "2026.8.4"
             - name: HELM_APP_VERSION
-              value: "2026.8.3"
+              value: "2026.8.5"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -8268,7 +8277,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "9d5b1847a145e107d6c32a8d1602f58302bb96fb0de972f642804e8bc11f2ea"
+        configChecksum: "7d35d2c03f222cc28158ebbd7876aec65e16567241b828876daaff9d5e7e0a4"
         
     spec:
       securityContext:
@@ -8279,7 +8288,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.3"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -8555,10 +8564,10 @@ metadata:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-delete-policy": before-hook-creation
   labels:
-    helm.sh/chart: dataplane-2026.8.3
+    helm.sh/chart: dataplane-2026.8.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.3"
+    app.kubernetes.io/version: "2026.8.5"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: serving
 spec:
@@ -8609,10 +8618,10 @@ spec:
   workloads:
   - name: 3scale-kourier-gateway
     labels:
-      helm.sh/chart: dataplane-2026.8.3
+      helm.sh/chart: dataplane-2026.8.4
       app.kubernetes.io/name: release-name-dataplane
       app.kubernetes.io/instance: release-name
-      app.kubernetes.io/version: "2026.8.3"
+      app.kubernetes.io/version: "2026.8.5"
       app.kubernetes.io/managed-by: Helm
       app.kubernetes.io/component: 3scale-kourier-gateway
     affinity:
@@ -8642,8 +8651,8 @@ spec:
           cpu: "2"
           memory: 2Gi
         requests:
-          cpu: "1"
-          memory: 1Gi
+          cpu: 100m
+          memory: 256Mi
   - name: activator
     affinity:
       podAntiAffinity:
@@ -8720,8 +8729,8 @@ spec:
           cpu: "1"
           memory: 1Gi
         requests:
-          cpu: 500m
-          memory: 500Mi
+          cpu: 100m
+          memory: 256Mi
   - name: webhook
     affinity:
       podAntiAffinity:
