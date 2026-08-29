@@ -1,0 +1,571 @@
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: flyteadmin
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.8.3
+    #app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups:
+      - ""
+      - flyte.lyft.com
+      - rbac.authorization.k8s.io
+    resources:
+      - configmaps
+      - flyteworkflows
+      - namespaces
+      - pods
+      - resourcequotas
+      - roles
+      - rolebindings
+      - secrets
+      - services
+      - serviceaccounts
+      - spark-role
+    verbs:
+      - '*'
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: flyteadmin-binding
+  namespace: union
+  labels: 
+    app.kubernetes.io/name: flyteadmin
+    app.kubernetes.io/instance: release-name
+    helm.sh/chart: controlplane-2026.8.3
+    #app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: flyteadmin
+subjects:
+  - kind: ServiceAccount
+    name: flyteadmin
+    namespace: union
+---
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# BackendTrafficPolicy — configures Envoy→gRPC backend connection settings.
+# Replaces nginx grpc_connect_timeout, grpc_read_timeout, grpc_send_timeout.
+# Three policies (one per GRPCRoute) so h2c and timeouts are scoped to gRPC traffic only.
+#
+# requestTimeout applies to unary calls; maxStreamDuration applies to streaming calls.
+# "0s" for maxStreamDuration means no limit (equivalent to grpc_read_timeout 604800s on streaming routes).
+# Both protected and unprotected GRPCRoutes contain streaming methods so both get the same config.
+#
+# Rate limit is also included here (when enabled) because route-level BTPs override gateway-level ones,
+# so the gateway-level rate-limit BTP below would be suppressed for these two GRPCRoutes without it.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: controlplane-grpc-protected-h2c
+  namespace: union
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: controlplane-grpc-protected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for streaming (grpc_read_timeout 604800s on streaming routes)
+  tcpKeepalive:
+    probes: 9
+    idleTime: "15s"
+    interval: "15s"
+  http2: {}
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: controlplane-grpc-unprotected-h2c
+  namespace: union
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: controlplane-grpc-unprotected
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for WatchExecutionStatusUpdates streaming
+  tcpKeepalive:
+    probes: 9
+    idleTime: "15s"
+    interval: "15s"
+  http2: {}
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: BackendTrafficPolicy
+metadata:
+  name: controlplane-grpc-protected-extended-h2c
+  namespace: union
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: GRPCRoute
+      name: controlplane-grpc-protected-extended
+  timeout:
+    tcp:
+      connectTimeout: "1200s"  # grpc_connect_timeout 1200s
+    http:
+      requestTimeout: "1200s"  # grpc_read_timeout 1200s (unary calls)
+      maxStreamDuration: "0s"  # no limit for streaming
+  tcpKeepalive:
+    probes: 9
+    idleTime: "15s"
+    interval: "15s"
+  http2: {}
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# ClientTrafficPolicy — configures inbound client connection settings on the Gateway.
+# Replaces nginx server-snippet: client_header_timeout, client_body_timeout,
+# client_header_buffer_size, and large_client_header_buffers.
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: controlplane-client-policy
+  namespace: union
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: controlplane
+  timeout:
+    http:
+      requestReceivedTimeout: "0s"  # client_header_timeout 604800
+      streamIdleTimeout: "0s"       # client_body_timeout 604800
+  tls:
+    alpnProtocols:
+      - h2
+      - http/1.1
+  connection:
+    # large_client_header_buffers 64 32k = 2Mi total; mitigates 400 errors from large cookies
+    # at the /me auth endpoint (see PE-1101).
+    bufferLimit: "2Mi"
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# Unauthenticated gRPC routes — health checks and auth metadata used by clients
+# before they have a token. Mirrors the gRPC rules in the nginx unprotected ingress.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: controlplane-grpc-unprotected
+  namespace: union
+spec:
+  parentRefs:
+    - name: controlplane
+      namespace: union
+  hostnames:
+    - "test.example.com"
+    - "envoy-controlplane.envoy-gateway.svc.cluster.local"
+  rules:
+    - matches:
+        - method:
+            service: "flyteidl.service.HealthService"
+        - method:
+            service: "flyteidl.service.AuthMetadataService"
+        - method:
+            service: "flyteidl2.auth.AuthMetadataService"
+        - method:
+            service: "flyteidl.service.WatchService"
+            method: "WatchExecutionStatusUpdates"
+      backendRefs:
+        - name: flyteadmin
+          port: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# Consolidates nginx protected-grpc, protected-grpc-streaming, apps-protected,
+# and protected-grpc-high-tput ingresses. GRPCRoute service-level matches
+# cover all methods; specific-method matches are used where routes vary by method.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: controlplane-grpc-protected
+  namespace: union
+spec:
+  parentRefs:
+    - name: controlplane
+      namespace: union
+  hostnames:
+    - "test.example.com"
+    - "envoy-controlplane.envoy-gateway.svc.cluster.local"
+  rules:
+    # flyteadmin — protected gRPC (AdminService, ProjectService, IdentityService, etc.)
+    - matches:
+        - method: {service: "flyteidl.service.AdminService"}
+        - method: {service: "flyteidl2.project.ProjectService"}
+        - method: {service: "flyteidl2.auth.IdentityService"}
+        - method: {service: "flyteidl.service.WatchService"}
+        - method: {service: "cloudidl.cloudadmin.CloudAdminService"}
+        - method: {service: "flyteidl.service.IdentityService"}
+        - method: {service: "flyteidl.service.SignalService"}
+      backendRefs:
+        - name: flyteadmin
+          port: 81
+    # executions
+    - matches:
+        - method: {service: "cloudidl.execution.ExecutionService"}
+        - method: {service: "cloudidl.echo.EchoService"}
+        - method: {service: "cloudidl.app.AppService"}
+        - method: {service: "cloudidl.workflow.RunLogsService"}
+        - method: {service: "flyteidl2.app.AppService"}
+        - method: {service: "flyteidl2.workflow.RunLogsService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    # cluster
+    - matches:
+        - method: {service: "cloudidl.cluster.ClusterService"}
+        - method: {service: "cloudidl.fleet.FleetService"}
+        - method: {service: "flyteidl2.cluster.ClusterService"}
+        - method: {service: "cloudidl.cluster.ClusterNodepoolService"}
+        - method: {service: "cloudidl.cloudaccounts.CloudAccountsService"}
+        - method: {service: "cloudidl.cluster.ManagedClusterService"}
+        - method: {service: "cloudidl.clusterpool.ClusterPoolService"}
+        - method: {service: "cloudidl.clusterconfig.ClusterConfigService"}
+        - method: {service: "cloudidl.queue.QueueService"}
+        - method: {service: "cloudidl.queue.InternalQueueService"}
+      backendRefs:
+        - name: cluster
+          port: 80
+    # identity
+    - matches:
+        - method: {service: "cloudidl.apikey.APIKeyService"}
+        - method: {service: "cloudidl.identity.AppsService"}
+        - method: {service: "cloudidl.identity.UserService"}
+        - method: {service: "cloudidl.identity.MemberService"}
+        - method: {service: "cloudidl.identity.RoleService"}
+        - method: {service: "cloudidl.identity.PolicyService"}
+        - method: {service: "cloudidl.identity.IdentityService"}
+      backendRefs:
+        - name: identity
+          port: 80
+    - matches:
+        - method: {service: "cloudidl.identity.SelfServe"}
+      backendRefs:
+        - name: identity
+          port: 80
+    # organizations
+    - matches:
+        - method: {service: "cloudidl.org.OrgService"}
+        - method: {service: "flyteidl2.settings.SettingsService"}
+      backendRefs:
+        - name: organizations
+          port: 83
+    # usage
+    - matches:
+        - method: {service: "cloudidl.usage.UsageService"}
+      backendRefs:
+        - name: usage
+          port: 80
+    # authorizer
+    - matches:
+        - method: {service: "cloudidl.authorizer.AuthorizerService"}
+      backendRefs:
+        - name: authorizer
+          port: 83
+    # cacheservice
+    - matches:
+        - method: {service: "flyteidl.cacheservice.CacheService"}
+        - method: {service: "flyteidl.cacheservice.v2.CacheService"}
+      backendRefs:
+        - name: cacheservice
+          port: 89
+    # dataproxy (gRPC)
+    - matches:
+        - method: {service: "cloudidl.actor.ActorEnvironmentService"}
+        - method: {service: "cloudidl.agent.AgentService"}
+        - method: {service: "cloudidl.support.SupportService"}
+        - method: {service: "cloudidl.clouddataproxy.CloudDataProxyService"}
+        - method: {service: "flyteidl.service.DataProxyService"}
+        - method: {service: "flyteidl2.dataproxy.DataProxyService"}
+        - method: {service: "flyteidl2.workflow.TranslatorService"}
+        - method: {service: "cloudidl.logs.LogsService"}
+        - method: {service: "cloudidl.app.AppLogsService"}
+        - method: {service: "cloudidl.app.ReplicaService"}
+        - method: {service: "flyteidl2.app.AppLogsService"}
+        - method: {service: "flyteidl2.app.ReplicaService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+    # image builder (dataproxy)
+    - matches:
+        - method: {service: "cloudidl.imagebuilder.ImageService"}
+        - method: {service: "flyteidl2.imagebuilder.ImageService"}
+      backendRefs:
+        - name: dataproxy
+          port: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# Second GRPCRoute — split from grpcroute-protected to stay within the
+# Gateway API 16-rule-per-resource limit (gateway.networking.k8s.io CRD v1.4.1).
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: controlplane-grpc-protected-extended
+  namespace: union
+spec:
+  parentRefs:
+    - name: controlplane
+      namespace: union
+  hostnames:
+    - "test.example.com"
+    - "envoy-controlplane.envoy-gateway.svc.cluster.local"
+  rules:
+    # leasor (v2 — queue/lease equivalent for v2 actions/leasor stack)
+    - matches:
+        - method: {service: "cloudidl.workflow.v2.LeasorService"}
+      backendRefs:
+        - name: leasor
+          port: 80
+    # actions + pluginState (v2)
+    - matches:
+        - method: {service: "flyteidl2.actions.ActionsService"}
+        - method: {service: "cloudidl.pluginstate.PluginStateService"}
+      backendRefs:
+        - name: actions
+          port: 80
+    # eventsProxy (v2 — runs in the executions binary, called by leaseworker)
+    - matches:
+        - method: {service: "flyteidl2.workflow.EventsProxyService"}
+      backendRefs:
+        - name: executions
+          port: 80
+    # Union v2 workflow services (executions)
+    - matches:
+        - method: {service: "cloudidl.workflow.RunService"}
+        - method: {service: "cloudidl.workflow.InternalRunService"}
+        - method: {service: "cloudidl.workflow.TaskService"}
+        - method: {service: "cloudidl.workflow.TriggerService"}
+        - method: {service: "flyteidl2.workflow.RunService"}
+        - method: {service: "flyteidl2.task.TaskService"}
+        - method: {service: "flyteidl2.trigger.TriggerService"}
+      backendRefs:
+        - name: executions
+          port: 80
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: controlplane
+  namespace: union
+spec:
+  gatewayClassName: controlplane-envoy
+  listeners:
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "test.example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            namespace: 
+            name: 
+    - name: https-local
+      protocol: HTTPS
+      port: 443
+      hostname: "envoy-controlplane.envoy-gateway.svc.cluster.local"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            namespace: 
+            name:
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# WARNING: any route here is accessible without authentication.
+# Flyteadmin acts as an auth server and is therefore publicly accessible.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: controlplane-unprotected
+  namespace: union
+spec:
+  parentRefs:
+    - name: controlplane
+      namespace: union
+  hostnames:
+    - "test.example.com"
+  rules:
+    # Auth / identity endpoints — publicly required for OIDC flows
+    - matches:
+        - path: {type: PathPrefix, value: "/.well-known"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/login"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/logout"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/callback"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/config"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/oauth2"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: PathPrefix, value: "/auth"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: Exact, value: "/me"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    - matches:
+        - path: {type: Exact, value: "/healthcheck"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    # OpenAPI / redoc — port 87 in flyteadmin
+    - matches:
+        - path: {type: PathPrefix, value: "/openapi"}
+      backendRefs:
+        - name: flyteadmin
+          port: 87
+    # Console healthchecks
+    - matches:
+        - path: {type: Exact, value: "/healthz"}
+      backendRefs:
+        - name: flyteconsole
+          port: 80
+    - matches:
+        - path: {type: Exact, value: "/v2/healthz"}
+      backendRefs:
+        - name: unionconsole
+          port: 80
+    # Webhook endpoints
+    - matches:
+        - path: {type: PathPrefix, value: "/enqueue_metronome_request/v1"}
+      backendRefs:
+        - name: usage
+          port: 81
+    - matches:
+        - path: {type: PathPrefix, value: "/enqueue_stripe_request/v1"}
+      backendRefs:
+        - name: usage
+          port: 81
+---
+# Source: controlplane/templates/flyte-core-app.yaml
+# NOTE: Auth enforcement (SecurityPolicy/ExtAuthz) is added in M2.
+# These routes currently allow unauthenticated access — they match the
+# nginx protected-ingress paths but without the auth-url annotation.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: controlplane-protected
+  namespace: union
+spec:
+  parentRefs:
+    - name: controlplane
+      namespace: union
+  hostnames:
+    - "test.example.com"
+  rules:
+    # Flyte REST API
+    - matches:
+        - path: {type: PathPrefix, value: "/api"}
+        - path: {type: PathPrefix, value: "/v1"}
+        - path: {type: PathPrefix, value: "/cloudadmin"}
+      backendRefs:
+        - name: flyteadmin
+          port: 80
+    # Dataproxy HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/actor"}
+        - path: {type: PathPrefix, value: "/agent"}
+        - path: {type: PathPrefix, value: "/dataplane"}
+        - path: {type: PathPrefix, value: "/spark-history-server"}
+        - path: {type: PathPrefix, value: "/api/v1/dataproxy"}
+        - path: {type: PathPrefix, value: "/cloudidl.support.SupportService"}
+      backendRefs:
+        - name: dataproxy
+          port: 81
+    # Executions HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/app"}
+        - path: {type: PathPrefix, value: "/apps"}
+        - path: {type: PathPrefix, value: "/echo"}
+        - path: {type: PathPrefix, value: "/execution"}
+      backendRefs:
+        - name: executions
+          port: 81
+    # Cluster HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/cluster"}
+        - path: {type: PathPrefix, value: "/clusterpool"}
+        - path: {type: PathPrefix, value: "/clusterconfig"}
+        - path: {type: PathPrefix, value: "/managed_cluster"}
+      backendRefs:
+        - name: cluster
+          port: 81
+    # Authorizer HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/authorizer"}
+      backendRefs:
+        - name: authorizer
+          port: 81
+    # Usage HTTP
+    - matches:
+        - path: {type: PathPrefix, value: "/usage"}
+      backendRefs:
+        - name: usage
+          port: 81
+    # Root redirect — exact "/" → /console (avoids PathPrefix catch-all swallowing ConnectRPC paths)
+    - matches:
+        - path: {type: Exact, value: "/"}
+      filters:
+        - type: RequestRedirect
+          requestRedirect:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /console
+            statusCode: 301
+    # Console (React SPA) — /console, /dashboard, /resources, /cost, /loading
+    - matches:
+        - path: {type: PathPrefix, value: "/console"}
+        - path: {type: PathPrefix, value: "/dashboard"}
+        - path: {type: PathPrefix, value: "/resources"}
+        - path: {type: PathPrefix, value: "/cost"}
+        - path: {type: PathPrefix, value: "/loading"}
+      backendRefs:
+        - name: flyteconsole
+          port: 80
+    # Union v2 console
+    - matches:
+        - path: {type: PathPrefix, value: "/v2"}
+      backendRefs:
+        - name: unionconsole
+          port: 80
