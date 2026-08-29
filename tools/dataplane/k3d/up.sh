@@ -235,13 +235,40 @@ phase_route() {
   # (was a v1 ClusterPoolStatus-cache workaround).
 }
 
+# Dump the knative serving state for the app the functional suite deploys. The
+# app-serving check hangs/fails when the app's revision never becomes ready
+# (RevisionMissing) — a backend-side condition the pytest log alone can't explain,
+# since the pod runs here in the k3d dataplane. This is the only place with kubectl
+# access to that cluster, so surface the revision/pod/events on failure.
+_dump_app_diagnostics() {
+  echo "== [functional] app-serving diagnostics (knative revision/pod/events) =="
+  echo "-- knative serving objects (all namespaces) --"
+  kubectl get ksvc,configuration,revision,route -A 2>/dev/null || true
+  echo "-- pods in $UNION_NS --"
+  kubectl get pods -n "$UNION_NS" -o wide 2>/dev/null || true
+  # Describe any not-Ready revision + its pod, and dump recent warning events.
+  for rev in $(kubectl get revision -n "$UNION_NS" --no-headers 2>/dev/null | awk '{print $1}'); do
+    echo "-- describe revision/$rev --"; kubectl describe revision "$rev" -n "$UNION_NS" 2>/dev/null | tail -40 || true
+  done
+  for p in $(kubectl get pods -n "$UNION_NS" --no-headers 2>/dev/null | awk '$3!="Running" && $3!="Completed"{print $1}'); do
+    echo "-- describe pod/$p (not Running) --"; kubectl describe pod "$p" -n "$UNION_NS" 2>/dev/null | tail -50 || true
+  done
+  echo "-- recent Warning events in $UNION_NS --"
+  kubectl get events -n "$UNION_NS" --field-selector type=Warning --sort-by=.lastTimestamp 2>/dev/null | tail -30 || true
+}
+
 phase_functional() {
-  echo ">> [functional] pytest tests/functional"
-  # APP_NAMESPACE = k3d's release namespace (low_privilege pins the app ksvc there);
-  # the code default is "dataplane" (standing legs), so k3d must set it explicitly.
+  # The functional suite now lives in flyteorg/flyte-sdk (tests/functional); point
+  # FUNCTIONAL_SUITE_DIR at your local checkout (default: sibling clone).
+  local suite="${FUNCTIONAL_SUITE_DIR:-../flyte-sdk/tests/functional}"
+  echo ">> [functional] pytest $suite (backend=union)"
+  local rc=0
   CONTROL_PLANE_URL="https://$CP_HOST" CLUSTER_NAME="$CLUSTER" ORG_NAME="$ORG" \
-    APP_NAMESPACE="$UNION_NS" \
-    pytest tests/functional
+    ENV_SUFFIX="$CLUSTER" FLYTE_FUNCTIONAL_BACKEND=union \
+    FLYTE_FUNCTIONAL_IMAGE_CACHE_BUST="local-$(date +%s)" \
+    pytest "$suite" || rc=$?
+  [ "$rc" -ne 0 ] && _dump_app_diagnostics
+  return "$rc"
 }
 
 case "$PHASE" in
