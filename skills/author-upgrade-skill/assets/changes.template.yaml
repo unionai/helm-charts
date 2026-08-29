@@ -1,0 +1,105 @@
+# Machine-readable twin of SKILL.md for this version hop.
+#
+# Purpose: let an agent handling a multi-version jump merge N releases without reading N
+# prose documents. It can see that a key deprecated in one release was removed in a later
+# one, and skip the intermediate advice.
+#
+# Every entry here has a counterpart in SKILL.md and vice versa.
+
+chart: dataplane
+from: "<FROM_VERSION>"
+to: "<TO_VERSION>"
+released: "<YYYY-MM-DD>"
+
+# Highest severity present. breaking | behavior_change | additive
+impact: <impact>
+
+# Set true if written retroactively rather than at release time.
+backfilled: false
+
+# --- Class 6: must happen outside/before `helm upgrade` ---
+prerequisites:
+  - id: <short-slug>
+    action: <imperative, one line>
+    command: |
+      <exact command>
+    applies_to: all            # all | aws | gcp | azure | apps_enabled | zero_trust_enabled
+    reason: <observable consequence of skipping>
+
+# --- Class 2: silently inert if not migrated ---
+removed_or_renamed:
+  - old_key: <dotted.path>
+    new_key: <dotted.path>     # or null if removed outright
+    since: "<TO_VERSION>"
+    deprecated_in: null        # version that deprecated it, if it passed through Class 3
+    migration: <one line>
+    detect: <grep pattern that finds it in a values file>
+    breaks: <what stops working if left unmigrated>
+
+# --- Class 1: changes without customer action ---
+default_changes:
+  - key: <dotted.path>
+    old: <value>
+    new: <value>
+    scope: base                # base | aws | gcp | azure
+    effect: <observable behavior change>
+    preserve_old: |
+      <yaml snippet pinning the previous behavior>
+
+# --- Class 4: default is now a template expression ---
+computed_defaults:
+  - key: <dotted.path>
+    depends_on: <dotted.path>
+    resolution:
+      - when: <controlling value>
+        value: <resolved value>
+    effect: <one line>
+
+# --- Class 5: rendered-object changes ---
+workloads:
+  added:
+    - kind_name: <Kind/name>
+      note: <resource footprint or admission-policy implication>
+  removed:
+    - kind_name: <Kind/name>
+      note: <what may still reference it — monitoring, alerts, PDBs, netpol>
+
+# --- Class 8 ---
+image_changes:
+  - component: <name>
+    old: <ref>
+    new: <ref>
+    note: <mirror requirement for restricted-registry clusters>
+
+# --- Class 3: still works, will not forever ---
+deprecations:
+  - old_key: <dotted.path>
+    new_key: <dotted.path>
+    still_honored: true
+    precedence: <resolution order if more than one fallback>
+
+# --- Class 7: nothing breaks if ignored ---
+optional_features:
+  - id: <slug>
+    summary: <one line>
+    values: |
+      <yaml snippet>
+    caveat: <cross-cluster or tenant-wide prerequisite, if any>
+
+# --- Upstream subchart bumps; link, do not restate ---
+subchart_bumps:
+  - name: <chart>
+    old: <version>
+    new: <version>
+    upstream_notes: <public URL>
+
+# --- Things the author could not establish. Reviewer resolves before merge. ---
+unverified:
+  - <claim needing human confirmation>
+
+# --- Verification steps, each with a falsifiable expectation ---
+verification:
+  - id: <slug>
+    command: |
+      <command>
+    expect: <exact expected output>

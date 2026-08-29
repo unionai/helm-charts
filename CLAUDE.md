@@ -95,3 +95,24 @@ Deployment guides are colocated with the charts:
 - `charts/controlplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
 - `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_GCP.md`
 - `charts/dataplane/SELFHOSTED_INTRA_CLUSTER_AWS.md`
+
+## Customer Upgrade Guides
+
+Each dataplane release gets a customer-facing upgrade guide under
+`charts/dataplane/upgrades/<version>/`, indexed by `charts/dataplane/UPGRADING.md`. These
+are what a self-managed customer hands their own coding agent to plan a `helm upgrade`.
+
+They are generated, not hand-written. After cutting a dataplane release, follow
+`skills/author-upgrade-skill/SKILL.md` — it diffs the release, classifies every change,
+and fills a fixed template.
+
+Two things to know before touching them:
+
+- **`RELEASE.md` is the input, not the output.** It is thorough but written for a Union
+  engineer: it explains mechanism, carries almost no runnable commands, and includes notes
+  a customer cannot act on. The generated guide distills it into commands with expected
+  outputs and retargets it at a customer audience.
+- **`charts/` is public.** The generator has a two-stage disclosure gate; run
+  `skills/author-upgrade-skill/assets/scan-disclosure.sh` on anything written into
+  `charts/dataplane/upgrades/`, and read `skills/author-upgrade-skill/references/disclosure-policy.md`
+  before writing output by hand. See `skills/README.md` for the environment it needs.
