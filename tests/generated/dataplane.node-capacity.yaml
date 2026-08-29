@@ -5711,6 +5711,57 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
 ---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+---
+# Read-only cluster-scoped access for reporting the cluster's real capacity: the node
+# shapes it runs, their utilization, and the pools that can create them.
+#
+# Rendered independently of low_privilege. The broad ClusterRole above is suppressed under
+# low privilege because it grants create/update/delete across pods, secrets, configmaps and
+# namespaces cluster-wide. This role grants reads on three resources and nothing else, so a
+# cluster can report capacity without taking on that surface. Nodes are cluster-scoped, so
+# there is no namespaced form of this grant.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: operator-system-node-capacity
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Node shapes: allocatable resources, instance type, pool identity, taints.
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+    verbs:
+      - get
+      - list
+      - watch
+  # Scheduled pod requests, which is what makes a capacity figure a utilization figure.
+  - apiGroups:
+      - ""
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  # Karpenter pools describe shapes the cluster can create but is not currently running,
+  # and the ceilings it may grow to. Absent where Karpenter is not installed, in which case
+  # the operator reports only what it observes.
+  - apiGroups:
+      - karpenter.sh
+    resources:
+      - nodepools
+      - nodeclaims
+    verbs:
+      - get
+      - list
+      - watch
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrolebinding.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -5879,6 +5930,25 @@ subjects:
   - kind: ServiceAccount
     name: knative-operator
     namespace: "union"
+---
+# Source: dataplane/templates/operator/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: operator-system-node-capacity
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: operator-system-node-capacity
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
 ---
 # Source: dataplane/charts/knative-operator/templates/knative-operator.yaml
 # Copyright 2022 The Knative Authors
@@ -7970,17 +8040,6 @@ template:
       - name: default
         image: docker.io/rwgrim/docker-noop
 ---
-# Source: dataplane/templates/common/pre-upgrade-hook.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: release-name-pre-upgrade
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-upgrade
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
----
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -8030,40 +8089,6 @@ subjects:
     name: flyte-webhook-cleanup
     namespace: union
 ---
-# Source: dataplane/templates/common/pre-upgrade-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: release-name-pre-upgrade
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-upgrade
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-rules:
-- apiGroups: ["apps"]
-  resources: ["deployments"]
-  verbs: ["get", "delete"]
----
-# Source: dataplane/templates/common/pre-upgrade-hook.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: release-name-pre-upgrade
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-upgrade
-    "helm.sh/hook-weight": "-10"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: release-name-pre-upgrade
-subjects:
-- kind: ServiceAccount
-  name: release-name-pre-upgrade
-  namespace: union
----
 # Source: dataplane/charts/fluentbit/templates/tests/test-connection.yaml
 apiVersion: v1
 kind: Pod
@@ -8085,36 +8110,6 @@ spec:
       command: ["sh"]
       args: ["-c", "sleep 5s && wget -O- release-name-fluentbit:2020"]
   restartPolicy: Never
-
----
-# Source: dataplane/templates/common/pre-upgrade-hook.yaml
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: release-name-pre-upgrade
-  namespace: union
-  annotations:
-    "helm.sh/hook": pre-upgrade
-    "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-spec:
-  ttlSecondsAfterFinished: 120
-  template:
-    spec:
-      serviceAccountName: release-name-pre-upgrade
-      restartPolicy: Never
-      containers:
-      - name: cleanup
-        image: docker.io/alpine/k8s:1.32.3
-        command:
-        - /bin/sh
-        - -c
-        - |
-          kubectl delete deployment \
-            union-operator-prometheus \
-            union-pod-webhook \
-            --ignore-not-found=true \
-            -n union
 
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
