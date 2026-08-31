@@ -699,7 +699,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_ACCESS_KEY_ID" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_ACCESS_KEY_ID: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
 {{- end }}
@@ -712,7 +712,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_SECRET_ACCESS_KEY" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_SECRET_ACCESS_KEY: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
 {{- end }}
