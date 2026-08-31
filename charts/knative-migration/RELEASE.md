@@ -2,6 +2,14 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.8.5
+
+Lockstep `version` bump with the `controlplane` / `dataplane` charts
+(`2026.8.4` → `2026.8.5`); `appVersion` stays at the migration tool's own
+`0.1.0`. No template changes — README only: the migration gate flag is
+corrected to `zero_trust.enabled`
+([#566](https://github.com/unionai/helm-charts/pull/566)).
+
 ## 2026.8.4
 
 Lockstep `version` bump with the `controlplane` / `dataplane` charts
