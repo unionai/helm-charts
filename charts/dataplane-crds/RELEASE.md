@@ -1,5 +1,12 @@
 # dataplane-crds — Release Notes
 
+## 2026.8.5
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.4` → `2026.8.5`);
+`appVersion` stays `2026.8.4`. No CRD changes — only the `Chart.yaml`
+deprecation notice now points at the real replacement, `crds/dataplane/`
+([#566](https://github.com/unionai/helm-charts/pull/566)).
+
 ## 2026.8.4
 
 Lockstep `version` bump with the `dataplane` chart (`2026.8.3` → `2026.8.4`);
