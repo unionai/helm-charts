@@ -134,28 +134,32 @@ config:
         gpu-device-node-label: cloud.google.com/gke-accelerator
         gpu-partition-size-node-label: cloud.google.com/gke-gpu-partition-size
 
-        # GKE Spot VM routing for interruptible workloads — DEFAULT: non-NAP
-        # (static node pools). GKE labels Spot nodes cloud.google.com/gke-spot=true;
-        # this REQUIRED node affinity deterministically routes interruptible pods
-        # onto a static Spot sibling pool.
+        # Spot VM routing is NOT a chart default — the chart stays compatible with
+        # Node Auto Provisioning (NAP) and Autopilot.
         #
-        # NOTE: Node Auto Provisioning (NAP) is NOT supported by these defaults.
-        # A *required* gke-spot affinity makes NAP refuse to scale up (GKE stamps
-        # the gke-spot label post-provisioning, so the scale-up predicate can never
-        # satisfy it), and it conflicts with GPU device selection under a Custom
-        # ComputeClass. On NAP clusters, override these defaults in your environment
-        # values overlay: drop this required affinity and instead prefer Spot via a
-        # soft/preferred nodeAffinity plus the gke-spot toleration.
-        interruptible-node-selector-requirement:
-          key: cloud.google.com/gke-spot
-          operator: In
-          values:
-            - "true"
-
-        # Non-interruptible workloads avoid Spot VMs
-        non-interruptible-node-selector-requirement:
-          key: cloud.google.com/gke-spot
-          operator: DoesNotExist
+        # A *required* cloud.google.com/gke-spot node affinity (either direction)
+        # makes NAP and Autopilot refuse to scale up: GKE stamps the gke-spot label
+        # only after a node is provisioned, so NAP's scale-up predicate can never
+        # satisfy the affinity. Tolerations are fine (NAP ignores them when deciding
+        # to scale up); required node affinities are not.
+        #
+        # Enable Spot routing from your environment values overlay / deployment
+        # tooling, gated on a Spot-preference flag: add a gke-spot toleration
+        # whenever Spot is preferred (harmless if the Spot pool is untainted), and
+        # add the REQUIRED affinities below only on non-NAP clusters (static Spot
+        # pools) for deterministic interruptible→Spot / non-interruptible→on-demand
+        # routing.
+        #
+        # To hard-route on a GKE Standard cluster with a static Spot pool, uncomment:
+        #
+        # interruptible-node-selector-requirement:
+        #   key: cloud.google.com/gke-spot
+        #   operator: In
+        #   values:
+        #     - "true"
+        # non-interruptible-node-selector-requirement:
+        #   key: cloud.google.com/gke-spot
+        #   operator: DoesNotExist
 
 # ----------------------------------------------------------------------------
 # Task namespace mapping (multi-namespace / low_privilege=false only)
