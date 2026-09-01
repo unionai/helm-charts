@@ -1,5 +1,11 @@
 # sandbox — Release Notes
 
+## 2026.9.0
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.5` → `2026.9.0`); `appVersion` realigns to `2026.9.0`. No sandbox
+chart changes in this release.
+
 ## 2026.8.5
 
 Lockstep `version` bump with the control-plane and data-plane charts

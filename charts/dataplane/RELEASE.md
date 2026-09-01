@@ -1,5 +1,11 @@
 # dataplane — Release Notes
 
+## 2026.9.0
+
+Release-train bump: `version` and `appVersion` move `2026.8.5` → `2026.9.0`,
+picking up the `2026.9.0` data-plane images. No chart template or values changes
+in this release.
+
 ## 2026.8.5
 
 Chart-only release: `version` moves `2026.8.4` → `2026.8.5`; `appVersion` stays
