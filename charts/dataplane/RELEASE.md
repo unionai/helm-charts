@@ -28,8 +28,10 @@ the `knative-operator`, its operator-installed `KnativeServing` conflicts with t
 vendored install — the `knative-migration` one-shot Job must run **before/at** the
 upgrade or it deadlocks:
 
-- **`union_extension` / self-managed envs — automatic.** The migration is wired as an
-  ArgoCD **PreSync** hook in the generated dataplane `values.yaml`; no manual action.
+- **Automated (GitOps) — check your deployment tooling.** Deployments that render this
+  chart via GitOps can wire the migration as an ArgoCD **PreSync** hook (a
+  `knative-migration` Job supplied through `extraObjects`); where that's in place it runs
+  automatically with no manual action.
 - **Manual upgrades — run the equivalent steps yourself** (idempotent; the
   `knative-operator` must be healthy first: `kubectl get deploy -n union knative-operator`):
   1. Delete the operator's `KnativeServing` CR so its finalizer tears down what it
