@@ -1450,8 +1450,8 @@ image:
     pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
-    repository: "cr.flyte.org/flyteorg/flytecopilot"
-    tag: "v1.14.1"
+    repository: "cr.flyte.org/flyteorg/flyte-binary-v2"
+    tag: "v2.0.45"
     pullPolicy: IfNotPresent
   # -- Union envoy build for the zero-trust gateway.
   envoy:
@@ -2215,9 +2215,11 @@ storage:
   # -- Define custom configurations for the object storage.  Only used if the provider is set to "custom".
   custom: { }
   # -- Reference to a Kubernetes Secret containing storage credentials.
-  # When set, credentials are omitted from ConfigMaps. An init container reads two flat
-  # keys from the secret and writes the YAML credential fragment to a temporary volume,
-  # which is merged with the component's config at startup.
+  # When set, the chart reads two flat keys from the secret AT RENDER TIME (helm
+  # lookup) and inlines them into the rendered storage configuration; the raw
+  # accessKey/secretKey values are not read. The secret must therefore exist
+  # BEFORE the release is installed or upgraded, and rotating it requires a new
+  # render (helm upgrade) to take effect.
   #
   # Create the secret with flat keys:
   #   kubectl create secret generic storage-credentials -n <namespace> \
@@ -2229,6 +2231,11 @@ storage:
   credentialsSecretRef:
     # -- Name of the Kubernetes Secret. Leave empty to disable (credentials go in ConfigMaps).
     name: ""
+    # -- Namespace the secret lives in. Empty means the release namespace. Set
+    # this when the release namespace is not known before install (e.g. the
+    # platform names it at deploy time) so the secret can be created in a fixed,
+    # pre-agreed namespace ahead of the first render.
+    namespace: ""
     # -- Key in the secret that holds the access key ID.
     accessKeyIdKey: access_key_id
     # -- Key in the secret that holds the secret key.

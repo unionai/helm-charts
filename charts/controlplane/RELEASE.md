@@ -1,5 +1,12 @@
 # controlplane — Release Notes
 
+## 2026.8.5
+
+Chart-only lockstep release: `version` moves `2026.8.4` → `2026.8.5`;
+`appVersion` stays `2026.8.5`, so images are unchanged. No control-plane
+template or values changes — this release carries data-plane chart changes
+only (see `charts/dataplane/RELEASE.md`).
+
 ## 2026.8.4
 
 `version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →

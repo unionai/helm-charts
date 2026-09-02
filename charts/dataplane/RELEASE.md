@@ -1,5 +1,33 @@
 # dataplane — Release Notes
 
+## 2026.8.5
+
+Chart-only release: `version` moves `2026.8.4` → `2026.8.5`; `appVersion` stays
+`2026.8.5`, so images are unchanged.
+
+- `storage.credentialsSecretRef` gains an optional `namespace` field so the
+  render-time secret `lookup` can read a fixed, pre-created namespace instead
+  of the release namespace — unblocks Omnistrate installs where the release
+  namespace is instance-derived and unknowable before the first install.
+  Empty/absent `namespace` keeps the exact current behavior
+  ([#567](https://github.com/unionai/helm-charts/pull/567)).
+- Interruptible node routing: `values.gcp.yaml` now routes `interruptible`
+  tasks to Spot nodes by default via the uniform `cloud.google.com/gke-spot`
+  label (node selector only — GKE labels Spot nodes but does not taint them),
+  matching the Azure default; AWS keeps commented guidance because its Spot
+  label is provisioner-specific
+  ([#561](https://github.com/unionai/helm-charts/pull/561)).
+- Leaseworker / union-operator control-plane connection liveness hardened by
+  default: `config.union.connection` sets `unaryRPCTimeout: 30s` and HTTP/2
+  keep-alive (`readIdleTimeout: 30s` / `pingTimeout: 10s`), so an idle
+  connection half-opened by a load balancer is detected and re-dialed instead
+  of silently stalling heartbeats and lease dispatch
+  ([#540](https://github.com/unionai/helm-charts/pull/540)).
+- `artifact-trigger` added to the `enabled-plugins` list rendered into the
+  leaseworker and propeller configmaps. Inventory-accuracy change — core
+  plugins currently load unconditionally, and propeller ignores unknown names
+  ([#511](https://github.com/unionai/helm-charts/pull/511)).
+
 ## 2026.8.4
 
 `version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
