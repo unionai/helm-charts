@@ -1,5 +1,17 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+> **Release pending** — not yet cut to a version. At the next release, rename this
+> heading to `## <version>` and bump `Chart.yaml`.
+
+- Self-hosted app serving: authorize app subdomains and compose public app URLs via
+  `publicURLPattern`, wired into the protected gRPC-route and ingress templates
+  ([#563](https://github.com/unionai/helm-charts/pull/563)).
+- App-serving config: public app URL composition + apps domain wiring and the
+  protected gRPC-route / ingress TLS surface for served apps
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+
 ## 2026.8.5
 
 Chart-only lockstep release: `version` moves `2026.8.4` → `2026.8.5`;

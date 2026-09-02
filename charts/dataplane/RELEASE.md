@@ -1,5 +1,67 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+> **Release pending** — these changes are not yet cut to a version. At the next
+> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+
+### Image-builder existence probe now honors the configured registry
+
+Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`
++ `defaultRepository`), which had been commented out. Without it the image existence
+probe (`GetImage`) defaulted to the `noop` handler and returned 404 for every image, so
+every run rebuilt images that already existed in the registry. This wires only the probe
+(the build/push path is configured separately) and is a no-op for envs that don't set
+`imageBuilder.authenticationType`. `basicAuth` stays commented (cloud registries use
+workload identity).
+
+### App serving now defaults to the vendored Knative gateway
+
+App serving is delivered by this chart's **vendored Knative Serving + Kourier + Envoy
+gateway** by default (`gateway.enabled: true`, `knative-operator.enabled: false`),
+replacing the legacy `knative-operator` path. With `apps.enabled: true` the vendored
+control plane renders and the operator path is off — no extra flags needed
+([#520](https://github.com/unionai/helm-charts/pull/520)).
+
+**Migrating from the knative-operator path.** If your data plane already served apps via
+the `knative-operator`, its operator-installed `KnativeServing` conflicts with the
+vendored install — the `knative-migration` one-shot Job must run **before/at** the
+upgrade or it deadlocks:
+
+- **Automated (GitOps) — check your deployment tooling.** Deployments that render this
+  chart via GitOps can wire the migration as an ArgoCD **PreSync** hook (a
+  `knative-migration` Job supplied through `extraObjects`); where that's in place it runs
+  automatically with no manual action.
+- **Manual upgrades — run the equivalent steps yourself** (idempotent; the
+  `knative-operator` must be healthy first: `kubectl get deploy -n union knative-operator`):
+  1. Delete the operator's `KnativeServing` CR so its finalizer tears down what it
+     installed: `kubectl delete knativeserving -n union union-operator-serving`.
+  2. *(Helm-managed dataplane only)* stamp Helm ownership onto the 12 Knative Serving
+     CRDs — else `helm upgrade dataplane` fails with `invalid ownership metadata`: run
+     `knative-migration` with `adoption.enabled: true` and
+     `adoption.targetRelease`/`targetNamespace` matching your dataplane release.
+  3. Delete the operator's two CRDs:
+     `kubectl delete crd knativeservings.operator.knative.dev knativeeventings.operator.knative.dev`.
+
+  Verify: `kubectl get knativeserving -n union` → none; both operator CRDs → NotFound.
+  Ready-made Job + full detail: `charts/knative-migration/README.md`.
+
+**Reverting to the legacy operator path.** Set `gateway.enabled: false` and
+`knative-operator.enabled: true` (keep `apps.enabled` as you like); the chart renders
+the knative-operator delivery instead of the vendored gateway.
+
+Other changes:
+
+- Interruptible tasks route to Spot in a NAP-compatible way by default: the GPU
+  accelerator node-labels default to the GKE keys, and Spot routing uses a
+  toleration rather than a *required* `cloud.google.com/gke-spot` nodeAffinity
+  (which blocks NAP / Autopilot scale-up); the required affinities stay opt-in via
+  an environment overlay for non-NAP static Spot pools
+  ([#564](https://github.com/unionai/helm-charts/pull/564)).
+- Public serving gateway: Envoy front proxy + `service-public` and bootstrap
+  config for the vendored gateway's external entrypoint
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+
 ## 2026.8.5
 
 Chart-only release: `version` moves `2026.8.4` → `2026.8.5`; `appVersion` stays
@@ -448,15 +510,17 @@ are covered in their own sections.
   working: the Job's commands are unchanged, and a leftover under any other name was never
   being deleted.
 
-### App-serving pod identity (zero trust only)
+### App-serving pod identity (vendored gateway only)
 
-**Scope: this section applies only to `zero_trust.enabled: true`.** App serving has two
-implementations. Under zero trust the chart renders the Knative workloads itself, and that is
-what changes here. With zero trust off it instead emits a `KnativeServing` resource and the
-Knative Operator creates those workloads — **that path is unchanged and keeps the upstream
-account names.** The chart offers no ServiceAccount override there, and the `KnativeServing`
-workload overrides expose no ServiceAccount field to add one through. If you run app serving
-without zero trust, nothing below applies to you and no migration step is needed.
+**Scope: this section applies only to the vendored gateway — `apps.enabled: true` with
+`gateway.enabled: true`, the default.** App serving has two implementations. On the vendored
+path the chart renders the Knative workloads itself, and that is what changes here. On the
+legacy `knative-operator` path (`gateway.enabled: false`) it instead emits a `KnativeServing`
+resource and the Knative Operator creates those workloads — **that path is unchanged and keeps
+the upstream account names.** The chart offers no ServiceAccount override there, and the
+`KnativeServing` workload overrides expose no ServiceAccount field to add one through. If you
+run app serving through the knative-operator, nothing below applies to you and no migration
+step is needed.
 
 - **BREAKING: the app-serving workloads change ServiceAccount.** Upstream Knative ships three
   ServiceAccounts for six workloads: the controller, the webhook and both autoscalers all ran
@@ -494,11 +558,11 @@ without zero trust, nothing below applies to you and no migration step is needed
   the first time. Set `commonServiceAccount.enabled: false` to split them back out across the
   five names above, at the cost of a cloud-side binding for each.
 
-### App-serving (Knative) RBAC (zero trust only)
+### App-serving (Knative) RBAC (vendored gateway only)
 
-**Scope: as above, this applies only when `zero_trust.enabled: true` and `apps.enabled` is not
-`false`.** A dataplane that does not run app serving under zero trust is unaffected by all of
-it, and so is the `knative-operator` path, which installs its own RBAC.
+**Scope: as above, this applies only when `apps.enabled: true` and `gateway.enabled: true`
+(the default).** A dataplane that does not run app serving is unaffected by all of it, and so
+is the `knative-operator` path (`gateway.enabled: false`), which installs its own RBAC.
 
 - **BREAKING: the vendored Knative Serving and Kourier RBAC is deleted, and the app-serving
   binaries declare into this chart's slot framework instead.** 16 hand-vendored objects go —
@@ -666,7 +730,8 @@ Also, in both modes:
 
 ### Migration / action required
 
-- **Under `zero_trust.enabled: true`, the app-serving ServiceAccount names change; rebind
+- **On the vendored gateway (`gateway.enabled: true`, the default), the app-serving
+  ServiceAccount names change; rebind
   anything outside the chart that referenced them.** Nothing inside the chart needs action —
   the bindings follow the names — but anything that named `controller`, `activator` or
   `net-kourier` from outside may: a cloud IAM trust policy or workload-identity binding
@@ -689,10 +754,10 @@ Also, in both modes:
   | `net-kourier` | `net-kourier` — unchanged, nothing to do |
 
   Two kinds of install have nothing to do here: `apps.enabled` off, which is the default; and
-  app serving without zero trust, where the Knative Operator owns those workloads and their
-  accounts are untouched.
+  app serving on the legacy knative-operator path (`gateway.enabled: false`), where the
+  Knative Operator owns those workloads and their accounts are untouched.
 
-- **Under `zero_trust.enabled: true`, this chart no longer supplies the Knative aggregation
+- **On the vendored gateway, this chart no longer supplies the Knative aggregation
   roles anything outside it may have been consuming.** Three cases, all of which now need
   supplying yourself:
 
@@ -924,7 +989,7 @@ Also, in both modes:
   previously defaulted to *on*, so every install that set neither got Knative Serving — 32 of
   the 37 dataplane snapshot fixtures did. It now defaults off, because `low_privilege`
   defaults on and the two cannot both be true (see the next entry). **Any deployment relying
-  on the default loses app serving on upgrade**, on the zero-trust *and* the legacy
+  on the default loses app serving on upgrade**, on the vendored-gateway *and* the legacy
   knative-operator path; set `apps.enabled: true` (plus `low_privilege: false`) to keep it.
   Check the generated overlays in `unionai/cloud` for environments that never set it
   explicitly before pinning this revision. `serving.enabled: true` still works and still takes
@@ -936,17 +1001,18 @@ Also, in both modes:
   and 4 ClusterRoleBindings with no namespaced form — `controller` gets its whole grant
   through an aggregated ClusterRole, `knative-serving-core` needs namespaces, CRDs and the
   webhook configurations, and the deployments take no watch-scope flag — so `low_privilege`
-  cannot scope it. **An existing `zero_trust.enabled: true` install that has not set
-  `low_privilege: false` will fail to render on upgrade** with a message naming both exits:
-  set `low_privilege: false` to keep app serving, or `apps.enabled: false` to run without it.
-  On the ArgoCD path this surfaces as a sync failure rather than a silent degradation, which
-  is the intent — the alternative was a dataplane whose apps never start and nothing saying
-  why. The Envoy gateway, dataproxy and tunnel-service ingress gate on `zero_trust.enabled`
-  alone, so `apps.enabled: false` leaves the zero-trust dataplane fully working.
+  cannot scope it. **An existing install running app serving on the vendored gateway that has
+  not set `low_privilege: false` will fail to render on upgrade** with a message naming both
+  exits: set `low_privilege: false` to keep app serving, or `apps.enabled: false` to run
+  without it. On the ArgoCD path this surfaces as a sync failure rather than a silent
+  degradation, which is the intent — the alternative was a dataplane whose apps never start
+  and nothing saying why. The Envoy gateway, dataproxy and tunnel-service ingress gate on
+  `serving.renderGateway` (`gateway.enabled` with either app serving or zero trust), so
+  `apps.enabled: false` leaves the zero-trust dataplane fully working.
   ([docs/rbac.md](docs/rbac.md#app-serving))
 
-- **App serving: Knative TLS certificate provisioning is gone**, at `zero_trust.enabled:
-  true`. The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
+- **App serving: Knative TLS certificate provisioning is gone**, on the vendored gateway.
+  The `config-certmanager` ConfigMap and the `routing-serving-certs` `Certificate`
   are removed; TLS terminates at the Envoy gateway. `config-network` is now written
   literally — the Kourier `ingress-class` this chart vendors, and nothing else — so
   `external-domain-tls`, `cluster-local-domain-tls`, `system-internal-tls`,
@@ -1010,6 +1076,55 @@ Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion`
 `2026.7.2`, so the data-plane images are unchanged. This is a **minor** bump rather than
 a patch because it removes the legacy executor and retires several globals — see
 Migration below.
+
+### App serving: vendored gateway is now the default
+
+App serving is now delivered by this chart's vendored Knative Serving + Kourier +
+Envoy gateway (`gateway.enabled: true`), and the `knative-operator` subchart
+defaults to `enabled: false`. Fresh installs need no action. An existing data
+plane that still runs the `knative-operator` `KnativeServing` CR must migrate off
+it before (or as) it adopts this release, or the upgrade deadlocks: the
+operator's `KnativeServing` CR and its two CRDs are left behind, and the vendored
+gateway's Serving CRDs collide with the operator-installed ones on ownership.
+
+The `knative-operator` subchart is still available for the legacy delivery path
+during the transition — set `knative-operator.enabled: true` and
+`gateway.enabled: false`.
+
+#### Migrating off the knative-operator subchart
+
+The migration is a one-shot cleanup that, with the operator **still healthy**,
+runs three idempotent steps:
+
+1. Delete the `KnativeServing` CR. The operator's finalizer tears down every
+   Deployment, Service, ConfigMap, HPA, PDB, ClusterRole/Binding, and
+   WebhookConfiguration it installed.
+2. (Helm-install paths only) Stamp Helm ownership metadata (`meta.helm.sh/*`
+   annotations + `app.kubernetes.io/managed-by=Helm`) onto the 12 Knative
+   Serving CRDs the operator installed imperatively, so the data plane release
+   can adopt them.
+3. Delete the operator's two CRDs (`knativeservings.operator.knative.dev`,
+   `knativeeventings.operator.knative.dev`).
+
+Run the steps once, before the upgrade that flips `knative-operator` off.
+Re-running on an already-migrated cluster is a no-op. Three ways to run them:
+
+- **Use the `knative-migration` chart** (same repo) — a one-shot Job that runs
+  the three steps. It ships **without** hook annotations, so you choose when it
+  runs (Helm hook, below, or install it as plain resources and run it yourself).
+  See `charts/knative-migration/README.md`.
+- **Run the steps manually.** Execute the three `kubectl` steps yourself against
+  the target cluster while the operator is healthy.
+- **Configure your own Job with Helm hook annotations.** Wire the
+  `knative-migration` Job (or your own equivalent) into your release lifecycle
+  with Helm hooks so the cleanup runs at upgrade time, e.g.:
+
+  ```yaml
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+    helm.sh/hook-weight: "10"
+  ```
 
 ### Removed: executor
 

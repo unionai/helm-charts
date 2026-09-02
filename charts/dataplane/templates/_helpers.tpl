@@ -1160,19 +1160,6 @@ serving.enabled from ever being read.
 {{- end -}}
 
 {{/*
-True when the vendored Knative app-serving stack under templates/gateway/ should
-render: app serving on and zero trust on. With zero trust off, app serving instead
-comes from the knative-operator (templates/serving/), which checks the inverse.
-Every gateway template gates on this one define.
-
-low_privilege is not a term here: that combination is rejected outright in
-gateway/validate.yaml, so it can never reach this point. See docs/rbac.md#app-serving.
-*/}}
-{{- define "zeroTrustApps.enabled" -}}
-{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) -}}true{{- end -}}
-{{- end -}}
-
-{{/*
 Name of the serving-envoy-bootstrap ConfigMap
 */}}
 {{- define "serving.envoyBootstrapConfigMapName" -}}

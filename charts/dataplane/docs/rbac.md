@@ -84,6 +84,12 @@ App serving is off by default and requires `low_privilege: false`.
 naming both exits. Since `low_privilege` defaults on, `apps.enabled` defaults off — so the
 default install is self-consistent and never meets the refusal.
 
+The refusal covers the vendored delivery path — `serving.useVendoredGateway`, i.e.
+`apps.enabled` with `gateway.enabled` (the default) — not zero trust specifically. The
+vendored Knative stack renders whenever app serving is on and delivered by this chart,
+whether or not zero trust is. The deprecated `knative-operator` path (`gateway.enabled:
+false`) is out of scope here, as it is everywhere else in this document.
+
 That default lives in the `apps.enabled` helper's missing final branch, not in `values.yaml`.
 Writing `apps.enabled: false` there would make the key *set*, and precedence is
 `apps.enabled > serving.enabled > false` — so the deprecated `serving.enabled` would stop
@@ -126,9 +132,10 @@ the operator's config and Role stay correct by construction rather than by a sec
 that has to be kept in step.
 
 **What `apps.enabled: false` keeps.** The Envoy gateway, dataproxy and tunnel-service ingress
-gate on `zero_trust.enabled` alone — they hold no cluster-scoped RBAC, and their static
-dataplane routes are what zero trust is. So the choice the guard forces is app serving vs.
-`low_privilege`, never zero trust vs. `low_privilege`.
+gate on `serving.renderGateway` — `gateway.enabled` with either app serving or zero trust —
+so under zero trust they survive `apps.enabled: false` on their own. They hold no
+cluster-scoped RBAC, and their static dataplane routes are what zero trust is. So the choice
+the guard forces is app serving vs. `low_privilege`, never zero trust vs. `low_privilege`.
 
 `tests/values/dataplane.aws.zero-trust{,-overrides,-serving-enabled}.yaml` turn app serving on
 and so pin `low_privilege: false`; `-apps-disabled` leaves it at the default, which is what

@@ -80,7 +80,7 @@ app-serving workloads map onto five entries: autoscaler-hpa runs the same
 reconciler as autoscaler under a different PodAutoscaler class, shares its
 ServiceAccount, and declares no slots of its own.
 */}}
-{{- if include "zeroTrustApps.enabled" . -}}
+{{- if include "serving.useVendoredGateway" . -}}
 {{- $components = append $components (dict "name" "knative-controller" "sa" (include "knative.controller.serviceAccountName" .)) -}}
 {{- $components = append $components (dict "name" "knative-webhook" "sa" (include "knative.webhook.serviceAccountName" .)) -}}
 {{- $components = append $components (dict "name" "knative-autoscaler" "sa" (include "knative.autoscaler.serviceAccountName" .)) -}}
