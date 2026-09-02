@@ -1,5 +1,55 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+> **Release pending** — these changes are not yet cut to a version. At the next
+> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+
+### App serving now defaults to the vendored Knative gateway
+
+App serving is delivered by this chart's **vendored Knative Serving + Kourier + Envoy
+gateway** by default (`gateway.enabled: true`, `knative-operator.enabled: false`),
+replacing the legacy `knative-operator` path. With `apps.enabled: true` the vendored
+control plane renders and the operator path is off — no extra flags needed
+([#520](https://github.com/unionai/helm-charts/pull/520)).
+
+**Migrating from the knative-operator path.** If your data plane already served apps via
+the `knative-operator`, its operator-installed `KnativeServing` conflicts with the
+vendored install — the `knative-migration` one-shot Job must run **before/at** the
+upgrade or it deadlocks:
+
+- **`union_extension` / self-managed envs — automatic.** The migration is wired as an
+  ArgoCD **PreSync** hook in the generated dataplane `values.yaml`; no manual action.
+- **Manual upgrades — run the equivalent steps yourself** (idempotent; the
+  `knative-operator` must be healthy first: `kubectl get deploy -n union knative-operator`):
+  1. Delete the operator's `KnativeServing` CR so its finalizer tears down what it
+     installed: `kubectl delete knativeserving -n union union-operator-serving`.
+  2. *(Helm-managed dataplane only)* stamp Helm ownership onto the 12 Knative Serving
+     CRDs — else `helm upgrade dataplane` fails with `invalid ownership metadata`: run
+     `knative-migration` with `adoption.enabled: true` and
+     `adoption.targetRelease`/`targetNamespace` matching your dataplane release.
+  3. Delete the operator's two CRDs:
+     `kubectl delete crd knativeservings.operator.knative.dev knativeeventings.operator.knative.dev`.
+
+  Verify: `kubectl get knativeserving -n union` → none; both operator CRDs → NotFound.
+  Ready-made Job + full detail: `charts/knative-migration/README.md`.
+
+**Reverting to the legacy operator path.** Set `gateway.enabled: false` and
+`knative-operator.enabled: true` (keep `apps.enabled` as you like); the chart renders
+the knative-operator delivery instead of the vendored gateway.
+
+Other changes:
+
+- Interruptible tasks route to Spot in a NAP-compatible way by default: the GPU
+  accelerator node-labels default to the GKE keys, and Spot routing uses a
+  toleration rather than a *required* `cloud.google.com/gke-spot` nodeAffinity
+  (which blocks NAP / Autopilot scale-up); the required affinities stay opt-in via
+  an environment overlay for non-NAP static Spot pools
+  ([#564](https://github.com/unionai/helm-charts/pull/564)).
+- Public serving gateway: Envoy front proxy + `service-public` and bootstrap
+  config for the vendored gateway's external entrypoint
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+
 ## 2026.8.5
 
 Chart-only release: `version` moves `2026.8.4` → `2026.8.5`; `appVersion` stays
@@ -124,6 +174,55 @@ Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion`
 `2026.7.2`, so the data-plane images are unchanged. This is a **minor** bump rather than
 a patch because it removes the legacy executor and retires several globals — see
 Migration below.
+
+### App serving: vendored gateway is now the default
+
+App serving is now delivered by this chart's vendored Knative Serving + Kourier +
+Envoy gateway (`gateway.enabled: true`), and the `knative-operator` subchart
+defaults to `enabled: false`. Fresh installs need no action. An existing data
+plane that still runs the `knative-operator` `KnativeServing` CR must migrate off
+it before (or as) it adopts this release, or the upgrade deadlocks: the
+operator's `KnativeServing` CR and its two CRDs are left behind, and the vendored
+gateway's Serving CRDs collide with the operator-installed ones on ownership.
+
+The `knative-operator` subchart is still available for the legacy delivery path
+during the transition — set `knative-operator.enabled: true` and
+`gateway.enabled: false`.
+
+#### Migrating off the knative-operator subchart
+
+The migration is a one-shot cleanup that, with the operator **still healthy**,
+runs three idempotent steps:
+
+1. Delete the `KnativeServing` CR. The operator's finalizer tears down every
+   Deployment, Service, ConfigMap, HPA, PDB, ClusterRole/Binding, and
+   WebhookConfiguration it installed.
+2. (Helm-install paths only) Stamp Helm ownership metadata (`meta.helm.sh/*`
+   annotations + `app.kubernetes.io/managed-by=Helm`) onto the 12 Knative
+   Serving CRDs the operator installed imperatively, so the data plane release
+   can adopt them.
+3. Delete the operator's two CRDs (`knativeservings.operator.knative.dev`,
+   `knativeeventings.operator.knative.dev`).
+
+Run the steps once, before the upgrade that flips `knative-operator` off.
+Re-running on an already-migrated cluster is a no-op. Three ways to run them:
+
+- **Use the `knative-migration` chart** (same repo) — a one-shot Job that runs
+  the three steps. It ships **without** hook annotations, so you choose when it
+  runs (Helm hook, below, or install it as plain resources and run it yourself).
+  See `charts/knative-migration/README.md`.
+- **Run the steps manually.** Execute the three `kubectl` steps yourself against
+  the target cluster while the operator is healthy.
+- **Configure your own Job with Helm hook annotations.** Wire the
+  `knative-migration` Job (or your own equivalent) into your release lifecycle
+  with Helm hooks so the cleanup runs at upgrade time, e.g.:
+
+  ```yaml
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+    helm.sh/hook-weight: "10"
+  ```
 
 ### Removed: executor
 

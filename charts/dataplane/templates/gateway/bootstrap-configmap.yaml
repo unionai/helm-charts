@@ -1,4 +1,4 @@
-{{- if .Values.zero_trust.enabled }}
+{{- if include "serving.renderGateway" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -162,6 +162,50 @@ data:
                                 prefix: "/"
                               direct_response:
                                 status: 404
+        {{- if .Values.gateway.publicLoadBalancer.enabled }}
+        # Separate-cluster apps HTTPS. A static TLS listener that terminates the apps
+        # wildcard cert (letsencrypt, mounted at /etc/apps-tls) and forwards to the
+        # internal Kourier service. The public LoadBalancer targets 8443 here. The
+        # dynamic 8444 Kourier listener can't serve TLS without a per-app KIngress
+        # cert (net-certmanager), so this gives Envoy the wildcard directly.
+        - name: apps_https
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 8443
+          filter_chains:
+            - transport_socket:
+                name: envoy.transport_sockets.tls
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.transport_sockets.tls.v3.DownstreamTlsContext
+                  common_tls_context:
+                    tls_certificates:
+                      - certificate_chain:
+                          filename: /etc/apps-tls/tls.crt
+                        private_key:
+                          filename: /etc/apps-tls/tls.key
+              filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: apps_https
+                    upgrade_configs:
+                      - upgrade_type: websocket
+                    route_config:
+                      virtual_hosts:
+                        - name: apps
+                          domains: ["*"]
+                          routes:
+                            - match:
+                                prefix: "/"
+                              route:
+                                cluster: kourier_internal
+                                timeout: 0s
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+        {{- end }}
       clusters:
         - name: service_stats
           connect_timeout: 0.250s
@@ -196,6 +240,23 @@ data:
                   connection_keepalive:
                     interval: 30s
                     timeout: 5s
+        {{- end }}
+        {{- if .Values.gateway.publicLoadBalancer.enabled }}
+        # Upstream for the apps_https listener: the internal Kourier service, which
+        # routes by Host to the app's Knative service.
+        - name: kourier_internal
+          connect_timeout: 5s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: kourier_internal
+            endpoints:
+              - lb_endpoints:
+                  - endpoint:
+                      address:
+                        socket_address:
+                          address: kourier-internal
+                          port_value: 80
         {{- end }}
         {{- include "gateway.extraClusters" . | nindent 8 }}
     stats_config:
