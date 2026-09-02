@@ -5,6 +5,16 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Image-builder existence probe now honors the configured registry
+
+Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`
++ `defaultRepository`), which had been commented out. Without it the image existence
+probe (`GetImage`) defaulted to the `noop` handler and returned 404 for every image, so
+every run rebuilt images that already existed in the registry. This wires only the probe
+(the build/push path is configured separately) and is a no-op for envs that don't set
+`imageBuilder.authenticationType`. `basicAuth` stays commented (cloud registries use
+workload identity).
+
 ### App serving now defaults to the vendored Knative gateway
 
 App serving is delivered by this chart's **vendored Knative Serving + Kourier + Envoy
