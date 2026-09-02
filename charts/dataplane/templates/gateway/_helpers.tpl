@@ -87,6 +87,29 @@ either silently produces broken URLs like `https://` or `<cluster>.dp.`.
 {{- end }}
 
 {{/*
+gateway.auth.insecureSkipVerify reports (as "true"/"") whether the Envoy auth
+plugin should skip verification of the control-plane TLS certificate when it
+dials the CP at startup. The gateway reaches the same control plane as the
+operator (gateway.host == the operator's connection host); self-hosted control
+planes serve a self-signed intracluster cert there, so the gateway must share
+the operator's trust posture or the union-authn plugin panics at init with
+x509: certificate signed by unknown authority.
+
+Precedence: an explicit gateway.auth.insecureSkipVerify (bool) wins; otherwise
+inherit config.union.connection.insecureSkipVerify (what leaseworker and the
+operator use to reach the same host). Emits "" when false so callers gate with
+`{{- if include ... }}`.
+*/}}
+{{- define "gateway.auth.insecureSkipVerify" -}}
+{{- $g := .Values.gateway.auth.insecureSkipVerify -}}
+{{- if not (kindIs "invalid" $g) -}}
+{{- if $g -}}true{{- end -}}
+{{- else if dig "union" "connection" "insecureSkipVerify" false .Values.config -}}
+true
+{{- end -}}
+{{- end }}
+
+{{/*
 Collector: aggregates all backend envoy routes.
 To add a new backend, add a conditional include block here.
 NOTE: dataproxy.envoyRoute is a catch-all (prefix "/") and must remain last.
