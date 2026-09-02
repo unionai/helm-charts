@@ -65,6 +65,27 @@ updateStatus:
     insecure: false
     # -- CP skips cert validation on the TLS handshake (self-signed CP cert envs).
     insecureSkipVerify: false
+    # -- DP-declared app serving. The dataplane reports where it serves apps
+    # (domain) and the TLS posture (insecure); the control plane builds an app's
+    # public_url as {scheme}://{subdomain}.{domain}. The dataplane owns the apps
+    # domain and its Ingress/DNS/TLS. connection_config v2 (apps.domain).
+    apps:
+      # -- Bare apps domain (no scheme, no subdomain) the dataplane serves apps
+      # under, with the dataplane name baked in so the URL routes to the DP
+      # running the app. Empty (default) disables self-reporting; the control
+      # plane then falls back to its global executions.apps.publicURLPattern
+      # (single-dataplane only).
+      #
+      # Recommended convention: a subdomain of the control-plane host so apps
+      # inherit control-plane SSO — "apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>",
+      # e.g. "apps.dp-1.union.example.com". SSO cookies set at the control-plane
+      # host propagate to its subdomains, and the per-dataplane label routes each
+      # app URL to the dataplane running it (required to run apps on more than one
+      # dataplane). A domain not under the control-plane host works but forgoes
+      # SSO-by-default — you then own its DNS/TLS and cookie setup.
+      domain: ""
+      # -- Serve app URLs over http:// instead of https:// when true. Default https.
+      insecure: false
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -616,14 +637,19 @@ config:
       objectStore:
         prefix: persisted-logs
         pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
-# Temporarily disable imageBuilderConfig
-#    imageBuilderConfig:
-#      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
-#      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
-#      basicAuth:
-#        registry: "{{ .Values.imageBuilder.defaultRepository }}"
-#        username: "{{ .Values.imageBuilder.basicAuth.username }}"
-#        passwordSecretName: "{{ .Values.imageBuilder.basicAuth.passwordSecretName }}"
+    # Wires the operator reverse-proxy's image existence probe (GetImage). Without
+    # authenticationType the probe handler defaults to noop and 404s every image, so
+    # every run rebuilds images that already exist in the registry. This does not
+    # enable/disable the image builder (the build/push path is configured separately).
+    imageBuilderConfig:
+      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
+      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
+      # basicAuth is only for basic-auth registries; cloud registries (google/aws/azure)
+      # authenticate via workload identity. Left commented (intended usage TBD).
+      # basicAuth:
+      #   registry: "{{ .Values.imageBuilder.defaultRepository }}"
+      #   username: "{{ .Values.imageBuilder.basicAuth.username }}"
+      #   passwordSecretName: "{{ .Values.imageBuilder.basicAuth.passwordSecretName }}"
   # -- Resource manager configuration
   resource_manager:
     # -- resource manager configuration
@@ -1643,6 +1669,13 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
+    # -- Emit the app-serving nginx Ingress (fronts the gateway via ingressClass).
+    # Default true: intracluster routes apps through the shared control-plane
+    # nginx. Set false on separate-cluster dataplanes, which have no shared nginx
+    # and instead expose the gateway Envoy via gateway.publicLoadBalancer —
+    # disable it there so the `<dp>-apps` Ingress isn't left dangling with no
+    # controller.
+    enabled: true
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
@@ -2215,10 +2248,12 @@ serving:
     # -- Disabling is common if not leveraging Union Cloud SSO.
     enabled: true
 
-# Enable the knative operator.  Required for app serving.
-# Note: The operator requires cluster-scoped RBAC (CRDs, ClusterRoles, namespaces, deployments).
+# Legacy app-serving delivery. Superseded by the vendored gateway
+# (`gateway.enabled: true`, the default). Only enable this when running the
+# knative-operator path (`gateway.enabled: false`); it requires cluster-scoped
+# RBAC (CRDs, ClusterRoles, namespaces, deployments).
 knative-operator:
-  enabled: true
+  enabled: false
   # Install into the release namespace rather than the default "knative-operator" namespace.
   # Requires knative-operator >= 2026.4.5 which evaluates this via tpl.
   namespaceOverride: '{{ .Release.Namespace }}'
@@ -2600,16 +2635,50 @@ monitoring:
 # -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
 # `zero_trust.enabled: true`; the templates gate on that flag directly.
 gateway:
+  # -- Deliver app serving via this chart's vendored Knative Serving + Kourier +
+  # Envoy gateway (raw manifests under templates/gateway/*) instead of the
+  # knative-operator subchart. Default delivery. When true and app serving is on
+  # (`apps.enabled`), the vendored control plane renders and `knative-operator`
+  # must be disabled. Zero trust requires this (it layers dataproxy routes on the
+  # Envoy gateway). Set false to fall back to the legacy knative-operator path.
+  enabled: true
   service:
     httpAppsPort: 80
     httpStaticPort: 8888
 
-  # -- Enables Union's auth integration across the kourier-gateway.
+  # -- Public internet-facing LoadBalancer for app serving. Separate-cluster
+  # dataplanes (not co-located with the control plane) have no shared CP ingress
+  # LB to borrow, so they expose the gateway Envoy directly: DNS
+  # `*.apps.<dp>.<domain>` -> this LB -> Envoy, with TLS terminated at Envoy
+  # (8444) using the letsencrypt wildcard cert. Off by default; enable and
+  # annotate it (external-dns hostname, internet-facing scheme) for
+  # separate-cluster dataplanes. Intracluster apps route through the shared CP
+  # ingress-nginx instead (`ingress.serving.class`), so this stays off there.
+  publicLoadBalancer:
+    enabled: false
+    # -- Annotations for the LoadBalancer Service — cloud LB scheme
+    # (internet-facing) + external-dns hostname. Set these for separate-cluster
+    # dataplanes; e.g. on AWS:
+    #   service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    #   service.beta.kubernetes.io/aws-load-balancer-type: external
+    #   external-dns.alpha.kubernetes.io/hostname: "*.apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>"
+    annotations: {}
+
+  # -- Union auth integration for the kourier gateway. The gateway Envoy calls the
+  # control plane to authenticate app requests (/me) and authorize them. All
+  # three URLs default off the control-plane host (global.CONTROLPLANE_HOST) when
+  # left empty, so apps get SSO out of the box — an app subdomain of the CP host
+  # shares its auth cookies. Override only to point app auth at a different
+  # tenant URL.
   auth:
     enable: true
+    # -- App auth (identity) endpoint. Empty -> https://<CONTROLPLANE_HOST>/me
     tenantAuthURL: ""
+    # -- App sign-in redirect target. Empty -> https://<CONTROLPLANE_HOST>/login
     tenantAuthSignInURL: ""
+    # -- Tenant control-plane base URL. Empty -> https://<CONTROLPLANE_HOST>
     tenantControlPlaneURL: ""
+    # -- Org override for auth. Empty -> orgName (global.ORG_NAME).
     organization: ""
 
   components:
