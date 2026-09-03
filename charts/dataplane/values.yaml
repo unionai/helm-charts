@@ -349,6 +349,43 @@ clusterresourcesync:
   # Use this instead of overriding `templates` to avoid accidentally removing
   # the default namespace, service account, and resource quota templates.
   # Each entry has a `key` (filename stem) and `value` (Kubernetes manifest).
+  # syncresources renders each `value` once per project namespace ({{ namespace }} is
+  # substituted), so this is the non-low_privilege / multi-namespace injection point for a
+  # per-namespace read-only model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV +
+  # RO PVC per namespace (the cloud integration emits these with the real bucket name).
+  # The PV is cluster-scoped, so name it per-namespace to avoid collisions:
+  #
+  #   - key: d_model_volume_pv
+  #     value: |
+  #       apiVersion: v1
+  #       kind: PersistentVolume
+  #       metadata:
+  #         name: union-models-{{ namespace }}
+  #       spec:
+  #         accessModes: ["ReadOnlyMany"]
+  #         capacity: { storage: 1Gi }
+  #         storageClassName: ""
+  #         persistentVolumeReclaimPolicy: Retain
+  #         mountOptions: ["implicit-dirs", "only-dir=models", "file-cache:max-size-mb:-1"]
+  #         claimRef: { namespace: {{ namespace }}, name: union-models-ro }
+  #         csi:
+  #           driver: gcsfuse.csi.storage.gke.io
+  #           volumeHandle: YOUR_MODEL_BUCKET
+  #           readOnly: true
+  #   - key: e_model_volume_pvc
+  #     value: |
+  #       apiVersion: v1
+  #       kind: PersistentVolumeClaim
+  #       metadata:
+  #         name: union-models-ro
+  #         namespace: {{ namespace }}
+  #       spec:
+  #         accessModes: ["ReadOnlyMany"]
+  #         storageClassName: ""
+  #         volumeName: union-models-{{ namespace }}
+  #         resources: { requests: { storage: 1Gi } }
+  #
+  # The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"`.
   additionalTemplates: []
   # -- Kubernetes resource configuration for the syncresources service
   resources:
@@ -2466,7 +2503,39 @@ ingress-nginx:
       name: dataplane
       controllerValue: union.ai/dataplane
 
-## -- Extra Kubernetes objects to deploy with the helm chart
+## -- Extra Kubernetes objects to deploy with the helm chart.
+## In low_privilege / single-namespace mode this is the injection point for a read-only
+## model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV + RO PVC mounting a GCS
+## bucket at only-dir=models, so serving pods can mount pre-staged model weights read-only
+## (the cloud integration emits these with the real per-dataplane bucket name):
+##
+##   - apiVersion: v1
+##     kind: PersistentVolume
+##     metadata:
+##       name: union-models
+##     spec:
+##       accessModes: ["ReadOnlyMany"]
+##       capacity: { storage: 1Gi }        # ignored by gcsfuse; required by the API
+##       storageClassName: ""
+##       persistentVolumeReclaimPolicy: Retain
+##       mountOptions: ["implicit-dirs", "only-dir=models", "file-cache:max-size-mb:-1"]
+##       claimRef: { namespace: <release-namespace>, name: union-models-ro }
+##       csi:
+##         driver: gcsfuse.csi.storage.gke.io
+##         volumeHandle: YOUR_MODEL_BUCKET  # per-dataplane GCS bucket (worker WI reads it)
+##         readOnly: true
+##   - apiVersion: v1
+##     kind: PersistentVolumeClaim
+##     metadata: { name: union-models-ro, namespace: <release-namespace> }
+##     spec:
+##       accessModes: ["ReadOnlyMany"]
+##       storageClassName: ""
+##       volumeName: union-models
+##       resources: { requests: { storage: 1Gi } }
+##
+## The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"` for the GKE
+## sidecar-injector to mount it. For non-low_privilege (multi-namespace) clusters, prefer
+## `clusterresourcesync.additionalTemplates` so the volume is created per project namespace.
 extraObjects: []
 
 ## -- Automatically create namespaces to deploy into
