@@ -164,7 +164,7 @@ Rendered actions config.yaml: the global .Values.configMap deep-merged with
 .Values.actions.configMap (reusing the same helper the generic services use).
 */}}
 {{- define "actions.configMap" -}}
-{{- include "unionai.configMap" (dict "config" .Values.actions "Values" .Values "Release" .Release "Chart" .Chart) -}}
+{{- include "unionai.configMap" (dict "config" .Values.actions "key" "actions" "Values" .Values "Release" .Release "Chart" .Chart) -}}
 {{- end -}}
 
 {{/*
@@ -172,13 +172,14 @@ Config checksum excluding the partition/shard layout, so a config change rolls
 all shards but a partition-range change (which changes shard names) does not
 double-trigger.
 */}}
+{{- /* Hash the fully rendered config (via actions.configMap), not the raw
+       .Values.actions.configMap — so derived fields (e.g. artifactReplicationEnabled,
+       set in unionai.configMap from services.artifacts.disabled) also roll the shards.
+       Partitions are excluded so a partition-range change alone does not double-trigger. */}}
 {{- define "actions.configChecksum" -}}
-{{- $config := dict -}}
-{{- if .Values.actions.configMap -}}
-{{- $config = deepCopy .Values.actions.configMap -}}
+{{- $config := include "actions.configMap" . | fromYaml -}}
 {{- if hasKey $config "actions" -}}
 {{- $_ := unset (index $config "actions") "partitions" -}}
-{{- end -}}
 {{- end -}}
 {{- sha256sum (toJson $config) -}}
 {{- end -}}
