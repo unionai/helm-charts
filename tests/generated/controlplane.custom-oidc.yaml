@@ -7347,6 +7347,422 @@ data:
           ],
           "title": "Archive queue depth & drain",
           "type": "timeseries"
+        },
+        {
+          "type": "row",
+          "title": "V2 \u2014 leasor: stuck-run diagnostics",
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 89
+          },
+          "id": 3300,
+          "panels": [
+            {
+              "type": "timeseries",
+              "title": "Leases by state (run_action) \u2014 THE stuck signal",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3301,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 0
+              },
+              "description": "unassigned climbing = scheduling bottlenecked (accepted, no worker took it). sent climbing = workers stuck (dispatched, not completing).",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 15,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "normal",
+                      "group": "A"
+                    }
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "sum by (state) (leasor:leases_by_state{namespace=~\"$namespace\", type=\"run_action\"})",
+                  "legendFormat": "{{state}}",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Schedule skips by reason (rate)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3302,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 0
+              },
+              "description": "Why runs aren't scheduling. no_workers/no_capacity/queue_at_run_concurrency = backpressure; orphaned_lease/queue_drained/queue_no_cluster_workers = misconfig (alert).",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 15,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "stacking": {
+                      "mode": "normal",
+                      "group": "A"
+                    }
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "sum by (reason) (rate(leasor:schedule_skip_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{reason}}",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Dispatch rate by result (ok\u21920 = dispatch outage)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3303,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 8
+              },
+              "description": "ok going to 0 while leases_by_state{state=unassigned} > 0 is a total dispatch outage.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "sum by (result) (rate(leasor:dispatch_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "{{result}}",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Run-slot saturation (active_runs / max_run_concurrency)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3304,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 8
+              },
+              "description": "Per-queue scheduled-run saturation. Queues with unlimited run concurrency (max=0) are excluded. 1.0 = queue is at its run cap and will hold new roots.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "thresholdsStyle": {
+                      "mode": "dashed"
+                    }
+                  },
+                  "unit": "percentunit",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "yellow",
+                        "value": 0.8
+                      },
+                      {
+                        "color": "red",
+                        "value": 1.0
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "leasor:queue_active_runs{namespace=~\"$namespace\"} / (leasor:queue_max_run_concurrency{namespace=~\"$namespace\"} != 0)",
+                  "legendFormat": "{{org}}/{{queue}}",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Enqueue rejects by reason (routing failures)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3305,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 16
+              },
+              "description": "unknown_queue/queue_not_active = client targeting a queue that isn't registered or is draining (the dev-cluster 'queue has no cluster selector' failure class).",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "sum by (reason) (rate(leasor:enqueue_reject_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "pre-store: {{reason}}",
+                  "refId": "A",
+                  "range": true
+                },
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "sum by (reason) (rate(leasor:queue_enqueue_reject_total{namespace=~\"$namespace\"}[$__rate_interval]))",
+                  "legendFormat": "queue: {{reason}}",
+                  "refId": "B",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Enqueue \u2192 dispatch wait (p99/p50)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3306,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 16
+              },
+              "description": "How long runs sit before a worker picks them up.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false
+                  },
+                  "unit": "s",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "histogram_quantile(0.99, sum by (le)(rate(leasor:queue_wait_seconds_bucket{namespace=~\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "queue wait p99",
+                  "refId": "A",
+                  "range": true
+                },
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "histogram_quantile(0.99, sum by (le)(rate(leasor:enqueue_to_dispatch_seconds_bucket{namespace=~\"$namespace\"}[$__rate_interval])))",
+                  "legendFormat": "enqueue\u2192dispatch p99",
+                  "refId": "B",
+                  "range": true
+                }
+              ]
+            }
+          ]
         }
       ],
       "schemaVersion": 39,

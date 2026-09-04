@@ -2992,7 +2992,7 @@ data:
             "y": 12
           },
           "id": 400,
-          "title": "gRPC Client (DP → CP)",
+          "title": "gRPC Client (DP \u2192 CP)",
           "type": "row",
           "panels": [
             {
@@ -3030,7 +3030,7 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP→CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent).",
+              "description": "DP\u2192CP gRPC client request rate by service and method (e.g. CreateWorkflowEvent).",
               "options": {
                 "legend": {
                   "displayMode": "table",
@@ -3078,7 +3078,7 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP→CP gRPC errors by method and code. Non-OK responses from the control plane.",
+              "description": "DP\u2192CP gRPC errors by method and code. Non-OK responses from the control plane.",
               "options": {
                 "legend": {
                   "displayMode": "table",
@@ -3126,7 +3126,7 @@ data:
                   "refId": "A"
                 }
               ],
-              "description": "DP→CP gRPC call latency at p95. High latency = slow control plane or network issues.",
+              "description": "DP\u2192CP gRPC call latency at p95. High latency = slow control plane or network issues.",
               "options": {
                 "legend": {
                   "displayMode": "table",
@@ -3426,7 +3426,7 @@ data:
                     "uid": "${datasource}"
                   },
                   "expr": "count by (GPU_I_PROFILE) (DCGM_FI_DEV_FB_USED{GPU_I_ID!=\"\"} > 0)",
-                  "legendFormat": "Used – {{GPU_I_PROFILE}}",
+                  "legendFormat": "Used \u2013 {{GPU_I_PROFILE}}",
                   "refId": "A",
                   "instant": true
                 },
@@ -3436,7 +3436,7 @@ data:
                     "uid": "${datasource}"
                   },
                   "expr": "count by (GPU_I_PROFILE) (DCGM_FI_DEV_FB_FREE{GPU_I_ID!=\"\"})",
-                  "legendFormat": "Total – {{GPU_I_PROFILE}}",
+                  "legendFormat": "Total \u2013 {{GPU_I_PROFILE}}",
                   "refId": "B",
                   "instant": true
                 }
@@ -3806,7 +3806,7 @@ data:
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "description": "flytepropeller time from a task node being queued to its pod running — i.e. pod scheduling time. A spike (minutes) means pods are sitting Pending.",
+          "description": "flytepropeller time from a task node being queued to its pod running \u2014 i.e. pod scheduling time. A spike (minutes) means pods are sitting Pending.",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -3908,7 +3908,7 @@ data:
           },
           "id": 4000,
           "panels": [],
-          "title": "V2 — leaseworker",
+          "title": "V2 \u2014 leaseworker",
           "type": "row"
         },
         {
@@ -4368,6 +4368,294 @@ data:
           ],
           "title": "Task assignment (no capacity / no workers)",
           "type": "timeseries"
+        },
+        {
+          "type": "row",
+          "title": "ResourceQuota utilization (project namespaces)",
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 49
+          },
+          "id": 3400,
+          "panels": [
+            {
+              "type": "timeseries",
+              "title": "ResourceQuota utilization by namespace/resource",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3401,
+              "gridPos": {
+                "h": 9,
+                "w": 16,
+                "x": 0,
+                "y": 0
+              },
+              "description": "used/hard for every project ResourceQuota (e.g. project-quota). 1.0 = saturated \u2192 pod creations rejected with 'exceeded quota', which stalls that namespace's runs.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false,
+                    "thresholdsStyle": {
+                      "mode": "dashed"
+                    }
+                  },
+                  "unit": "percentunit",
+                  "color": {
+                    "mode": "palette-classic"
+                  },
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "yellow",
+                        "value": 0.8
+                      },
+                      {
+                        "color": "red",
+                        "value": 0.95
+                      }
+                    ]
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "max by (namespace, resource) (kube_resourcequota{type=\"used\", resourcequota=\"project-quota\"} / ignoring(type) kube_resourcequota{type=\"hard\", resourcequota=\"project-quota\"})",
+                  "legendFormat": "{{namespace}} / {{resource}}",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "table",
+              "title": "Top-saturated quotas (now)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3402,
+              "gridPos": {
+                "h": 9,
+                "w": 8,
+                "x": 16,
+                "y": 0
+              },
+              "description": "Instant snapshot, highest first. Watch limits.cpu especially.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "align": "auto",
+                    "filterable": true
+                  },
+                  "unit": "percentunit",
+                  "thresholds": {
+                    "mode": "absolute",
+                    "steps": [
+                      {
+                        "color": "green",
+                        "value": null
+                      },
+                      {
+                        "color": "yellow",
+                        "value": 0.8
+                      },
+                      {
+                        "color": "red",
+                        "value": 0.95
+                      }
+                    ]
+                  },
+                  "color": {
+                    "mode": "thresholds"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "showHeader": true,
+                "sortBy": [
+                  {
+                    "displayName": "Value",
+                    "desc": true
+                  }
+                ]
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "topk(20, max by (namespace, resource) (kube_resourcequota{type=\"used\", resourcequota=\"project-quota\"} / ignoring(type) kube_resourcequota{type=\"hard\", resourcequota=\"project-quota\"}))",
+                  "format": "table",
+                  "instant": true,
+                  "refId": "A"
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "CPU-limit quota: used vs hard",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3403,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 0,
+                "y": 9
+              },
+              "description": "Absolute CPU-limit accounting. used pinned to hard = deadlock risk.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "kube_resourcequota{resource=\"limits.cpu\", type=\"used\", resourcequota=\"project-quota\"}",
+                  "legendFormat": "used: {{namespace}}",
+                  "refId": "A",
+                  "range": true
+                },
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "kube_resourcequota{resource=\"limits.cpu\", type=\"hard\", resourcequota=\"project-quota\"}",
+                  "legendFormat": "hard: {{namespace}}",
+                  "refId": "B",
+                  "range": true
+                }
+              ]
+            },
+            {
+              "type": "timeseries",
+              "title": "Namespaces \u226590% on any quota (count)",
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "id": 3404,
+              "gridPos": {
+                "h": 8,
+                "w": 12,
+                "x": 12,
+                "y": 9
+              },
+              "description": "Blast-radius counter \u2014 how many project namespaces are near saturation.",
+              "fieldConfig": {
+                "defaults": {
+                  "custom": {
+                    "drawStyle": "line",
+                    "lineInterpolation": "linear",
+                    "lineWidth": 1,
+                    "fillOpacity": 8,
+                    "showPoints": "never",
+                    "spanNulls": false
+                  },
+                  "unit": "short",
+                  "color": {
+                    "mode": "palette-classic"
+                  }
+                },
+                "overrides": []
+              },
+              "options": {
+                "legend": {
+                  "displayMode": "table",
+                  "placement": "bottom",
+                  "calcs": [
+                    "lastNotNull",
+                    "max"
+                  ]
+                },
+                "tooltip": {
+                  "mode": "multi",
+                  "sort": "desc"
+                }
+              },
+              "targets": [
+                {
+                  "datasource": {
+                    "type": "prometheus",
+                    "uid": "${datasource}"
+                  },
+                  "expr": "count(max by (namespace, resource) (kube_resourcequota{type=\"used\", resourcequota=\"project-quota\"} / ignoring(type) kube_resourcequota{type=\"hard\", resourcequota=\"project-quota\"}) >= 0.9)",
+                  "legendFormat": "namespaces \u226590%",
+                  "refId": "A",
+                  "range": true
+                }
+              ]
+            }
+          ]
         }
       ],
       "schemaVersion": 39,

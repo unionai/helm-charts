@@ -121,6 +121,28 @@ spec:
           annotations:
             summary: "Authorization deny rate exceeds 50%"
             description: "More than half of authorization decisions are being denied. Possible policy misconfiguration."
+
+        - alert: UnionCPLeasorRunsStuck
+          expr: |
+            sum(leasor:leases_by_state{namespace="{{ .Release.Namespace }}", state="unassigned", type="run_action"}) > 0
+            and
+            sum(rate(leasor:dispatch_total{namespace="{{ .Release.Namespace }}", result="ok"}[10m])) == 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Leasor has unassigned runs but dispatch has stalled"
+            description: "Run-action leases are waiting in 'unassigned' while the successful dispatch rate is zero for 10m — runs are stuck. Check leases_by_state, schedule_skip_total by reason, and leaseworker connectivity."
+
+        - alert: UnionCPLeasorEnqueueRejects
+          expr: |
+            sum(rate(leasor:enqueue_reject_total{namespace="{{ .Release.Namespace }}"}[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Leasor is rejecting EnqueueAction requests (routing failure)"
+            description: "Sustained enqueue_reject_total for 15m usually means a client targets an unknown or draining queue, or a queue lacks a cluster selector. Check enqueue_reject_total by reason."
     {{- end }}
 
     {{- if .Values.monitoring.slos.enabled }}
