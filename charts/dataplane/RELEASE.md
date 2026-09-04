@@ -5,6 +5,15 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Fix union-operator crash: drop the removed `operator.enabled` config key
+
+An internal Union change removed the `enabled` field from the operator config (the
+cluster healthy/ready flag is now derived internally), but this chart still rendered
+`operator.enabled` (from `config.operator.enabled`). The operator loads its config in
+strict mode, so the now-unknown key is fatal — a recent operator build crash-loops
+with `'config.Config' has invalid keys: enabled`. Stop rendering the key and drop the
+now-dead `config.operator.enabled` value + README row.
+
 ### Image-builder existence probe now honors the configured registry
 
 Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`
