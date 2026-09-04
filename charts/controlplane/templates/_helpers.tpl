@@ -491,6 +491,30 @@ IfNotPresent
   {{- $_ := set $merged "executions" $executions }}
 {{- end }}
 
+{{- /* artifactReplicationEnabled: derive from the artifacts service being deployed
+       (not services.artifacts.disabled) — the same single toggle that gates the
+       artifacts pod, its ingress route, and the console nav. So produces_artifacts
+       task outputs are published to the v2 artifact service exactly when that
+       service exists, and never dangle when it is off. */}}
+{{- if eq .key "actions" }}
+  {{- $actions := index $merged "actions" | default dict }}
+  {{- $_ := set $actions "artifactReplicationEnabled" (not (index .Values.services "artifacts" | default dict).disabled) }}
+  {{- $_ := set $merged "actions" $actions }}
+{{- end }}
+
+{{- /* enableArtifactsV1 is NOT configurable. The deprecated v1 artifact service
+       uses generic table names (artifacts, triggers, ...) that collide with other
+       services on the shared control-plane database and pollute them via GORM
+       automigrate. Force it off after the merge so no overlay can turn it back on;
+       only the flyteidl2 v2 service (artifacts_v2-scoped tables) ever runs. */}}
+{{- if eq .key "artifacts" }}
+  {{- $artifactsConfig := index $merged "artifactsConfig" | default dict }}
+  {{- $app := index $artifactsConfig "app" | default dict }}
+  {{- $_ := set $app "enableArtifactsV1" false }}
+  {{- $_ := set $artifactsConfig "app" $app }}
+  {{- $_ := set $merged "artifactsConfig" $artifactsConfig }}
+{{- end }}
+
 {{- /* apiKeyOverrides: render identity.app.apiKeyOverrides file locations from the
        seeded-secret references on services.identity (mounted by deployment.yaml,
        paths from controlplane.apiKeyOverride.mountDir). Reference-only. */}}

@@ -1074,7 +1074,26 @@
       name: dataproxy
       port:
         name: grpc
-{{- if .Values.artifacts.enabled }}
+{{- /* Route to the artifacts service whenever its pod is deployed — same
+       condition that gates the Deployment (not services.artifacts.disabled) and
+       the console nav, so routing can't drift from the running service. v2
+       (flyteidl2.artifact.ArtifactService) is what the console calls; v1
+       (flyteidl.artifact.ArtifactRegistry) is the deprecated surface. */}}
+{{- if not (index .Values.services "artifacts" | default dict).disabled }}
+- path: /flyteidl2.artifact.ArtifactService
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: artifacts
+      port:
+        name: grpc
+- path: /flyteidl2.artifact.ArtifactService/*
+  pathType: ImplementationSpecific
+  backend:
+    service:
+      name: artifacts
+      port:
+        name: grpc
 - path: /flyteidl.artifact.ArtifactRegistry
   pathType: ImplementationSpecific
   backend:
@@ -1480,7 +1499,7 @@
       name: usage
       port:
         name: http
-{{- if .Values.artifacts.enabled }}
+{{- if not (index .Values.services "artifacts" | default dict).disabled }}
 - path: /artifacts
   pathType: ImplementationSpecific
   backend:
