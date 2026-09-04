@@ -207,11 +207,16 @@ spec:
           configMap:
             name: {{ include "gateway.fullname" . }}-envoy-bootstrap
         {{- if .Values.gateway.publicLoadBalancer.enabled }}
-        # Apps wildcard TLS cert (issued by the DP letsencrypt ClusterIssuer),
-        # served by the apps_https:8443 static listener in the bootstrap.
+        {{- if not .Values.gateway.publicLoadBalancer.tlsSecretName }}
+        {{- fail "gateway.publicLoadBalancer.tlsSecretName is required when gateway.publicLoadBalancer.enabled — Envoy terminates the apps wildcard cert on :8443. TLS termination at the load balancer (empty tlsSecretName) is not yet supported." }}
+        {{- end }}
+        # Apps wildcard TLS cert (tls.crt/tls.key) mounted at /etc/apps-tls and
+        # served by the apps_https:8443 static listener in the bootstrap. The
+        # dataplane does not create this secret — supply it however you issue
+        # certs (cert-manager, a corporate CA, ACM sync, …).
         - name: apps-tls
           secret:
-            secretName: dataplane-apps-letsencrypt-tls
+            secretName: {{ .Values.gateway.publicLoadBalancer.tlsSecretName }}
         {{- end }}
 ---
 apiVersion: v1
