@@ -12,7 +12,6 @@ global:
   DB_USER: ""
   DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
   BUCKET_NAME: ""           # Object storage bucket for metadata
-  ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
   # --- Leasor: attached dataplane cluster identifier (DEPRECATED, static-only) ---
@@ -598,10 +597,17 @@ services:
           maxConnectionLifetime: 1m
       artifactsConfig:
         app:
+          # enableArtifactsV1 is intentionally NOT set here: it is force-set to
+          # false in the unionai.configMap helper (templates/_helpers.tpl) so no
+          # overlay can re-enable the deprecated v1 service, whose generic table
+          # names would collide with other services on the shared control-plane DB.
           adminClient:
             hackFlagUntilCellIsolation: true
           artifactBlobStoreConfig:
-            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            # Set per env: the dedicated artifacts object-store bucket (separate
+            # from the metadata bucket), on
+            # services.artifacts.configMap.artifactsConfig.app.artifactBlobStoreConfig.container.
+            container: ""
             # Storage backend config — cloud-specific, set in overlay.
             # AWS: stow/s3 with auth_type: iam
             # GCP: stow/google with json_key
@@ -1694,6 +1700,13 @@ console:
   # override of console.env can't drop it. Entries here are appended after it.
   env: []
 
+  # Self-hosted feature-flag overrides: a map of gate -> bool, rendered into the
+  # SELF_HOSTED_FEATURE_FLAGS env var (JSON) that the console reads at runtime.
+  # Wins over the console's built-in self-hosted defaults, so an operator can
+  # turn a surface on/off without rebuilding the image. Only applies when the
+  # console runs self-hosted (IS_SELF_HOSTED). Example: {artifacts-enabled: true}
+  featureFlags: {}
+
   # Additional environment variables from ConfigMap
   envFrom: []
 
@@ -2297,9 +2310,6 @@ unionv2:
 dataproxy:
   prometheus:
     enabled: false
-
-artifacts:
-  enabled: false
 
 objectstore:
   controlPlane:

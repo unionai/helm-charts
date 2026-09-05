@@ -15,11 +15,9 @@ global:
   DB_USER: ""
   DB_DEBUG: false
   BUCKET_NAME: ""             # GCS bucket for metadata
-  ARTIFACTS_BUCKET_NAME: ""   # GCS bucket for artifacts
   KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
 
   # --- GCP IAM (Workload Identity) ---
-  ARTIFACT_IAM_ROLE_ARN: ""   # SA for artifacts (e.g. "artifacts@PROJECT.iam.gserviceaccount.com")
   FLYTEADMIN_IAM_ROLE_ARN: "" # SA shared by flyteadmin, datacatalog, cacheservice
 
   # --- Service-to-Service OAuth2 ---
@@ -62,13 +60,18 @@ flyte:
 services:
   artifacts:
     serviceAccount:
-      annotations:
-        iam.gke.io/gcp-service-account: "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
+      # Set per env: configure the artifacts pod's identity annotation map
+      # directly. If binding a GCP service account via Workload Identity, set:
+      #   annotations:
+      #     iam.gke.io/gcp-service-account: "artifacts@PROJECT.iam.gserviceaccount.com"
+      annotations: {}
     configMap:
       artifactsConfig:
         app:
           artifactBlobStoreConfig:
-            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
+            # Set per env: the dedicated artifacts GCS bucket (separate from the
+            # metadata bucket), e.g. "my-org-union-artifacts".
+            container: ""
             stow:
               kind: google
               config:
