@@ -14,6 +14,17 @@ strict mode, so the now-unknown key is fatal — a recent operator build crash-l
 with `'config.Config' has invalid keys: enabled`. Stop rendering the key and drop the
 now-dead `config.operator.enabled` value + README row.
 
+### Apps wildcard TLS secret name is now configurable
+
+The Envoy `apps_https:8443` listener's TLS secret (mounted when
+`gateway.publicLoadBalancer.enabled`) is now `gateway.publicLoadBalancer.tlsSecretName`
+instead of a hardcoded `dataplane-apps-letsencrypt-tls`. The default is unchanged, so
+existing installs are unaffected; a bring-your-own-cert dataplane can now point the
+gateway at its own secret without prescribing cert-manager or a specific issuer. The
+value is **required (non-empty)** when `publicLoadBalancer.enabled` — the chart fails
+fast rather than rendering an Envoy that crash-loops on a missing cert. (TLS termination
+at the load balancer, i.e. an empty secret, is not yet supported.)
+
 ### Image-builder existence probe now honors the configured registry
 
 Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`

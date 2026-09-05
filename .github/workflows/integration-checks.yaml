@@ -245,6 +245,24 @@ jobs:
         if: matrix.cloud == 'k3d'
         run: tools/dataplane/k3d/up.sh bootstrap
 
+      # ── Recover a soft-deleted cluster before the operator heartbeats. The
+      #    cluster name is stable/seeded and reused every run; DeleteCluster is a
+      #    soft delete that re-registration does not revive, so a prior teardown
+      #    (or an out-of-band delete) leaves it `deleted` — the operator then can't
+      #    register, never mints its tunnel token, and the operator-proxy
+      #    cloudflared sidecar crash-loops until the chart install times out.
+      #    undelete + activate it here (no-op when it is already live). Needs the
+      #    SDK before the chart install, so install a throwaway venv. ──
+      - name: Recover soft-deleted cluster (k3d)
+        if: matrix.cloud == 'k3d'
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/heal-venv"
+          "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/heal-venv/bin/python" \
+            --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.7.0' kubernetes
+          "$RUNNER_TEMP/heal-venv/bin/python" .github/ci-scripts/integration_ops.py ensure-active
+
       # ── Ensure each chart's namespace exists and upgrade in place — deliberately no
       #    delete+recreate (finalizers hang namespace deletion and cold installs are
       #    flaky; real releases upgrade in place anyway). One run per cluster. ──
@@ -336,6 +354,16 @@ jobs:
         env:
           FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
         run: .github/ci-scripts/resolve-ci-creds.sh "${{ matrix.topology }}/${{ matrix.cloud }}"
+
+      # ── Same soft-delete recovery as the k3d leg (see "Recover soft-deleted
+      #    cluster (k3d)"), for the standing DPs: a prior teardown could have left
+      #    the cluster `deleted`, which the standing operator's heartbeats can't
+      #    revive, so it never reports enabled+healthy. undelete + activate before
+      #    the health gate (no-op when already live). Their operator is already
+      #    running, so this runs after creds resolve rather than before install. ──
+      - name: Recover soft-deleted cluster
+        if: matrix.cloud != 'k3d'
+        run: python .github/ci-scripts/integration_ops.py ensure-active
 
       # ── CP-side health gate: poll until the CP reports this DP enabled + healthy.
       #    Every leg — k3d's fresh operator must register; the standing legs confirm
