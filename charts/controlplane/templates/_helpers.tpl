@@ -744,6 +744,21 @@ Database name validation
 {{- end }}
 
 {{/*
+Artifacts bucket validation — a dedicated object-store bucket is required when
+the Artifacts service is enabled. The bucket is a dedicated key on the service
+(no global), so guard against enabling the pod without pointing it at a bucket.
+*/}}
+{{- define "controlplane.validateArtifactsBucket" -}}
+{{- $artifacts := index .Values.services "artifacts" | default dict }}
+{{- if not $artifacts.disabled }}
+{{- $container := dig "configMap" "artifactsConfig" "app" "artifactBlobStoreConfig" "container" "" $artifacts }}
+{{- if not $container }}
+{{- fail "ERROR: the Artifacts service is enabled (services.artifacts.disabled=false) but no object-store bucket is configured. Set services.artifacts.configMap.artifactsConfig.app.artifactBlobStoreConfig.container to the dedicated artifacts bucket." }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{/*
 Artifacts database configuration validation
 */}}
 {{- define "controlplane.validateArtifactsDatabase" -}}
