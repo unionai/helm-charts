@@ -174,7 +174,7 @@ double-trigger.
 */}}
 {{- /* Hash the fully rendered config (via actions.configMap), not the raw
        .Values.actions.configMap — so derived fields (e.g. artifactReplicationEnabled,
-       set in unionai.configMap from services.artifacts.disabled) also roll the shards.
+       set in unionai.configMap from services.artifacts.enabled) also roll the shards.
        Partitions are excluded so a partition-range change alone does not double-trigger. */}}
 {{- define "actions.configChecksum" -}}
 {{- $config := include "actions.configMap" . | fromYaml -}}

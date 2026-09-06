@@ -492,13 +492,13 @@ IfNotPresent
 {{- end }}
 
 {{- /* artifactReplicationEnabled: derive from the artifacts service being deployed
-       (not services.artifacts.disabled) — the same single toggle that gates the
+       (services.artifacts.enabled) — the same single toggle that gates the
        artifacts pod, its ingress route, and the console nav. So produces_artifacts
        task outputs are published to the v2 artifact service exactly when that
        service exists, and never dangle when it is off. */}}
 {{- if eq .key "actions" }}
   {{- $actions := index $merged "actions" | default dict }}
-  {{- $_ := set $actions "artifactReplicationEnabled" (not (index .Values.services "artifacts" | default dict).disabled) }}
+  {{- $_ := set $actions "artifactReplicationEnabled" (dig "enabled" true (index .Values.services "artifacts" | default dict)) }}
   {{- $_ := set $merged "actions" $actions }}
 {{- end }}
 
