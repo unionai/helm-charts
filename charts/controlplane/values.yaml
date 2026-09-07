@@ -371,6 +371,12 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-buffers: 4 32k
     nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-cookie-domain: ~^ .$host
+    # Upstream timeouts on the Ingress so external/BYO controllers inherit them.
+    # On GRPC backends nginx maps these to grpc_{connect,read,send}_timeout:
+    # https://kubernetes.github.io/ingress-nginx/user-guide/nginx-configuration/annotations/#custom-timeouts
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "604800"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "604800"
     nginx.ingress.kubernetes.io/server-snippet: |
       client_header_timeout 604800;
       client_body_timeout 604800;
@@ -2333,13 +2339,9 @@ ingress-nginx:
     # Snippet annotations are required for gRPC identity header forwarding.
     allowSnippetAnnotations: true
     config:
+      # Upstream timeouts live on the Ingress objects (ingress.annotations), not
+      # here, so external/BYO controllers inherit them.
       annotations-risk-level: "Critical"
-      grpc-connect-timeout: "1200"
-      grpc-read-timeout: "604800"
-      grpc-send-timeout: "604800"
-      proxy-read-timeout: "3600"
-      proxy-send-timeout: "3600"
-      proxy-connect-timeout: "60"
 
     metrics:
       enabled: true
