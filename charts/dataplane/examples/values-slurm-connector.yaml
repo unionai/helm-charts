@@ -1,0 +1,47 @@
+# Route Flyte 2 `slurm` and `slurm_script` tasks to the connector service and give
+# the connector cluster-wide Slurm credentials, so tasks can omit connection details.
+#
+#   helm upgrade dataplane ... -f examples/values-slurm-connector.yaml
+#
+# Requires a flyteconnector image with `flyteplugins-slurm` installed and a Kubernetes
+# Secret (here `slurm-login`) holding the SSH private key and a known_hosts file:
+#
+#   kubectl -n <namespace> create secret generic slurm-login \
+#     --from-file=ssh-privatekey=./id_ed25519 --from-file=known_hosts=./known_hosts
+#
+# Tasks can still set host/username/ssh_private_key on their own `Slurm` config; task
+# config takes precedence over these defaults.
+flyteconnector:
+  enabled: true
+  additionalEnvs:
+    - name: FLYTE_SLURM_HOST
+      value: "login.slurm.example.com"
+    - name: FLYTE_SLURM_USERNAME
+      value: "flyte"
+    - name: FLYTE_SLURM_SSH_PRIVATE_KEY
+      valueFrom:
+        secretKeyRef:
+          name: slurm-login
+          key: ssh-privatekey
+    - name: FLYTE_SLURM_KNOWN_HOSTS
+      value: /etc/slurm-login/known_hosts
+  additionalVolumes:
+    - name: slurm-login
+      secret:
+        secretName: slurm-login
+        items:
+          - key: known_hosts
+            path: known_hosts
+  additionalVolumeMounts:
+    - name: slurm-login
+      mountPath: /etc/slurm-login
+      readOnly: true
+
+union:
+  configmap:
+    enabled_plugins:
+      tasks:
+        task-plugins:
+          default-for-task-types:
+            slurm: connector-service
+            slurm_script: connector-service
