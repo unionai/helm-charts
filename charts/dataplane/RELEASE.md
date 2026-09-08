@@ -5,6 +5,24 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Webhook can resolve secrets from another AWS account
+
+New `config.core.webhook.embeddedSecretManagerConfig.awsConfig` with `account` and
+`region`, passed through to the webhook's secret injector. Set both when the AWS Secrets
+Manager the cluster reads task secrets from lives outside the cluster's own account —
+lookups are then addressed by ARN instead of by bare name.
+
+Both default to empty, which is the existing behaviour: secrets resolve by bare name in
+whichever account the webhook's credentials belong to. Setting `account` without `region`
+is rejected at webhook startup rather than silently falling back, since that would read a
+same-named secret out of the wrong account.
+
+This is the store's identity, not the cluster's — distinct from
+`config.proxy.smConfig.awsConfig` (operator drift reporting) and from
+`global.AWS_ACCOUNT_ID` / `global.AWS_REGION`. Cross-account reads also require a resource
+policy on each secret and a customer-managed KMS key granting the webhook's role
+`kms:Decrypt`; the AWS-managed `aws/secretsmanager` key cannot be shared across accounts.
+
 ### Image-builder existence probe now honors the configured registry
 
 Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`
