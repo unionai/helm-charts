@@ -157,8 +157,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            # On a separate-cluster data plane, point Kourier at the apps wildcard
+            # cert so its native external HTTPS listener (:8443, HTTPSPortExternal)
+            # terminates `*.apps.<host>` TLS and routes straight to the app — a
+            # single L7 hop, no gateway loopback. Replaces the static apps_https
+            # Envoy listener. Intracluster leaves this empty (apps go via the CP
+            # ingress-nginx / ingress.serving).
             - name: CERTS_SECRET_NAME
-              value: ""
+              value: {{ if and .Values.gateway.publicLoadBalancer .Values.gateway.publicLoadBalancer.enabled }}{{ .Values.gateway.publicLoadBalancer.tlsSecretName | default "dataplane-apps-letsencrypt-tls" | quote }}{{ else }}""{{ end }}
             - name: SYSTEM_NAMESPACE
               valueFrom:
                 fieldRef:
