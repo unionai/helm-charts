@@ -2927,7 +2927,19 @@ gateway:
     network:
       ingress-class: "kourier.ingress.networking.knative.dev"
     kourier: {}
-    autoscaler: {}
+    autoscaler:
+      # App serving is WebSocket-heavy (Streamlit, Bokeh, and most interactive
+      # dashboards open a persistent wss:// back to the app). Knative's default
+      # target-burst-capacity (200) exceeds a revision's spare capacity, so it
+      # keeps the Activator pinned in the request path — and the Activator's
+      # reverse proxy does not complete the WebSocket upgrade, so the app's HTTP
+      # polls succeed but its stream never connects and it renders only a loading
+      # skeleton. 0 keeps the Activator in the path only for scale-from-zero; once
+      # a pod is Ready it steps out and traffic flows Kourier -> queue-proxy ->
+      # pod, all of which proxy WebSockets cleanly. Trade-off: no Activator burst
+      # buffering in steady state, which is the right default for interactive
+      # serving.
+      target-burst-capacity: "0"
     certmanager: {}
     domain: {}
     gc: {}

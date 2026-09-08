@@ -5,6 +5,24 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Fix app-serving WebSocket: set `target-burst-capacity` to 0
+
+The serving gateway's `config-autoscaler` now sets `target-burst-capacity: "0"`
+as an actual data key (via `gateway.config.autoscaler`). Previously the key was
+unset — the `211` in the ConfigMap lives in the `_example` block (inert Knative
+documentation vendored in #386), so the effective value was Knative's code
+default of `200`. App serving is WebSocket-heavy — Streamlit, Bokeh, and most
+interactive dashboards open a persistent `wss://` to the app — and a burst
+capacity (200) larger than a revision's spare capacity keeps the Knative
+**Activator** pinned in the request path. The Activator's reverse proxy does not
+complete the WebSocket upgrade, so an app's HTTP polls succeed but its stream
+never connects and it renders only a loading skeleton. With `0` the Activator
+steps out of the path once a pod is Ready and traffic flows
+Kourier → queue-proxy → pod, all of which proxy WebSockets cleanly. The trade-off
+is no Activator burst buffering in steady state (scale-from-zero still routes
+through it), which is the right default for interactive serving. Override
+`gateway.config.autoscaler.target-burst-capacity` to restore buffering.
+
 ### Fix union-operator crash: drop the removed `operator.enabled` config key
 
 An internal Union change removed the `enabled` field from the operator config (the
