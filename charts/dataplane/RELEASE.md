@@ -1,9 +1,12 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.0
 
-> **Release pending** — these changes are not yet cut to a version. At the next
-> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+`version` moves `2026.8.5` → `2026.9.0`; `appVersion` stays `2026.8.5`, so the
+data-plane images are unchanged. **Minor bump**: app serving now defaults to this
+chart's vendored Knative gateway. A data plane that already served apps via the
+`knative-operator` must run the `knative-migration` Job before/at this upgrade —
+see "App serving now defaults to the vendored Knative gateway" below.
 
 ### Fix union-operator crash: drop the removed `operator.enabled` config key
 
@@ -81,6 +84,17 @@ Other changes:
 - Public serving gateway: Envoy front proxy + `service-public` and bootstrap
   config for the vendored gateway's external entrypoint
   ([#522](https://github.com/unionai/helm-charts/pull/522)).
+- Gateway auth plugin now inherits the control plane's TLS trust. Against a
+  self-hosted control plane serving a self-signed intracluster certificate, the
+  plugin failed verification (`x509: certificate signed by unknown authority`) and
+  crash-looped the gateway, so the data plane never went healthy. New
+  `gateway.auth.insecureSkipVerify` (`null` = inherit
+  `config.union.connection.insecureSkipVerify`) and `gateway.auth.caFile` for an
+  explicit CA bundle. Defaults render byte-identically, so existing installs are
+  unaffected ([#571](https://github.com/unionai/helm-charts/pull/571)).
+- `flytecopilot` image moves to `cr.flyte.org/flyteorg/flyte-binary-v2:v2.0.45`
+  (was `cr.flyte.org/flyteorg/flytecopilot:v1.14.1`), following flyteorg/flyte#7575
+  ([#569](https://github.com/unionai/helm-charts/pull/569)).
 
 ## 2026.8.5
 
