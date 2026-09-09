@@ -2,11 +2,11 @@
 
 ## 2026.9.0
 
-`version` moves `2026.8.5` → `2026.9.0`; `appVersion` stays `2026.8.5`, so the
-data-plane images are unchanged. **Minor bump**: app serving now defaults to this
-chart's vendored Knative gateway. A data plane that already served apps via the
-`knative-operator` must run the `knative-migration` Job before/at this upgrade —
-see "App serving now defaults to the vendored Knative gateway" below.
+`version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
+`2026.9.1`, picking up the new data-plane images plus the chart changes below. **Minor bump**: app serving now
+defaults to this chart's vendored Knative gateway. A data plane that already served
+apps via the `knative-operator` must run the `knative-migration` Job before/at this
+upgrade — see "App serving now defaults to the vendored Knative gateway" below.
 
 ### Fix union-operator crash: drop the removed `operator.enabled` config key
 

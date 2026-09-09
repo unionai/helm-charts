@@ -3,7 +3,7 @@
 ## 2026.9.0
 
 Lockstep `version` bump with the `dataplane` chart (`2026.8.5` → `2026.9.0`);
-`appVersion` is realigned to the release train (`2026.8.4` → `2026.9.0`).
+`appVersion` is realigned to the release train (`2026.8.4` → `2026.9.1`).
 **No CRD changes in this release** — the chart still renders only the
 `flyteworkflows.flyte.lyft.com` CRD, and `appVersion` is a label value here, not
 an image tag. This chart stays deprecated; use `crds/dataplane/`.
