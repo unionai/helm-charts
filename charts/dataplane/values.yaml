@@ -2023,6 +2023,7 @@ prometheus:
 #   cluster-scoped node discovery, and kube-state-metrics is limited to the release
 #   namespace (no cross-namespace pod resource metrics for task execution pods).
 #   Console CPU/memory charts for task executions will show "no data."
+#   Recoverable on its own: see node_metrics below.
 # - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
 #   kube-state-metrics instance.
 # - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
@@ -2030,6 +2031,22 @@ prometheus:
 #   will not function in low_privilege mode. This list will be expanded as they are
 #   identified.
 low_privilege: true
+
+# -- Grants Prometheus read access to nodes so cadvisor scraping works under
+# low_privilege, which is what backs the console's per-task CPU and memory charts
+# (used/allocated/utilization). Costs exactly one ClusterRole + ClusterRoleBinding,
+# read-only and limited to nodes, nodes/proxy and nodes/metrics; the rest of
+# Prometheus' access stays namespace-scoped.
+#
+# Leave false where the installing principal cannot create cluster-scoped RBAC --
+# that is the case low_privilege exists for, and the install would fail rather than
+# degrade. It does NOT restore node-level metrics (kube_node_*, node_*), which come
+# from kube-state-metrics and stay namespace-scoped.
+#
+# No-op when low_privilege is false: the full Prometheus ClusterRole already covers
+# nodes there (prometheus.rbac.create).
+node_metrics:
+  enabled: false
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and

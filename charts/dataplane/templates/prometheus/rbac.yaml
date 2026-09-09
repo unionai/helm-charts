@@ -155,4 +155,47 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
   name: union-operator-prometheus-rbac
+{{- if .Values.node_metrics.enabled }}
+---
+# Nodes are cluster-scoped, so the namespaced Role above grants nothing on them: the
+# `kubernetes-cadvisor` scrape job's `role: node` service discovery gets a 403 and finds
+# no targets, and container_cpu_usage_seconds_total / container_memory_working_set_bytes
+# are never collected. This is the one grant that restores them, and it is read-only and
+# limited to nodes -- everything else Prometheus reads stays namespace-scoped.
+# Named per namespace so two releases in one cluster do not fight over the object.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-prometheus-node-metrics-{{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+rules:
+  # nodes: `role: node` discovery lists and watches them.
+  # nodes/proxy: the job scrapes /api/v1/nodes/<node>/proxy/metrics/cadvisor through the
+  # API server, which authorizes as a get on this subresource.
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-prometheus-node-metrics-{{ .Release.Namespace }}
+  labels:
+    release: {{ .Release.Name }}
+subjects:
+  - kind: ServiceAccount
+    name: union-operator-prometheus
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-prometheus-node-metrics-{{ .Release.Namespace }}
+{{- end }}
 {{- end }}

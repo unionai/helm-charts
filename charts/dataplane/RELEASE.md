@@ -5,6 +5,22 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Task CPU/memory charts can now work under `low_privilege`
+
+New `node_metrics.enabled` (default `false`) grants Prometheus a read-only ClusterRole
+over `nodes`, `nodes/proxy` and `nodes/metrics`. Without it, `low_privilege` gives
+Prometheus only a namespaced Role, so the `kubernetes-cadvisor` job's `role: node`
+discovery is denied and finds no targets — `container_cpu_usage_seconds_total` and
+`container_memory_working_set_bytes` are never collected, and the console's per-task
+used/allocated/utilization charts show "no data".
+
+Off by default: an installer that cannot create cluster-scoped RBAC is the case
+`low_privilege` exists for, and the install would fail rather than degrade. Everything
+else Prometheus reads stays namespace-scoped, and node-level metrics (`kube_node_*`,
+`node_*`) still come from the namespace-scoped kube-state-metrics and are unaffected.
+No-op when `low_privilege` is `false`, where `prometheus.rbac.create` already covers
+nodes.
+
 ### Fix union-operator crash: drop the removed `operator.enabled` config key
 
 An internal Union change removed the `enabled` field from the operator config (the
