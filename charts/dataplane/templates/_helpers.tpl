@@ -131,7 +131,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropeller.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropeller.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropeller.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -144,7 +144,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.tolerations" -}}
-{{- with .Values.flytepropeller.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropeller.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -193,7 +193,7 @@ affinity:
 {{- end }}
 
 {{- define "leaseworker.scheduling.nodeSelector" -}}
-{{- with .Values.leaseworker.nodeSelector }}
+{{- with (merge (dict) (.Values.leaseworker.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -206,7 +206,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "leaseworker.scheduling.tolerations" -}}
-{{- with .Values.leaseworker.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.leaseworker.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -274,7 +274,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropellerwebhook.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropellerwebhook.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -287,7 +287,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.tolerations" -}}
-{{- with .Values.flytepropellerwebhook.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropellerwebhook.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -391,7 +391,7 @@ affinity:
 {{- end }}
 
 {{- define "nodeobserver.scheduling.nodeSelector" -}}
-{{- with .Values.nodeobserver.nodeSelector }}
+{{- with (merge (dict) (.Values.nodeobserver.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -404,7 +404,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.tolerations" -}}
-{{- with .Values.nodeobserver.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.nodeobserver.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -486,7 +486,7 @@ affinity:
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.nodeSelector" -}}
-{{- with .Values.clusterresourcesync.nodeSelector }}
+{{- with (merge (dict) (.Values.clusterresourcesync.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -499,7 +499,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.tolerations" -}}
-{{- with .Values.clusterresourcesync.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.clusterresourcesync.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -585,7 +585,7 @@ affinity:
 {{- end }}
 
 {{- define "operator.scheduling.nodeSelector" -}}
-{{- with .Values.operator.nodeSelector }}
+{{- with (merge (dict) (.Values.operator.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -598,7 +598,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "operator.scheduling.tolerations" -}}
-{{- with .Values.operator.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.operator.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -699,7 +699,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_ACCESS_KEY_ID" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_ACCESS_KEY_ID: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
 {{- end }}
@@ -712,7 +712,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_SECRET_ACCESS_KEY" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_SECRET_ACCESS_KEY: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
 {{- end }}
@@ -796,7 +796,7 @@ affinity:
 {{- end }}
 
 {{- define "proxy.scheduling.nodeSelector" -}}
-{{- with .Values.proxy.nodeSelector }}
+{{- with (merge (dict) (.Values.proxy.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -809,7 +809,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "proxy.scheduling.tolerations" -}}
-{{- with .Values.proxy.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.proxy.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -957,6 +957,44 @@ Global service account annotations
 {{- end -}}
 
 {{/*
+Render RBAC that grants one service account use of an OpenShift SCC.
+*/}}
+{{- define "openshift.sccRbac" -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+rules:
+  - apiGroups:
+      - security.openshift.io
+    resources:
+      - securitycontextconstraints
+    resourceNames:
+      - {{ .name }}
+    verbs:
+      - use
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .name }}
+  namespace: {{ .root.Release.Namespace }}
+  labels:
+    {{- .labels | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .serviceAccountName }}
+    namespace: {{ .root.Release.Namespace }}
+{{- end -}}
+
+{{/*
 Name of the fluentbit configMap
 */}}
 {{- define "fluentbit.configMapName" -}}
@@ -995,7 +1033,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
     Tag                 namespace-<namespace_name>.pod-<pod_name>.cont-<container_name>
     Tag_Regex           (?<pod_name>[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*)_(?<namespace_name>[^_]+)_(?<container_name>.+)-
     Path                /var/log/containers/*.log
-    DB                  /var/log/flb_kube.db
+    DB                  {{ .Values.fluentbit.tailDBPath }}
     multiline.parser    docker, cri
     Mem_Buf_Limit       5MB
     Skip_Long_Lines     On
@@ -1106,6 +1144,10 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{ include "unionai-dataplane.labels" . }}
 app.kubernetes.io/component: serving
 {{- end -}}
+
+{{- define "serving.kourierGateway.openShiftSccName" -}}
+{{- default (printf "%s-kourier-gateway" (include "serving.fullname" .)) .Values.serving.openShift.kourierGatewayScc.name | trunc 63 | trimSuffix "-" }}
+{{- end }}
 
 {{- define "3scale-kourier-gateway.selectorLabels" -}}
 app.kubernetes.io/name: 3scale-kourier-gateway
@@ -1393,10 +1435,37 @@ Returns the fluentbit service account name, using the common SA when enabled.
 Returns the buildkit service account name, using the common SA when enabled.
 */}}
 {{- define "buildkit.serviceAccountName" -}}
-{{- if include "useCommonServiceAccount" . -}}
+{{- if .Values.imageBuilder.buildkit.serviceAccount.forceDedicated -}}
+{{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- else if and .Values.imageBuilder.buildkit.openShift.enabled (include "useCommonServiceAccount" .) -}}
+{{- fail "imageBuilder.buildkit.serviceAccount.forceDedicated must be true when imageBuilder.buildkit.openShift.enabled is true so the BuildKit SCC is not bound to the common service account" -}}
+{{- else if include "useCommonServiceAccount" . -}}
 {{- include "common.serviceAccountName" . -}}
 {{- else -}}
 {{- .Values.imageBuilder.buildkit.serviceAccount.name | default "union-imagebuilder" -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Return true when the chart should create the BuildKit OpenShift SCC.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftCreateScc" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- if and (include "imagebuilder.buildkit.enabled" .) .Values.imageBuilder.buildkit.openShift.enabled $scc.create (not $scc.existingName) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Create the name of OpenShift SecurityContextConstraints to use for buildkit.
+*/}}
+{{- define "imagebuilder.buildkit.openShiftSccName" -}}
+{{- $scc := .Values.imageBuilder.buildkit.openShift.securityContextConstraints -}}
+{{- $defaultName := printf "%s-rootless" (include "imagebuilder.buildkit.fullname" .) -}}
+{{- if $scc.existingName -}}
+{{- $scc.existingName | trunc 63 | trimSuffix "-" -}}
+{{- else if and (not $scc.create) $scc.name -}}
+{{- $scc.name | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- default $defaultName $scc.name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 

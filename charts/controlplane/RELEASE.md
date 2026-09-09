@@ -1,5 +1,146 @@
 # controlplane — Release Notes
 
+## Unreleased
+
+> **Release pending** — not yet cut to a version. At the next release, rename this
+> heading to `## <version>` and bump `Chart.yaml`.
+
+- Self-hosted app serving: authorize app subdomains and compose public app URLs via
+  `publicURLPattern`, wired into the protected gRPC-route and ingress templates
+  ([#563](https://github.com/unionai/helm-charts/pull/563)).
+- App-serving config: public app URL composition + apps domain wiring and the
+  protected gRPC-route / ingress TLS surface for served apps
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+
+## 2026.8.5
+
+Chart-only lockstep release: `version` moves `2026.8.4` → `2026.8.5`;
+`appVersion` stays `2026.8.5`, so images are unchanged. No control-plane
+template or values changes — this release carries data-plane chart changes
+only (see `charts/dataplane/RELEASE.md`).
+
+## 2026.8.4
+
+`version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
+`2026.8.5`, picking up the new control-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+### Chart changes
+
+- Right-size default CPU/memory **requests** for control-plane services (`actions`
+  + its router, `leasor`; `scylla` CPU only) to steady-state usage. **Limits are
+  unchanged**, so burst headroom is intact — only the idle reservation shrinks,
+  improving pod packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Add a chart-level **global scheduling** default
+  (`.Values.scheduling.{affinity,nodeSelector,tolerations}`) honored by every
+  control-plane pod, with per-service overrides — steer the whole plane onto a
+  chosen node pool (e.g. Spot) with one value. Per-service `tolerations`/`nodeSelector`
+  **inherit** from the global block (concat / merge, service wins on conflicts);
+  `affinity` fully overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
+- Fix the generic service Deployment template and the redis-consumer
+  StatefulSet rendering `tolerations` as an error object instead of a list
+  whenever any toleration was set (global or per-service) — [#556]'s
+  `fromYaml` on list YAML — which made `helm upgrade` fail with
+  `cannot unmarshal object into Go struct field PodSpec...tolerations`
+  ([#557](https://github.com/unionai/helm-charts/pull/557)).
+
+### Schema migrations (run automatically on upgrade)
+
+- `artifacts`: `artifacts_v2.created_by` moves from a proto-marshaled `bytea`
+  blob to a plain `varchar(255)` subject, with a partial index behind a new
+  `created_by` EQUAL filter on `ListArtifacts`. **Creator attribution on
+  artifacts created before the upgrade is reset to empty** — the blob only ever
+  held the subject. Rolling the image back requires running the migration's
+  rollback too, since the old code unmarshals the column
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833)).
+- `artifacts`: `llm_gateway_gateways` gains
+  `allow_anonymous_access boolean NOT NULL DEFAULT true`; existing gateways keep
+  their current behavior
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `executions`: a backdated `20260101000000_partition_action_events` migration
+  partitions `action_events` by `created_at` **on fresh databases only**. It is
+  triple-guarded — already partitioned → no-op, empty → convert, has rows →
+  no-op with a `NOTICE` — so an existing database upgrading through it is left
+  on the unpartitioned table
+  ([unionai/cloud#17817](https://github.com/unionai/cloud/pull/17817)).
+
+### Behavior
+
+- Artifacts resolve `created_by` into a full `EnrichedIdentity` (name, email) at
+  read time, degrading to a subject-only identity when the identity cache is
+  unavailable. **This chart leaves `services.artifacts.configMap.cache.identity`
+  at the global `enabled: false` default**, so the console keeps rendering the
+  raw OIDC subject until it is turned on for the artifacts service
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833),
+  [unionai/cloud#17866](https://github.com/unionai/cloud/pull/17866)).
+- LLM gateway: anonymous access on the backing app is now a user-settable
+  gateway option instead of a hardcoded `true`. It still defaults to on, so
+  OpenAI-compatible clients keep authenticating with the virtual key alone
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `cluster`: additive IDL for the cluster drain lifecycle (`ClusterState`,
+  `UpdateClusterState`, `InternalClusterService.ReportClusterWorkloadDrained`)
+  and a `GetLifecycleStatus` RPC. The drain RPC is stubbed `Unimplemented` — no
+  behavior change yet ([unionai/cloud#17763](https://github.com/unionai/cloud/pull/17763),
+  [unionai/cloud#17834](https://github.com/unionai/cloud/pull/17834)).
+
+### Console (`unionconsole`)
+
+- The launch form's Settings tab gains a **Timeout** field (overall task-attempt
+  timeout, in seconds). An existing task timeout is prefilled on launch and
+  rerun, and can be edited or cleared before submit
+  ([unionai/cloud#16525](https://github.com/unionai/cloud/pull/16525)).
+- Cluster details renders a red error banner carrying `unhealthyReasons` when an
+  enabled cluster is unhealthy
+  ([unionai/cloud#17831](https://github.com/unionai/cloud/pull/17831)).
+- The LLM gateway deploy form and detail page expose the anonymous-access
+  setting (the Throughput card becomes a Configuration card)
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- Flag-gated, off by default and inert for this chart: ClickHouse-backed org
+  dashboards and the new `/overview` org page
+  ([unionai/cloud#17663](https://github.com/unionai/cloud/pull/17663),
+  [unionai/cloud#17905](https://github.com/unionai/cloud/pull/17905)), and
+  self-serve onboarding tutorial cards on `/home`
+  ([unionai/cloud#17827](https://github.com/unionai/cloud/pull/17827)).
+
+## 2026.8.3
+
+`version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
+`2026.8.3`, picking up the new control-plane images.
+
+- Service resource names now fall back to the service key instead of the chart
+  name when no `fullnameOverride`/`nameOverride` is set, so multi-service
+  releases render distinct fullnames
+  ([#544](https://github.com/unionai/helm-charts/pull/544)).
+- The console deployment always injects `UNION_ORG_OVERRIDE`, then appends any
+  user-provided `console.env` entries after it
+  ([#536](https://github.com/unionai/helm-charts/pull/536)).
+- Monitoring: the control-plane overview dashboard is reworked for v2 metrics
+  and a new v1 overview dashboard is added alongside it
+  ([#529](https://github.com/unionai/helm-charts/pull/529)).
+
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the control-plane images are unchanged.
+
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
+- Actions shard coordination init containers now use
+  `actions.coordination.securityContext`, with non-root defaults suitable for
+  restricted Kubernetes distributions. Shard label values are rendered
+  consistently as strings across Deployments, Services, selectors, and pod
+  templates ([#515](https://github.com/unionai/helm-charts/pull/515)).
+
+## 2026.8.1
+
+Adding redis-consumer service to control plane ([#525](https://github.com/unionai/helm-charts/pull/525)).
+
 ## 2026.8.0
 
 Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion` stays

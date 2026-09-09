@@ -25,13 +25,18 @@ make test                # confirm they match (validate == make helm-test)
 git add tests/generated && git commit
 ```
 
-## Release PRs — integration test suite
+## Integration test suite
 
-A **release PR** additionally runs `.github/workflows/integration-checks.yaml`:
-the candidate charts are installed onto standing canary clusters and exercised
-end-to-end across the full matrix — selfmanaged `aws` / `gcp` / `azure` / `k3d`
-and selfhosted `aws` / `gcp` — with a binary health gate and the pytest
-functional suite (`tests/functional/`).
+`.github/workflows/integration-checks.yaml` runs in two tiers:
+
+- The **k3d leg runs on every PR** to `main` — self-contained (ephemeral k3d
+  cluster installed with `charts/dataplane/values.k3d.yaml`), with a binary
+  health gate and the pytest functional suite (`tests/functional/`).
+- The **five cloud legs run on release PRs** (or with the
+  `run-integration-tests` label, or a `workflow_dispatch` with `force=true`):
+  the candidate charts are installed onto standing canary clusters and
+  exercised end-to-end — selfmanaged-dp `aws` / `gcp` / `azure` and selfhosted
+  `aws` / `gcp`.
 
 **A PR is classified as a release when either:**
 

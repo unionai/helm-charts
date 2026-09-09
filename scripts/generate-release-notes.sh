@@ -59,7 +59,7 @@ for chart_dir in charts/*/; do
     # (e.g. independently-versioned charts that don't carry release notes).
     # Find previous release tag for this chart (exact name match to avoid e.g.
     # dataplane matching dataplane-crds).
-    prev_tag=$(git tag -l "${chart_name}-*" --sort=-v:refname | grep -E "^${chart_name}-[0-9]" | grep -v "^${tag}$" | head -1)
+    prev_tag=$(git tag -l "${chart_name}-*" --sort=-v:refname | grep -E "^${chart_name}-[0-9]" | grep -v "^${tag}$" | head -1 || true)
 
     if [ -n "$prev_tag" ]; then
       notes=$(git log "${prev_tag}..HEAD" --pretty=format:"- %s (%h)" -- "$chart_dir")

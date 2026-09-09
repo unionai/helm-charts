@@ -54,12 +54,27 @@ global:
   # --- Ingress ---
   INGRESS_PROVIDER: nginx   # nginx | envoy | both
 
+  # --- AWS IAM ---
+  AWS_POD_IDENTITY_ANNOTATION_PREFIX: eks.amazonaws.com
+
   # --- Service-to-Service OAuth2 ---
   # Full IdP config lives in flyte.configmap.adminServer.auth below; these
   # three globals feed into that block plus a few service ConfigMaps.
   INTERNAL_CLIENT_ID: ""    # client_credentials client ID for S2S calls
   AUTH_TOKEN_URL: ""        # OAuth2 token endpoint
   OIDC_S2S_SCOPE: ""        # Okta: leave empty. Entra ID: "api://my-app/.default"
+
+# -- Global kubernetes scheduling constraints applied to control-plane pods.
+# Per-service constraints (services.<name>.nodeSelector / affinity / tolerations)
+# always take precedence. Mirrors the dataplane chart's `scheduling` block so a
+# single value steers both planes (e.g. onto a Spot node pool).
+scheduling:
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  affinity: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
+  nodeSelector: {}
+  # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration
+  tolerations: []
 
 # Prefer setting the DB password via a K8s secret referenced by
 # global.KUBERNETES_SECRET_NAME; this inline field is here only as a fallback.
@@ -999,7 +1014,7 @@ services:
       # configured.
       enabled: false
       fullnameOverride: "redis-consumer"
-      replicaCount: 1
+      replicaCount: 2
       args:
         - cloudpropeller
         - consumer
@@ -1054,8 +1069,14 @@ services:
           # When true and no identity service is reachable, all runs display "Unknown"
           # even when created_by is populated in the DB.
           enrichIdentities: false
-          # App serving URL pattern (work in progress for self-hosted)
-          publicURLPattern: 'https://%s.apps.{{ .Values.global.UNION_HOST }}'
+          # Global fallback app-serving URL pattern (BYOC-style, two %s:
+          # subdomain, org). Empty on selfhosted: an app's public_url is not known
+          # until it is leased to a dataplane, and the dataplane self-declares its
+          # own apps domain via connection_config (apps.domain, dataplane name
+          # baked in). The control plane builds the URL as {scheme}://{sub}.{domain}
+          # at lease time. Leaving this set here would make app CREATE render a
+          # premature (and, with one %s, malformed) URL that fails IDL validation.
+          publicURLPattern: ''
 
         # Disable LLM assistant features (requires Redis and OpenAI API key)
         llm:
@@ -1451,8 +1472,8 @@ services:
         cpu: 2
         memory: 4Gi
       requests:
-        cpu: 1
-        memory: 2Gi
+        cpu: 250m
+        memory: 512Mi
 
 
 # Actions is the stateful coordination layer between the run service and leasor.
@@ -1507,6 +1528,13 @@ actions:
     image:
       repository: docker.io/alpine/k8s
       tag: "1.32.3"
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65534
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
 
   serviceAccount:
     create: true
@@ -1523,8 +1551,8 @@ actions:
       cpu: 2
       memory: 4Gi
     requests:
-      cpu: 1
-      memory: 2Gi
+      cpu: 150m
+      memory: 512Mi
 
   podAnnotations:
     prometheus.io/path: /metrics
@@ -1597,8 +1625,8 @@ actions:
         cpu: 2
         memory: 2Gi
       requests:
-        cpu: 1
-        memory: 1Gi
+        cpu: 150m
+        memory: 256Mi
     autoscaling:
       enabled: false
       minReplicas: 2
@@ -1661,12 +1689,10 @@ console:
       cpu: 250m
       memory: 250Mi
 
-  # Environment variables
-  env:
-    - name: UNION_ORG_OVERRIDE
-      value: '{{ .Values.global.UNION_ORG }}'
-    - name: DISABLE_EXTERNAL_TELEMETRY
-      value: "true"
+  # Environment variables. UNION_ORG_OVERRIDE is injected unconditionally by the
+  # deployment template (from global.UNION_ORG), ahead of this list, so a consumer
+  # override of console.env can't drop it. Entries here are appended after it.
+  env: []
 
   # Additional environment variables from ConfigMap
   envFrom: []
@@ -2065,6 +2091,9 @@ flyte:
           - "http://flyteadmin:80"
           - 'http://flyteadmin.{{ .Release.Namespace }}.svc.cluster.local:80'
           - 'https://{{ .Values.global.UNION_HOST }}'
+          # Allow post-login redirect back to app subdomains (single-label
+          # wildcard); else login falls back to the console.
+          - 'https://*.apps.{{ .Values.global.UNION_HOST }}'
           # - 'https://<each ingress.extraHosts entry>'
 
         appAuth:
@@ -2141,7 +2170,14 @@ flyte:
               - offline_access
           cookieSetting:
             sameSitePolicy: "LaxMode"
-            domain: ""
+            # Scope the session cookie to the control-plane host so it is sent to
+            # every subdomain, including per-dataplane app hostnames
+            # (*.apps.<cluster>.<host>). Without a Domain the cookie is host-only:
+            # a user logged into the console who opens an app is bounced to /login
+            # because the cookie never reaches the app subdomain. UNION_HOST is the
+            # public control-plane host (same value used for authorizedUris); the
+            # flyte-core subchart tpl-renders this against the shared global.
+            domain: '{{ .Values.global.UNION_HOST }}'
           idpQueryParameter: "idp"
 
       admin:
@@ -2371,7 +2407,7 @@ scylla:
           cpu: 2
           memory: 4Gi
         requests:
-          cpu: 1
+          cpu: 250m
           memory: 2Gi
       # Explicitly disable placement constraints (operator adds defaults otherwise)
       # For production with dedicated nodes, configure nodeAffinity and tolerations here

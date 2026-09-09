@@ -129,10 +129,9 @@ Args: root context (.)
 {{- end }}
 
 {{- define "unionai.nodeSelector" -}}
-{{- if and (hasKey .config "nodeSelector") }}
-{{ toYaml .config.nodeSelector }}
-{{- else if and (hasKey .Values "nodeSelector") }}
-{{ toYaml .Values.nodeSelector }}
+{{- $ns := merge (dict) (.config.nodeSelector | default dict) (.Values.nodeSelector | default dict) ((.Values.scheduling | default dict).nodeSelector | default dict) -}}
+{{- with $ns }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
@@ -150,14 +149,15 @@ Args: root context (.)
 {{ toYaml .config.affinity }}
 {{- else if and (hasKey .Values "affinity") }}
 {{ toYaml .Values.affinity }}
+{{- else if and (hasKey .Values "scheduling") .Values.scheduling.affinity }}
+{{ toYaml .Values.scheduling.affinity }}
 {{- end }}
 {{- end }}
 
 {{- define "unionai.tolerations" -}}
-{{- if and (hasKey .config "tolerations") }}
-{{ toYaml .config.tolerations }}
-{{- else if and (hasKey .Values "tolerations") }}
-{{ toYaml .Values.tolerations }}
+{{- $t := concat ((.Values.scheduling | default dict).tolerations | default list) (.Values.tolerations | default list) (.config.tolerations | default list) -}}
+{{- with $t }}
+{{ toYaml . }}
 {{- end }}
 {{- end }}
 
@@ -198,9 +198,9 @@ false
 
 {{- define "unionai.serviceAccount.annotations" -}}
 {{- if and (hasKey .config "serviceAccount") (hasKey .config.serviceAccount "annotations") }}
-{{- toYaml .config.serviceAccount.annotations }}
+{{- tpl (toYaml .config.serviceAccount.annotations) . }}
 {{- else if and (hasKey .Values "serviceAccount") (hasKey .Values.serviceAccount "annotations") }}
-{{- toYaml .Values.serviceAccount.annotations }}
+{{- tpl (toYaml .Values.serviceAccount.annotations) . }}
 {{- else }}
 {}
 {{- end }}
@@ -303,7 +303,7 @@ null
 {{- if .config.fullnameOverride }}
 {{- .config.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
-{{- printf "%s-%s" $.Release.Name .name | trunc 63 | trimSuffix "-" }}
+{{- printf "%s-%s" $.Release.Name .key | trunc 63 | trimSuffix "-" }}
 {{- end }}
 {{- end }}
 

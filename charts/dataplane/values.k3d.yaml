@@ -76,42 +76,62 @@ config:
         image-pull-backoff-grace-period: 8m
         create-container-error-grace-period: 8m
 
-# Knative serving is needed for the app functional test (verify_app).
-# The default install pins the 4-vCPU runner at ~96% CPU (HA replicas=2 across
-# activator/autoscaler/controller/webhook/kourier, and kourier-gateway alone
-# requests 1 CPU × 2). That leaves no room for the reusable/app task pods, which
-# then sit in WAITING_FOR_RESOURCES forever. Trim to single-replica and shrink
-# the kourier requests so the whole stack + test pods fit on the runner.
-serving:
-  enabled: true
-  # high-availability.replicas — 1 collapses every serving component to a single
-  # pod (activator, autoscaler, controller, webhook, kourier gateway/controller).
-  replicas: 1
-  # Knative resolves each revision's image tag → digest by querying the registry
-  # from the serving controller over HTTPS via cluster DNS. The k3d in-cluster
-  # registry is HTTP-only and not resolvable by coredns, so verify_app's revision
-  # fails: 'failed to resolve image to digest ... Get "https://k3d-registry:5000/
-  # v2/": ... no such host', and the app never activates (serve() hangs).
-  # Skip tag resolution for the k3d registry — list BOTH host:port and host forms
-  # since Knative's match key depends on how the image ref is normalised. The
-  # kubelet still pulls the image fine via containerd's registry mirror.
-  extraConfig:
-    deployment:
-      registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,k3d-registry:5000,k3d-registry"
-  resources:
-    3scale-kourier-gateway:
-      kourier-gateway:
-        requests:
-          cpu: "100m"
-          memory: 128Mi
-    net-kourier-controller:
-      controller:
-        requests:
-          cpu: "100m"
-          memory: 128Mi
+# App serving (verify_app) runs on the chart's DEFAULT vendored Knative gateway
+# (gateway.enabled=true, knative-operator.enabled=false) — the same delivery path
+# that ships to self-hosted data planes.
+#
+# The vendored gateway renders a full Knative Serving control plane (activator,
+# autoscaler, controller, webhook, net-kourier-controller) plus the Envoy public
+# gateway, every component HA at replicas=2 by default. On the single 4-vCPU
+# runner that overflows the node (net-kourier-controller alone requests 2×500m
+# and activator 2×300m), leaving the app/reusable task pods stuck in
+# WAITING_FOR_RESOURCES. Collapse every component to a single replica and trim
+# the two heaviest requests so the whole serving stack + test pods fit. HPA'd
+# components (envoy, activator, webhook) also need minReplicas=1, else the HPA
+# holds them at 2. The k3d in-cluster HTTP registry is already skipped for
+# tag→digest resolution via gateway.config.deployment's default
+# (imagebuilder.defaultRegistry = k3d-registry:5000), so no extra config here.
+gateway:
+  components:
+    envoy:
+      replicas: 1
+      hpa:
+        minReplicas: 1
+    kourier-controller:
+      replicas: 1
+      containers:
+        controller:
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+    activator:
+      replicas: 1
+      hpa:
+        minReplicas: 1
+      containers:
+        activator:
+          resources:
+            requests:
+              cpu: "100m"
+              memory: 256Mi
+    controller:
+      replicas: 1
+    autoscaler:
+      replicas: 1
+    autoscaler-hpa:
+      replicas: 1
+    webhook:
+      replicas: 1
+      hpa:
+        minReplicas: 1
 
+# Legacy knative-operator serving path stays off (matches the chart default now
+# that gateway.enabled=true). Leaving it enabled would deploy the operator + its
+# webhook for nothing — the KnativeServing CR they manage isn't rendered while
+# the vendored gateway is active.
 knative-operator:
-  enabled: true
+  enabled: false
 
 # Disable monitoring stack — not needed for chart validation.
 monitoring:
@@ -176,6 +196,15 @@ executor:
 
 proxy:
   resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+  # The operator-proxy pod also runs a tunnel sidecar (loopback tunnel to the CP)
+  # whose request defaults to 500m — the second-largest single request on the
+  # node. Lower the scheduling request; it still bursts to its 3-CPU limit when
+  # the tunnel is busy. Without this the vendored gateway's larger serving
+  # footprint tips the 4-vCPU node over and the verify_app task pods can't fit.
+  tunnel_resources:
     requests:
       cpu: "100m"
       memory: "256Mi"

@@ -41,8 +41,13 @@ jobs:
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: |
           set -euo pipefail
+          # 3-dot diffs (base...head) so we only inspect the PR's OWN changes, i.e.
+          # from the merge-base. A 2-dot diff (base..head) misfires when the branch
+          # is behind a main that has bumped the chart version: it renders the
+          # branch's older `version:` as a spurious `+version:`, falsely classifying
+          # the PR as a release and running the full cloud matrix.
           chart_bump=false
-          if git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' \
+          if git diff "$BASE_SHA"..."$HEAD_SHA" -- 'charts/*/Chart.yaml' \
                | grep -qE '^\+version:'; then chart_bump=true; fi
           title_release=false
           [[ "$PR_TITLE" =~ ^Release\ [0-9] ]] && title_release=true
@@ -82,13 +87,13 @@ jobs:
 
           # Soft guardrails: nudge release PRs toward clean version bumps.
           if [[ "$is_release" == true ]]; then
-            if git diff --name-only "$BASE_SHA".."$HEAD_SHA" -- 'charts/**' \
+            if git diff --name-only "$BASE_SHA"..."$HEAD_SHA" -- 'charts/**' \
                  | grep -vE '/(Chart\.yaml|RELEASE\.md)$' | grep -q .; then
               echo "::warning::Release PR also changes chart templates/values — releases should be clean version bumps; move feature changes to a prior non-release PR."
             fi
           fi
           if [[ "$is_release" == false ]] \
-             && git diff "$BASE_SHA".."$HEAD_SHA" -- 'charts/*/Chart.yaml' | grep -qE '^\+appVersion:'; then
+             && git diff "$BASE_SHA"..."$HEAD_SHA" -- 'charts/*/Chart.yaml' | grep -qE '^\+appVersion:'; then
             echo "::warning::appVersion changed on a non-release PR — appVersion bumps belong in a dedicated release PR."
           fi
 
@@ -240,6 +245,24 @@ jobs:
         if: matrix.cloud == 'k3d'
         run: tools/dataplane/k3d/up.sh bootstrap
 
+      # ── Recover a soft-deleted cluster before the operator heartbeats. The
+      #    cluster name is stable/seeded and reused every run; DeleteCluster is a
+      #    soft delete that re-registration does not revive, so a prior teardown
+      #    (or an out-of-band delete) leaves it `deleted` — the operator then can't
+      #    register, never mints its tunnel token, and the operator-proxy
+      #    cloudflared sidecar crash-loops until the chart install times out.
+      #    undelete + activate it here (no-op when it is already live). Needs the
+      #    SDK before the chart install, so install a throwaway venv. ──
+      - name: Recover soft-deleted cluster (k3d)
+        if: matrix.cloud == 'k3d'
+        run: |
+          set -euo pipefail
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          "$HOME/.local/bin/uv" venv "$RUNNER_TEMP/heal-venv"
+          "$HOME/.local/bin/uv" pip install --python "$RUNNER_TEMP/heal-venv/bin/python" \
+            --no-cache --prerelease=allow --upgrade flyte 'flyteplugins-union>=0.7.0' kubernetes
+          "$RUNNER_TEMP/heal-venv/bin/python" .github/ci-scripts/integration_ops.py ensure-active
+
       # ── Ensure each chart's namespace exists and upgrade in place — deliberately no
       #    delete+recreate (finalizers hang namespace deletion and cold installs are
       #    flaky; real releases upgrade in place anyway). One run per cluster. ──
@@ -331,6 +354,16 @@ jobs:
         env:
           FUNCTEST: ${{ vars.HELM_CHARTS_CI_FUNCTEST }}
         run: .github/ci-scripts/resolve-ci-creds.sh "${{ matrix.topology }}/${{ matrix.cloud }}"
+
+      # ── Same soft-delete recovery as the k3d leg (see "Recover soft-deleted
+      #    cluster (k3d)"), for the standing DPs: a prior teardown could have left
+      #    the cluster `deleted`, which the standing operator's heartbeats can't
+      #    revive, so it never reports enabled+healthy. undelete + activate before
+      #    the health gate (no-op when already live). Their operator is already
+      #    running, so this runs after creds resolve rather than before install. ──
+      - name: Recover soft-deleted cluster
+        if: matrix.cloud != 'k3d'
+        run: python .github/ci-scripts/integration_ops.py ensure-active
 
       # ── CP-side health gate: poll until the CP reports this DP enabled + healthy.
       #    Every leg — k3d's fresh operator must register; the standing legs confirm

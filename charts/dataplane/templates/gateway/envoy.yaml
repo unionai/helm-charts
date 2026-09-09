@@ -1,4 +1,4 @@
-{{- if .Values.zero_trust.enabled }}
+{{- if include "serving.renderGateway" . }}
 {{- $comp := index .Values.gateway.components "envoy" }}
 {{- $container := index $comp.containers "envoy" }}
 ---
@@ -107,6 +107,14 @@ spec:
               {{- else }}
               value: {{ include "gateway.organization" $ | quote }}
               {{- end }}
+            {{- if include "gateway.auth.insecureSkipVerify" $ }}
+            - name: UNION_AUTH_CONTROLPLANEINSECURESKIPVERIFY
+              value: "true"
+            {{- end }}
+            {{- with .Values.gateway.auth.caFile }}
+            - name: UNION_AUTH_CONTROLPLANECAFILE
+              value: {{ . | quote }}
+            {{- end }}
             {{- end }}
             {{- with $container.env }}
             {{- toYaml . | nindent 12 }}
@@ -175,8 +183,21 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /tmp/config
-      {{- with $comp.affinity }}
+            {{- if .Values.gateway.publicLoadBalancer.enabled }}
+            - name: apps-tls
+              mountPath: /etc/apps-tls
+              readOnly: true
+            {{- end }}
+      {{- with (merge (dict) ($comp.nodeSelector | default dict) (($.Values.scheduling | default dict).nodeSelector | default dict)) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($comp.affinity | default ($.Values.scheduling | default dict).affinity) }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (concat (($.Values.scheduling | default dict).tolerations | default list) ($comp.tolerations | default list)) }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       restartPolicy: Always
@@ -185,6 +206,18 @@ spec:
         - name: config-volume
           configMap:
             name: {{ include "gateway.fullname" . }}-envoy-bootstrap
+        {{- if .Values.gateway.publicLoadBalancer.enabled }}
+        {{- if not .Values.gateway.publicLoadBalancer.tlsSecretName }}
+        {{- fail "gateway.publicLoadBalancer.tlsSecretName is required when gateway.publicLoadBalancer.enabled — Envoy terminates the apps wildcard cert on :8443. TLS termination at the load balancer (empty tlsSecretName) is not yet supported." }}
+        {{- end }}
+        # Apps wildcard TLS cert (tls.crt/tls.key) mounted at /etc/apps-tls and
+        # served by the apps_https:8443 static listener in the bootstrap. The
+        # dataplane does not create this secret — supply it however you issue
+        # certs (cert-manager, a corporate CA, ACM sync, …).
+        - name: apps-tls
+          secret:
+            secretName: {{ .Values.gateway.publicLoadBalancer.tlsSecretName }}
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

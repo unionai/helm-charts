@@ -1,5 +1,35 @@
 # dataplane-crds — Release Notes
 
+## 2026.8.5
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.4` → `2026.8.5`);
+`appVersion` stays `2026.8.4`. No CRD changes — only the `Chart.yaml`
+deprecation notice now points at the real replacement, `crds/dataplane/`
+([#566](https://github.com/unionai/helm-charts/pull/566)).
+
+## 2026.8.4
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.3` → `2026.8.4`);
+`appVersion` is realigned to the release train (`2026.7.2` → `2026.8.4`).
+**No CRD changes in this release** — the chart still renders only the
+`flyteworkflows.flyte.lyft.com` CRD, and `appVersion` is a label value here, not
+an image tag.
+
+## 2026.8.3
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.2` → `2026.8.3`).
+No CRD changes in this release.
+
+## 2026.8.2
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.1` → `2026.8.2`).
+No CRD changes in this release.
+
+## 2026.8.1
+
+Lockstep `version` bump with the `dataplane` chart (`2026.8.0` -> `2026.8.1`).
+No CRD changes in this release.
+
 ## 2026.8.0
 
 Lockstep `version` bump with the `dataplane` chart (`2026.7.2` → `2026.8.0`);

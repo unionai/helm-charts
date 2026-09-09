@@ -20,6 +20,10 @@ generate-expected: $(GEN_DIR) vendor-crds
 .PHONY: test
 test: check-vendored-crds helm-test kubeconform-test check-image-paths
 
+.PHONY: snapshot-generator-test
+snapshot-generator-test:
+	bash ./tests/test-atomic-render.sh
+
 # Gate on fully qualified image references. Reads the checked-in
 # tests/generated/ corpus, so it needs neither network nor helm — but that
 # means it is only as fresh as `make generate-expected`. helm-test is what
@@ -56,7 +60,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR)
+helm-test: $(TMP_DIR) snapshot-generator-test
 	./tests/run.sh helm
 
 .PHONY: kubeconform-test
