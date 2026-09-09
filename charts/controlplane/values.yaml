@@ -2404,13 +2404,19 @@ scylla:
       storage:
         capacity: 100Gi
         storageClassName: "scylladb"  # Reference the storage class created above
+      # Guaranteed QoS: requests == limits. scylla-operator sizes the reactor
+      # shard count (--cpu-count) from limits.cpu, so requests below the limit
+      # leave shards without guaranteed cores — under node contention the reactor
+      # stalls, the /healthz liveness probe times out, and the pod is restarted.
+      # Matching requests to limits gives each shard a guaranteed core and avoids
+      # the restart storm.
       resources:
         limits:
           cpu: 2
           memory: 4Gi
         requests:
-          cpu: 250m
-          memory: 2Gi
+          cpu: 2
+          memory: 4Gi
       # Explicitly disable placement constraints (operator adds defaults otherwise)
       # For production with dedicated nodes, configure nodeAffinity and tolerations here
       placement:
