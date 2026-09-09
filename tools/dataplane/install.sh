@@ -130,9 +130,16 @@ cmd_chart() {
   # Retry: the bundled kube-prometheus-stack operator's admission webhook isn't
   # ready when the chart first creates PrometheusRule CRs (harmless no-op on legs
   # that disable monitoring). Callers pass -n / -f <values> / --set per leg.
+  #
+  # --force-conflicts: helm 4 applies server-side. The contract seeds a static
+  # Secret/union-secret-auth AND an ExternalSecret targeting the same Secret;
+  # once ESO reconciles it, field-manager externalsecrets.external-secrets.io
+  # owns the sync-wave annotation, so a re-apply conflicts and the retry loop
+  # can never recover. Force ownership of the conflicting fields on re-apply
+  # (--take-ownership only covers release-level helm ownership, not SSA fields).
   local n=0
   until helm upgrade --install "$release" "$chart" "$@" \
-          --take-ownership --wait --timeout "${CHART_TIMEOUT:-12m}"; do
+          --take-ownership --force-conflicts --wait --timeout "${CHART_TIMEOUT:-12m}"; do
     n=$((n+1)); [ "$n" -ge 3 ] && { echo "ERROR: helm upgrade --install $release failed after $n attempts" >&2; return 1; }
     echo ">> [chart] $release attempt $n failed — retrying in 30s (operator webhook not ready?)" >&2
     sleep 30
