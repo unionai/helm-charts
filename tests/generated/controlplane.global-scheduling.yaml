@@ -129,7 +129,18 @@ metadata:
 
 ---
 # Source: controlplane/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: artifacts
+  labels:
+    helm.sh/chart: controlplane-2026.8.5
+    app.kubernetes.io/name: artifacts
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
 ---
+# Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -516,6 +527,7 @@ metadata:
 data:
   config.yaml: |
     actions:
+      artifactReplicationEnabled: true
       db:
         cql:
           hosts:
@@ -1822,6 +1834,119 @@ data:
         max_size_mbs: 1024
         target_gc_percent: 70
 
+---
+# Source: controlplane/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: artifacts
+  labels:
+    helm.sh/chart: controlplane-2026.8.5
+    app.kubernetes.io/name: artifacts
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    admin:
+      clientId: 'test-internal-client-id'
+      clientSecretLocation: /etc/secrets/union/client_secret
+      endpoint: flyteadmin.union.svc.cluster.local:81
+      insecure: true
+    artifactsConfig:
+      app:
+        adminClient:
+          hackFlagUntilCellIsolation: true
+        artifactDatabaseConfig:
+          connMaxLifeTime: 1m
+          maxIdleConnections: 20
+          maxOpenConnections: 30
+          postgres:
+            dbname: ''
+            host: ''
+            options: sslmode=disable
+            passwordPath: /etc/db/pass.txt
+            port: 5432
+            readReplicaHost: ''
+            username: ''
+        artifactServerConfig:
+          httpPort: 8089
+          port: 8080
+          respectUserOrgsForServerless: true
+        artifactTriggerConfig:
+          executionMaxRetryCount: 3
+          executionSchedulerQuerySize: 20
+          executionSchedulers: 1
+          executionSchedulersWait: 10
+          triggerProcessorQuerySize: 100
+          triggerProcessors: 1
+          triggerProcessorsWait: 10
+        enableArtifactsV1: false
+    authorizer:
+      authorizerClient:
+        forwardHeaders:
+        - authorization
+        - flyte-authorization
+        - x-user-token
+        grpcConfig:
+          host: dns:///authorizer.union.svc.cluster.local:80
+          insecure: true
+      type: Authorizer
+      useExternalIdentity: 'false'
+    cache:
+      identity:
+        enabled: false
+    connection:
+      environment: staging
+      region: us-east-2
+      rootTenantURLPattern: dns:///fake-host.domain
+    db:
+      connectionPool:
+        maxConnectionLifetime: 1m
+        maxIdleConnections: 20
+        maxOpenConnections: 20
+      dbname: ''
+      debug: 'false'
+      host: ''
+      options: sslmode=disable
+      passwordPath: /etc/db/pass.txt
+      port: 5432
+      username: ''
+    logger:
+      formatter:
+        type: json
+      level: 6
+      show-source: true
+    otel:
+      type: noop
+    sharedService:
+      metrics:
+        scope: 'artifacts:'
+      security:
+        singleTenantOrgID: 'test-org'
+      selfServeConfig:
+        legacyHosts:
+        - 'test-org'
+    union:
+      auth:
+        authorizationMetadataKey: flyte-authorization
+        clientId: 'test-internal-client-id'
+        clientSecretLocation: /etc/secrets/union/client_secret
+        enable: true
+        scopes:
+        - 'all'
+        tokenUrl: 'https://test.example.com/oauth2/v1/token'
+        type: ClientSecret
+      connection:
+        insecure: false
+        insecureSkipVerify: true
+        trustedIdentityClaims:
+          enabled: true
+          externalIdentityClaim: ""
+          externalIdentityTypeClaim: app
+      internalConnectionConfig:
+        enabled: true
+        urlPattern: _SERVICE_.union.svc.cluster.local:80
 ---
 # Source: controlplane/templates/configmap.yaml
 ---
@@ -9984,7 +10109,41 @@ spec:
 
 ---
 # Source: controlplane/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifacts
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    helm.sh/chart: controlplane-2026.8.5
+    app.kubernetes.io/name: artifacts
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - name: grpc
+      port: 80
+      protocol: TCP
+      targetPort: grpc
+    - name: connect
+      port:  83
+      protocol: TCP
+      targetPort: connect
+    - name: http
+      port: 81
+      protocol: TCP
+      targetPort: http
+    - name: debug
+      port: 82
+      protocol: TCP
+      targetPort: debug
+  selector:
+    app.kubernetes.io/name: artifacts
+    app.kubernetes.io/instance: release-name
 ---
+# Source: controlplane/templates/service.yaml
 apiVersion: v1
 kind: Service
 metadata:
@@ -10855,7 +11014,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -11046,7 +11205,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -11237,7 +11396,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -11428,7 +11587,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -11619,7 +11778,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -11810,7 +11969,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -12001,7 +12160,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -12192,7 +12351,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -12383,7 +12542,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -12574,7 +12733,7 @@ spec:
   template:
     metadata:
       annotations:
-        checksum/config: ffc0200049ba65f4995a6a0df5e37781dc3678002cf1287bfc1fe8935e8b95f7
+        checksum/config: fc29b5918163b01d4d7bff3a2cae60adb0ae2ec6a36f0694e07bcf63dcee9018
         kubectl.kubernetes.io/default-container: actions
         prometheus.io/path: /metrics
         prometheus.io/port: "10254"
@@ -13055,6 +13214,8 @@ spec:
         env:
           - name: UNION_ORG_OVERRIDE
             value: test-org
+          - name: SELF_HOSTED_FEATURE_FLAGS
+            value: '{"artifacts-enabled":true}'
         resources:
           limits:
             cpu: 500m
@@ -13082,7 +13243,141 @@ spec:
 
 ---
 # Source: controlplane/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: artifacts
+  labels:
+    helm.sh/chart: controlplane-2026.8.5
+    app.kubernetes.io/name: artifacts
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: artifacts
+      app.kubernetes.io/instance: release-name
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: artifacts
+        linkerd.io/inject: disabled
+        prometheus.io/path: /metrics
+        prometheus.io/port: "10254"
+      labels:
+        app.kubernetes.io/name: artifacts
+        app.kubernetes.io/instance: release-name
+    spec:
+      imagePullSecrets:
+        - name: union-registry-secret
+      serviceAccountName: artifacts
+      volumes:
+      - name: secrets
+        secret:
+          secretName: 
+      - name: db-pass
+        secret:
+          secretName: 
+      - name: config
+        configMap:
+          name: artifacts
+      initContainers:
+        - name: artifacts-migrate
+          image: registry.unionai.cloud/controlplane/services:2026.8.5
+          imagePullPolicy: IfNotPresent
+          args:
+          - artifacts
+          - migrate
+          - --config
+          - /etc/config/*.yaml
+          volumeMounts:
+          - name: db-pass
+            mountPath: /etc/db
+          - name: secrets
+            mountPath: /etc/secrets/union
+          - name: config
+            mountPath: /etc/config/
+      containers:
+        - name: artifacts
+          image: registry.unionai.cloud/controlplane/services:2026.8.5
+          imagePullPolicy: IfNotPresent
+          args:
+            - artifacts
+            - serve
+            - --config
+            - /etc/config/*.yaml
+          ports:
+            - name: grpc
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: db-pass
+              mountPath: /etc/db
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+          resources:
+              limits:
+                cpu: 500m
+                memory: 512Mi
+              requests:
+                cpu: 250m
+                memory: 250Mi
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      nodeSelector:
+        union.ai/node-role: services
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - preference:
+              matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values:
+                - "true"
+            weight: 100
+      tolerations:
+        - effect: NoSchedule
+          key: cloud.google.com/gke-spot
+          operator: Equal
+          value: "true"
 ---
+# Source: controlplane/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -14332,7 +14627,32 @@ spec:
 
 ---
 # Source: controlplane/templates/hpa.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: artifacts
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: artifacts
+  minReplicas: 1
+  maxReplicas: 1
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 80
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
 ---
+# Source: controlplane/templates/hpa.yaml
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -15244,6 +15564,20 @@ spec:
                 name: usage
                 port:
                   name: http
+          - path: /artifacts
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
+                port:
+                  name: http
+          - path: /artifacts/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
+                port:
+                  name: http
 ---
 # Source: controlplane/templates/flyte-core-app.yaml
 apiVersion: networking.k8s.io/v1
@@ -15942,6 +16276,34 @@ spec:
             backend:
               service:
                 name: dataproxy
+                port:
+                  name: grpc
+          - path: /flyteidl2.artifact.ArtifactService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
+                port:
+                  name: grpc
+          - path: /flyteidl2.artifact.ArtifactService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
+                port:
+                  name: grpc
+          - path: /flyteidl.artifact.ArtifactRegistry
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
+                port:
+                  name: grpc
+          - path: /flyteidl.artifact.ArtifactRegistry/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: artifacts
                 port:
                   name: grpc
           - path: /cloudidl.app.AppService/*
