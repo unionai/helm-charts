@@ -12,7 +12,6 @@ global:
   DB_USER: ""
   DB_DEBUG: false           # Enable GORM SQL debug logging (logs every query)
   BUCKET_NAME: ""           # Object storage bucket for metadata
-  ARTIFACTS_BUCKET_NAME: ""
   KUBERNETES_SECRET_NAME: "" # K8s secret with DB password under key "pass.txt"
 
   # --- Leasor: attached dataplane cluster identifier (DEPRECATED, static-only) ---
@@ -563,9 +562,9 @@ configMap:
 services:
   artifacts:
 
-    # Artifacts service migrations conflict with Executions services. In a subsequent PR we will force database
-    # migrations to create separate databases.
-    disabled: true
+    # The v2 artifact service is a DB-backed metadata layer (no object store); it
+    # shares the control-plane database. Enabled by default; set false to skip it.
+    enabled: true
 
     fullnameOverride: "artifacts"
     initContainers:
@@ -598,17 +597,16 @@ services:
           maxConnectionLifetime: 1m
       artifactsConfig:
         app:
+          # enableArtifactsV1 is intentionally NOT set here: it is force-set to
+          # false in the unionai.configMap helper (templates/_helpers.tpl) so no
+          # overlay can re-enable the deprecated v1 service, whose generic table
+          # names would collide with other services on the shared control-plane DB.
           adminClient:
             hackFlagUntilCellIsolation: true
-          artifactBlobStoreConfig:
-            container: '{{ .Values.global.ARTIFACTS_BUCKET_NAME }}'
-            # Storage backend config — cloud-specific, set in overlay.
-            # AWS: stow/s3 with auth_type: iam
-            # GCP: stow/google with json_key
-            stow:
-              config: {}
-              kind: ""
-            type: stow
+          # No artifactBlobStoreConfig: the v2 artifact service is a DB-backed
+          # metadata layer (cards are URI refs; blobs stay at the producing
+          # task's data-bucket output). The blob store is v1-only, and v1 is
+          # disabled, so the service needs no object-store bucket or creds.
           artifactDatabaseConfig:
             connMaxLifeTime: 1m
             maxIdleConnections: 20
@@ -1694,6 +1692,13 @@ console:
   # override of console.env can't drop it. Entries here are appended after it.
   env: []
 
+  # Self-hosted feature-flag overrides: a map of gate -> bool, rendered into the
+  # SELF_HOSTED_FEATURE_FLAGS env var (JSON) that the console reads at runtime.
+  # Wins over the console's built-in self-hosted defaults, so an operator can
+  # turn a surface on/off without rebuilding the image. Only applies when the
+  # console runs self-hosted (IS_SELF_HOSTED). Example: {artifacts-enabled: true}
+  featureFlags: {}
+
   # Additional environment variables from ConfigMap
   envFrom: []
 
@@ -2298,9 +2303,6 @@ dataproxy:
   prometheus:
     enabled: false
 
-artifacts:
-  enabled: false
-
 objectstore:
   controlPlane:
     enabled: false
@@ -2402,13 +2404,19 @@ scylla:
       storage:
         capacity: 100Gi
         storageClassName: "scylladb"  # Reference the storage class created above
+      # Guaranteed QoS: requests == limits. scylla-operator sizes the reactor
+      # shard count (--cpu-count) from limits.cpu, so requests below the limit
+      # leave shards without guaranteed cores — under node contention the reactor
+      # stalls, the /healthz liveness probe times out, and the pod is restarted.
+      # Matching requests to limits gives each shard a guaranteed core and avoids
+      # the restart storm.
       resources:
         limits:
           cpu: 2
           memory: 4Gi
         requests:
-          cpu: 250m
-          memory: 2Gi
+          cpu: 2
+          memory: 4Gi
       # Explicitly disable placement constraints (operator adds defaults otherwise)
       # For production with dedicated nodes, configure nodeAffinity and tolerations here
       placement:
