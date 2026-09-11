@@ -1,9 +1,12 @@
 # controlplane — Release Notes
 
-## Unreleased
+## 2026.9.0
 
-> **Release pending** — not yet cut to a version. At the next release, rename this
-> heading to `## <version>` and bump `Chart.yaml`.
+`version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
+`2026.9.1`, picking up the new control-plane images plus the chart changes below. The minor bump tracks the
+data-plane chart's switch to the vendored Knative gateway (see
+`charts/dataplane/RELEASE.md`); the control-plane side of that work is the
+app-URL / authorization wiring below.
 
 - Self-hosted app serving: authorize app subdomains and compose public app URLs via
   `publicURLPattern`, wired into the protected gRPC-route and ingress templates

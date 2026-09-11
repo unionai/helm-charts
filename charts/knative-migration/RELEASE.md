@@ -2,6 +2,15 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.9.0
+
+Lockstep `version` bump with the `controlplane` / `dataplane` charts
+(`2026.8.5` → `2026.9.0`); `appVersion` stays at the migration tool's own
+`0.1.0`. No migration-tool or template changes. This is the release in which
+the data-plane chart makes the vendored Knative gateway the default, so this
+Job is the one-shot migration path off the `knative-operator` — see
+`charts/dataplane/RELEASE.md` and this chart's README.
+
 ## 2026.8.5
 
 Lockstep `version` bump with the `controlplane` / `dataplane` charts
