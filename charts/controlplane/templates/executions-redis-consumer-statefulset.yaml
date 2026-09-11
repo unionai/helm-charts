@@ -1,0 +1,123 @@
+{{- if (index .Values "controlplane" | default dict).enabled }}
+{{- $executionsConfig := index .Values.services "executions" | default dict }}
+{{- $consumerConfig := $executionsConfig.redisConsumer | default dict }}
+{{- if and $executionsConfig $consumerConfig.enabled (not $executionsConfig.disabled) }}
+{{- $executionsService := dict "config" $executionsConfig "key" "executions" "name" "executions" "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+{{- $consumerService := dict "config" $consumerConfig "key" "redis-consumer" "name" "redis-consumer" "Release" $.Release "Values" $.Values "Chart" $.Chart }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "unionai.fullname" $consumerService }}
+  labels:
+    {{- include "unionai.labels" $consumerService | nindent 4 }}
+spec:
+  replicas: {{ include "unionai.replicaCount" $consumerService | trim }}
+  serviceName: {{ include "unionai.fullname" $consumerService }}
+  selector:
+    matchLabels:
+      {{- include "unionai.selectorLabels" $consumerService | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        kubectl.kubernetes.io/default-container: {{ include "unionai.name" $consumerService }}
+        {{- $podAnnotations := include "unionai.podAnnotations" $consumerService | fromYaml }}
+        {{- with $podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "unionai.selectorLabels" $consumerService | nindent 8 }}
+    spec:
+      {{- with (include "unionai.imagePullSecrets" $consumerService | fromYamlArray) }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "unionai.serviceAccountName" $executionsService }}
+      {{- $podSecurityContext := include "unionai.podSecurityContext" $consumerService }}
+      {{- if $podSecurityContext }}
+      securityContext:
+        {{- $podSecurityContext | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $consumerConfig.terminationGracePeriodSeconds | default 60 }}
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ include "unionai.secretName" $executionsService }}
+        - name: config
+          configMap:
+            name: {{ include "unionai.fullname" $executionsService }}
+      containers:
+        - name: {{ include "unionai.name" $consumerService }}
+          {{- $sec := include "unionai.securityContext" $consumerService }}
+          {{- if $sec }}
+          securityContext:
+            {{- $sec | fromYaml | toYaml | nindent 12 }}
+          {{- end }}
+          image: {{ include "unionai.image" $consumerService | trim }}
+          imagePullPolicy: {{ include "unionai.imagePullPolicy" $consumerService | trim }}
+          args:
+            {{- toYaml $consumerConfig.args | nindent 12 }}
+          ports:
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          volumeMounts:
+            - name: secrets
+              mountPath: /etc/secrets/union
+            - name: config
+              mountPath: /etc/config/
+          env:
+            {{- $env := include "unionai.env" $consumerService }}
+            {{- if $env }}
+            {{- $env | nindent 12 }}
+            {{- end }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  apiVersion: v1
+                  fieldPath: metadata.name
+            - name: NUM_CONSUMERS
+              value: {{ include "unionai.replicaCount" $consumerService | trim | quote }}
+          {{- $res := include "unionai.resources" $consumerService }}
+          {{- if $res }}
+          resources:
+            {{- $res | fromYaml | toYaml | nindent 12 }}
+          {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: debug
+            initialDelaySeconds: 3
+            periodSeconds: 3
+      {{- $node := include "unionai.nodeSelector" $consumerService }}
+      {{- if $node }}
+      nodeSelector:
+        {{- $node | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+      {{- $aff := include "unionai.affinity" $consumerService }}
+      {{- if $aff }}
+      affinity:
+        {{- $aff | fromYaml | toYaml | nindent 8 }}
+      {{- else }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "unionai.selectorLabels" $consumerService | nindent 20 }}
+                topologyKey: "kubernetes.io/hostname"
+      {{- end }}
+      {{- $tolerations := include "unionai.tolerations" $consumerService }}
+      {{- if $tolerations }}
+      tolerations:
+        {{- $tolerations | fromYaml | toYaml | nindent 8 }}
+      {{- end }}
+{{- end }}
+{{- end }}
