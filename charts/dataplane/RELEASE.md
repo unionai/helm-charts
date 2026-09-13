@@ -25,6 +25,26 @@ gate node readiness on it via `nodeobserver.config.criticalDaemonSets` — the
 `/readyz` probe reports whether kubelet has actually registered the driver, not
 merely that the process is up.
 
+### Remove the FUSE device-plugin DaemonSet (**breaking if you enabled it**)
+
+`fuseDevicePlugin` and its `examples/values-fuse-device-plugin.yaml` overlay are
+gone. It advertised the host `/dev/fuse` as the extended resource
+`smarter-devices/fuse`, so an unprivileged pod requesting it could perform an
+in-pod FUSE mount with `CAP_SYS_ADMIN`. The mount broker above supersedes it for
+Union Volumes and needs no capability in the task pod at all.
+
+**If you set `fuseDevicePlugin.enabled: true`,** this upgrade deletes that
+DaemonSet and the node stops advertising `smarter-devices/fuse`. Any pod whose
+template requests that resource becomes unschedulable — Helm will not warn you,
+because the removed key is simply ignored. Check for it before upgrading:
+
+```
+kubectl get pods -A -o json | grep -l 'smarter-devices/fuse'
+```
+
+Union Volumes do not use that resource, so if the plugin was enabled only for
+Volumes there is nothing to migrate — enable `uvolMountBroker` instead.
+
 Operator notes:
 
 - `uvolMountBroker.nodeSelector` defaults to empty (all nodes) deliberately.
