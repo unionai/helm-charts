@@ -1,5 +1,40 @@
 # dataplane — Release Notes
 
+## 2026.9.1
+
+Chart-only bump: adds the opt-in uvol mount broker. No `appVersion` change.
+
+### Ship the uvol mount broker (Union Volumes on self-managed)
+
+New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
+(`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
+on clusters that want Union Volumes. This is what makes Volumes mountable at
+all on a self-managed data plane; without it a task pod requesting one fails
+`NodePublish` with `driver volumes.union.ai not found`.
+
+The broker is a CSI node driver that premounts a FUSE channel per pod and hands
+the file descriptor to the in-pod client over a unix socket, so **task pods mount
+Volumes with no privileges**: no `CAP_SYS_ADMIN`, no `/dev/fuse`, no `hostPath`.
+Privilege stays confined to this DaemonSet.
+
+It runs as its own DaemonSet rather than a container in `union-nodeobserver`,
+and with `automountServiceAccountToken: false`: it never calls the Kubernetes
+API, so it holds no credential a privileged container could be made to misuse.
+That also lets it ship where the observer is not deployed, and lets the observer
+gate node readiness on it via `nodeobserver.config.criticalDaemonSets` — the
+`/readyz` probe reports whether kubelet has actually registered the driver, not
+merely that the process is up.
+
+Operator notes:
+
+- `uvolMountBroker.nodeSelector` defaults to empty (all nodes) deliberately.
+  Task pods carry no matching selector of their own, so any node a volume-using
+  task can land on and the broker cannot must not exist.
+- `uvolMountBroker.kubeletDir` must match the distribution's kubelet root
+  (k3s and some managed AMIs relocate it) or CSI registration fails.
+- The cpu request is a scheduling-latency knob, not a utilization estimate: the
+  broker sits on the task `open()` path. There is deliberately no cpu limit.
+
 ## 2026.9.0
 
 `version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →

@@ -134,6 +134,13 @@ metadata:
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/component: activator
 ---
+# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nodeobserver-system
+  namespace: union
+---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
 kind: Secret
@@ -2316,7 +2323,7 @@ data:
         authorizationMetadataKey: flyte-authorization
         clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
+        enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
@@ -5222,6 +5229,19 @@ data:
     
 
 ---
+# Source: dataplane/templates/nodeobserver/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-nodeobserver
+  namespace: union
+data:
+  config.yaml: | 
+    criticalDaemonSets:
+    - name: union-uvol-broker
+      namespace: 'union'
+
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -5253,7 +5273,7 @@ data:
         authorizationMetadataKey: flyte-authorization
         clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
-        enable: false
+        enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     sharedService:
@@ -5269,7 +5289,7 @@ data:
           insecureSkipVerify: false
       type: Authorizer
     operator:
-      enableTunnelService: false
+      enableTunnelService: true
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: true
@@ -5297,7 +5317,7 @@ data:
       collectUsages:
         enabled: false
       billing:
-        model: 'None'
+        model: 'ResourceUsage'
       dependenciesHeartbeat:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
@@ -6598,6 +6618,29 @@ data:
   rules: |
     {}
 ---
+# Source: dataplane/templates/uvol-broker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-uvol-broker
+  namespace: union
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  broker.yaml: |
+    uvolBroker:
+      driverName: volumes.union.ai
+      kubeletDir: /var/lib/kubelet
+      socketDir: /run/uvol
+      stateDir: /var/lib/uvol/state
+      metricsScope: "uvol_broker"
+      profilerPort: 10254
+      autoAbortAfter: 5m
+
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -7122,6 +7165,19 @@ rules:
   - delete
   - update
 ---
+# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: union-nodeobserver
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "update"]
+---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -7422,6 +7478,21 @@ subjects:
 - kind: ServiceAccount
   name: union-system
   namespace: union
+
+---
+# Source: dataplane/templates/nodeobserver/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: union-nodeobserver
+subjects:
+- kind: ServiceAccount
+  name: nodeobserver-system
+  namespace: union
+roleRef:
+  kind: Role
+  apiGroup: rbac.authorization.k8s.io
+  name: union-nodeobserver
 
 ---
 # Source: dataplane/templates/operator/serviceaccount-proxy-secret.yaml
@@ -8122,6 +8193,238 @@ spec:
           name: etcmachineid
       tolerations:
         - operator: Exists
+
+---
+# Source: dataplane/templates/nodeobserver/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-nodeobserver
+  labels:
+    app.kubernetes.io/name: nodeobserver
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nodeobserver
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "0f784e2cf75ee05cdc8fbd29a706a2c4316e5871b6062e2f86bb07060a45128"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        
+        app.kubernetes.io/name: nodeobserver
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+    spec:
+      priorityClassName: 
+      serviceAccountName: nodeobserver-system
+      securityContext:
+        {}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-nodeobserver
+      containers:
+        - name: node-observer
+          securityContext:
+            capabilities:
+              add:
+              - SYS_ADMIN
+            privileged: true
+            runAsNonRoot: false
+            runAsUser: 0
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.1"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: "1"
+              memory: 500Mi
+            requests:
+              cpu: 100m
+              memory: 100Mi
+          volumeMounts:
+            - mountPath: /etc/union
+              name: config-volume
+          env:
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+          - name: POD_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: GOMEMLIMIT
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.memory
+          - name: GOMAXPROCS
+            valueFrom:
+              resourceFieldRef:
+                divisor: 1
+                resource: limits.cpu
+          - name: CLUSTER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: operator-cluster-name
+                key: cluster_name
+          - name: DEPLOYMENT_NAME
+            value: operator
+          - name: PROXY_SERVICE_URL
+            value: http://union-operator-proxy:8080
+          - name: PROMETHEUS_SERVICE_URL
+            value: http://union-operator-prometheus:80
+          - name: KNATIVE_PROXY_SERVICE_URL
+            value: http://kourier-internal
+          - name: LOG_LEVEL
+            value: "4"
+          - name: KUBE_NODE_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: spec.nodeName
+          args:
+            - nodeobserver
+            - --config
+            - /etc/union/config.yaml
+      
+      
+
+---
+# Source: dataplane/templates/uvol-broker/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-uvol-broker
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: uvol-broker
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      annotations:
+        configChecksum: "d04f1f46671b6d52fdb2e83166f586d675682eb1775962622c4b273d89d7952"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+        prometheus.io/path: /metrics
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        app.kubernetes.io/name: uvol-broker
+        app.kubernetes.io/instance: release-name
+    spec:
+      # No ServiceAccount and no token: the broker never calls the Kubernetes
+      # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
+      # credential cannot be turned into a confused deputy for the cluster.
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: union-uvol-broker
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: /run/uvol
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: /var/lib/uvol/state
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+      containers:
+        # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
+        # pods don't have to be — they run restricted-PSS and collect a
+        # connected fd over a per-volume socket. Holds no object storage
+        # credentials: the data plane runs in-pod under pod IAM.
+        # In-place upgrade safe: kernel mounts and pod-held fds survive
+        # restarts; the state journal + client fd re-registration resume the rest.
+        - name: uvol-mount-broker
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.1"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - nodeobserver
+            - broker
+            - --config
+            - /etc/union/broker.yaml
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          # Ready means kubelet has acknowledged the CSI registration — not
+          # merely that the process is up. An unregistered driver fails every
+          # NodePublish, so this is the signal a node-readiness gate needs.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 500m
+              memory: 32Mi
+          # Deliberately NOT global.podEnvVars: that block injects control-plane
+          # service URLs and a cluster-name secretKeyRef. The broker never talks
+          # to the control plane or the Kubernetes API, and giving a privileged
+          # container credentials it cannot use is exactly the confused-deputy
+          # surface the no-ServiceAccount design above exists to avoid. It also
+          # would make this DaemonSet fail to start on a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              # Broker premounts FUSE inside kubelet-owned publish targets;
+              # those mounts must propagate back to the host mount ns (and
+              # from there into task pods via kubelet's container rbind).
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: /run/uvol
+            - name: uvol-state
+              mountPath: /var/lib/uvol/state
+            - name: dev-fuse
+              mountPath: /dev/fuse
 
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
@@ -9388,7 +9691,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "3e879c9e72fdaaf30a9c7513e931e3f16b83498cd29f892107b7e8a5b8a89fd"
+        configChecksum: "4ae81df5c150cba60bc5eebd4be035bf4e1a3251849b8aea81a07188921abf8"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9405,6 +9708,12 @@ spec:
         - name: config-volume
           configMap:
             name: leaseworker
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+        - name: auth
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: leaseworker
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.1"
@@ -9460,6 +9769,10 @@ spec:
           volumeMounts:
             - name: config-volume
               mountPath: /etc/config
+            - name: secret-volume
+              mountPath: /etc/union/secret
+            - name: auth
+              mountPath: /etc/secrets/
       
       
 
@@ -9484,7 +9797,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ea91f6dc96b13342e3abd7d8921c51c35554555d1d613ef4cfca1dcddbc3cbd"
+        configChecksum: "5a4924983c604fadad2bf71785ac9b279fb7b0b0640459a2b4de3d2e27e98f1"
         
       labels:
         
@@ -9499,6 +9812,9 @@ spec:
             sources:
             - configMap:
                 name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       serviceAccountName: union-system
       securityContext:
         {}
@@ -9519,6 +9835,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           args:
             - operator
             - proxy
@@ -9569,6 +9887,32 @@ spec:
             value: http://union-operator-prometheus:80
           - name: KNATIVE_PROXY_SERVICE_URL
             value: http://kourier-internal
+        - name: "tunnel"
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.1"
+          imagePullPolicy: IfNotPresent
+          args:
+            - cloudflared
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - $(TUNNEL_TOKEN)
+          env:
+            - name: TUNNEL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: union-secret-auth
+                  key: tunnel_token
+                  optional: true
+          resources:
+            limits:
+              cpu: "3"
+              memory: 3Gi
+            requests:
+              cpu: 500m
+              memory: 500Mi
       
       
 
@@ -9591,7 +9935,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "ea91f6dc96b13342e3abd7d8921c51c35554555d1d613ef4cfca1dcddbc3cbd"
+        configChecksum: "5a4924983c604fadad2bf71785ac9b279fb7b0b0640459a2b4de3d2e27e98f1"
         
       labels:
         
@@ -9607,6 +9951,9 @@ spec:
         - name: config-volume
           configMap:
             name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
       containers:
         - name: operator
           securityContext:
@@ -9624,6 +9971,8 @@ spec:
           volumeMounts:
             - mountPath: /etc/union/config
               name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
           env:
             - name: HELM_CHART_VERSION
               value: "2026.9.1"
@@ -9712,7 +10061,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "3e879c9e72fdaaf30a9c7513e931e3f16b83498cd29f892107b7e8a5b8a89fd"
+        configChecksum: "4ae81df5c150cba60bc5eebd4be035bf4e1a3251849b8aea81a07188921abf8"
         
     spec:
       securityContext:
@@ -9950,130 +10299,6 @@ spec:
           averageUtilization: 70
           type: Utilization
       type: Resource
----
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane-serving
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  ingressClassName: "nginx"
-  rules:
-  - http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: kourier-internal
-            port:
-              number: 80
-    host: "*.apps.test-controlplane-host"
----
-# Source: dataplane/templates/common/ingress.yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: release-name-dataplane
-  namespace: union
-  labels:
-    app.kubernetes.io/name: dataplane
-    app.kubernetes.io/instance: release-name
-spec:
-  ingressClassName: "nginx"
-  rules:
-    - http:
-        paths:
-          - path: /api/v1/dataproxy/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /prometheus/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-prometheus
-                port:
-                  number: 80
-          - path: /clickhouse/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /dataplane/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /resourcequota/v1/project_quota
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /spark-history-server/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /secrets/api/v1
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /data_plane_object_store/api/v1/
-            pathType: Prefix
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.actor.ActorEnvironmentService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.logs.dataplane.LogsService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.objectstore.v1.ObjectStoreService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-          - path: /cloudidl.imagebuilder.dataplane.ImageService/
-            pathType: ImplementationSpecific
-            backend:
-              service:
-                name: union-operator-proxy
-                port:
-                  number: 8080
-      host: "ingress-nginx-internal.ingress-nginx.svc.cluster.local"
-
 ---
 # Source: dataplane/templates/gateway/webhookconfigurations.yaml
 # Copyright 2020 The Knative Authors
@@ -10493,6 +10718,29 @@ webhooks:
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 ---
+
+---
+# Source: dataplane/templates/uvol-broker/csidriver.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: volumes.union.ai
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Node-local ephemeral inline volumes only: the driver premounts a FUSE
+  # channel per pod and hands the fd to the pod's unprivileged client. No
+  # controller service, no attach/provision, no per-volume secrets — the
+  # data plane authenticates in-pod with the pod's own identity.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None
 
 ---
 # Source: dataplane/templates/gateway/misc.yaml

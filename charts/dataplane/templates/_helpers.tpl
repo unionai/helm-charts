@@ -368,6 +368,17 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "uvolBroker.selectorLabels" -}}
+app.kubernetes.io/name: uvol-broker
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "uvolBroker.labels" -}}
+{{- include "uvolBroker.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}
