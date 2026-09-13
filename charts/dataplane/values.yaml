@@ -1577,6 +1577,69 @@ fuseDevicePlugin:
       cpu: 10m
       memory: 15Mi
 
+uvolMountBroker:
+  # -- Enable the uvol mount broker DaemonSet: a CSI node driver that premounts
+  # FUSE channels and hands the fds to unprivileged in-pod clients, so task pods
+  # mount versioned Volumes with no CAP_SYS_ADMIN, no /dev/fuse and no hostPath.
+  # Opt-in: disabled by default; enable per cluster where Volumes are wanted.
+  enabled: false
+  # -- CSI driver name. Task pods reference this exact string, so changing it
+  # requires the same change on the client side — leave it alone unless you know
+  # you need to.
+  driverName: volumes.union.ai
+  # -- kubelet's root directory, bind-mounted so the broker can premount inside
+  # kubelet-owned publish targets. Distributions that relocate it (k3s, some
+  # managed AMIs) must set this to match, or registration fails.
+  kubeletDir: /var/lib/kubelet
+  # -- Host directory for the per-volume unix sockets task pods connect to.
+  socketDir: /run/uvol
+  # -- Host directory for the broker's state journal, which is what lets kernel
+  # mounts and pod-held fds survive a broker restart.
+  stateDir: /var/lib/uvol/state
+  # -- Top-level metrics scope for every series the broker emits (uvol_broker:*
+  # — verb failures, journal write failures, CSI outcomes, active channels).
+  metricsScope: "uvol_broker"
+  # -- flytestdlib profutils port: /metrics, /healthcheck, pprof, and the
+  # /readyz endpoint the readinessProbe uses.
+  profilerPort: 10254
+  # -- Extra keys merged into the broker config block (for example
+  # autoAbortAfter). May include template values.
+  config: {}
+  # -- Override the priorityClass. Defaults to system-node-critical: task pods
+  # cannot mount a Volume on a node whose broker was evicted.
+  priorityClassName: system-node-critical
+  # -- Rolling update budget. The broker is on the task open() path, so a large
+  # value trades mount availability for upgrade speed.
+  maxUnavailable: 25%
+  # -- Must cover every node a volume-using task pod can land on: task pods
+  # carry no matching nodeSelector of their own, so any node without the broker
+  # fails NodePublish with "driver volumes.union.ai not found". Empty = all
+  # nodes, which is the safe default.
+  nodeSelector: { }
+  # -- Tolerate everything, for the same reason: a tainted node that still runs
+  # task pods needs the broker.
+  tolerations:
+    - operator: Exists
+  affinity: { }
+  # -- Additional pod annotations.
+  podAnnotations: { }
+  # -- Additional pod environment variables.
+  podEnv: [ ]
+  # -- The broker sits on task pods' open() hot path (passthrough backing
+  # registration RPCs), so the cpu request is a scheduling-latency knob rather
+  # than a utilization estimate: starve it and every small-file open pays extra
+  # milliseconds. Deliberately no cpu limit — CFS throttling would inject worse
+  # tail latency than fair-share contention. Measured at 60us of broker CPU per
+  # open with 8 volumes active, so 500m carries roughly 8,300 opens/s. Memory is
+  # O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node cap); the
+  # limit is a leak backstop, not an operating bound.
+  resources:
+    requests:
+      cpu: 500m
+      memory: 32Mi
+    limits:
+      memory: 256Mi
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
