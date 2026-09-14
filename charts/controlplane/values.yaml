@@ -850,7 +850,7 @@ services:
                 histogram_quantile(0.5, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -859,7 +859,7 @@ services:
                 histogram_quantile(0.90, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -868,7 +868,7 @@ services:
                 histogram_quantile(0.95, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -914,6 +914,59 @@ services:
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
                 sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              # GPU health metrics. Reported per GPU device via the `gpu` label from dcgm-exporter.
+              # DCGM_FI_PROF_* fields and the violation counters must be enabled in the dcgm-exporter
+              # counter set; where they are not, these queries simply return no series.
+              # Counters are turned into rates over the same 5m window used by the CPU queries, except
+              # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL which uses increase() so a counter reset on device
+              # reinitialization does not read as a drop, and DCGM_FI_DEV_XID_ERRORS which is a gauge
+              # carrying the last Xid code and is therefore never rated or scaled.
+              EXECUTION_METRIC_GPU_TEMPERATURE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_MEMORY_TEMPERATURE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEMORY_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_POWER_USAGE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_POWER_USAGE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_SM_CLOCK: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_SM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_MEMORY_CLOCK: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_TENSOR_ACTIVE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_DRAM_ACTIVE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_DRAM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_PCIE_TX_BYTES: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_TX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_PCIE_RX_BYTES: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_RX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_NVLINK_BANDWIDTH: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              # Xid is reduced with max rather than sum: the value is an error code, not a quantity.
+              EXECUTION_METRIC_GPU_XID_LAST_ERROR: |
+                max by (namespace, pod, gpu) (DCGM_FI_DEV_XID_ERRORS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_POWER_VIOLATION: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_THERMAL_VIOLATION: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_ECC_DBE_VOLATILE: |
+                sum by (namespace, pod, gpu) (increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_UNCORRECTABLE_REMAPPED_ROWS: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
@@ -1209,7 +1262,7 @@ services:
                 histogram_quantile(0.5, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -1218,7 +1271,7 @@ services:
                 histogram_quantile(0.90, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -1227,7 +1280,7 @@ services:
                 histogram_quantile(0.95, sum(rate((
                   envoy_cluster_upstream_rq_time_bucket{
                     job="serving-envoy",
-                    project=~"${{ "{{" }}.Project{{ "}}" }}",
+                    project=~"{{ "{{" }}.Project{{ "}}" }}",
                     domain=~"{{ "{{" }}.Domain{{ "}}" }}",
                     name=~"{{ "{{" }}.AppName{{ "}}" }}",
                     name!=""}
@@ -1273,6 +1326,59 @@ services:
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
                 sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              # GPU health metrics. Reported per GPU device via the `gpu` label from dcgm-exporter.
+              # DCGM_FI_PROF_* fields and the violation counters must be enabled in the dcgm-exporter
+              # counter set; where they are not, these queries simply return no series.
+              # Counters are turned into rates over the same 5m window used by the CPU queries, except
+              # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL which uses increase() so a counter reset on device
+              # reinitialization does not read as a drop, and DCGM_FI_DEV_XID_ERRORS which is a gauge
+              # carrying the last Xid code and is therefore never rated or scaled.
+              EXECUTION_METRIC_GPU_TEMPERATURE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_MEMORY_TEMPERATURE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEMORY_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_POWER_USAGE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_POWER_USAGE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_SM_CLOCK: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_SM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_MEMORY_CLOCK: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_TENSOR_ACTIVE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_DRAM_ACTIVE: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_DRAM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_PCIE_TX_BYTES: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_TX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_PCIE_RX_BYTES: |
+                sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_RX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_NVLINK_BANDWIDTH: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              # Xid is reduced with max rather than sum: the value is an error code, not a quantity.
+              EXECUTION_METRIC_GPU_XID_LAST_ERROR: |
+                max by (namespace, pod, gpu) (DCGM_FI_DEV_XID_ERRORS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_POWER_VIOLATION: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_THERMAL_VIOLATION: |
+                sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_ECC_DBE_VOLATILE: |
+                sum by (namespace, pod, gpu) (increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+                on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+              EXECUTION_METRIC_GPU_UNCORRECTABLE_REMAPPED_ROWS: |
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
                 on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
               EXECUTION_METRIC_LIMIT_CPU: |
                 sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
