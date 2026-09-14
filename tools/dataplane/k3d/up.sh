@@ -122,7 +122,7 @@ EOF
 }
 
 phase_storage() {
-  _need kubectl
+  _need kubectl curl aws
   echo ">> [storage] deploying RustFS + bucket '$RUSTFS_BUCKET'"
   kubectl create namespace "$RUSTFS_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl apply -n "$RUSTFS_NS" -f tools/dataplane/k3d/rustfs.yaml >/dev/null
@@ -130,19 +130,17 @@ phase_storage() {
   kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 >/dev/null 2>&1 &
   local pf=$!; trap 'kill '"$pf"' 2>/dev/null || true' RETURN
   for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 2; done
-  if ! command -v mc >/dev/null; then
-    _need curl
-    # dl.min.io 504s intermittently on shared runners — retry.
-    local n=0
-    until [ "$n" -ge 6 ]; do
-      curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$REPO_ROOT/.mc" && chmod +x "$REPO_ROOT/.mc" && break
-      n=$((n+1)); echo "mc download failed (attempt $n) — retrying in $((n*10))s" >&2; sleep $((n*10))
-    done
-    [ "$n" -ge 6 ] && { echo "mc download failed after $n attempts" >&2; return 1; }
-  fi
-  local MC; MC="$(command -v mc || echo "$REPO_ROOT/.mc")"
-  "$MC" alias set k3dstore http://localhost:9000 "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY" >/dev/null
-  "$MC" mb --ignore-existing "k3dstore/$RUSTFS_BUCKET" >/dev/null
+  rustfs_aws() {
+    AWS_ACCESS_KEY_ID="$RUSTFS_ACCESS_KEY" \
+    AWS_SECRET_ACCESS_KEY="$RUSTFS_SECRET_KEY" \
+    AWS_SESSION_TOKEN= \
+    AWS_SECURITY_TOKEN= \
+    AWS_DEFAULT_REGION=us-east-1 \
+    AWS_EC2_METADATA_DISABLED=true \
+      aws --endpoint-url http://localhost:9000 "$@"
+  }
+  rustfs_aws s3api head-bucket --bucket "$RUSTFS_BUCKET" >/dev/null 2>&1 \
+    || rustfs_aws s3api create-bucket --bucket "$RUSTFS_BUCKET" >/dev/null
   echo "bucket-ok"
 }
 
