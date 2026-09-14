@@ -132,11 +132,25 @@ phase_storage() {
   for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 2; done
   if ! command -v mc >/dev/null; then
     _need curl
-    # dl.min.io 504s intermittently on shared runners — retry.
+    # Pinned GitHub release asset. The old unversioned dl.min.io path
+    # (client/mc/release/linux-amd64/mc) now returns 410 Gone permanently --
+    # as does its .../archive/mc.RELEASE.* form -- so every k3d run failed at
+    # bucket creation after burning the full retry budget on a status that was
+    # never going to change. GitHub release assets carry the release tag in the
+    # filename, so there is no stable "latest" name to follow; pin and bump.
+    local MC_RELEASE="RELEASE.2025-08-13T08-35-41Z"
+    local MC_URL="https://github.com/minio/mc/releases/download/${MC_RELEASE}/mc.linux-amd64.${MC_RELEASE}"
+    # Retry 5xx/transport blips, but stop immediately on a 4xx: a permanently
+    # withdrawn artifact is not worth 3.5 minutes of backoff.
     local n=0
     until [ "$n" -ge 6 ]; do
-      curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$REPO_ROOT/.mc" && chmod +x "$REPO_ROOT/.mc" && break
-      n=$((n+1)); echo "mc download failed (attempt $n) — retrying in $((n*10))s" >&2; sleep $((n*10))
+      local code
+      code="$(curl -fsSL -w '%{http_code}' "$MC_URL" -o "$REPO_ROOT/.mc" 2>/dev/null)" \
+        && chmod +x "$REPO_ROOT/.mc" && break
+      case "$code" in
+        4??) echo "mc download failed: HTTP $code from $MC_URL (not retryable)" >&2; return 1 ;;
+      esac
+      n=$((n+1)); echo "mc download failed (attempt $n, HTTP ${code:-000}) — retrying in $((n*10))s" >&2; sleep $((n*10))
     done
     [ "$n" -ge 6 ] && { echo "mc download failed after $n attempts" >&2; return 1; }
   fi
