@@ -69,6 +69,7 @@ k3d-storage-test:
 
 .PHONY: billing-test
 billing-test: requirements
+	helm dependency update $(CHART_DIR)
 	uv run python tests/test-operator-billing.py
 
 .PHONY: kubeconform-test
