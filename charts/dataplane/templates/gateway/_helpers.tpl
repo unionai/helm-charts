@@ -63,7 +63,7 @@ Applied to all knative-serving resources.
 */}}
 {{- define "gateway.knativeLabels" -}}
 app.kubernetes.io/name: knative-serving
-app.kubernetes.io/version: "1.16.0"
+app.kubernetes.io/version: "1.23.0"
 {{- end }}
 
 {{/*
