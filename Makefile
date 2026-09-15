@@ -60,12 +60,16 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test
 	./tests/run.sh helm
 
 .PHONY: k3d-storage-test
 k3d-storage-test:
 	python3 tests/test-k3d-storage.py
+
+.PHONY: billing-test
+billing-test: requirements
+	uv run python tests/test-operator-billing.py
 
 .PHONY: kubeconform-test
 kubeconform-test:
