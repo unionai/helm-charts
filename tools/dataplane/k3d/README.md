@@ -12,9 +12,8 @@ and RustFS manifest (`tools/dataplane/k3d/rustfs.yaml`), so they can't drift.
 ## Prerequisites
 
 `k3d`, `kubectl`, `helm` (**3.17.x** — matches CI; other majors can hit helm's
-1 MB release-secret limit on this chart), `docker`, and optionally `mc`
-(minio-client, to create the RustFS bucket) and `awscli`+`jq` (for
-`--from-aws-secret`).
+1 MB release-secret limit on this chart), `docker`, `awscli` (to create the
+RustFS bucket), and optionally `jq` (for `--from-aws-secret`).
 
 ## Operator credentials
 
