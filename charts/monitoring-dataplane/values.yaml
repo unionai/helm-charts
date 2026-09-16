@@ -1,0 +1,282 @@
+# Values for the monitoring-dataplane chart.
+# Installs kube-prometheus-stack (alias: monitoring) and/or the standalone
+# Prometheus chart (alias: prometheus) into the dataplane namespace.
+#
+# Install this chart before enabling monitoring resources in the dataplane chart:
+#   helm install monitoring-dataplane charts/monitoring-dataplane -n <dataplane-ns>
+#   helm upgrade dataplane charts/dataplane --set monitoring.enabled=true ...
+#
+# Only one of monitoring (kube-prometheus-stack) or prometheus (standalone) should
+# be enabled at a time. Use kube-prometheus-stack for full observability stacks;
+# use standalone prometheus for lightweight or low-privilege deployments.
+
+# --- kube-prometheus-stack ---
+monitoring:
+  enabled: false
+
+  nameOverride: "monitoring"
+  fullnameOverride: "monitoring"
+
+  prometheusOperator:
+    enabled: true
+
+  # CRDs should be installed separately via the dataplane-crds chart
+  # (set crds.prometheusOperator: true) before enabling the monitoring stack.
+  crds:
+    enabled: false
+
+  alertmanager:
+    enabled: false
+
+  # Grafana provides the dashboard UI for viewing Union service metrics.
+  grafana:
+    enabled: true
+    fullNameOverride: "monitoring-grafana"
+    adminPassword: admin
+
+  coreDns:
+    enabled: true
+  defaultRules:
+    create: true
+  kubeApiServer:
+    enabled: true
+  kubeControllerManager:
+    enabled: true
+  kubeEtcd:
+    enabled: true
+  kubeProxy:
+    enabled: true
+  kubeScheduler:
+    enabled: true
+  nodeExporter:
+    enabled: true
+  kubelet:
+    enabled: true
+  kubeStateMetrics:
+    enabled: true
+
+  kube-state-metrics:
+    nameOverride: "monitoring-kube-state-metrics"
+    fullnameOverride: "monitoring-kube-state-metrics"
+    env: []
+
+  prometheus:
+    enabled: true
+    agentMode: false
+    service:
+      port: 80
+    prometheusSpec:
+      maximumStartupDurationSeconds: 600
+      retention: 7d
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelectorNilUsesHelmValues: false
+      podMonitorSelectorNilUsesHelmValues: false
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+
+# --- Standalone Prometheus (lightweight / low-privilege alternative) ---
+prometheus:
+  enabled: false
+
+  rbac:
+    create: false
+
+  server:
+    fullnameOverride: "union-operator-prometheus"
+    clusterRoleNameOverride: "union-operator-prometheus"
+    useExistingClusterRoleName: ""
+
+    service:
+      servicePort: 80
+
+    prefixURL: "/prometheus"
+    baseURL: "/prometheus/"
+
+    retention: "3d"
+
+    persistentVolume:
+      enabled: false
+
+    emptyDir:
+      sizeLimit: "10Gi"
+
+    strategy:
+      type: RollingUpdate
+      rollingUpdate:
+        maxSurge: 1
+        maxUnavailable: 0
+
+    startupProbe:
+      initialDelaySeconds: 120
+
+    resources:
+      limits:
+        cpu: "3"
+        memory: "3500Mi"
+      requests:
+        cpu: "1"
+        memory: "1Gi"
+
+    extraConfigmapMounts:
+      - name: recording-rules
+        mountPath: /etc/config/recording
+        configMap: union-recording-rules
+        readonly: true
+
+  extraScrapeConfigs: |
+    - job_name: 'kube-state-metrics'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: kube-state-metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+          action: keep
+        - source_labels: [__name__, phase]
+          separator: ";"
+          regex: "kube_pod_status_phase;(Succeeded|Failed)"
+          action: drop
+        - source_labels: [node]
+          target_label: nodename
+          regex: "(.*)"
+          action: replace
+        - source_labels: [label_node_group_name]
+          action: replace
+          regex: "(.+)"
+          target_label: label_node_pool_name
+    - job_name: 'opencost'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: opencost
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: http
+          action: keep
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+    - job_name: 'union-services'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_platform_union_ai_service_group]
+          regex: .+
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: debug
+          action: keep
+    - job_name: 'flytepropeller'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=flytepropeller
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "flyte:propeller:all:round:execution_info|flyte:propeller:all:node:fast_task:fast_task_execution_duration"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_name]
+          regex: flytepropeller
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    - job_name: 'serving-envoy'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            own_namespace: true
+          selectors:
+            - role: pod
+              label: app=3scale-kourier-gateway
+      metrics_path: /stats/prometheus
+      metric_relabel_configs:
+        - source_labels: [__name__]
+          regex: "envoy_cluster_upstream_rq_xx|envoy_cluster_upstream_rq_time_bucket"
+          action: keep
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_pod_container_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          action: replace
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_name]
+          action: replace
+          target_label: pod
+    - job_name: 'gpu-metrics'
+      kubernetes_sd_configs:
+        - role: pod
+          namespaces:
+            names:
+              - kube-system
+          selectors:
+            - role: pod
+              label: app.kubernetes.io/name=dcgm-exporter
+
+  alertmanager:
+    enabled: false
+
+  kube-state-metrics:
+    enabled: true
+    rbac:
+      create: false
+    releaseNamespace: true
+    metricRelabelings:
+      - sourceLabels: [ "__name__" ]
+        separator: ";"
+        regex: "kube_pod_container_resource_(limits|requests)|kube_pod_status_phase|kube_node_(labels|status_allocatable|status_condition|status_capacity)|kube_namespace_labels|kube_pod_container_status_(waiting|terminated|last_terminated).*_reason|kube_daemonset_status_number_unavailable|kube_deployment_status_replicas_unavailable|kube_resourcequota|kube_pod_info|kube_node_info|kube_pod_container_status_restarts_total"
+        action: keep
+      - sourceLabels: [ "__name__", "phase" ]
+        separator: ";"
+        regex: "kube_pod_status_phase;(Succeeded|Failed)"
+        action: drop
+      - sourceLabels: [ "node" ]
+        targetLabel: "nodename"
+        regex: "(.*)"
+        action: replace
+      - sourceLabels: [ "label_node_group_name" ]
+        action: replace
+        regex: "(.+)"
+        targetLabel: "label_node_pool_name"
+
+  prometheus-node-exporter:
+    enabled: false
+
+  prometheus-pushgateway:
+    enabled: false
