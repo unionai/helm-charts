@@ -1,5 +1,26 @@
 # controlplane — Release Notes
 
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+- Build-image task pod options: new `imageBuilder.bootstrap.taskPodAnnotations`
+  (default `{}`) and `imageBuilder.bootstrap.taskServiceAccountName` (default `""`,
+  i.e. the namespace default SA) are applied to the pods that remote image builds run
+  in — not to the bootstrap Job pod. Useful for service-mesh sidecar control or a
+  dedicated build identity. Defaults leave rendered pods unchanged
+  ([#586](https://github.com/unionai/helm-charts/pull/586)).
+- Fix empty Apps response-time charts: the P50/P90/P95 PromQL templates rendered
+  `project=~"${{.Project}}"` (stray `$`), which never matched a project. Fixed in both
+  the `dataproxy` and `usage` query blocks
+  ([#582](https://github.com/unionai/helm-charts/pull/582)).
+- GPU health metrics: 16 new `EXECUTION_METRIC_GPU_*` query templates (temperature,
+  power, clock/throttle, tensor/DRAM activity, PCIe/NVLink throughput, last Xid, ECC
+  and remapped-row errors) in the `dataproxy` and `usage` blocks. They need the
+  matching dcgm-exporter fields; where those are not collected the queries return no
+  series ([#582](https://github.com/unionai/helm-charts/pull/582)).
+
 ## 2026.9.0
 
 `version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
