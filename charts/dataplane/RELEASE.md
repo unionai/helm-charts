@@ -1,5 +1,22 @@
 # dataplane — Release Notes
 
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+### Fix missing task/app metrics on zero-trust data planes
+
+With `zero_trust.enabled`, this chart runs its own dataproxy, but never gave it the
+PromQL query templates it looks up per metric, so the metrics tab failed with
+`failed to do get template due to key EXECUTION_METRIC_* not found`. The chart now
+ships `dataproxy.taskMetrics` (the `promQuery` templates, including the new GPU health
+metrics, plus the DGX `agentQuery` mappings), kept in sync with the controlplane
+chart, and renders it into the zero-trust dataproxy config. Non-zero-trust renders are
+unchanged. If you worked around this with `config.configOverrides.dataproxy.taskMetrics`,
+you can drop that override
+([#582](https://github.com/unionai/helm-charts/pull/582)).
+
 ## 2026.9.0
 
 `version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
