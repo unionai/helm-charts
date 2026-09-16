@@ -1,5 +1,10 @@
 # sandbox — Release Notes
 
+## 2026.9.2
+
+Lockstep chart-only release with the dataplane billing fix (#590).
+`appVersion` stays `2026.9.1`; no sandbox template or image changes.
+
 ## 2026.9.1
 
 Lockstep `version` bump with the control-plane and data-plane charts

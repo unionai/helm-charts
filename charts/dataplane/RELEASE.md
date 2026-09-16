@@ -1,5 +1,22 @@
 # dataplane — Release Notes
 
+## 2026.9.2
+
+Chart-only release: `version` moves `2026.9.1` → `2026.9.2`; `appVersion` stays
+`2026.9.1`.
+
+- Decouple `config.operator.billing.model` from `operator.enableTunnelService`
+  (#590). Fresh installs default to `ResourceUsage` regardless of tunnel settings.
+  Set the model explicitly to `None` when billing must be disabled, including for
+  self-hosted deployments. Usage collection remains independently configurable.
+- Connected Helm upgrades preserve the installed billing model unless explicitly
+  overridden, including with `--reuse-values` and `--reset-values`. If the installed
+  model cannot be read or validated, supply the intended model explicitly.
+- Preview preservation with `helm upgrade --dry-run=server`. Offline
+  `helm template --is-upgrade` requires an explicit billing model. To deliberately
+  reset billing to the install default, set
+  `config.operator.billing.model=ResourceUsage` explicitly.
+
 ## 2026.9.1
 
 Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays

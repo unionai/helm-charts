@@ -1,5 +1,10 @@
 # controlplane — Release Notes
 
+## 2026.9.2
+
+Lockstep chart-only release with the dataplane billing fix (#590).
+`appVersion` stays `2026.9.1`; no controlplane template or image changes.
+
 ## 2026.9.1
 
 Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
