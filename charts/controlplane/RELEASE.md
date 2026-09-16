@@ -1,9 +1,95 @@
 # controlplane — Release Notes
 
-## 2026.9.2
+## 2026.9.3
 
-Lockstep chart-only release with the dataplane billing fix (#590).
-`appVersion` stays `2026.9.1`; no controlplane template or image changes.
+`version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
+`2026.9.3`. Chart version `2026.9.2` was not published; image version `2026.9.2`
+was published separately. Controlplane templates and values are unchanged.
+
+### Control-plane and console images
+
+- Settings > Clusters > Logs requests namespace `auto`, which the new operator
+  proxy resolves to its own namespace. The control plane forwards explicit
+  namespaces unchanged. Upgrade all connected dataplane proxies before deploying
+  these control-plane/console images; reverse that order for rollback
+  ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+- Zero-trust metrics queries no longer require the control-plane tunnel
+  ([cloud#18296](https://github.com/unionai/cloud/pull/18296)). Untouched datetime
+  inputs retain fractional seconds through launch-form hydration, including
+  Recover and Rerun; directly editing the datetime widget can still reduce
+  precision ([cloud#18347](https://github.com/unionai/cloud/pull/18347)).
+- Artifact versions can be deleted, sorted, and filtered by creator or metadata;
+  artifact cards support fullscreen viewing. Deleting a version does not delete
+  its offloaded blob data
+  ([cloud#18307](https://github.com/unionai/cloud/pull/18307),
+  [cloud#18336](https://github.com/unionai/cloud/pull/18336)).
+- Queue resource caps are enforced when the leasor uses the `v2` scheduling
+  strategy. Strict FIFO and greedy-capacity policies control handling of work
+  that cannot currently fit; requests exceeding the whole cap fail as
+  unschedulable. Console controls and utilization/head-block displays require
+  the `queue-resource-caps` feature gate, which defaults off for selfhosted
+  installations. Existing caps survive unrelated console edits regardless of
+  that gate ([cloud#18295](https://github.com/unionai/cloud/pull/18295),
+  [cloud#18350](https://github.com/unionai/cloud/pull/18350)).
+- GPU faults appear with structured explanations in run errors and as markers on
+  GPU metric charts when fault data is available
+  ([cloud#17807](https://github.com/unionai/cloud/pull/17807)).
+- Cluster pages expose drain/deletion state and actions. Registration checks
+  names through organization-scoped listings and rejects duplicate Fleet names;
+  organizations can hold multiple Fleet deployment targets. Cluster-pool
+  heartbeats fill undefined configuration fields without replacing defined
+  values ([cloud#18193](https://github.com/unionai/cloud/pull/18193),
+  [cloud#18294](https://github.com/unionai/cloud/pull/18294),
+  [cloud#18285](https://github.com/unionai/cloud/pull/18285),
+  [cloud#18287](https://github.com/unionai/cloud/pull/18287),
+  [cloud#18393](https://github.com/unionai/cloud/pull/18393)).
+- Clusters, pools, and queues report creator/updater identity. Fleet applies
+  stored configuration revisions with persisted checkpoints and error details;
+  chart upgrades remain separate from that apply operation
+  ([cloud#18321](https://github.com/unionai/cloud/pull/18321),
+  [cloud#18297](https://github.com/unionai/cloud/pull/18297)).
+- Missing projects return NotFound to callers with organization-level project
+  visibility; the console shows a stable not-found page for invalid project or
+  domain URLs ([cloud#18394](https://github.com/unionai/cloud/pull/18394),
+  [cloud#18402](https://github.com/unionai/cloud/pull/18402),
+  [cloud#18405](https://github.com/unionai/cloud/pull/18405)).
+- ZITADEL username/password login now requires organization metadata
+  `union.login.capabilities.v1` with `password: true`; absent, invalid, or
+  unavailable metadata disables that login method
+  ([cloud#18338](https://github.com/unionai/cloud/pull/18338)). The self-serve
+  first-run tour is available behind the default-off `self-serve-tutorial` gate
+  ([cloud#18438](https://github.com/unionai/cloud/pull/18438)).
+- Image-build tasks accept pod annotations and a service account, complementing
+  the chart configuration introduced in 2026.9.1
+  ([cloud#18384](https://github.com/unionai/cloud/pull/18384)). Usage reporting
+  supports additional AWS accelerators/TPUs and configured self-serve Omnistrate
+  metering with coordinated submissions
+  ([cloud#18383](https://github.com/unionai/cloud/pull/18383),
+  [cloud#18088](https://github.com/unionai/cloud/pull/18088),
+  [cloud#18322](https://github.com/unionai/cloud/pull/18322)).
+
+### Upgrade and rollback considerations
+
+The images include cluster database migrations for per-cluster deployment-target
+keys, render diagnostics, authorship, and stored-apply state
+([cloud#18287](https://github.com/unionai/cloud/pull/18287),
+[cloud#18348](https://github.com/unionai/cloud/pull/18348),
+[cloud#18321](https://github.com/unionai/cloud/pull/18321),
+[cloud#18297](https://github.com/unionai/cloud/pull/18297)). The per-cluster key
+cannot be rolled back while an organization has multiple deployment targets.
+Treat a database downgrade as a separate compatibility review, not as part of a
+chart/image rollback.
+
+Flyte admin's execution-status watch avoids repeated closure reads and adds a
+concurrent index migration; a large executions table can extend the first
+upgrade while the index builds
+([cloud#18373](https://github.com/unionai/cloud/pull/18373),
+[cloud#18444](https://github.com/unionai/cloud/pull/18444)).
+
+The dataplane chart's billing/tunnel changes are described in its 2026.9.3 notes
+(#590). Image source: [cloud changes since release/2026.9.1](https://github.com/unionai/cloud/compare/release/2026.9.1...a60aefc8a9d2d4051576f71c818b239cf221bf4b).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/771e792c89aa11b30cbd2dab74c77e170efcecb6...4011364765dfea33d6431db11afdffef01ab1609)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/6390805ff6495b87b2d172c35ccd5e6fab5567a5...a2aec3f7210f450b35b34b9e924f3cef9f60ee2f).
 
 ## 2026.9.1
 
