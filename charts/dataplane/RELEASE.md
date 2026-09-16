@@ -1,5 +1,27 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+> **Release pending** — these changes are not yet cut to a version. At the next
+> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+
+### Eager API key bootstrap now enabled by default
+
+`config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
+operator mints the `EAGER_API_KEY` on the control plane and writes it to the task-pod
+secret store so eager/actions (v2) tasks can call back to the control plane. It relies
+on the proxy secret manager (`proxy.secretManager.enabled`), which is already on by
+default.
+
+> **Selfhosted operators:** under v2 every deployment runs eager/actions workloads, so
+> leave this on. The real dependency is on the **control plane**, not the dataplane:
+> minting `EAGER_API_KEY` requires a control plane that can produce the credential. If
+> your control plane registers OAuth clients on its IdP, no action is needed. If it
+> **can't** self-register (common with selfhosted Okta/Entra), you must first seed the
+> pre-created OAuth client credentials via the controlplane chart's
+> `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
+> fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
+
 ## 2026.9.3
 
 `version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
