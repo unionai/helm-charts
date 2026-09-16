@@ -11,6 +11,34 @@ on docs.union.ai — start with the per-cloud `prepare-infra` page for your prov
 
 Chart conventions: [`CONVENTIONS.md`](../CONVENTIONS.md). Recent migrations: [`MIGRATION.md`](../MIGRATION.md).
 
+## Tunnels and billing
+
+`operator.enableTunnelService` and `config.operator.billing.model` are independent.
+A fresh install defaults to `ResourceUsage`, even when tunnels are disabled. Set
+`config.operator.billing.model: None` explicitly when billing must be disabled,
+including when connecting to a self-hosted control plane. The supported models
+remain `None`, `Legacy`, `Shadow`, and `ResourceUsage`.
+
+Without an explicit model, a connected Helm upgrade preserves the model in the
+installed `union-operator` ConfigMap. This also applies to `--reuse-values` and
+`--reset-values`. If the installed model cannot be read or validated, rendering
+fails before applying changes; supply the intended model explicitly to recover.
+
+To deliberately reset billing to the fresh-install default:
+
+```bash
+helm upgrade <release> unionai/dataplane --reset-values \
+  --set-string config.operator.billing.model=ResourceUsage
+```
+
+Preview preservation with `helm upgrade --dry-run=server`; an offline
+`helm template --is-upgrade` needs an explicit billing model. Helm does not expose
+`--reset-values` to chart templates, so that flag alone does not reset billing.
+
+Usage collection remains separate: `config.operator.collectUsages.enabled: true`
+can report dashboard usage with billing set to `None`. Task monitoring retains its
+existing Prometheus and RBAC requirements.
+
 ## Quick start
 
 ### 1. Add the Helm repository

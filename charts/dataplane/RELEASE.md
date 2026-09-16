@@ -1,5 +1,86 @@
 # dataplane — Release Notes
 
+## 2026.9.3
+
+`version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
+`2026.9.3`. Chart version `2026.9.2` was not published; image version `2026.9.2`
+was published separately. This release includes the image changes since
+`2026.9.1`, including the system-log fix below.
+
+### Billing and tunnels
+
+- Decouple `config.operator.billing.model` from `operator.enableTunnelService`
+  (#590). Fresh installs default to `ResourceUsage` regardless of tunnel settings.
+  Set the model explicitly to `None` when billing must be disabled, including for
+  self-hosted deployments. Usage collection remains independently configurable.
+- Connected Helm upgrades preserve the installed billing model unless explicitly
+  overridden, including with `--reuse-values` and `--reset-values`. If the installed
+  model cannot be read or validated, supply the intended model explicitly.
+- Preview preservation with `helm upgrade --dry-run=server`. Offline
+  `helm template --is-upgrade` requires an explicit billing model. To deliberately
+  reset billing to the install default, set
+  `config.operator.billing.model=ResourceUsage` explicitly.
+
+### Dataplane images
+
+- System-log requests using namespace `auto` resolve to the operator proxy's own
+  namespace. Explicit namespaces pass through unchanged. This supplies the
+  dataplane half of the Settings > Clusters > Logs fix for Fleet and selfmanaged
+  installs ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+- A failed or evicted replica no longer cancels healthy replicas' live log
+  streams; unavailable replicas are reported inline
+  ([cloud#18335](https://github.com/unionai/cloud/pull/18335)).
+- `unionoperator` and `envoy` release images support both `linux/amd64` and
+  `linux/arm64`. Image-builder artifacts remain single-architecture
+  ([cloud#18396](https://github.com/unionai/cloud/pull/18396)).
+- Fast tasks are re-enqueued when their environment finishes initializing
+  ([cloud#18362](https://github.com/unionai/cloud/pull/18362)). Leaseworker event
+  caching distinguishes resource kinds, keeping same-named resources' events
+  separate ([cloud#18378](https://github.com/unionai/cloud/pull/18378)).
+- With the GPU fault watcher installed, pod-backed tasks attach structured GPU
+  fault details and classify critical hardware faults as system-retryable
+  failures. CRD-backed distributed GPU tasks are not covered by this change
+  ([cloud#17793](https://github.com/unionai/cloud/pull/17793)).
+- The volume mount broker adds channel-health metrics and abort support. A
+  channel with unchanged queued requests for five minutes and no client session
+  is aborted instead of remaining stuck; `autoAbortAfter: 0` disables that
+  behavior. Broker logging now honors `LOG_LEVEL` after configuration is loaded
+  ([cloud#18352](https://github.com/unionai/cloud/pull/18352),
+  [cloud#18376](https://github.com/unionai/cloud/pull/18376),
+  [cloud#18379](https://github.com/unionai/cloud/pull/18379),
+  [cloud#18375](https://github.com/unionai/cloud/pull/18375)).
+- Operator heartbeat reporting includes additional AWS accelerators and TPUs
+  ([cloud#18383](https://github.com/unionai/cloud/pull/18383)).
+
+### Upgrade order
+
+Upgrade the operator proxy on every dataplane served by a control plane before
+deploying the control-plane/console change that sends namespace `auto`. The old
+proxy treats `auto` as a literal namespace; publishing this chart does not upgrade
+existing clusters. Roll back the control plane and console before rolling back
+the dataplane ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+
+Image source: [cloud changes since release/2026.9.1](https://github.com/unionai/cloud/compare/release/2026.9.1...a60aefc8a9d2d4051576f71c818b239cf221bf4b).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/771e792c89aa11b30cbd2dab74c77e170efcecb6...4011364765dfea33d6431db11afdffef01ab1609)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/6390805ff6495b87b2d172c35ccd5e6fab5567a5...a2aec3f7210f450b35b34b9e924f3cef9f60ee2f).
+
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+### Fix missing task/app metrics on zero-trust data planes
+
+With `zero_trust.enabled`, this chart runs its own dataproxy, but never gave it the
+PromQL query templates it looks up per metric, so the metrics tab failed with
+`failed to do get template due to key EXECUTION_METRIC_* not found`. The chart now
+ships `dataproxy.taskMetrics` (the `promQuery` templates, including the new GPU health
+metrics, plus the DGX `agentQuery` mappings), kept in sync with the controlplane
+chart, and renders it into the zero-trust dataproxy config. Non-zero-trust renders are
+unchanged. If you worked around this with `config.configOverrides.dataproxy.taskMetrics`,
+you can drop that override
+([#582](https://github.com/unionai/helm-charts/pull/582)).
+
 ## 2026.9.0
 
 `version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
