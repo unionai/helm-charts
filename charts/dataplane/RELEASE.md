@@ -22,6 +22,17 @@ default.
 > `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
 > fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
 
+### Knative Serving Kubernetes min-version gate relaxed
+
+The vendored Knative Serving 1.23 gateway hard-requires Kubernetes ≥ 1.34 at startup and otherwise
+crash-loops. This release sets `KUBERNETES_MIN_VERSION=v1.32.0` on the serving components
+(`gateway.components.*.containers.*.env`) to relax that gate so App Serving runs on the current
+fleet. Override it per-cluster if you must run lower.
+
+> **Kubernetes support for App Serving:** **1.34 and above is recommended.** **1.32 is the
+> minimum** supported for App Serving. Lower versions may work but are **not officially supported**
+> for App Serving.
+
 ## 2026.9.3
 
 `version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
