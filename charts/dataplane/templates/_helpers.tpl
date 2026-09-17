@@ -357,13 +357,13 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.selectorLabels" -}}
-app.kubernetes.io/name: fuse-device-plugin
+{{- define "uvolBroker.selectorLabels" -}}
+app.kubernetes.io/name: uvol-broker
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.labels" -}}
-{{- include "fuseDevicePlugin.selectorLabels" . }}
+{{- define "uvolBroker.labels" -}}
+{{- include "uvolBroker.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}

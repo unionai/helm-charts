@@ -5,6 +5,57 @@
 > **Release pending** — these changes are not yet cut to a version. At the next
 > release, rename this heading to `## <version>` and bump `Chart.yaml`.
 
+### Ship the uvol mount broker (Union Volumes on self-managed)
+
+New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
+(`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
+on clusters that want Union Volumes. This is what makes Volumes mountable at
+all on a self-managed data plane; without it a task pod requesting one fails
+`NodePublish` with `driver volumes.union.ai not found`.
+
+The broker is a CSI node driver that premounts a FUSE channel per pod and hands
+the file descriptor to the in-pod client over a unix socket, so **task pods mount
+Volumes with no privileges**: no `CAP_SYS_ADMIN`, no `/dev/fuse`, no `hostPath`.
+Privilege stays confined to this DaemonSet.
+
+It runs as its own DaemonSet rather than a container in `union-nodeobserver`,
+and with `automountServiceAccountToken: false`: it never calls the Kubernetes
+API, so it holds no credential a privileged container could be made to misuse.
+That also lets it ship where the observer is not deployed, and lets the observer
+gate node readiness on it via `nodeobserver.config.criticalDaemonSets` — the
+`/readyz` probe reports whether kubelet has actually registered the driver, not
+merely that the process is up.
+
+### Remove the FUSE device-plugin DaemonSet (**breaking if you enabled it**)
+
+`fuseDevicePlugin` and its `examples/values-fuse-device-plugin.yaml` overlay are
+gone. It advertised the host `/dev/fuse` as the extended resource
+`smarter-devices/fuse`, so an unprivileged pod requesting it could perform an
+in-pod FUSE mount with `CAP_SYS_ADMIN`. The mount broker above supersedes it for
+Union Volumes and needs no capability in the task pod at all.
+
+**If you set `fuseDevicePlugin.enabled: true`,** this upgrade deletes that
+DaemonSet and the node stops advertising `smarter-devices/fuse`. Any pod whose
+template requests that resource becomes unschedulable — Helm will not warn you,
+because the removed key is simply ignored. Check for it before upgrading:
+
+```
+kubectl get pods -A -o json | grep -l 'smarter-devices/fuse'
+```
+
+Union Volumes do not use that resource, so if the plugin was enabled only for
+Volumes there is nothing to migrate — enable `uvolMountBroker` instead.
+
+Operator notes:
+
+- `uvolMountBroker.nodeSelector` defaults to empty (all nodes) deliberately.
+  Task pods carry no matching selector of their own, so any node a volume-using
+  task can land on and the broker cannot must not exist.
+- `uvolMountBroker.kubeletDir` must match the distribution's kubelet root
+  (k3s and some managed AMIs relocate it) or CSI registration fails.
+- The cpu request is a scheduling-latency knob, not a utilization estimate: the
+  broker sits on the task `open()` path. There is deliberately no cpu limit.
+
 ### Eager API key bootstrap now enabled by default
 
 `config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
