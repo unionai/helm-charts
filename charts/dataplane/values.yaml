@@ -2862,6 +2862,15 @@ gateway:
       containers:
         activator:
           image: {}
+          # Knative Serving 1.23 refuses to start unless the cluster is >= its built-in
+          # KubernetesMinVersion (v1.34.0); many dataplanes run older k8s (fleet default 1.32).
+          # A scan of the 1.23 source shows the server version is read only by the startup gate
+          # (cmd/*/main.go + sharedmain CheckMinimumVersion) with no other runtime version
+          # branching, so older k8s works -- relax the gate. Remove once clusters are >= 1.34.
+          # Ref: knative.dev/pkg/version.
+          env: &knativeMinVersionEnv
+            - name: KUBERNETES_MIN_VERSION
+              value: v1.32.0
       hpa:
         minReplicas: 2
         maxReplicas: 20
@@ -2896,6 +2905,7 @@ gateway:
       containers:
         controller:
           image: {}
+          env: *knativeMinVersionEnv
 
     autoscaler:
       replicas: 2
@@ -2914,6 +2924,7 @@ gateway:
       containers:
         autoscaler:
           image: {}
+          env: *knativeMinVersionEnv
 
     autoscaler-hpa:
       replicas: 2
@@ -2932,6 +2943,7 @@ gateway:
       containers:
         autoscaler-hpa:
           image: {}
+          env: *knativeMinVersionEnv
 
     webhook:
       replicas: 2
@@ -2950,6 +2962,7 @@ gateway:
       containers:
         webhook:
           image: {}
+          env: *knativeMinVersionEnv
       hpa:
         minReplicas: 2
         maxReplicas: 10
