@@ -32,9 +32,11 @@ _LARGE_MIB = 32
 _volume_env = flyte.TaskEnvironment(
     name=f"ci-volume-{_env_suffix}",
     image=flyte.Image.from_debian_base()
-    # redis-server: only used behind a custom S3 endpoint (k3d) — see _store().
-    .with_apt_packages("fuse3", "redis-server", "redis-tools")
-    .with_pip_packages("flyteplugins-union")
+    .with_apt_packages("fuse3")
+    # >=0.11.0b2: Volumes behind S3-compatible endpoints (k3d's RustFS) —
+    # flyteplugins-union#132. Pre-releases allowed for the same reason the
+    # runner's SDK venv allows them.
+    .with_pip_packages("flyteplugins-union>=0.11.0b2", pre=True)
     .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     # The client keeps a read/write buffer in memory; 2Gi is the floor at which
     # it is comfortable, and still fits next to buildkit on the 4-vCPU k3d node.
@@ -55,43 +57,22 @@ _volume_env = flyte.TaskEnvironment(
 def _store() -> str | None:
     """Metadata store for the volume this run creates; None = the plugin default (badger).
 
-    Behind a custom S3-compatible endpoint (k3d's RustFS) the default badger
-    store cannot take a writable mount today: it needs a writer-session slice
-    domain, whose claim is written with obstore against the ``s3://`` bucket
-    form, while the JuiceFS client needs the path-style ``http://<endpoint>/…``
-    form — the plugin offers no bucket URI that satisfies both (flyteplugins-
-    union gap; self-managed dataplanes on MinIO/RustFS/Ceph hit the same wall).
-    The redis store needs no domain claim, so that leg uses it; the broker
-    path under test is identical either way. Drop this once the plugin resolves
-    the endpoint for the client itself.
+    ``CI_VOLUME_STORE`` overrides it for a dry run of one specific store; CI
+    itself runs the default everywhere, including behind k3d's RustFS
+    (flyteplugins-union >= 0.11.0b2 resolves the endpoint for both the ledger
+    and the client).
     """
-    if os.environ.get("CI_VOLUME_STORE"):
-        return os.environ["CI_VOLUME_STORE"]
-    return "redis" if os.environ.get("FLYTE_AWS_ENDPOINT") else None
-
-
-def _export_store_creds() -> bool:
-    """Give the JuiceFS client the object-store credentials propeller injected.
-
-    Behind a custom S3-compatible endpoint (k3d's RustFS) the store's keys arrive
-    as ``FLYTE_AWS_*``; the client reads plain ``AWS_*``. Needed by *every* task
-    that mounts — the reader's chunk GETs fail with EIO without it, not just the
-    writer's uploads. On IRSA/workload-identity legs there is nothing to map.
-    """
-    mapped = False
-    for k in ("ACCESS_KEY_ID", "SECRET_ACCESS_KEY"):
-        v = os.environ.get(f"FLYTE_AWS_{k}")
-        if v:
-            os.environ.setdefault(f"AWS_{k}", v)
-            mapped = True
-    return mapped
+    return os.environ.get("CI_VOLUME_STORE") or None
 
 
 def _bucket() -> tuple[str, str | None]:
     """(bucket URI for this run's volumes, region) from the task's raw-data path.
 
-    Behind a custom S3-compatible endpoint (k3d's RustFS: ``FLYTE_AWS_ENDPOINT``
-    set), JuiceFS wants the path-style ``http(s)://<endpoint>/<bucket>`` form.
+    Always the plain ``s3://`` (or ``gs://``/``abfs://``) form: behind an
+    S3-compatible endpoint (k3d's RustFS) flyteplugins-union >= 0.11.0b2 pins
+    ``$FLYTE_AWS_ENDPOINT`` onto the Volume itself and hands the injected
+    ``FLYTE_AWS_*`` keys to both the client and the slice-domain ledger, so
+    the test does nothing store-specific -- which is the point of the test.
     """
     rdp = flyte.ctx().raw_data_path
     raw = getattr(rdp, "path", None) or str(rdp)
@@ -99,9 +80,6 @@ def _bucket() -> tuple[str, str | None]:
     if not m:
         raise RuntimeError(f"cannot parse raw_data_path {raw!r}")
     scheme, bucket = m.group(1), m.group(2).split("/", 1)[0]
-    endpoint = os.environ.get("FLYTE_AWS_ENDPOINT")
-    if scheme == "s3" and endpoint:
-        return f"{endpoint.rstrip('/')}/{bucket}/ci-volume", None
     return f"{scheme}://{bucket}/ci-volume", os.environ.get("AWS_REGION") or os.environ.get(
         "AWS_DEFAULT_REGION"
     )
@@ -212,7 +190,6 @@ def _payload(i: int, nonce: str) -> bytes:
 @_volume_env.task(retries=2)
 async def volume_write(nonce: str) -> ROVolume:
     """Create a volume, write a known payload, seal it."""
-    _export_store_creds()
     bucket, region = _bucket()
     # Unique per *attempt*, not per run: `juicefs format` refuses a non-empty
     # prefix, so a retry that reused the first attempt's name could never pass.
@@ -257,7 +234,6 @@ async def volume_write(nonce: str) -> ROVolume:
 @_volume_env.task(retries=2)
 async def volume_read(vol: ROVolume, nonce: str) -> dict:
     """Mount the sealed version read-only in a fresh pod and verify every byte."""
-    _export_store_creds()
     mnt = await _mount_or_fail(vol, "volume_read")
     mode = _broker_mode(mnt)
     assert mode["broker_mode"], f"read mount is not in broker mode: {mode}"
