@@ -1,0 +1,163 @@
+{{- /*
+uvol mount broker: a CSI node driver that premounts FUSE channels and hands
+the fds to unprivileged in-pod clients, so task pods mount versioned Volumes
+with zero privileges (no CAP_SYS_ADMIN, no /dev/fuse, no hostPath).
+
+Its own DaemonSet rather than a container in union-nodeobserver, because:
+
+  * It needs NO Kubernetes API access — it talks only to kubelet (CSI
+    sockets) and to task pods (unix sockets). Standalone it runs with no
+    ServiceAccount token at all, instead of sharing a Pod with the observer,
+    whose ClusterRole carries cluster-wide nodes:get/update + pods:list.
+  * Volume support ships independently of node-readiness gating: this DS can
+    be enabled on clusters where the observer is not deployed.
+  * It makes the startup-taint gate usable. The observer cannot meaningfully
+    wait for a container inside its own Pod; as a separate DaemonSet it can
+    be listed in nodeobserver.config.criticalDaemonSets, so the node stays
+    tainted until /readyz reports kubelet has actually registered the driver.
+
+Opt-in: disabled by default; enable per cluster with uvolMountBroker.enabled.
+*/}}
+{{- if .Values.uvolMountBroker.enabled }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-uvol-broker
+  labels:
+    {{- include "uvolBroker.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "uvolBroker.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.uvolMountBroker.maxUnavailable }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/uvol-broker/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.uvolMountBroker.profilerPort | quote }}
+        prometheus.io/path: /metrics
+        {{- with .Values.uvolMountBroker.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        platform.union.ai/zone: "dataplane"
+        {{- include "uvolBroker.selectorLabels" . | nindent 8 }}
+    spec:
+      # No ServiceAccount and no token: the broker never calls the Kubernetes
+      # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
+      # credential cannot be turned into a confused deputy for the cluster.
+      automountServiceAccountToken: false
+      {{- $priorityClassName := include "uvolBroker.priorityClassName" . }}
+      {{- if $priorityClassName }}
+      priorityClassName: {{ $priorityClassName }}
+      {{- end }}
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.uvolMountBroker.nodeSelector }}
+      # Must cover every node a volume-using task pod can land on: task pods
+      # get no matching nodeSelector of their own, so a node without the
+      # broker fails NodePublish with "driver <name> not found".
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+        {{- toYaml .Values.uvolMountBroker.tolerations | nindent 8 }}
+      {{- with .Values.uvolMountBroker.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: union-uvol-broker
+        - name: kubelet-dir
+          hostPath:
+            path: {{ .Values.uvolMountBroker.kubeletDir }}
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: {{ .Values.uvolMountBroker.socketDir }}
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: {{ .Values.uvolMountBroker.stateDir }}
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+      containers:
+        # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
+        # pods don't have to be — they run restricted-PSS and collect a
+        # connected fd over a per-volume socket. Holds no object storage
+        # credentials: the data plane runs in-pod under pod IAM.
+        # In-place upgrade safe: kernel mounts and pod-held fds survive
+        # restarts; the state journal + client fd re-registration resume the rest.
+        - name: uvol-mount-broker
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - nodeobserver
+            - broker
+            - --config
+            - /etc/union/broker.yaml
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.uvolMountBroker.profilerPort }}
+              protocol: TCP
+          # Ready means kubelet has acknowledged the CSI registration — not
+          # merely that the process is up. An unregistered driver fails every
+          # NodePublish, so this is the signal a node-readiness gate needs.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.uvolMountBroker.resources | nindent 12 }}
+          # Deliberately NOT global.podEnvVars: that block injects control-plane
+          # service URLs and a cluster-name secretKeyRef. The broker never talks
+          # to the control plane or the Kubernetes API, and giving a privileged
+          # container credentials it cannot use is exactly the confused-deputy
+          # surface the no-ServiceAccount design above exists to avoid. It also
+          # would make this DaemonSet fail to start on a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: {{ .Values.logging.level | quote }}
+            {{- with .Values.uvolMountBroker.podEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: {{ .Values.uvolMountBroker.kubeletDir }}
+              # Broker premounts FUSE inside kubelet-owned publish targets;
+              # those mounts must propagate back to the host mount ns (and
+              # from there into task pods via kubelet's container rbind).
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: {{ .Values.uvolMountBroker.socketDir }}
+            - name: uvol-state
+              mountPath: {{ .Values.uvolMountBroker.stateDir }}
+            - name: dev-fuse
+              mountPath: /dev/fuse
+{{- end }}

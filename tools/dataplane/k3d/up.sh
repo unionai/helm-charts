@@ -121,30 +121,81 @@ EOF
   kubectl wait --for=condition=Ready nodes --all --timeout=120s
 }
 
-phase_storage() {
-  _need kubectl
+_download_mc() {
+  local target="$1" release="RELEASE.2025-08-13T08-35-41Z"
+  local platform expected actual
+  case "$(uname -s)/$(uname -m)" in
+    Linux/x86_64)
+      platform=linux-amd64
+      expected=01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891 ;;
+    Linux/aarch64|Linux/arm64)
+      platform=linux-arm64
+      expected=14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c ;;
+    Darwin/x86_64)
+      platform=darwin-amd64
+      expected=2862c79cce11b09be9a8911a279b2e9465bebf74b9f01abca9c348a0d795f0cb ;;
+    Darwin/arm64)
+      platform=darwin-arm64
+      expected=a877fd0c183409da9f20f9d6e1811987298bbbca1aa03428eebdffba79fb9445 ;;
+    *) echo "ERROR: no bundled mc download for this platform; install mc on PATH." >&2; return 1 ;;
+  esac
+  local checksum=()
+  if command -v sha256sum >/dev/null; then
+    checksum=(sha256sum)
+  else
+    _need shasum
+    checksum=(shasum -a 256)
+  fi
+  curl -fsSL --retry 3 --retry-delay 2 --retry-max-time 120 \
+    --connect-timeout 10 --max-time 60 \
+    "https://github.com/minio/mc/releases/download/$release/mc.$platform.$release" \
+    --output "$target" || return
+  actual="$("${checksum[@]}" "$target")" || return
+  if [ "${actual%% *}" != "$expected" ]; then
+    echo "ERROR: mc checksum mismatch for $platform ($release)." >&2
+    return 1
+  fi
+  chmod +x "$target"
+}
+
+phase_storage() (
+  _need kubectl curl
   echo ">> [storage] deploying RustFS + bucket '$RUSTFS_BUCKET'"
   kubectl create namespace "$RUSTFS_NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
   kubectl apply -n "$RUSTFS_NS" -f tools/dataplane/k3d/rustfs.yaml >/dev/null
   kubectl wait --for=condition=Available deploy/rustfs -n "$RUSTFS_NS" --timeout=180s
   kubectl port-forward -n "$RUSTFS_NS" svc/rustfs 9000:9000 >/dev/null 2>&1 &
-  local pf=$!; trap 'kill '"$pf"' 2>/dev/null || true' RETURN
-  for _ in $(seq 1 20); do curl -sf http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; sleep 2; done
-  if ! command -v mc >/dev/null; then
-    _need curl
-    # dl.min.io 504s intermittently on shared runners — retry.
-    local n=0
-    until [ "$n" -ge 6 ]; do
-      curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o "$REPO_ROOT/.mc" && chmod +x "$REPO_ROOT/.mc" && break
-      n=$((n+1)); echo "mc download failed (attempt $n) — retrying in $((n*10))s" >&2; sleep $((n*10))
-    done
-    [ "$n" -ge 6 ] && { echo "mc download failed after $n attempts" >&2; return 1; }
+  local pf=$! download="" attempt ready=0 MC
+  trap 'kill "$pf" 2>/dev/null || true; wait "$pf" 2>/dev/null || true; [ -z "$download" ] || rm -f "$download"' EXIT
+  for ((attempt=0; attempt<20; attempt++)); do
+    if ! kill -0 "$pf" 2>/dev/null; then
+      echo "ERROR: RustFS port-forward exited before storage became ready." >&2
+      return 1
+    fi
+    if curl -fsS --connect-timeout 2 --max-time 2 http://localhost:9000/health/live >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    if [ "$attempt" -lt 19 ]; then sleep 2; fi
+  done
+  if [ "$ready" -ne 1 ]; then
+    echo "ERROR: RustFS did not become ready at http://localhost:9000/health/live after 20 attempts." >&2
+    return 1
   fi
-  local MC; MC="$(command -v mc || echo "$REPO_ROOT/.mc")"
+  if ! kill -0 "$pf" 2>/dev/null; then
+    echo "ERROR: RustFS port-forward exited before bucket creation." >&2
+    return 1
+  fi
+  if ! MC="$(command -v mc)"; then
+    download="$(mktemp "$REPO_ROOT/.mc.XXXXXX")"
+    _download_mc "$download"
+    mv "$download" "$REPO_ROOT/.mc"
+    MC="$REPO_ROOT/.mc"
+  fi
   "$MC" alias set k3dstore http://localhost:9000 "$RUSTFS_ACCESS_KEY" "$RUSTFS_SECRET_KEY" >/dev/null
   "$MC" mb --ignore-existing "k3dstore/$RUSTFS_BUCKET" >/dev/null
   echo "bucket-ok"
-}
+)
 
 phase_provision() {
   _resolve_creds

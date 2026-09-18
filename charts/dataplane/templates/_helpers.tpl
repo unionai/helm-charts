@@ -357,15 +357,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.selectorLabels" -}}
-app.kubernetes.io/name: fuse-device-plugin
+{{- define "uvolBroker.selectorLabels" -}}
+app.kubernetes.io/name: uvol-broker
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.labels" -}}
-{{- include "fuseDevicePlugin.selectorLabels" . }}
+{{- define "uvolBroker.labels" -}}
+{{- include "uvolBroker.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Effective PriorityClass name for the uvol broker (only invoked when the broker
+is enabled): explicit name wins; else when the chart creates the class, a
+release-scoped default (RFC 1123: lowercased, <=63 chars, no trailing '-').
+Empty name with priorityClass.create=false is rejected — the broker is critical
+infra and must have a deliberate class, so bring your own or let the chart make one.
+*/}}
+{{- define "uvolBroker.priorityClassName" -}}
+{{- if .Values.uvolMountBroker.priorityClassName -}}
+{{- .Values.uvolMountBroker.priorityClassName -}}
+{{- else if .Values.uvolMountBroker.priorityClass.create -}}
+{{- printf "%s-uvol-broker" .Release.Name | lower | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- fail "uvolMountBroker: priorityClassName is empty and priorityClass.create is false — set priorityClassName to bring your own class, or enable priorityClass.create." -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "nodeobserver.podLabels" -}}

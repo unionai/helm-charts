@@ -313,6 +313,12 @@ jobs:
           for chart in ${{ matrix.charts }}; do
             # executor + monitoring are disabled in the generated contract — no --set needed.
             extra=()
+            if [ "$chart" = "dataplane" ]; then
+              # Union Volumes mount broker: off by default in the chart and absent from
+              # the contract, so turn it on here — the functional volume scenario mounts
+              # through it and asserts broker mode (values.k3d.yaml does the same for k3d).
+              extra+=(--set "uvolMountBroker.enabled=true")
+            fi
             if [ "$chart" = "controlplane" ]; then
               appver="$(awk '/^appVersion:/{print $2}' "charts/$chart/Chart.yaml" | tr -d '"')"
               for svc in flyteadmin cacheservice datacatalog flyteconsole flytescheduler; do
