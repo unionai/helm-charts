@@ -1596,17 +1596,22 @@ uvolMountBroker:
   podAnnotations: { }
   # -- Additional pod environment variables.
   podEnv: [ ]
-  # -- The broker sits on task pods' open() hot path (passthrough backing
-  # registration RPCs), so the cpu request is a scheduling-latency knob rather
-  # than a utilization estimate: starve it and every small-file open pays extra
-  # milliseconds. Deliberately no cpu limit — CFS throttling would inject worse
-  # tail latency than fair-share contention. Measured at 60us of broker CPU per
-  # open with 8 volumes active, so 500m carries roughly 8,300 opens/s. Memory is
-  # O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node cap); the
-  # limit is a leak backstop, not an operating bound.
+  # -- The cpu request is what the broker is guaranteed under contention, not a
+  # cap: there is deliberately no cpu limit — CFS throttling would inject worse
+  # tail latency than fair-share contention — so on an idle node the broker
+  # bursts past the request. What the request costs is node schedulability: the
+  # broker is a DaemonSet at system-node-critical, so every milli it requests
+  # leaves allocatable, and a request a task pod cannot fit around preempts
+  # that task pod rather than queueing it. Task pods sized to a node's full
+  # allocatable CPU are common, which makes the DaemonSet footprint the binding
+  # constraint, so the default is small; raise it per cluster where volume
+  # traffic warrants it. Measured at 60us of broker CPU per open with 8 volumes
+  # active, so 30m guarantees ~500 opens/s and 500m carries roughly 8,300.
+  # Memory is O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node
+  # cap); the limit is a leak backstop, not an operating bound.
   resources:
     requests:
-      cpu: 500m
+      cpu: 30m
       memory: 32Mi
     limits:
       memory: 256Mi
