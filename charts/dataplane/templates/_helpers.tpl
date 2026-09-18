@@ -369,9 +369,11 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
 {{/*
-Effective PriorityClass name for the uvol broker: explicit name wins; else when
-the chart creates the class, a release-scoped default (RFC 1123: lowercased,
-<=63 chars, no trailing '-'); else inherit operator's class.
+Effective PriorityClass name for the uvol broker (only invoked when the broker
+is enabled): explicit name wins; else when the chart creates the class, a
+release-scoped default (RFC 1123: lowercased, <=63 chars, no trailing '-').
+Empty name with priorityClass.create=false is rejected — the broker is critical
+infra and must have a deliberate class, so bring your own or let the chart make one.
 */}}
 {{- define "uvolBroker.priorityClassName" -}}
 {{- if .Values.uvolMountBroker.priorityClassName -}}
@@ -379,7 +381,7 @@ the chart creates the class, a release-scoped default (RFC 1123: lowercased,
 {{- else if .Values.uvolMountBroker.priorityClass.create -}}
 {{- printf "%s-uvol-broker" .Release.Name | lower | trunc 63 | trimSuffix "-" -}}
 {{- else -}}
-{{- .Values.operator.priorityClassName -}}
+{{- fail "uvolMountBroker: priorityClassName is empty and priorityClass.create is false — set priorityClassName to bring your own class, or enable priorityClass.create." -}}
 {{- end -}}
 {{- end -}}
 
