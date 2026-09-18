@@ -1,5 +1,22 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
+
+On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
+broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for
+it (`allow_volumes(shared_node_cache=True)` in flyteplugins-union) as an inline
+CSI volume tagged `volumes.union.ai/kind=node-cache`. Pods of one namespace on a
+node then share one chunk cache; other namespaces never see it; and — the point
+— the task pod carries no hostPath and no privilege: the bind mount is done by
+this DaemonSet. A pod that asks on a node without it fails `NodePublish` with
+`FailedPrecondition` rather than mounting anything privileged. Put the path on
+the node's fastest local disk and size it; each client evicts against its own
+budget. Pods of one namespace need not share a uid: the plugin mounts the
+shared directory with `--cache-mode 0666`. Verified end to end on dogfood-1
+(cloud#18524).
+
 ## 2026.9.4
 
 `version` and `appVersion` move `2026.9.3` → `2026.9.4`.

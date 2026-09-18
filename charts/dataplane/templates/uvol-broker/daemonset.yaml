@@ -94,6 +94,15 @@ spec:
           hostPath:
             path: /dev/fuse
             type: CharDevice
+        {{- if .Values.uvolMountBroker.nodeCache.enabled }}
+        # The node-shared chunk cache root. Task pods never mount this
+        # themselves: the broker bind-mounts a per-namespace subtree into the
+        # pod's CSI target (kind=node-cache), so the privilege stays here.
+        - name: uvol-node-cache
+          hostPath:
+            path: {{ .Values.uvolMountBroker.nodeCache.hostPath }}
+            type: DirectoryOrCreate
+        {{- end }}
       containers:
         # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
         # pods don't have to be — they run restricted-PSS and collect a
@@ -160,4 +169,8 @@ spec:
               mountPath: {{ .Values.uvolMountBroker.stateDir }}
             - name: dev-fuse
               mountPath: /dev/fuse
+            {{- if .Values.uvolMountBroker.nodeCache.enabled }}
+            - name: uvol-node-cache
+              mountPath: {{ .Values.uvolMountBroker.nodeCache.hostPath }}
+            {{- end }}
 {{- end }}
