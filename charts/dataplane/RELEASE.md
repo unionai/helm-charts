@@ -1,11 +1,40 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.4
 
-> **Release pending** — these changes are not yet cut to a version. At the next
-> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`.
 
-### Ship the uvol mount broker (Union Volumes on self-managed)
+### Dataplane images
+
+- Billing: GPU usage from user sidecars that request GPUs without an
+  accelerator type is now reported as billable usage (previously dropped).
+  Accelerator labels are aligned with the Flyte SDK ([cloud#18484](https://github.com/unionai/cloud/pull/18484)).
+- Operator-side mirrors of the chart's Knative Serving 1.23.0 gateway and
+  `KUBERNETES_MIN_VERSION` changes below ([cloud#18409](https://github.com/unionai/cloud/pull/18409),
+  [cloud#18486](https://github.com/unionai/cloud/pull/18486)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
+### Vendored Knative Serving gateway 1.16.0 → 1.23.0
+
+The default vendored gateway (`gateway.enabled: true`) moves to Knative Serving
+**1.23.0**: serving image digests, the vendored Serving CRDs (`crds/dataplane/`),
+and version labels (#588). `gateway.config.features.kubernetes.podspec-volumes-csi`
+is now `enabled`, so App serving pods can mount Union Volumes via inline CSI. The
+legacy `knative-operator` subchart (`gateway.enabled: false`) is unchanged.
+
+This skips Knative 1.17–1.22 as a direct manifest/CRD replacement; validate on a
+canary dataplane before fleet rollout. The 1.23 CRDs are additive supersets of
+1.16 (apply via ArgoCD or `kubectl apply --server-side -f crds/dataplane/`). See
+`charts/MIGRATION.md`.
+
+The `knative-serving-core` ClusterRole also regains upstream's `*/scale` patch
+rule, without which the 1.23 autoscaler cannot scale App revisions to or from
+zero (#593).
+
+### Ship the uvol mount broker (Union Volumes on self-managed) (#585)
 
 New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
 (`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
@@ -56,7 +85,7 @@ Operator notes:
 - The cpu request is a scheduling-latency knob, not a utilization estimate: the
   broker sits on the task `open()` path. There is deliberately no cpu limit.
 
-### Eager API key bootstrap now enabled by default
+### Eager API key bootstrap now enabled by default (#482)
 
 `config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
 operator mints the `EAGER_API_KEY` on the control plane and writes it to the task-pod
@@ -73,7 +102,7 @@ default.
 > `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
 > fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
 
-### Knative Serving Kubernetes min-version gate relaxed
+### Knative Serving Kubernetes min-version gate relaxed (#594)
 
 The vendored Knative Serving 1.23 gateway hard-requires Kubernetes ≥ 1.34 at startup and otherwise
 crash-loops. This release sets `KUBERNETES_MIN_VERSION=v1.32.0` on the serving components
