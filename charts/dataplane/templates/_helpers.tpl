@@ -368,6 +368,21 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{/*
+Effective PriorityClass name for the uvol broker: explicit name wins; else when
+the chart creates the class, a release-scoped default (RFC 1123: lowercased,
+<=63 chars, no trailing '-'); else inherit operator's class.
+*/}}
+{{- define "uvolBroker.priorityClassName" -}}
+{{- if .Values.uvolMountBroker.priorityClassName -}}
+{{- .Values.uvolMountBroker.priorityClassName -}}
+{{- else if .Values.uvolMountBroker.priorityClass.create -}}
+{{- printf "%s-uvol-broker" .Release.Name | lower | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- .Values.operator.priorityClassName -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}
