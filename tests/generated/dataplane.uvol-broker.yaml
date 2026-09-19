@@ -6655,6 +6655,7 @@ data:
       kubeletDir: /var/lib/kubelet
       socketDir: /run/uvol
       stateDir: /var/lib/uvol/state
+      nodeCacheDir: /mnt/k8s-disks/0/uvol-node-cache
       metricsScope: "uvol_broker"
       profilerPort: 10254
       autoAbortAfter: 5m
@@ -8349,7 +8350,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "d04f1f46671b6d52fdb2e83166f586d675682eb1775962622c4b273d89d7952"
+        configChecksum: "2768f96ec49b12329c59598a03c5839a04b8662195ab05ff3bdeea8a4775105"
         prometheus.io/scrape: "true"
         prometheus.io/port: "10254"
         prometheus.io/path: /metrics
@@ -8386,6 +8387,13 @@ spec:
           hostPath:
             path: /dev/fuse
             type: CharDevice
+        # The node-shared chunk cache root. Task pods never mount this
+        # themselves: the broker bind-mounts a per-namespace subtree into the
+        # pod's CSI target (kind=node-cache), so the privilege stays here.
+        - name: uvol-node-cache
+          hostPath:
+            path: /mnt/k8s-disks/0/uvol-node-cache
+            type: DirectoryOrCreate
       containers:
         # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
         # pods don't have to be — they run restricted-PSS and collect a
@@ -8453,6 +8461,8 @@ spec:
               mountPath: /var/lib/uvol/state
             - name: dev-fuse
               mountPath: /dev/fuse
+            - name: uvol-node-cache
+              mountPath: /mnt/k8s-disks/0/uvol-node-cache
 
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
