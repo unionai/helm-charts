@@ -5238,7 +5238,22 @@ metadata:
   name: union-nodeobserver
   namespace: union
 data:
-  config.yaml: | 
+  # Emitted twice on purpose, so this chart and the dataplane image can roll in
+  # either order.
+  #
+  # nodeobserver is being folded into a single `nodeagent` binary that loads
+  # config through flytestdlib, which keys each component by a named section:
+  # the new binary reads `nodeReadiness:` and nothing else, the current one
+  # reads these keys at the document root and nothing else. Each ignores the
+  # other's copy — the old parser is a plain yaml.Unmarshal, not a strict one.
+  #
+  # Without the section, a routine image bump would leave the new binary
+  # reading an empty criticalDaemonSets, which removes the node's startup taint
+  # immediately while the pod goes on reporting Ready. The root copy can go
+  # once no dataplane runs a pre-consolidation image.
+  config.yaml: |
+    nodeReadiness:
+      criticalDaemonSets: []
     criticalDaemonSets: []
 
 ---
@@ -8201,7 +8216,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "53588c33a77619d28361e2b7ac9d8d903680ecb12be9214e4adb74210f52d03"
+        configChecksum: "61d451578160bcb5d46b36bd3c88f2afe39bdf0c556965c558fb4399f6bbe6d"
         
       labels:
         platform.union.ai/zone: "dataplane"
