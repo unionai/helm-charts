@@ -18,6 +18,14 @@ secrets and every mutate verb).
 {{- $img := $k8s.image | default dict -}}
 {{- $repo := $img.repository | default "registry.k8s.io/kubectl" -}}
 {{- $tag := $img.tag | default "v1.32.2" -}}
+{{- /* Strip-auth sidecar: the union-apps edge authorizes the caller then passes the
+       caller's Authorization bearer through to the backend (apps opt-in to token
+       passthrough; there is no per-app strip knob today — see SYSTEM_APPS.md §6).
+       kubectl proxy must instead reach the API server with its own read-only SA, so
+       an nginx front clears Authorization before kubectl proxy (client-go then adds
+       the SA token). */ -}}
+{{- $strip := $k8s.authStripSidecar | default dict -}}
+{{- $stripImg := $strip.image | default "nginxinc/nginx-unprivileged:1.27-alpine" -}}
 {{- /* Apps wildcard base for the DomainMapping. NOT the CP host (which is the
        intracluster service name on selfhosted). Prefer an explicit
        systemApps.k8sProxy.appsDomain; else derive from the apps ingress host
@@ -143,6 +151,40 @@ subjects:
     namespace: {{ .Release.Namespace }}
 {{- end }}
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-authstrip
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8080;
+        location / {
+          # The edge already authorized the caller; drop their Union bearer so
+          # kubectl proxy authenticates to the API server with its own read-only SA.
+          proxy_set_header Authorization "";
+          proxy_pass http://127.0.0.1:8081;
+          proxy_http_version 1.1;
+        }
+      }
+    }
+---
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
@@ -172,22 +214,53 @@ spec:
         app.kubernetes.io/name: {{ $name }}
     spec:
       serviceAccountName: {{ $name }}
+      volumes:
+        - name: authstrip-config
+          configMap:
+            name: {{ $name }}-authstrip
+        - name: tmp
+          emptyDir: {}
       containers:
+        # Ingress/serving container (Knative routes to the one with a port): strips
+        # the caller's Authorization then forwards to kubectl proxy on localhost.
+        - name: authstrip
+          image: {{ $stripImg | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: authstrip-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+        # Read-only kubectl proxy: bound to localhost, reached only via the sidecar.
+        # Talks to the API server with the pod's read-only ServiceAccount (the
+        # sidecar has removed the caller bearer, so client-go adds the SA token).
         - name: kubectl-proxy
           image: "{{ $repo }}:{{ $tag }}"
           imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
-          # kubectl proxy authenticates to the API server with the pod's mounted
-          # ServiceAccount token + in-cluster CA. --accept-hosts=.* is safe here:
-          # the only ingress path is the union-authn ext_authz edge, which has
-          # already authorized the caller against the dataplane's owner org.
           command: ["kubectl"]
           args:
             - "proxy"
-            - "--port=8080"
-            - "--address=0.0.0.0"
+            - "--port=8081"
+            - "--address=127.0.0.1"
             - "--accept-hosts=.*"
-          ports:
-            - containerPort: 8080
           {{- with $k8s.env }}
           env:
 {{ toYaml . | indent 12 }}
