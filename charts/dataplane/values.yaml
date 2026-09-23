@@ -1573,12 +1573,36 @@ uvolMountBroker:
   # -- flytestdlib profutils port: /metrics, /healthcheck, pprof, and the
   # /readyz endpoint the readinessProbe uses.
   profilerPort: 10254
+  # -- Node-shared chunk cache for Union Volumes, served by the broker. A task
+  # pod that asks (`allow_volumes(shared_node_cache=True)`) gets a per-namespace
+  # subtree of `hostPath` bind-mounted by the broker — no hostPath and no
+  # privilege in the task pod; pods of one namespace on a node share one cache,
+  # other namespaces never see it. On by default, so a pod that asks gets it on
+  # every node; set `enabled: false` to refuse (the pod then fails NodePublish
+  # with FailedPrecondition rather than mounting anything privileged). Put
+  # `hostPath` on the node's fastest local disk (on EKS AMIs with instance
+  # store, under /mnt/k8s-disks/0) and budget it: each client evicts against its
+  # own limit.
+  nodeCache:
+    enabled: true
+    hostPath: /var/lib/uvol/node-cache
   # -- Extra keys merged into the broker config block (for example
   # autoAbortAfter). May include template values.
   config: {}
-  # -- Override the priorityClass. Defaults to system-node-critical: task pods
-  # cannot mount a Volume on a node whose broker was evicted.
-  priorityClassName: system-node-critical
+  # -- PriorityClass for the broker DaemonSet: schedules ahead of task pods so a
+  # node's broker isn't evicted out from under pods that need it to mount Volumes.
+  # Empty (with priorityClass.create) derives a release-scoped default; set an
+  # explicit name to override. Empty with create: false is rejected — the broker
+  # must have a deliberate class. Do NOT use a reserved system class (e.g.
+  # system-node-critical): GKE restricts those to kube-system, so the pods are
+  # rejected at creation.
+  priorityClassName: ""
+  # -- Whether the chart creates the PriorityClass (the name above, or a derived
+  # release-scoped default when empty). Set create: false to bring your own, which
+  # then requires priorityClassName. value applies only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
   # -- Rolling update budget. The broker is on the task open() path, so a large
   # value trades mount availability for upgrade speed.
   maxUnavailable: 25%
@@ -1596,17 +1620,22 @@ uvolMountBroker:
   podAnnotations: { }
   # -- Additional pod environment variables.
   podEnv: [ ]
-  # -- The broker sits on task pods' open() hot path (passthrough backing
-  # registration RPCs), so the cpu request is a scheduling-latency knob rather
-  # than a utilization estimate: starve it and every small-file open pays extra
-  # milliseconds. Deliberately no cpu limit — CFS throttling would inject worse
-  # tail latency than fair-share contention. Measured at 60us of broker CPU per
-  # open with 8 volumes active, so 500m carries roughly 8,300 opens/s. Memory is
-  # O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node cap); the
-  # limit is a leak backstop, not an operating bound.
+  # -- The cpu request is what the broker is guaranteed under contention, not a
+  # cap: there is deliberately no cpu limit — CFS throttling would inject worse
+  # tail latency than fair-share contention — so on an idle node the broker
+  # bursts past the request. What the request costs is node schedulability: the
+  # broker is a DaemonSet at system-node-critical, so every milli it requests
+  # leaves allocatable, and a request a task pod cannot fit around preempts
+  # that task pod rather than queueing it. Task pods sized to a node's full
+  # allocatable CPU are common, which makes the DaemonSet footprint the binding
+  # constraint, so the default is small; raise it per cluster where volume
+  # traffic warrants it. Measured at 60us of broker CPU per open with 8 volumes
+  # active, so 30m guarantees ~500 opens/s and 500m carries roughly 8,300.
+  # Memory is O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node
+  # cap); the limit is a leak backstop, not an operating bound.
   resources:
     requests:
-      cpu: 500m
+      cpu: 30m
       memory: 32Mi
     limits:
       memory: 256Mi

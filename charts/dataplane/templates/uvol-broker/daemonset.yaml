@@ -53,7 +53,7 @@ spec:
       # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
       # credential cannot be turned into a confused deputy for the cluster.
       automountServiceAccountToken: false
-      {{- $priorityClassName := .Values.uvolMountBroker.priorityClassName | default .Values.operator.priorityClassName }}
+      {{- $priorityClassName := include "uvolBroker.priorityClassName" . }}
       {{- if $priorityClassName }}
       priorityClassName: {{ $priorityClassName }}
       {{- end }}
@@ -94,6 +94,15 @@ spec:
           hostPath:
             path: /dev/fuse
             type: CharDevice
+        {{- if .Values.uvolMountBroker.nodeCache.enabled }}
+        # The node-shared chunk cache root. Task pods never mount this
+        # themselves: the broker bind-mounts a per-namespace subtree into the
+        # pod's CSI target (kind=node-cache), so the privilege stays here.
+        - name: uvol-node-cache
+          hostPath:
+            path: {{ required "uvolMountBroker.nodeCache.hostPath is required when nodeCache is enabled" .Values.uvolMountBroker.nodeCache.hostPath }}
+            type: DirectoryOrCreate
+        {{- end }}
       containers:
         # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
         # pods don't have to be — they run restricted-PSS and collect a
@@ -160,4 +169,8 @@ spec:
               mountPath: {{ .Values.uvolMountBroker.stateDir }}
             - name: dev-fuse
               mountPath: /dev/fuse
+            {{- if .Values.uvolMountBroker.nodeCache.enabled }}
+            - name: uvol-node-cache
+              mountPath: {{ required "uvolMountBroker.nodeCache.hostPath is required when nodeCache is enabled" .Values.uvolMountBroker.nodeCache.hostPath }}
+            {{- end }}
 {{- end }}
