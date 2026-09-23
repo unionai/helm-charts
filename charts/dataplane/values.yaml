@@ -2303,6 +2303,46 @@ tunnelService:
 apps:
   enabled: null
 
+# -- Union-operated system apps that ride the app-serving substrate (Knative
+# Serving + the apps wildcard ingress). Each is a scale-to-zero Knative Service
+# fronted by the union-authn ext_authz edge, so it inherits the same
+# per-org authorization as customer apps. All are dark by default; opt in per
+# environment. Requires `apps.enabled` (the serving substrate).
+systemApps:
+  # -- Read-only in-cluster `kubectl proxy` (union-k8s-ro). Lets /union-help and
+  # on-call engineers read live cluster state (pending pods, events, nodes, App
+  # container logs) through the apps edge instead of a laptop kubeconfig. Runs
+  # under a dedicated ServiceAccount bound to a read-only ClusterRole (or a
+  # namespaced Role when `lowPrivilege`) that omits secrets and every mutate verb.
+  k8sProxy:
+    enabled: false
+    # -- Subdomain (and Knative Service name); the DomainMapping is
+    # `<subdomain>.apps.<controlplane-host>`.
+    subdomain: "union-k8s-ro"
+    # -- Namespace-scoped RBAC (Role/RoleBinding pinned to .Release.Namespace)
+    # instead of a cluster-wide ClusterRole. For enterprise clusters where Union
+    # is confined to its own namespace and cluster-wide RBAC is prohibited.
+    lowPrivilege: false
+    # -- Pinned official SIG-Release image (registry.k8s.io, no Docker Hub rate
+    # limits). Override repository/tag to mirror into an air-gapped registry.
+    image:
+      repository: "registry.k8s.io/kubectl"
+      tag: "v1.32.2"
+      pullPolicy: IfNotPresent
+    # -- Private-registry pull secrets for air-gapped / sovereign VPCs.
+    imagePullSecrets: []
+    # -- Extra env (corporate proxy vars, private CA bundle paths).
+    env: []
+    minScale: 0
+    maxScale: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
 # -- Configure app serving and knative.
 serving:
   # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
@@ -3073,6 +3113,10 @@ gateway:
       # (e.g. CAP_SYS_ADMIN from PodTemplate.allow_fuse(), used to mount a FUSE
       # filesystem such as a flyteplugins-union Volume).
       kubernetes.containerspec-addcapabilities: "enabled"
+      # Allow a Service to pin its revision's ServiceAccount. The union-k8s-ro
+      # system app (systemApps.k8sProxy) runs under a dedicated read-only SA;
+      # without this flag Knative would force the namespace default SA.
+      kubernetes.podspec-serviceaccount: "enabled"
       kubernetes.podspec-shareprocessnamespace: "enabled"
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
