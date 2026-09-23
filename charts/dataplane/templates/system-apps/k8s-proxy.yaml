@@ -18,7 +18,15 @@ secrets and every mutate verb).
 {{- $img := $k8s.image | default dict -}}
 {{- $repo := $img.repository | default "registry.k8s.io/kubectl" -}}
 {{- $tag := $img.tag | default "v1.32.2" -}}
-{{- $host := printf "%s.apps.%s" $name (include "dataplane.cp.host" .) -}}
+{{- /* Apps wildcard base for the DomainMapping. NOT the CP host (which is the
+       intracluster service name on selfhosted). Prefer an explicit
+       systemApps.k8sProxy.appsDomain; else derive from the apps ingress host
+       ("*.apps.<host>" → "apps.<host>"), which honors ingress.serving.hostOverride. */ -}}
+{{- $appsDomain := tpl ($k8s.appsDomain | default "") . -}}
+{{- if not $appsDomain -}}
+{{- $appsDomain = trimPrefix "*." (include "ingress.serving.host" . | trim | trimAll "\"") -}}
+{{- end -}}
+{{- $host := printf "%s.%s" $name $appsDomain -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
