@@ -152,6 +152,16 @@ metadata:
     {{- include "unionai-dataplane.labels" . | nindent 4 }}
     app.kubernetes.io/component: system-app
     union.ai/system-app: {{ $name }}
+  annotations:
+    # Route + authorize through the standard app-serving edge (Union's net-kourier
+    # fork + union-apps ext_authz filter), exactly like a Flyte App: the fork
+    # programs an external-host route to this cluster-local ksvc, and the filter
+    # authorizes callers against the dataplane owner org (empty project/domain =>
+    # org-level check => cross-tenant callers are 403'd). No DomainMapping / no
+    # public config-domain needed.
+    serving.unionai.dev/external-hosts: {{ $host | quote }}
+    serving.unionai.dev/app-id: {{ dict "name" $name "org" (tpl .Values.orgName .) | toJson | quote }}
+    serving.unionai.dev/allow-anonymous: "false"
 spec:
   template:
     metadata:
@@ -194,33 +204,4 @@ spec:
             runAsGroup: 65532
             capabilities:
               drop: ["ALL"]
----
-# Grant this namespace the apps-domain host so the DomainMapping can claim it.
-# config-network.autocreate-cluster-domain-claims is off by default, so without
-# this the DomainMapping fails with DomainAlreadyClaimed.
-apiVersion: networking.internal.knative.dev/v1alpha1
-kind: ClusterDomainClaim
-metadata:
-  name: {{ $host }}
-  labels:
-    {{- include "unionai-dataplane.labels" . | nindent 4 }}
-    app.kubernetes.io/component: system-app
-    union.ai/system-app: {{ $name }}
-spec:
-  namespace: {{ .Release.Namespace }}
----
-apiVersion: serving.knative.dev/v1beta1
-kind: DomainMapping
-metadata:
-  name: {{ $host }}
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "unionai-dataplane.labels" . | nindent 4 }}
-    app.kubernetes.io/component: system-app
-    union.ai/system-app: {{ $name }}
-spec:
-  ref:
-    apiVersion: serving.knative.dev/v1
-    kind: Service
-    name: {{ $name }}
 {{- end }}
