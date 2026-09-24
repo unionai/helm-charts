@@ -1,6 +1,24 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.5
+
+`version` and `appVersion` move `2026.9.4` → `2026.9.5`.
+
+### Dataplane images
+
+- uvol mount broker: serves a node-shared chunk cache to task pods as
+  `volumes.union.ai/kind=node-cache` ([cloud#18524](https://github.com/unionai/cloud/pull/18524)).
+  This is the image half of the chart's `uvolMountBroker.nodeCache` (below): a
+  2026.9.4 broker ignores the attribute, so the feature only works from this
+  image on.
+- Operator: App status conditions are capped so oversized messages no longer
+  break the inline status notification ([cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- Operator: fleet pool registries are rendered and the configured image
+  endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.5).
+Included submodule changes: Flyte v1 unchanged (`8b7a3dd2`);
+[Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
 
 ### Knative autoscaler resources
 
@@ -11,7 +29,7 @@ decider per revision, including scaled-to-zero ones; on a dataplane with many
 revisions the 1-CPU cap throttled it until the liveness probe killed it in a
 loop, and no new Knative revision could become ready. Mirrors cloud#18669.
 
-### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
 
 On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
 broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for
