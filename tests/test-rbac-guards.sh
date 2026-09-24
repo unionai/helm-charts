@@ -1252,6 +1252,63 @@ function expect-workload-sa {
 # `delete` appearing on resourcequotas, or on the emitter's clusterroles bind rule, fails this
 # without anyone adding a case for it.
 #
+# expect-resource-group <description> <role> <resource> <expected apiGroups> [helm --set flags...]
+# Asserts that within one named role, the rule carrying <resource> declares exactly the given
+# comma-separated sorted apiGroups.
+#
+# The companion to expect-verb-resources, which is deliberately group-blind: it treats an
+# `apiGroups:` line only as a rule boundary, so it cannot tell `endpointslices` under
+# discovery.k8s.io from the same name under the core group. That distinction is the whole of
+# the Serving 1.23 EndpointSlice move, and a rule that got the group wrong would render, pass
+# every resource-set pin in this file, and fail at the API server. Scoped to the one question
+# rather than retrofitting groups into expect-verb-resources, whose output shape every other
+# check here depends on.
+#
+# Fails closed twice over: a missing role and a resource that appears in no rule are both
+# failures, not vacuous passes.
+function expect-resource-group {
+  local desc=$1 role=$2 resource=$3 expected=$4; shift 4
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  # Buffer each rule's apiGroups, and emit them only once the rule is known to carry the
+  # resource -- the groups are declared before the resources, so the decision cannot be made
+  # until the rule closes.
+  got=$(awk -v role="${role}" -v want="${resource}" '
+    function flush(  i) {
+      if (has_res) for (i in grp) print i
+      delete grp; has_res=0
+    }
+    /^# Source: / {flush(); kind=""; inrole=0}
+    /^kind: / {kind=$2; next}
+    /^  name: / {if ((kind=="Role" || kind=="ClusterRole") && $2==role) {inrole=1; found=1} next}
+    inrole && /^  - apiGroups:/ {flush(); key="apiGroups"; next}
+    inrole && /^    (resources|verbs):[[:space:]]*$/ {key=$1; sub(/:$/,"",key); next}
+    inrole && /^    [a-z]/ {key=""}
+    inrole && key=="apiGroups" && /^    - / {v=$0; sub(/^    - /,"",v); gsub(/"/,"",v); if (v=="") v="(core)"; grp[v]=1; next}
+    inrole && key=="resources" && /^    - / {v=$0; sub(/^    - /,"",v); gsub(/"/,"",v); if (v==want) has_res=1; next}
+    END {flush(); if (!found) print "<NO-SUCH-ROLE>"}
+  ' <<<"${out}" | sort -u | paste -sd, -)
+  if [[ -z "${got}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           no rule in ${role} carries ${resource}"
+    failures=$((failures + 1)); return
+  fi
+  if [[ "${got}" == "${expected}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           apiGroups of the rule carrying ${resource} on ${role}"
+    echo "           expected: ${expected}"
+    echo "           observed: ${got}"
+    failures=$((failures + 1))
+  fi
+}
+
 # Fails closed. If the role is not in the render the assertion fails rather than passing with
 # an empty set, so removing the object under test cannot turn a check green.
 function expect-verb-resources {
@@ -1836,6 +1893,34 @@ expect-verb-resources "and its list set is unchanged by that move" \
   union-knative-controller-cluster-read list \
   "'*',deployments,endpoints,namespaces,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The autoscaler's, pinned the same way and for the same two reasons: it is the role the 1.23
+# bump moved from core endpoints to discovery.k8s.io endpointslices, and a complete set is what
+# catches both directions of that -- core endpoints coming back, and a wildcard rule appearing
+# under any of the three read verbs. Asserted on list and watch, which the shared informers
+# always take together; `get` is empty because this role has none.
+expect-verb-resources "the autoscaler's cluster read is exactly its informers" \
+  union-knative-autoscaler-cluster-read list "'*',deployments,endpointslices,horizontalpodautoscalers,leases,pods,revisions,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and the same set under watch" \
+  union-knative-autoscaler-cluster-read watch "'*',deployments,endpointslices,horizontalpodautoscalers,leases,pods,revisions,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-verb-resources "and it gets nothing cluster-wide" \
+  union-knative-autoscaler-cluster-read get "" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The absence half, as with net-kourier's secrets: the per-verb sets above see a resource only
+# if its rule carries that verb, so this catches a core endpoints rule restored under any verb.
+expect-role-resource "and no core endpoints rule returns to it" \
+  absent union-knative-autoscaler-cluster-read "endpoints" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-resource-group "and the informer it reads through is the discovery.k8s.io one" \
+  union-knative-autoscaler-cluster-read endpointslices "discovery.k8s.io" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# The other side of the 1.23 split: the controller's serverlessservice reconciler still writes
+# core Endpoints, so its restricted subresource must stay in the core group. The two are easy
+# to conflate now that both names appear in the chart.
+expect-resource-group "while the controller's restricted subresource stays in core" \
+  union-work-ns "endpoints/restricted" "(core)" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
 # The other half: the grant has to still be conveyed, or digest resolution fails and every
 # Revision goes ContainerMissing. Asserted with leaseworker and flytepropeller OFF, as with
 # endpoints/restricted above -- a pooled role cannot say who contributed a rule, so what this
@@ -1939,6 +2024,8 @@ expect-verb-resources "and deletecollection on the one resource collected that w
 #   create  carries endpoints/restricted, which nothing else may hold, and not
 #           ingresses -- net-kourier reacts to Ingresses, it does not make them.
 #   update  carries ingresses/status but not ingresses, the other half of that split.
+#   patch   carries deployments/scale, which is the whole of scale-to-zero, and which no
+#           other verb or slot conveys.
 expect-verb-resources "work-ns grants get on its full app-serving resource set" \
   union-work-ns get \
   "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
@@ -1950,6 +2037,14 @@ expect-verb-resources "and create on the subset that is created" \
 expect-verb-resources "and update on the subset that is updated" \
   union-work-ns update \
   "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# And patch, which is where scale-to-zero lives. kpa/scaler.go JSON-patches /spec/replicas on
+# the scale subresource of the PodAutoscaler's target, in the revision's namespace -- so a
+# deployments/scale that goes missing here, or moves to a cluster slot, breaks scale-to-zero
+# and cold-start-from-zero while every other check in this file stays green.
+expect-verb-resources "and patch, which is the only thing conveying deployments/scale" \
+  union-work-ns patch \
+  "'*','*/finalizers','*/status',deployments,deployments/scale,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,replicasets/finalizers,secrets,serverlessservices,serverlessservices/status,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 
 # comp-ns-write does not render at chart defaults -- no enabled component declares into
@@ -1965,6 +2060,15 @@ expect-verb-resources "the autoscaler's comp-ns-write covers the statforwarder's
 # the removal, since the set above only sees resources that carry `get`.
 expect-role-resource "and no core endpoints rule survives the 1.23 bump" \
   absent union-knative-autoscaler-comp-ns-write "endpoints" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# And both halves are in discovery.k8s.io, not core. Every other pin here is group-blind, so
+# without these a rule that kept the resource name and got the group wrong reads as correct
+# through the whole file and is refused at the API server instead.
+expect-resource-group "and its endpointslices rule is in discovery.k8s.io, not core" \
+  union-knative-autoscaler-comp-ns-write endpointslices "discovery.k8s.io" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-resource-group "as is the restricted subresource it pairs with" \
+  union-knative-autoscaler-comp-ns-write "endpointslices/restricted" "discovery.k8s.io" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 expect-verb-resources "the knative webhook's is one Secret it creates and renews" \
   union-knative-webhook-comp-ns-write create "secrets" \
