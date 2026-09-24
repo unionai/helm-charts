@@ -29,6 +29,25 @@ _CACHE_BUST = os.environ.get("FUNCTIONAL_IMAGE_CACHE_BUST", "")
 _N_SMALL = 64
 _LARGE_MIB = 32
 
+
+def _volume_pod_template():
+    """``allow_volumes()``, plus the label the SELinux webhook selects on.
+
+    TEMPORARY. flyteplugins-union sets ``volumes.union.ai/channel`` in
+    ``allow_volumes()`` from v0.11.1; the pin below is ``>=0.11.0b2``, which
+    predates it. Without the label the webhook's objectSelector does not match,
+    the API server never consults it, the task container keeps ``container_t``,
+    and the broker's descriptor is refused — which is exactly the failure this
+    whole change exists to fix, so it fails loudly rather than silently.
+
+    Remove this once the pin moves to >=0.11.1: keeping it would let CI pass
+    even if the released plugin stopped setting the label.
+    """
+    pt = allow_volumes()
+    pt.labels = {**(pt.labels or {}), "volumes.union.ai/channel": "true"}
+    return pt
+
+
 _volume_env = flyte.TaskEnvironment(
     name=f"ci-volume-{_env_suffix}",
     image=flyte.Image.from_debian_base()
@@ -41,7 +60,7 @@ _volume_env = flyte.TaskEnvironment(
     # The client keeps a read/write buffer in memory; 2Gi is the floor at which
     # it is comfortable, and still fits next to buildkit on the 4-vCPU k3d node.
     resources=flyte.Resources(cpu="500m", memory="2Gi"),
-    pod_template=allow_volumes(),
+    pod_template=_volume_pod_template(),
     cache="disable",
     # The driver action re-imports this module in its own pod: the env name must
     # resolve identically there, or the nested calls miss the image cache.
@@ -85,6 +104,21 @@ def _bucket() -> tuple[str, str | None]:
     )
 
 
+def _selinux_context() -> str:
+    """The container's own SELinux context, or why it could not be read.
+
+    This is the one piece of evidence that cannot be lost to a log rotation or
+    a restarted webhook pod: it is what the kernel thinks this container is, at
+    the moment it mounted. On a Bottlerocket node an unmutated container reads
+    back ``container_t`` and cannot receive the broker's descriptor at all.
+    """
+    try:
+        with open("/proc/self/attr/current") as f:
+            return f.read().strip("\x00\n") or "(empty)"
+    except OSError as e:
+        return f"{type(e).__name__}: {e}"
+
+
 def _broker_mode(mount_path: str) -> dict:
     """Prove the mount went through the broker, not a privileged in-pod mount.
 
@@ -96,7 +130,13 @@ def _broker_mode(mount_path: str) -> dict:
     chan = os.environ.get("UVOL_CHANNEL_DIR", "")
     real = os.path.realpath(mount_path)
     ok = bool(chan) and real.startswith(os.path.realpath(chan) + os.sep)
-    return {"broker_mode": ok, "channel_dir": chan, "mount_path": mount_path, "resolved": real}
+    return {
+        "broker_mode": ok,
+        "channel_dir": chan,
+        "mount_path": mount_path,
+        "resolved": real,
+        "selinux": _selinux_context(),
+    }
 
 
 def _channel_preflight() -> dict:
