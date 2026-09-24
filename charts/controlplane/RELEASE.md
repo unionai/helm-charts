@@ -1,8 +1,8 @@
 # controlplane — Release Notes
 
-## 2026.9.5
+## 2026.9.6
 
-`version` and `appVersion` move `2026.9.4` → `2026.9.5`. Controlplane templates
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`. Controlplane templates
 and values are unchanged.
 
 ### Control-plane and console images
@@ -17,7 +17,7 @@ and values are unchanged.
   enumerations ([cloud#18553](https://github.com/unionai/cloud/pull/18553)).
 - Console: runs can be searched by run ID as well as task name ([cloud#18395](https://github.com/unionai/cloud/pull/18395)).
 
-Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.5).
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
 
 ## 2026.9.4
 

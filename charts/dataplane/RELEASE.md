@@ -1,8 +1,8 @@
 # dataplane — Release Notes
 
-## 2026.9.5
+## 2026.9.6
 
-`version` and `appVersion` move `2026.9.4` → `2026.9.5`.
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`.
 
 ### Dataplane images
 
@@ -16,8 +16,23 @@
 - Operator: fleet pool registries are rendered and the configured image
   endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
 
-Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.5).
-Included submodule changes: Flyte v1 unchanged (`8b7a3dd2`);
+- uvol mount broker: mounts its published channel on first use rather than at
+  NodePublish, and gives that mount the pod's own SELinux label
+  ([cloud#18583](https://github.com/unionai/cloud/pull/18583)). Without this a
+  task pod on an SELinux-enforcing node cannot start: the container runtime
+  relabels the CSI target, walks into a premount nothing is serving yet, and
+  fails. Union Volumes have been unusable on those nodes since the broker
+  shipped in 2026.9.2.
+- Propeller webhook: can give a volume-mounting container an SELinux type it is
+  allowed to receive the broker's channel descriptor with
+  ([flyte#1017](https://github.com/unionai/flyte/pull/1017)). Off unless
+  enabled; see the `selinuxTaskPods` section below for what the type grants and
+  why it is not on by default.
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+Included submodule changes:
+[Flyte v1](https://github.com/unionai/flyte/compare/8b7a3dd29511...273cb0d62544)
+— this is where the webhook above comes from;
 [Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
 
 ### Knative autoscaler resources
