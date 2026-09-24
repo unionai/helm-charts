@@ -30,37 +30,22 @@ _N_SMALL = 64
 _LARGE_MIB = 32
 
 
-def _volume_pod_template():
-    """``allow_volumes()``, plus the label the SELinux webhook selects on.
-
-    TEMPORARY. flyteplugins-union sets ``volumes.union.ai/channel`` in
-    ``allow_volumes()`` from v0.11.1; the pin below is ``>=0.11.0b2``, which
-    predates it. Without the label the webhook's objectSelector does not match,
-    the API server never consults it, the task container keeps ``container_t``,
-    and the broker's descriptor is refused — which is exactly the failure this
-    whole change exists to fix, so it fails loudly rather than silently.
-
-    Remove this once the pin moves to >=0.11.1: keeping it would let CI pass
-    even if the released plugin stopped setting the label.
-    """
-    pt = allow_volumes()
-    pt.labels = {**(pt.labels or {}), "volumes.union.ai/channel": "true"}
-    return pt
-
-
 _volume_env = flyte.TaskEnvironment(
     name=f"ci-volume-{_env_suffix}",
     image=flyte.Image.from_debian_base()
     .with_apt_packages("fuse3")
-    # >=0.11.0b2: Volumes behind S3-compatible endpoints (k3d's RustFS) —
-    # flyteplugins-union#132. Pre-releases allowed for the same reason the
-    # runner's SDK venv allows them.
-    .with_pip_packages("flyteplugins-union>=0.11.0b2", pre=True)
+    # >=0.12.1: allow_volumes() sets the volumes.union.ai/channel label that
+    # the SELinux webhook's objectSelector matches (flyteplugins-union#142), so
+    # a task pod on an SELinux-enforcing node can be given a type that may
+    # receive the broker's channel descriptor. It also carries >=0.11.0b2's
+    # Volumes-behind-an-S3-compatible-endpoint support (k3d's RustFS, #132).
+    # No pre=True: 0.12.1 is a final release.
+    .with_pip_packages("flyteplugins-union>=0.12.1")
     .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     # The client keeps a read/write buffer in memory; 2Gi is the floor at which
     # it is comfortable, and still fits next to buildkit on the 4-vCPU k3d node.
     resources=flyte.Resources(cpu="500m", memory="2Gi"),
-    pod_template=_volume_pod_template(),
+    pod_template=allow_volumes(),
     cache="disable",
     # The driver action re-imports this module in its own pod: the env name must
     # resolve identically there, or the nested calls miss the image cache.
