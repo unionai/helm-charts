@@ -516,6 +516,20 @@ config:
       certDir: /etc/webhook/certs
       serviceName: union-pod-webhook
       servicePort: "{{ .Values.flytepropellerwebhook.service.port }}"
+      # -- Let a volume-mounting task pod's container run in an SELinux type
+      # -- that may receive the mount broker's channel descriptor. Needed only
+      # -- where the node enforces SELinux (Bottlerocket, so EKS Auto Mode;
+      # -- RHCOS/OpenShift): there the broker's descriptor is refused and the
+      # -- volume client dies. OFF by default — it relaxes task-pod
+      # -- confinement, so a cluster that does not need it must not get it.
+      # -- An empty nodeOSImageSubstrings applies it wherever it is enabled
+      # -- instead of only on the distributions that need it: the webhook's
+      # -- role cannot read nodes (it is namespaced under low_privilege), so
+      # -- auto-detection would fail closed here and mutate nothing.
+      selinuxTaskPods:
+        enabled: false
+        type: spc_t
+        nodeOSImageSubstrings: []
       listenPort: "{{ .Values.flytepropellerwebhook.service.targetPort }}"
       secretManagerTypes:
       - Embedded
@@ -1373,6 +1387,33 @@ flytepropellerwebhook:
           matchLabels:
             inject-flyte-secrets: "true"
             organization: "{{ tpl .Values.orgName . }}"
+      # -- SELinux type for volume-mounting task pods. Off by default; needed
+      # -- only where the node's policy refuses the mount broker's attempt to
+      # -- label a volume channel for a confined pod (Bottlerocket, so EKS
+      # -- Auto Mode). Scoped to this org's pods like the secrets webhook,
+      # -- which keeps a webhook outage away from everything else — these
+      # -- webhooks fail closed.
+      selinuxTaskPods:
+        # -- Register the mutator's path. Keep in step with
+        # -- configmap core.webhook.selinuxTaskPods.enabled above.
+        enabled: false
+        # -- Name of the webhook
+        name: union-pod-webhook-selinux.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/selinux-task-pods
+        # -- Namespace selector for the webhook
+        namespaceSelector: {}
+        # -- Object selector for the webhook. Scoped twice over: to this org,
+        # -- like every other pod webhook here, AND to pods that actually carry
+        # -- a mount-broker channel volume. The chart builds the
+        # -- MutatingWebhookConfiguration, so the selector the propeller binary
+        # -- would have defaulted to never applies — it has to be set here.
+        # -- The label comes from flyteplugins-union's allow_volumes(); a
+        # -- cluster enabling this wants a plugin new enough to set it.
+        objectSelector:
+          matchLabels:
+            organization: "{{ tpl .Values.orgName . }}"
+            volumes.union.ai/channel: "true"
       # -- Managed image webhook configuration (requires Union operator support)
       managedImage:
         enabled: false
