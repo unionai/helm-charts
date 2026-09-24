@@ -1,16 +1,7 @@
 {{- /*
-union-k8s-ro — a scale-to-zero, read-only `kubectl proxy` exposed as a Knative
-Service on the apps wildcard domain. It lets Cally (/union-help) and on-call
-engineers read live cluster state (pending pods, events, nodes, App container
-logs) through the same edge that fronts app serving — authenticated by the
-union-authn ext_authz filter and hard-pinned to the dataplane's owner org — so
-no laptop kubeconfig / cloud-SSO drift is in the path.
-
-Dark by default (systemApps.k8sProxy.enabled=false); opt-in per environment.
-Requires the Knative Serving substrate (apps.enabled) since it is a KSVC, and
-the kubernetes.podspec-serviceaccount feature flag so the revision can run under
-the dedicated read-only ServiceAccount below (bound to a ClusterRole that omits
-secrets and every mutate verb).
+union-k8s-ro: a scale-to-zero, read-only `kubectl proxy` served behind the
+app-serving edge, so a caller authorized for the dataplane's org can read cluster
+state without a kubeconfig.
 */ -}}
 {{- $k8s := (.Values.systemApps | default dict).k8sProxy | default dict -}}
 {{- if and $k8s.enabled (include "apps.enabled" .) -}}
@@ -18,18 +9,12 @@ secrets and every mutate verb).
 {{- $img := $k8s.image | default dict -}}
 {{- $repo := $img.repository | default "registry.k8s.io/kubectl" -}}
 {{- $tag := $img.tag | default "v1.32.2" -}}
-{{- /* Strip-auth sidecar: the union-apps edge authorizes the caller then passes the
-       caller's Authorization bearer through to the backend (apps opt-in to token
-       passthrough; there is no per-app strip knob today — see SYSTEM_APPS.md §6).
-       kubectl proxy must instead reach the API server with its own read-only SA, so
-       an nginx front clears Authorization before kubectl proxy (client-go then adds
-       the SA token). */ -}}
+{{- /* The edge passes the caller's bearer through to the backend; nginx clears it so
+       kubectl proxy authenticates with its own read-only ServiceAccount instead. */ -}}
 {{- $strip := $k8s.authStripSidecar | default dict -}}
 {{- $stripImg := $strip.image | default "nginxinc/nginx-unprivileged:1.27-alpine" -}}
-{{- /* Apps wildcard base for the DomainMapping. NOT the CP host (which is the
-       intracluster service name on selfhosted). Prefer an explicit
-       systemApps.k8sProxy.appsDomain; else derive from the apps ingress host
-       ("*.apps.<host>" → "apps.<host>"), which honors ingress.serving.hostOverride. */ -}}
+{{- /* Derived from the apps ingress host, not the CP host, which is an in-cluster
+       service name on selfhosted. */ -}}
 {{- $appsDomain := tpl ($k8s.appsDomain | default "") . -}}
 {{- if not $appsDomain -}}
 {{- $appsDomain = trimPrefix "*." (include "ingress.serving.host" . | trim | trimAll "\"") -}}
@@ -176,8 +161,6 @@ data:
       server {
         listen 8080;
         location / {
-          # The edge already authorized the caller; drop their Union bearer so
-          # kubectl proxy authenticates to the API server with its own read-only SA.
           proxy_set_header Authorization "";
           proxy_pass http://127.0.0.1:8081;
           proxy_http_version 1.1;
@@ -195,12 +178,8 @@ metadata:
     app.kubernetes.io/component: system-app
     union.ai/system-app: {{ $name }}
   annotations:
-    # Route + authorize through the standard app-serving edge (Union's net-kourier
-    # fork + union-apps ext_authz filter), exactly like a Flyte App: the fork
-    # programs an external-host route to this cluster-local ksvc, and the filter
-    # authorizes callers against the dataplane owner org (empty project/domain =>
-    # org-level check => cross-tenant callers are 403'd). No DomainMapping / no
-    # public config-domain needed.
+    # Routed and authorized like a Flyte App. An app-id without project/domain is
+    # an org-level check, so callers from other orgs get a 403.
     serving.unionai.dev/external-hosts: {{ $host | quote }}
     serving.unionai.dev/app-id: {{ dict "name" $name "org" (tpl .Values.orgName .) | toJson | quote }}
     serving.unionai.dev/allow-anonymous: "false"
@@ -227,8 +206,7 @@ spec:
         - name: tmp
           emptyDir: {}
       containers:
-        # Ingress/serving container (Knative routes to the one with a port): strips
-        # the caller's Authorization then forwards to kubectl proxy on localhost.
+        # Knative sends traffic to the one container that declares a port.
         - name: authstrip
           image: {{ $stripImg | quote }}
           imagePullPolicy: IfNotPresent
@@ -260,9 +238,7 @@ spec:
             runAsNonRoot: true
             capabilities:
               drop: ["ALL"]
-        # Read-only kubectl proxy: bound to localhost, reached only via the sidecar.
-        # Talks to the API server with the pod's read-only ServiceAccount (the
-        # sidecar has removed the caller bearer, so client-go adds the SA token).
+        # Bound to localhost: reachable only through authstrip.
         - name: kubectl-proxy
           image: "{{ $repo }}:{{ $tag }}"
           imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
@@ -282,8 +258,7 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             runAsNonRoot: true
-            # registry.k8s.io/kubectl runs as root by default; pin a non-root uid
-            # (kubectl proxy needs no root and binds a >1024 port).
+            # The image defaults to root; kubectl proxy needs none.
             runAsUser: 65532
             runAsGroup: 65532
             capabilities:

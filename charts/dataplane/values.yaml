@@ -2333,39 +2333,29 @@ tunnelService:
 apps:
   enabled: null
 
-# -- Union-operated system apps that ride the app-serving substrate (Knative
-# Serving + the apps wildcard ingress). Each is a scale-to-zero Knative Service
-# fronted by the union-authn ext_authz edge, so it inherits the same
-# per-org authorization as customer apps. All are dark by default; opt in per
-# environment. Requires `apps.enabled` (the serving substrate).
+# -- Union-operated system apps served as scale-to-zero Knative Services behind the
+# app-serving edge, with the same per-org authorization as user apps. Off by default;
+# requires `apps.enabled`.
 systemApps:
-  # -- Read-only in-cluster `kubectl proxy` (union-k8s-ro). Lets /union-help and
-  # on-call engineers read live cluster state (pending pods, events, nodes, App
-  # container logs) through the apps edge instead of a laptop kubeconfig. Runs
-  # under a dedicated ServiceAccount bound to a read-only ClusterRole (or a
-  # namespaced Role when `lowPrivilege`) that omits secrets and every mutate verb.
+  # -- Read-only in-cluster `kubectl proxy` (union-k8s-ro) for reading live cluster
+  # state through the apps edge. Its RBAC excludes secrets and every write verb.
   k8sProxy:
     enabled: false
-    # -- Subdomain (and Knative Service name).
+    # -- Subdomain and Knative Service name.
     subdomain: "union-k8s-ro"
-    # -- Apps wildcard base for the DomainMapping host (`<subdomain>.<appsDomain>`).
-    # Empty → derived from the apps ingress host (ingress.serving.host, honoring
-    # ingress.serving.hostOverride): "*.apps.<host>" → "apps.<host>". Set explicitly
-    # only when the apps domain differs from the ingress wildcard.
+    # -- Apps wildcard base; the host is `<subdomain>.<appsDomain>`. Defaults to the
+    # apps ingress host (`*.apps.<host>` → `apps.<host>`, honoring
+    # `ingress.serving.hostOverride`).
     appsDomain: ""
-    # -- Namespace-scoped RBAC (Role/RoleBinding pinned to .Release.Namespace)
-    # instead of a cluster-wide ClusterRole. For enterprise clusters where Union
-    # is confined to its own namespace and cluster-wide RBAC is prohibited.
+    # -- Use a namespaced Role instead of a ClusterRole, for clusters that prohibit
+    # cluster-wide RBAC.
     lowPrivilege: false
-    # -- Pinned official SIG-Release image (registry.k8s.io, no Docker Hub rate
-    # limits). Override repository/tag to mirror into an air-gapped registry.
     image:
       repository: "registry.k8s.io/kubectl"
       tag: "v1.32.2"
       pullPolicy: IfNotPresent
-    # -- Private-registry pull secrets for air-gapped / sovereign VPCs.
     imagePullSecrets: []
-    # -- Extra env (corporate proxy vars, private CA bundle paths).
+    # -- Extra env, e.g. proxy settings or a private CA bundle path.
     env: []
     minScale: 0
     maxScale: 1
@@ -3155,9 +3145,7 @@ gateway:
       # (e.g. CAP_SYS_ADMIN from PodTemplate.allow_fuse(), used to mount a FUSE
       # filesystem such as a flyteplugins-union Volume).
       kubernetes.containerspec-addcapabilities: "enabled"
-      # Allow a Service to pin its revision's ServiceAccount. The union-k8s-ro
-      # system app (systemApps.k8sProxy) runs under a dedicated read-only SA;
-      # without this flag Knative would force the namespace default SA.
+      # Lets systemApps.k8sProxy run under its own read-only ServiceAccount.
       kubernetes.podspec-serviceaccount: "enabled"
       kubernetes.podspec-shareprocessnamespace: "enabled"
       kubernetes.podspec-tolerations: "enabled"
