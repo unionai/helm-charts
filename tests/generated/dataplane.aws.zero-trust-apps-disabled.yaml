@@ -157,11 +157,11 @@ metadata:
   name: union-operator-gateway-envoy-bootstrap
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
-    app.kubernetes.io/version: "1.16.0"
+    app.kubernetes.io/version: "1.23.0"
     networking.knative.dev/ingress-provider: kourier
 data:
   envoy-bootstrap.yaml: |
@@ -3533,7 +3533,6 @@ data:
           insecureSkipVerify: false
       type: Authorizer
     operator:
-      enabled: true
       enableTunnelService: true
       #  enableDepot: false
       tunnel:
@@ -3563,7 +3562,7 @@ data:
       collectUsages:
         enabled: false
       billing:
-        model: 'ResourceUsage'
+        model: ResourceUsage
       dependenciesHeartbeat:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
@@ -3580,6 +3579,8 @@ data:
           union.ai/namespace-type: flyte
         referenceConfigmapName: union-operator
         targetConfigMapName: "build-image-config"
+      apiKey:
+        enabled: true
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
@@ -3603,7 +3604,163 @@ data:
         type: local
       secureTunnelTenantURLPattern: "http://union-operator-proxy:8080"
       taskMetrics:
+        agentQuery:
+          mappings:
+            dgx_job:
+              queries:
+                EXECUTION_METRIC_ALLOCATED_CPU_AVG: CPU_ALLOCATION:MEAN
+                EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: MEM_ALLOCATION:MEAN
+                EXECUTION_METRIC_CPU_UTILIZATION: CPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_GPU_UTILIZATION: GPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_MEMORY_UTILIZATION: MEM_UTILIZATION:MEAN
         metricDelayToleranceDuration: 0s
+        promQuery:
+          queries:
+            EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_APP_REPLICA_COUNT: |
+              sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{.Namespace}}", pod=~"{{.AppName}}.*"} == 1) or vector(0)
+            EXECUTION_METRIC_APP_REQUESTS: |
+              sum(rate((
+                envoy_cluster_upstream_rq_xx{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, envoy_response_code_class)
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
+              histogram_quantile(0.5, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
+              histogram_quantile(0.90, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
+              histogram_quantile(0.95, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_CPU_UTILIZATION: |
+              (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_DRAM_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_DRAM_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_ECC_DBE_VOLATILE: |
+              sum by (namespace, pod, gpu) (increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
+              (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}) /
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} + DCGM_FI_DEV_FB_FREE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_MEMORY_CLOCK: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_CLOCK{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_MEMORY_TEMPERATURE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEMORY_TEMP{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_GPU_NVLINK_BANDWIDTH: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_PCIE_RX_BYTES: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_RX_BYTES{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_PCIE_TX_BYTES: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_TX_BYTES{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_POWER_USAGE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_POWER_USAGE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_POWER_VIOLATION: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[2m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_CLOCK: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_SM_CLOCK{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_TEMPERATURE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_TEMP{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_TENSOR_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_THERMAL_VIOLATION: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[2m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_UNCORRECTABLE_REMAPPED_ROWS: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_UTILIZATION: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_GPU_XID_LAST_ERROR: |
+              max by (namespace, pod, gpu) (DCGM_FI_DEV_XID_ERRORS{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_LIMIT_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_MEMORY_UTILIZATION: |
+              (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_REQUEST_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_CPU_AVG: |
+              sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
+              sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
   logger.yaml: |
     logger:
       formatter:
@@ -3652,10 +3809,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.9.4"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -4720,10 +4877,10 @@ metadata:
   name: union-operator-prometheus-rbac
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.9.4"
     app.kubernetes.io/managed-by: Helm
     release: release-name
 rules:
@@ -4760,10 +4917,10 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.9.4"
     app.kubernetes.io/managed-by: Helm
     release: release-name
 rules:
@@ -4853,10 +5010,10 @@ metadata:
   name: union-operator-prometheus-rbac
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.9.4"
     app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
@@ -4875,10 +5032,10 @@ metadata:
   name: release-name-kube-state-metrics
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.9.4"
     app.kubernetes.io/managed-by: Helm
     release: release-name
 subjects:
@@ -5057,7 +5214,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -5545,7 +5702,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "855faecd896c73711c81f20e46f667612a04b021c82ae3a64b2cfb480e8253c"
+        configChecksum: "13e32ab4dac1e38d772c70a2572defd54816855001574357a5abd2d43b1c82a"
         
       labels:
         
@@ -5568,7 +5725,7 @@ spec:
         - name: dataproxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -5706,7 +5863,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -5722,7 +5879,7 @@ spec:
     metadata:
       labels:
         app: gateway
-        helm.sh/chart: dataplane-2026.8.5
+        helm.sh/chart: dataplane-2026.9.4
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
       annotations:
@@ -5733,14 +5890,14 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: f133f02dd983716a55cfe816d23d7207866badae3114d10081db9b31e3283d72
+        checksum/bootstrap-config: e93cb049b0f4a86b084e314e54e3bac5dba4004c1eb45c3dc1dde5ad8aeb5157
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
     spec:
       containers:
         - name: kourier-gateway
-          image: public.ecr.aws/p0i0a9q8/envoy:2026.8.5
+          image: public.ecr.aws/p0i0a9q8/envoy:2026.9.4
           args:
             - --base-id 1
             - -c /tmp/config/envoy-bootstrap.yaml
@@ -5985,7 +6142,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -6066,7 +6223,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "855faecd896c73711c81f20e46f667612a04b021c82ae3a64b2cfb480e8253c"
+        configChecksum: "13e32ab4dac1e38d772c70a2572defd54816855001574357a5abd2d43b1c82a"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -6092,7 +6249,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6160,7 +6317,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -6205,7 +6362,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "855faecd896c73711c81f20e46f667612a04b021c82ae3a64b2cfb480e8253c"
+        configChecksum: "13e32ab4dac1e38d772c70a2572defd54816855001574357a5abd2d43b1c82a"
         
       labels:
         
@@ -6228,7 +6385,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6245,9 +6402,9 @@ spec:
               name: secret-volume
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.8.5"
+              value: "2026.9.4"
             - name: HELM_APP_VERSION
-              value: "2026.8.5"
+              value: "2026.9.4"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6342,7 +6499,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.4"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -6451,7 +6608,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.8.5
+    helm.sh/chart: dataplane-2026.9.4
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:

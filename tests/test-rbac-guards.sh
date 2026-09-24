@@ -784,12 +784,13 @@ expect-role-resource "and under Shadow billing" \
 expect-manifest "and not under the default ResourceUsage billing" \
   absent "name: union-operator-cluster-read" \
   --set low_privilege=false
-# The operator reaches the same decision from a tpl'd value and a lower-cased one -- the
-# config passes through tpl and its enum parser retries lower-cased -- so a gate comparing
-# the raw string would withhold the grant while the informer starts. That direction fails
-# closed at the API server, not at render.
-expect-role-resource "and follows a lower-cased model, which the operator also accepts" \
-  present union-operator-cluster-read nodes \
+# A lower-cased model no longer reaches the gate at all: operator.billing.config validates the
+# resolved model against the four canonical spellings and fails the render, so the chart refuses
+# `legacy` before the slot is evaluated. The gate still compares lower-cased -- the operator's own
+# enum parser retries lower-cased, so a value that got past that validation would still start the
+# informer -- but what is assertable here is the refusal.
+expect-refusal "and a lower-cased model is refused before the gate ever sees it" \
+  "config.operator.billing.model must resolve to None, Legacy, Shadow, or ResourceUsage" \
   --set low_privilege=false --set config.operator.billing.model=legacy
 # disableClusterPermissions stops the informer outright, so the grant goes with it.
 expect-manifest "and is withheld when cluster permissions are disabled outright" \
@@ -1764,13 +1765,17 @@ expect-webhook-cluster-write-exact "and every rule of it stays pinned to named o
 expect-only-webhook-cluster-write "and it is the only app-serving cluster-write role there is" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 
-# OpenShift's RestrictedEndpointsAdmission refuses an Endpoints object naming a cluster-network
-# address unless the caller holds create on the endpoints/restricted subresource, and the
-# autoscaler's statforwarder writes exactly such an object in the release namespace. RBAC does
-# not derive a subresource from its parent, so `endpoints` alone does not convey it and the
-# vendored role carried both. The failure is invisible on every non-OpenShift cluster.
-expect-verb-resources "the autoscaler's release-namespace write role carries endpoints/restricted" \
-  union-knative-autoscaler-comp-ns-write create "endpoints,endpoints/restricted,leases,services" \
+# OpenShift's RestrictedEndpointsAdmission refuses an endpoints object naming a cluster-network
+# address unless the caller holds create on the restricted subresource, and the autoscaler's
+# statforwarder writes exactly such an object in the release namespace. RBAC does not derive a
+# subresource from its parent, so the parent alone does not convey it and the vendored role
+# carried both. The failure is invisible on every non-OpenShift cluster.
+#
+# discovery.k8s.io, not core: at Serving 1.23 the statforwarder publishes its bucket as an
+# EndpointSlice and registers no core Endpoints informer, so both halves moved groups. The
+# controller's core endpoints/restricted, asserted below, did not.
+expect-verb-resources "the autoscaler's release-namespace write role carries endpointslices/restricted" \
+  union-knative-autoscaler-comp-ns-write create "endpointslices,endpointslices/restricted,leases,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # And the controller's copy in the pooled work-ns role, asserted with leaseworker and
 # flytepropeller OFF. A pooled role cannot say which component contributed a rule, so what
@@ -1952,7 +1957,14 @@ expect-verb-resources "and update on the subset that is updated" \
 # the one worth reading twice: its whole release-namespace write grant is the serving
 # certificate it issues to itself, and it neither patches nor deletes it.
 expect-verb-resources "the autoscaler's comp-ns-write covers the statforwarder's objects" \
-  union-knative-autoscaler-comp-ns-write get "endpoints,leases,services" \
+  union-knative-autoscaler-comp-ns-write get "endpointslices,leases,services" \
+  "${APPS[@]}" --set commonServiceAccount.enabled=false
+# And no core endpoints anywhere in it. At Serving 1.23 the statforwarder writes through
+# DiscoveryV1() and takes the EndpointSlice lister; nothing in that binary registers a core
+# Endpoints informer, so the rules this slot carried until the 1.23 bump are dead. This pins
+# the removal, since the set above only sees resources that carry `get`.
+expect-role-resource "and no core endpoints rule survives the 1.23 bump" \
+  absent union-knative-autoscaler-comp-ns-write "endpoints" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 expect-verb-resources "the knative webhook's is one Secret it creates and renews" \
   union-knative-webhook-comp-ns-write create "secrets" \

@@ -63,7 +63,7 @@ Applied to all knative-serving resources.
 */}}
 {{- define "gateway.knativeLabels" -}}
 app.kubernetes.io/name: knative-serving
-app.kubernetes.io/version: "1.16.0"
+app.kubernetes.io/version: "1.23.0"
 {{- end }}
 
 {{/*
@@ -84,6 +84,29 @@ either silently produces broken URLs like `https://` or `<cluster>.dp.`.
 
 {{- define "gateway.organization" -}}
 {{- required "orgName is required when gateway.auth.enable is true and gateway.auth.organization is unset" (tpl .Values.orgName .) -}}
+{{- end }}
+
+{{/*
+gateway.auth.insecureSkipVerify reports (as "true"/"") whether the Envoy auth
+plugin should skip verification of the control-plane TLS certificate when it
+dials the CP at startup. The gateway reaches the same control plane as the
+operator (gateway.host == the operator's connection host); self-hosted control
+planes serve a self-signed intracluster cert there, so the gateway must share
+the operator's trust posture or the union-authn plugin panics at init with
+x509: certificate signed by unknown authority.
+
+Precedence: an explicit gateway.auth.insecureSkipVerify (bool) wins; otherwise
+inherit config.union.connection.insecureSkipVerify (what leaseworker and the
+operator use to reach the same host). Emits "" when false so callers gate with
+`{{- if include ... }}`.
+*/}}
+{{- define "gateway.auth.insecureSkipVerify" -}}
+{{- $g := .Values.gateway.auth.insecureSkipVerify -}}
+{{- if not (kindIs "invalid" $g) -}}
+{{- if $g -}}true{{- end -}}
+{{- else if dig "union" "connection" "insecureSkipVerify" false .Values.config -}}
+true
+{{- end -}}
 {{- end }}
 
 {{/*

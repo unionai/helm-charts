@@ -8,12 +8,14 @@ so subsequent steps can consume it.
 
 Commands
 --------
+ensure-active         Undelete + activate the cluster if it is soft-deleted, so
+                      the operator can re-register. Run before the chart install.
 wait-healthy          Poll Cluster.get until enabled+healthy. Emit ORG_NAME.
 setup-routing         Create the cluster pool + project and route this run's
                       cluster + queue to them.
 register-build-image  (selfhosted) Register the build-image task in
                       system/production and route the system project to this DP.
-teardown              Deregister the cluster (SDK, best-effort).
+teardown              Leave the stable cluster registered (no-op; see below).
 
 The functional tests (verify_simple + verify_*) live in tests/functional/ as pytest; this
 module provides the cluster operations they run against.
@@ -104,6 +106,47 @@ def cmd_wait_healthy(args: argparse.Namespace) -> None:
     api_key = _env("FLYTE_API_KEY", required=False)
     org = asyncio.run(_wait_healthy_async(cluster_name, control_plane_url, api_key, args.timeout))
     _gha_output("org_name", org)
+
+
+# ── ensure-active (self-heal a soft-deleted cluster) ─────────────────────────
+
+
+async def _ensure_active_async(cluster_name: str, control_plane_url: str, api_key: str) -> None:
+    from flyteplugins.union.remote import Cluster  # type: ignore
+
+    await flyte_ops.init_client(control_plane_url, api_key, project=cluster_name)
+
+    # The control plane's DeleteCluster is a SOFT delete: a deleted cluster keeps
+    # its name reserved in a `deleted` state, disappears from Cluster.get, and
+    # rejects heartbeats + status updates until it is undeleted. Our cluster name
+    # is STABLE and seeded (reused every run), so a single teardown that deleted
+    # it leaves every later run unable to (re-)register: the operator never mints
+    # its Cloudflare tunnel token, the operator-proxy cloudflared sidecar
+    # crash-loops on the unset token, and the chart install times out. Recover it
+    # before the operator heartbeats. listall(deleted=True) is the only way to
+    # see a soft-deleted cluster.
+    is_deleted = False
+    async for c in Cluster.listall.aio(deleted=True):  # type: ignore
+        if c.name == cluster_name:
+            is_deleted = True
+            break
+    if not is_deleted:
+        print(f"[ci] ensure-active: {cluster_name} not soft-deleted — nothing to do.", flush=True)
+        return
+
+    # undelete restores it in the `drained` state; activate returns it to `active`
+    # so it accepts the operator's heartbeat again.
+    print(f"[ci] ensure-active: {cluster_name} is soft-deleted — undelete + activate", flush=True)
+    await Cluster.undelete.aio(name=cluster_name)  # type: ignore
+    await Cluster.activate.aio(name=cluster_name)  # type: ignore
+    print(f"[ci] ensure-active: {cluster_name} restored to active.", flush=True)
+
+
+def cmd_ensure_active(args: argparse.Namespace) -> None:
+    cluster_name = _env("CLUSTER_NAME")
+    control_plane_url = _env("CONTROL_PLANE_URL")
+    api_key = _env("FLYTE_API_KEY", required=False)
+    asyncio.run(_ensure_active_async(cluster_name, control_plane_url, api_key))
 
 
 # ── setup-routing ─────────────────────────────────────────────────────────────
@@ -327,45 +370,22 @@ def cmd_register_build_image(args: argparse.Namespace) -> None:
 # ── teardown ────────────────────────────────────────────────────────────────
 
 
-async def _teardown_step(label: str, coro) -> None:  # type: ignore[no-untyped-def]
-    """Await a teardown coroutine, logging and swallowing any error — a failed
-    cleanup must never fail the always() teardown step."""
-    try:
-        await coro
-        print(f"[ci] teardown: {label} OK", flush=True)
-    except Exception as e:  # noqa: BLE001
-        print(f"[ci] teardown: {label} failed (ignored): {str(e)[:200]}", flush=True)
-
-
 def cmd_teardown(args: argparse.Namespace) -> None:
     cluster_name = _env("CLUSTER_NAME")
-    # ORG_NAME comes from wait-healthy; absent if the run failed before then.
-    org = os.environ.get("ORG_NAME", "").strip()
-    control_plane_url = _env("CONTROL_PLANE_URL", required=False)
-    api_key = _env("FLYTE_API_KEY", required=False)
-
-    if not control_plane_url:
-        print("[ci] teardown: CONTROL_PLANE_URL unset — nothing to clean up.", flush=True)
-        return
-
-    # Deregister the ephemeral cluster only. The pool/queue/project are REUSED
-    # across runs (create-only) — draining/archiving them would break the next run.
-    # setup-routing re-registers the cluster and re-pins routing next run.
-    async def _teardown_async() -> None:
-        from flyteplugins.union.remote import Cluster  # type: ignore
-
-        await flyte_ops.init_client(control_plane_url, api_key, project=cluster_name, org=org)
-        print(
-            f"[ci] teardown: deregistering cluster {cluster_name} (pool/queue/project reused)",
-            flush=True,
-        )
-        await _teardown_step("cluster delete", Cluster.delete.aio(name=cluster_name))  # type: ignore
-
-    try:
-        asyncio.run(_teardown_async())
-    except Exception as e:  # noqa: BLE001 — teardown must never fail the job
-        print(f"[ci] teardown: cleanup failed (ignored): {str(e)[:200]}", flush=True)
-    print("[ci] teardown: done.", flush=True)
+    # Deliberately DO NOT deregister the cluster. It is STABLE and seeded — reused
+    # every run, exactly like the pool/queue/project (which teardown already left
+    # in place). DeleteCluster is a SOFT delete: it reserves the name in a
+    # `deleted` state that the next run's re-registration does not revive
+    # ("undelete the cluster first"), so deleting here would brick every later run
+    # (operator can't mint its tunnel token → operator-proxy cloudflared sidecar
+    # crash-loops → chart install times out). The next run's operator simply
+    # re-heartbeats the existing cluster; `ensure-active` recovers it if anything
+    # soft-deletes it out of band.
+    print(
+        f"[ci] teardown: leaving cluster {cluster_name} registered "
+        "(stable/seeded, reused across runs — soft-delete would brick the next run).",
+        flush=True,
+    )
 
 
 # ── main ────────────────────────────────────────────────────────────────────
@@ -374,6 +394,8 @@ def cmd_teardown(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(description="Dataplane CI helper (flyte 2.x SDK; no uctl)")
     sub = p.add_subparsers(dest="command", required=True)
+
+    sub.add_parser("ensure-active")
 
     p_wait = sub.add_parser("wait-healthy")
     p_wait.add_argument("--timeout", type=int, default=300)
@@ -389,6 +411,7 @@ def main() -> None:
 
     args = p.parse_args()
     {
+        "ensure-active": cmd_ensure_active,
         "wait-healthy": cmd_wait_healthy,
         "setup-routing": cmd_setup_routing,
         "register-build-image": cmd_register_build_image,

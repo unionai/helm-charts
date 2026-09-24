@@ -1,0 +1,27 @@
+# helm-values: examples/values-test-certs.yaml
+global:
+  # Control-plane host so the dataplane→CP connection resolves. Without it the
+  # dataplane.cp.host template's required guard fails the render.
+  UNION_CONTROL_PLANE_HOST: "test-controlplane-host"
+secrets:
+  admin:
+    create: false
+# The uvol mount broker is opt-in, so this fixture is what keeps its rendering
+# covered: the DaemonSet, its ConfigMap and the cluster-scoped CSIDriver.
+uvolMountBroker:
+  enabled: true
+  # The node-shared chunk cache root the broker serves to pods (kind=node-cache).
+  nodeCache:
+    enabled: true
+    hostPath: /mnt/k8s-disks/0/uvol-node-cache
+  config:
+    # Exercise the extra-config passthrough as well as the fixed keys.
+    autoAbortAfter: 5m
+# The broker ships independently of the observer, but when both are on, the
+# observer can gate node readiness on the broker having registered with kubelet.
+nodeobserver:
+  enabled: true
+  config:
+    criticalDaemonSets:
+      - name: union-uvol-broker
+        namespace: '{{ tpl .Release.Namespace . }}'

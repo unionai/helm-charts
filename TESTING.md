@@ -80,3 +80,12 @@ branch → set **force** to `true`.)
 > `unionai/helm-charts`, and the integration legs can't obtain an OIDC token from
 > a fork regardless. A maintainer must first bring the change onto a same-repo
 > branch (e.g. `gh pr checkout <pr#>` then push to `origin`) and label/dispatch that.
+
+## Billing upgrade compatibility
+
+`make billing-test` runs `tests/test-operator-billing.py` using Helm against a
+read-only HTTP API fixture on localhost. It never connects to a real cluster. The
+test exercises real `helm upgrade --dry-run=server` value merging and ConfigMap
+lookup, including retained defaults under `--reuse-values`, explicit overrides,
+`--reset-values`, invalid prior configuration, and the full dataplane render.
+Set `HELM_BIN` to exercise another installed Helm version.

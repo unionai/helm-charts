@@ -14,6 +14,7 @@ Per-namespace defaults consumed at task execution time come from the
 `build-image-config` ConfigMap that the union-operator BuildImageConfigSyncer
 auto-creates in every namespace labelled `union.ai/namespace-type: flyte`.
 """
+import json
 import os
 
 from kubernetes.client import (
@@ -42,6 +43,8 @@ _CONFIG_DIR = "/etc/union/config"
 
 config_map_name = os.getenv("CONFIG_MAP_NAME", _DEFAULT_CONFIGMAP_NAME)
 log_level = os.getenv("LOG_LEVEL", "5")
+task_pod_annotations = json.loads(os.getenv("BUILD_IMAGE_TASK_POD_ANNOTATIONS", "{}"))
+task_service_account = os.getenv("BUILD_IMAGE_TASK_SERVICE_ACCOUNT") or None
 
 union_image_name_prefix = os.getenv("UNION_IMAGE_NAME_PREFIX")
 if not union_image_name_prefix:
@@ -59,7 +62,9 @@ build_image_task = ContainerTask(
     outputs={"fully_qualified_image": str},
     pod_template=flyte.PodTemplate(
         primary_container_name="main",
+        annotations=task_pod_annotations or None,
         pod_spec=V1PodSpec(
+            service_account_name=task_service_account,
             containers=[
                 V1Container(
                     name="main",

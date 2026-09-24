@@ -2,8 +2,246 @@
 
 ## Unreleased
 
-> **Release pending** — these changes are not yet cut to a version. At the next
-> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
+
+On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
+broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for
+it (`allow_volumes(shared_node_cache=True)` in flyteplugins-union) as an inline
+CSI volume tagged `volumes.union.ai/kind=node-cache`. Pods of one namespace on a
+node then share one chunk cache; other namespaces never see it; and — the point
+— the task pod carries no hostPath and no privilege: the bind mount is done by
+this DaemonSet. A pod that asks on a node without it fails `NodePublish` with
+`FailedPrecondition` rather than mounting anything privileged. Put the path on
+the node's fastest local disk and size it; each client evicts against its own
+budget. Pods of one namespace need not share a uid: the plugin mounts the
+shared directory with `--cache-mode 0666`. Verified end to end on dogfood-1
+(cloud#18524).
+
+## 2026.9.4
+
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`.
+
+### Dataplane images
+
+- Billing: GPU usage from user sidecars that request GPUs without an
+  accelerator type is now reported as billable usage (previously dropped).
+  Accelerator labels are aligned with the Flyte SDK ([cloud#18484](https://github.com/unionai/cloud/pull/18484)).
+- Operator-side mirrors of the chart's Knative Serving 1.23.0 gateway and
+  `KUBERNETES_MIN_VERSION` changes below ([cloud#18409](https://github.com/unionai/cloud/pull/18409),
+  [cloud#18486](https://github.com/unionai/cloud/pull/18486)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
+### Vendored Knative Serving gateway 1.16.0 → 1.23.0
+
+The default vendored gateway (`gateway.enabled: true`) moves to Knative Serving
+**1.23.0**: serving image digests, the vendored Serving CRDs (`crds/dataplane/`),
+and version labels (#588). `gateway.config.features.kubernetes.podspec-volumes-csi`
+is now `enabled`, so App serving pods can mount Union Volumes via inline CSI. The
+legacy `knative-operator` subchart (`gateway.enabled: false`) is unchanged.
+
+This skips Knative 1.17–1.22 as a direct manifest/CRD replacement; validate on a
+canary dataplane before fleet rollout. The 1.23 CRDs are additive supersets of
+1.16 (apply via ArgoCD or `kubectl apply --server-side -f crds/dataplane/`). See
+`charts/MIGRATION.md`.
+
+The autoscaler also gains the scale-subresource patch rule, without which the 1.23
+autoscaler cannot scale App revisions to or from zero (#593). Upstream restored
+this on the vendored `knative-serving-core` ClusterRole as `apiGroups: ["*"]` on
+`"*/scale"`; this chart no longer vendors that role, and declares it as
+`apps/deployments/scale` `patch` in the autoscaler's `work-ns` slot — the
+revision's namespace is where the KPA patches, and the revision reconciler only
+ever names an `apps/v1` Deployment as the scale target.
+
+### Ship the uvol mount broker (Union Volumes on self-managed) (#585)
+
+New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
+(`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
+on clusters that want Union Volumes. This is what makes Volumes mountable at
+all on a self-managed data plane; without it a task pod requesting one fails
+`NodePublish` with `driver volumes.union.ai not found`.
+
+The broker is a CSI node driver that premounts a FUSE channel per pod and hands
+the file descriptor to the in-pod client over a unix socket, so **task pods mount
+Volumes with no privileges**: no `CAP_SYS_ADMIN`, no `/dev/fuse`, no `hostPath`.
+Privilege stays confined to this DaemonSet.
+
+It runs as its own DaemonSet rather than a container in `union-nodeobserver`,
+and with `automountServiceAccountToken: false`: it never calls the Kubernetes
+API, so it holds no credential a privileged container could be made to misuse.
+That also lets it ship where the observer is not deployed, and lets the observer
+gate node readiness on it via `nodeobserver.config.criticalDaemonSets` — the
+`/readyz` probe reports whether kubelet has actually registered the driver, not
+merely that the process is up.
+
+### Remove the FUSE device-plugin DaemonSet (**breaking if you enabled it**)
+
+`fuseDevicePlugin` and its `examples/values-fuse-device-plugin.yaml` overlay are
+gone. It advertised the host `/dev/fuse` as the extended resource
+`smarter-devices/fuse`, so an unprivileged pod requesting it could perform an
+in-pod FUSE mount with `CAP_SYS_ADMIN`. The mount broker above supersedes it for
+Union Volumes and needs no capability in the task pod at all.
+
+**If you set `fuseDevicePlugin.enabled: true`,** this upgrade deletes that
+DaemonSet and the node stops advertising `smarter-devices/fuse`. Any pod whose
+template requests that resource becomes unschedulable — Helm will not warn you,
+because the removed key is simply ignored. Check for it before upgrading:
+
+```
+kubectl get pods -A -o json | grep -l 'smarter-devices/fuse'
+```
+
+Union Volumes do not use that resource, so if the plugin was enabled only for
+Volumes there is nothing to migrate — enable `uvolMountBroker` instead.
+
+Operator notes:
+
+- `uvolMountBroker.nodeSelector` defaults to empty (all nodes) deliberately.
+  Task pods carry no matching selector of their own, so any node a volume-using
+  task can land on and the broker cannot must not exist.
+- `uvolMountBroker.kubeletDir` must match the distribution's kubelet root
+  (k3s and some managed AMIs relocate it) or CSI registration fails.
+- The cpu request is a scheduling-latency knob, not a utilization estimate: the
+  broker sits on the task `open()` path. There is deliberately no cpu limit.
+
+### Eager API key bootstrap now enabled by default (#482)
+
+`config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
+operator mints the `EAGER_API_KEY` on the control plane and writes it to the task-pod
+secret store so eager/actions (v2) tasks can call back to the control plane. It relies
+on the proxy secret manager (`proxy.secretManager.enabled`), which is already on by
+default.
+
+> **Selfhosted operators:** under v2 every deployment runs eager/actions workloads, so
+> leave this on. The real dependency is on the **control plane**, not the dataplane:
+> minting `EAGER_API_KEY` requires a control plane that can produce the credential. If
+> your control plane registers OAuth clients on its IdP, no action is needed. If it
+> **can't** self-register (common with selfhosted Okta/Entra), you must first seed the
+> pre-created OAuth client credentials via the controlplane chart's
+> `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
+> fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
+
+### Knative Serving Kubernetes min-version gate relaxed (#594)
+
+The vendored Knative Serving 1.23 gateway hard-requires Kubernetes ≥ 1.34 at startup and otherwise
+crash-loops. This release sets `KUBERNETES_MIN_VERSION=v1.32.0` on the serving components
+(`gateway.components.*.containers.*.env`) to relax that gate so App Serving runs on the current
+fleet. Override it per-cluster if you must run lower.
+
+> **Kubernetes support for App Serving:** **1.34 and above is recommended.** **1.32 is the
+> minimum** supported for App Serving. Lower versions may work but are **not officially supported**
+> for App Serving.
+
+## 2026.9.3
+
+`version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
+`2026.9.3`. Chart version `2026.9.2` was not published; image version `2026.9.2`
+was published separately. This release includes the image changes since
+`2026.9.1`, including the system-log fix below.
+
+### Billing and tunnels
+
+- Decouple `config.operator.billing.model` from `operator.enableTunnelService`
+  (#590). Fresh installs default to `ResourceUsage` regardless of tunnel settings.
+  Set the model explicitly to `None` when billing must be disabled, including for
+  self-hosted deployments. Usage collection remains independently configurable.
+- Connected Helm upgrades preserve the installed billing model unless explicitly
+  overridden, including with `--reuse-values` and `--reset-values`. If the installed
+  model cannot be read or validated, supply the intended model explicitly.
+- Preview preservation with `helm upgrade --dry-run=server`. Offline
+  `helm template --is-upgrade` requires an explicit billing model. To deliberately
+  reset billing to the install default, set
+  `config.operator.billing.model=ResourceUsage` explicitly.
+
+### Dataplane images
+
+- System-log requests using namespace `auto` resolve to the operator proxy's own
+  namespace. Explicit namespaces pass through unchanged. This supplies the
+  dataplane half of the Settings > Clusters > Logs fix for Fleet and selfmanaged
+  installs ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+- A failed or evicted replica no longer cancels healthy replicas' live log
+  streams; unavailable replicas are reported inline
+  ([cloud#18335](https://github.com/unionai/cloud/pull/18335)).
+- `unionoperator` and `envoy` release images support both `linux/amd64` and
+  `linux/arm64`. Image-builder artifacts remain single-architecture
+  ([cloud#18396](https://github.com/unionai/cloud/pull/18396)).
+- Fast tasks are re-enqueued when their environment finishes initializing
+  ([cloud#18362](https://github.com/unionai/cloud/pull/18362)). Leaseworker event
+  caching distinguishes resource kinds, keeping same-named resources' events
+  separate ([cloud#18378](https://github.com/unionai/cloud/pull/18378)).
+- With the GPU fault watcher installed, pod-backed tasks attach structured GPU
+  fault details and classify critical hardware faults as system-retryable
+  failures. CRD-backed distributed GPU tasks are not covered by this change
+  ([cloud#17793](https://github.com/unionai/cloud/pull/17793)).
+- The volume mount broker adds channel-health metrics and abort support. A
+  channel with unchanged queued requests for five minutes and no client session
+  is aborted instead of remaining stuck; `autoAbortAfter: 0` disables that
+  behavior. Broker logging now honors `LOG_LEVEL` after configuration is loaded
+  ([cloud#18352](https://github.com/unionai/cloud/pull/18352),
+  [cloud#18376](https://github.com/unionai/cloud/pull/18376),
+  [cloud#18379](https://github.com/unionai/cloud/pull/18379),
+  [cloud#18375](https://github.com/unionai/cloud/pull/18375)).
+- Operator heartbeat reporting includes additional AWS accelerators and TPUs
+  ([cloud#18383](https://github.com/unionai/cloud/pull/18383)).
+
+### Upgrade order
+
+Upgrade the operator proxy on every dataplane served by a control plane before
+deploying the control-plane/console change that sends namespace `auto`. The old
+proxy treats `auto` as a literal namespace; publishing this chart does not upgrade
+existing clusters. Roll back the control plane and console before rolling back
+the dataplane ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+
+Image source: [cloud changes since release/2026.9.1](https://github.com/unionai/cloud/compare/release/2026.9.1...a60aefc8a9d2d4051576f71c818b239cf221bf4b).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/771e792c89aa11b30cbd2dab74c77e170efcecb6...4011364765dfea33d6431db11afdffef01ab1609)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/6390805ff6495b87b2d172c35ccd5e6fab5567a5...a2aec3f7210f450b35b34b9e924f3cef9f60ee2f).
+
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+### Fix missing task/app metrics on zero-trust data planes
+
+With `zero_trust.enabled`, this chart runs its own dataproxy, but never gave it the
+PromQL query templates it looks up per metric, so the metrics tab failed with
+`failed to do get template due to key EXECUTION_METRIC_* not found`. The chart now
+ships `dataproxy.taskMetrics` (the `promQuery` templates, including the new GPU health
+metrics, plus the DGX `agentQuery` mappings), kept in sync with the controlplane
+chart, and renders it into the zero-trust dataproxy config. Non-zero-trust renders are
+unchanged. If you worked around this with `config.configOverrides.dataproxy.taskMetrics`,
+you can drop that override
+([#582](https://github.com/unionai/helm-charts/pull/582)).
+
+## 2026.9.0
+
+`version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
+`2026.9.1`, picking up the new data-plane images plus the chart changes below. **Minor bump**: app serving now
+defaults to this chart's vendored Knative gateway. A data plane that already served
+apps via the `knative-operator` must run the `knative-migration` Job before/at this
+upgrade — see "App serving now defaults to the vendored Knative gateway" below.
+
+### Fix union-operator crash: drop the removed `operator.enabled` config key
+
+An internal Union change removed the `enabled` field from the operator config (the
+cluster healthy/ready flag is now derived internally), but this chart still rendered
+`operator.enabled` (from `config.operator.enabled`). The operator loads its config in
+strict mode, so the now-unknown key is fatal — a recent operator build crash-loops
+with `'config.Config' has invalid keys: enabled`. Stop rendering the key and drop the
+now-dead `config.operator.enabled` value + README row.
+
+### Apps wildcard TLS secret name is now configurable
+
+The Envoy `apps_https:8443` listener's TLS secret (mounted when
+`gateway.publicLoadBalancer.enabled`) is now `gateway.publicLoadBalancer.tlsSecretName`
+instead of a hardcoded `dataplane-apps-letsencrypt-tls`. The default is unchanged, so
+existing installs are unaffected; a bring-your-own-cert dataplane can now point the
+gateway at its own secret without prescribing cert-manager or a specific issuer. The
+value is **required (non-empty)** when `publicLoadBalancer.enabled` — the chart fails
+fast rather than rendering an Envoy that crash-loops on a missing cert. (TLS termination
+at the load balancer, i.e. an empty secret, is not yet supported.)
 
 ### Image-builder existence probe now honors the configured registry
 
@@ -61,6 +299,17 @@ Other changes:
 - Public serving gateway: Envoy front proxy + `service-public` and bootstrap
   config for the vendored gateway's external entrypoint
   ([#522](https://github.com/unionai/helm-charts/pull/522)).
+- Gateway auth plugin now inherits the control plane's TLS trust. Against a
+  self-hosted control plane serving a self-signed intracluster certificate, the
+  plugin failed verification (`x509: certificate signed by unknown authority`) and
+  crash-looped the gateway, so the data plane never went healthy. New
+  `gateway.auth.insecureSkipVerify` (`null` = inherit
+  `config.union.connection.insecureSkipVerify`) and `gateway.auth.caFile` for an
+  explicit CA bundle. Defaults render byte-identically, so existing installs are
+  unaffected ([#571](https://github.com/unionai/helm-charts/pull/571)).
+- `flytecopilot` image moves to `cr.flyte.org/flyteorg/flyte-binary-v2:v2.0.45`
+  (was `cr.flyte.org/flyteorg/flytecopilot:v1.14.1`), following flyteorg/flyte#7575
+  ([#569](https://github.com/unionai/helm-charts/pull/569)).
 
 ## 2026.8.5
 
@@ -614,14 +863,24 @@ is the `knative-operator` path (`gateway.enabled: false`), which installs its ow
   work-namespace slot. The chart does not refuse the key; it simply is not a feature to enable
   when it works in one identity mode and not the other.
 
-  **One grant from that role is kept and re-scoped rather than dropped: `endpoints/restricted`.**
-  It is an OpenShift admission concept — `RestrictedEndpointsAdmission` refuses an `Endpoints`
-  object naming a cluster-network address unless the caller holds `create` on that subresource,
-  and both the autoscaler's statforwarder and the controller's serverlessservice reconciler
-  write exactly such an object. It moves from one cluster-wide grant to two namespaced ones: the
-  release-namespace `comp-ns-write` Role, where the statforwarder publishes its bucket, and the
-  `work-ns` role, where the controller writes each revision's public Endpoints. On any
+  **One grant from that role is kept and re-scoped rather than dropped: the restricted-endpoints
+  subresource.** It is an OpenShift admission concept — `RestrictedEndpointsAdmission` refuses an
+  endpoints object naming a cluster-network address unless the caller holds `create` on that
+  subresource, and both the autoscaler's statforwarder and the controller's serverlessservice
+  reconciler write exactly such an object. It moves from one cluster-wide grant to two namespaced
+  ones, and Serving 1.23 splits them across two API groups: `discovery.k8s.io`
+  `endpointslices/restricted` in the release-namespace `comp-ns-write` Role, where the
+  statforwarder publishes its bucket as an EndpointSlice, and core `endpoints/restricted` in the
+  `work-ns` role, where the controller still writes each revision's public `Endpoints`. On any
   non-OpenShift cluster it conveys nothing.
+
+  **The autoscaler's core `endpoints` grants go entirely.** At 1.23 the statforwarder writes its
+  bucket through `DiscoveryV1()` and takes the EndpointSlice lister; nothing in that binary
+  registers a core Endpoints informer any more. Its release-namespace `endpoints` write and its
+  cluster-wide `endpoints` `list`/`watch` are replaced by the equivalent `discovery.k8s.io`
+  `endpointslices` rules — `get`/`list`/`watch`/`create`/`update`, since `createOrUpdateEndpoints`
+  neither deletes nor patches the slice. The controller and the activator keep their core
+  `endpoints` rules, which their own informers still need.
 
 - **`autoscaling/horizontalpodautoscalers` moves from a cluster-wide write to a namespaced
   one.** `autoscaler-hpa` reconciles an HPA-class PodAutoscaler into a HorizontalPodAutoscaler
