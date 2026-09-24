@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Knative autoscaler resources
+
+The vendored Knative autoscaler now defaults to `limits: 4000m` CPU / `2000Mi`
+memory and `requests: 250m` / `128Mi` (was `1000m` / `1000Mi` and `100m` / `100Mi`),
+via `gateway.components.autoscaler.containers.autoscaler.resources`. It runs one
+decider per revision, including scaled-to-zero ones; on a dataplane with many
+revisions the 1-CPU cap throttled it until the liveness probe killed it in a
+loop, and no new Knative revision could become ready. Mirrors cloud#18669.
+
 ### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
 
 On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
