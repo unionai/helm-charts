@@ -44,6 +44,42 @@ decider per revision, including scaled-to-zero ones; on a dataplane with many
 revisions the 1-CPU cap throttled it until the liveness probe killed it in a
 loop, and no new Knative revision could become ready. Mirrors cloud#18669.
 
+### SELinux type for volume-mounting task pods (`selinuxTaskPods`)
+
+Off by default. On a node that enforces SELinux — Bottlerocket, so EKS Auto
+Mode, and RHCOS/OpenShift — the mount broker passes the task pod a `/dev/fuse`
+descriptor from a privileged domain, the kernel refuses a confined container
+that descriptor, and the volume client dies on the empty message. Nothing in
+the pod can recover it, so Union Volumes cannot be mounted there at all.
+
+Enabling this registers a propeller webhook that gives an SELinux type only to
+the containers that mount a broker channel volume, and only in pods carrying
+`volumes.union.ai/channel` (set by `flyteplugins-union`'s `allow_volumes()`).
+It never overrides a type the pod asked for itself.
+
+Turn it on only where the nodes need it:
+
+```yaml
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true
+config:
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
+```
+
+Read before enabling: the type moves the task container into a subject set
+that Bottlerocket's policy allows to write the node's API socket, which the
+unprivileged set is explicitly denied. A task pod gets no hostPath and so
+cannot reach that socket, but the permission is real and this is a
+security-team conversation, not a values change. Pod Security Admission's
+*baseline* profile also rejects the resulting pod, and a mutating webhook
+cannot exempt itself.
+
 ### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
 
 On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
