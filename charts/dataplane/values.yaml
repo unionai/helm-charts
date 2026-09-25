@@ -2333,6 +2333,40 @@ tunnelService:
 apps:
   enabled: null
 
+# -- Union-operated system apps served as scale-to-zero Knative Services behind the
+# app-serving edge, with the same per-org authorization as user apps. Off by default;
+# requires `apps.enabled`.
+systemApps:
+  # -- Read-only in-cluster `kubectl proxy` (union-k8s-ro) for reading live cluster
+  # state through the apps edge. Its RBAC excludes secrets and every write verb.
+  k8sProxy:
+    enabled: false
+    # -- Subdomain and Knative Service name.
+    subdomain: "union-k8s-ro"
+    # -- Apps wildcard base; the host is `<subdomain>.<appsDomain>`. Defaults to the
+    # apps ingress host (`*.apps.<host>` → `apps.<host>`, honoring
+    # `ingress.serving.hostOverride`).
+    appsDomain: ""
+    # -- Use a namespaced Role instead of a ClusterRole, for clusters that prohibit
+    # cluster-wide RBAC.
+    lowPrivilege: false
+    image:
+      repository: "registry.k8s.io/kubectl"
+      tag: "v1.32.2"
+      pullPolicy: IfNotPresent
+    imagePullSecrets: []
+    # -- Extra env, e.g. proxy settings or a private CA bundle path.
+    env: []
+    minScale: 0
+    maxScale: 1
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi
+
 # -- Configure app serving and knative.
 serving:
   # -- DEPRECATED: use `apps.enabled`. Honored only when `apps.enabled` is
@@ -3111,6 +3145,8 @@ gateway:
       # (e.g. CAP_SYS_ADMIN from PodTemplate.allow_fuse(), used to mount a FUSE
       # filesystem such as a flyteplugins-union Volume).
       kubernetes.containerspec-addcapabilities: "enabled"
+      # Lets systemApps.k8sProxy run under its own read-only ServiceAccount.
+      kubernetes.podspec-serviceaccount: "enabled"
       kubernetes.podspec-shareprocessnamespace: "enabled"
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"

@@ -1,0 +1,266 @@
+{{- /*
+union-k8s-ro: a scale-to-zero, read-only `kubectl proxy` served behind the
+app-serving edge, so a caller authorized for the dataplane's org can read cluster
+state without a kubeconfig.
+*/ -}}
+{{- $k8s := (.Values.systemApps | default dict).k8sProxy | default dict -}}
+{{- if and $k8s.enabled (include "apps.enabled" .) -}}
+{{- $name := $k8s.subdomain | default "union-k8s-ro" -}}
+{{- $img := $k8s.image | default dict -}}
+{{- $repo := $img.repository | default "registry.k8s.io/kubectl" -}}
+{{- $tag := $img.tag | default "v1.32.2" -}}
+{{- /* The edge passes the caller's bearer through to the backend; nginx clears it so
+       kubectl proxy authenticates with its own read-only ServiceAccount instead. */ -}}
+{{- $strip := $k8s.authStripSidecar | default dict -}}
+{{- $stripImg := $strip.image | default "nginxinc/nginx-unprivileged:1.27-alpine" -}}
+{{- /* Derived from the apps ingress host, not the CP host, which is an in-cluster
+       service name on selfhosted. */ -}}
+{{- $appsDomain := tpl ($k8s.appsDomain | default "") . -}}
+{{- if not $appsDomain -}}
+{{- $appsDomain = trimPrefix "*." (include "ingress.serving.host" . | trim | trimAll "\"") -}}
+{{- end -}}
+{{- $host := printf "%s.%s" $name $appsDomain -}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+{{- with $k8s.imagePullSecrets }}
+imagePullSecrets:
+{{ toYaml . | indent 2 }}
+{{- end }}
+---
+{{- if $k8s.lowPrivilege }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+rules:
+  # Namespace-scoped read only. Secrets and every mutate verb are excluded.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "services", "endpoints", "configmaps", "resourcequotas", "limitranges", "persistentvolumeclaims", "serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services", "revisions", "routes", "configurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling.internal.knative.dev"]
+    resources: ["podautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- else }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}-{{ $name }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+rules:
+  # Cluster-wide read only. Secrets and every mutate verb are excluded.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "nodes", "namespaces", "services", "endpoints", "configmaps", "resourcequotas", "limitranges", "persistentvolumeclaims", "persistentvolumes", "replicationcontrollers", "serviceaccounts"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses", "volumeattachments", "csinodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["karpenter.sh"]
+    resources: ["nodepools", "nodeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["karpenter.k8s.aws"]
+    resources: ["ec2nodeclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services", "revisions", "routes", "configurations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling.internal.knative.dev"]
+    resources: ["podautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "unionai-dataplane.fullname" . }}-{{ $name }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "unionai-dataplane.fullname" . }}-{{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}-authstrip
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+data:
+  nginx.conf: |
+    worker_processes 1;
+    pid /tmp/nginx.pid;
+    error_log /dev/stderr warn;
+    events { worker_connections 1024; }
+    http {
+      access_log off;
+      client_body_temp_path /tmp/client_body;
+      proxy_temp_path /tmp/proxy;
+      fastcgi_temp_path /tmp/fastcgi;
+      uwsgi_temp_path /tmp/uwsgi;
+      scgi_temp_path /tmp/scgi;
+      server {
+        listen 8080;
+        location / {
+          proxy_set_header Authorization "";
+          proxy_pass http://127.0.0.1:8081;
+          proxy_http_version 1.1;
+        }
+      }
+    }
+---
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: system-app
+    union.ai/system-app: {{ $name }}
+  annotations:
+    # Routed and authorized like a Flyte App. An app-id without project/domain is
+    # an org-level check, so callers from other orgs get a 403.
+    serving.unionai.dev/external-hosts: {{ $host | quote }}
+    serving.unionai.dev/app-id: {{ dict "name" $name "org" (tpl .Values.orgName .) | toJson | quote }}
+    serving.unionai.dev/allow-anonymous: "false"
+spec:
+  traffic:
+    - latestRevision: true
+      percent: 100
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: {{ $k8s.minScale | default 0 | quote }}
+        autoscaling.knative.dev/max-scale: {{ $k8s.maxScale | default 1 | quote }}
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+    spec:
+      serviceAccountName: {{ $name }}
+      containerConcurrency: 0
+      timeoutSeconds: 300
+      enableServiceLinks: false
+      volumes:
+        - name: authstrip-config
+          configMap:
+            name: {{ $name }}-authstrip
+        - name: tmp
+          emptyDir: {}
+      containers:
+        # Knative sends traffic to the one container that declares a port.
+        - name: authstrip
+          image: {{ $stripImg | quote }}
+          imagePullPolicy: IfNotPresent
+          command: ["nginx", "-g", "daemon off;", "-c", "/etc/nginx/nginx.conf"]
+          ports:
+            - containerPort: 8080
+              protocol: TCP
+          readinessProbe:
+            successThreshold: 1
+            tcpSocket:
+              port: 0
+          volumeMounts:
+            - name: authstrip-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+        # Bound to localhost: reachable only through authstrip.
+        - name: kubectl-proxy
+          image: "{{ $repo }}:{{ $tag }}"
+          imagePullPolicy: {{ $img.pullPolicy | default "IfNotPresent" }}
+          command: ["kubectl"]
+          args:
+            - "proxy"
+            - "--port=8081"
+            - "--address=127.0.0.1"
+            - "--accept-hosts=.*"
+          {{- with $k8s.env }}
+          env:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml ($k8s.resources | default (dict "requests" (dict "cpu" "50m" "memory" "64Mi") "limits" (dict "cpu" "250m" "memory" "256Mi"))) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            # The image defaults to root; kubectl proxy needs none.
+            runAsUser: 65532
+            runAsGroup: 65532
+            capabilities:
+              drop: ["ALL"]
+{{- end }}
