@@ -769,32 +769,44 @@ expect-manifest "and not at all under low_privilege" \
 
 # The node informer's grant lives in cluster-read, not work-ns-cluster-read: nodes are read for
 # usage attribution, not to reach across the namespaces tasks run in, and at full privilege the
-# two slots produce the same object anyway. The informer runs under two of the four billing
-# models, so the grant is gated the same way -- and withheld under the other two.
-expect-role-resource "the node informer's grant appears under Legacy billing" \
+# two slots produce the same object anyway. operator/cmd/root.go starts the informer whenever
+# cluster permissions are not disabled and any usage collector runs -- a billing model other
+# than None, collectUsages.enabled, or serverlessCollectUsages.enabled -- and startup blocks until
+# it syncs. The default full-privilege install (ResourceUsage, collectUsages on) is the case that
+# hung without the grant, so it is the first one pinned.
+expect-role-resource "the node informer's grant appears at full privilege with default billing" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=Legacy
-expect-role-resource "and under Shadow billing" \
-  present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=Shadow
-# The withheld cases assert the whole role is gone, not that it renders without nodes: the
-# node rule is the only thing the operator declares into cluster-read, so emitSlot drops the
-# role and its binding entirely. expect-role-resource refuses a missing role (it would make
-# `absent` vacuous), so these are expect-manifest.
-expect-manifest "and not under the default ResourceUsage billing" \
-  absent "name: union-operator-cluster-read" \
   --set low_privilege=false
-# A lower-cased model no longer reaches the gate at all: operator.billing.config validates the
-# resolved model against the four canonical spellings and fails the render, so the chart refuses
-# `legacy` before the slot is evaluated. The gate still compares lower-cased -- the operator's own
-# enum parser retries lower-cased, so a value that got past that validation would still start the
-# informer -- but what is assertable here is the refusal.
+expect-role-resource "and under Legacy billing with usage collection off" \
+  present union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set config.operator.collectUsages.enabled=false
+expect-role-resource "and under billing None while collectUsages is on" \
+  present union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=None
+# serverlessCollectUsages has no chart key; configOverrides is the only way it reaches the
+# operator, so that is the path the gate reads.
+expect-role-resource "and under billing None when only serverless collection is on" \
+  present union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false \
+  --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
+# At full privilege the role also carries the API server /metrics scrape, so it renders in
+# every withheld case there and the check is on the nodes rule. Under low_privilege the role
+# carries nothing and emitSlot drops it, so those cases assert the whole role is gone:
+# expect-role-resource refuses a missing role (it would make `absent` vacuous).
+expect-role-resource "and not with billing None and both usage collectors off" \
+  absent union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false
+# operator.billing.config validates the resolved model against the four canonical spellings and
+# fails the render, so the gate compares canonical names and a lower-cased model never reaches it.
 expect-refusal "and a lower-cased model is refused before the gate ever sees it" \
   "config.operator.billing.model must resolve to None, Legacy, Shadow, or ResourceUsage" \
   --set low_privilege=false --set config.operator.billing.model=legacy
 # disableClusterPermissions stops the informer outright, so the grant goes with it.
-expect-manifest "and is withheld when cluster permissions are disabled outright" \
-  absent "name: union-operator-cluster-read" \
+expect-role-resource "and is withheld when cluster permissions are disabled outright" \
+  absent union-operator-cluster-read nodes \
   --set low_privilege=false --set config.operator.billing.model=Legacy \
   --set config.operator.disableClusterPermissions=true
 # cluster-read is emitted in both privilege modes, so unlike work-ns-cluster-read it cannot
@@ -804,6 +816,21 @@ expect-manifest "and is withheld when cluster permissions are disabled outright"
 expect-manifest "and is withheld under low_privilege, where the informer never starts" \
   absent "name: union-operator-cluster-read" \
   --set config.operator.billing.model=Legacy
+expect-manifest "even with a serverless collector configured" \
+  absent "name: union-operator-cluster-read" \
+  --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
+
+# The work queue's API-server scrape feeds its FlyteWorkflow-count and etcd-size throttles, and
+# a refused scrape leaves both off without a word. A nonResourceURLs rule means something only in
+# a ClusterRole, so it is granted at full privilege whatever the billing settings, and not at all
+# under low_privilege (the whole-role absence above already covers that mode).
+expect-role-resource "the API server /metrics scrape is granted at full privilege" \
+  present union-operator-cluster-read /metrics \
+  --set low_privilege=false
+expect-role-resource "including with billing and usage collection off" \
+  present union-operator-cluster-read /metrics \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false
 
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
 # so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
@@ -934,16 +961,19 @@ expect-binding-namespaces "and the grants follow the explicit list rather than c
   --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
   --set controlplaneNamespace=union-cp \
   --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
-# An explicitly empty list is the operator's way of asking for every namespace, so it must
-# survive as an empty list rather than being overwritten by the default -- and must not be
-# emitted twice, which a duplicate key would resolve silently in favour of the later one.
-expect-manifest "an explicitly empty list stays empty" \
-  present "        namespaces: \[\]" \
+# An explicitly empty list is the operator's way of asking for every namespace: it lists pods
+# cluster-wide, which nothing here grants, and the refusal ends the process at startup. Granting
+# it would take cluster-wide writes on Deployments and ReplicaSets, so the chart refuses it.
+expect-refusal "an explicitly empty list is refused while the watcher is on" \
+  "config.operator.secretsWatcher.namespaces is set to an empty list" \
   --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
   --set 'config.operator.secretsWatcher.namespaces=null'
-expect-manifest "and is not emitted twice" \
-  absent "          - union\$" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+expect-refusal "and under low_privilege" \
+  "config.operator.secretsWatcher.namespaces is set to an empty list" \
+  --set config.operator.secretsWatcher.enabled=true \
+  --set 'config.operator.secretsWatcher.namespaces=null'
+# With the watcher off the list is never read, so it must not block the render.
+expect-render "but not while the watcher is off" \
   --set 'config.operator.secretsWatcher.namespaces=null'
 
 # The control plane half is a Role in someone else's namespace, so the slot emitter cannot
@@ -1834,6 +1864,107 @@ expect-binding-subject "with per-component identities too, where it would be vis
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
 echo
+echo "- cluster-wide reads follow the code paths that make them"
+
+# The pod-metrics list follows the usage aggregators: the main one runs on collectUsages or a
+# ResourceUsage/Shadow model, the serverless one on serverlessCollectUsages with cluster
+# permissions. pods is also in this role's core rule, so the check is on the apiGroups of the
+# rules carrying pods rather than on the resource name.
+expect-resource-group "the pod-metrics list appears at full privilege with default billing" \
+  union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
+  --set low_privilege=false
+expect-resource-group "and under ResourceUsage billing with collectUsages off" \
+  union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
+  --set low_privilege=false --set config.operator.collectUsages.enabled=false
+expect-resource-group "but not under Legacy billing with collectUsages off, which reads nodes instead" \
+  union-operator-work-ns-cluster-read pods "(core)" \
+  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set config.operator.collectUsages.enabled=false
+expect-resource-group "nor with billing None and both usage collectors off" \
+  union-operator-work-ns-cluster-read pods "(core)" \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false
+expect-resource-group "and back when only serverless collection is on" \
+  union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false \
+  --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
+
+# Under low_privilege the cluster-wide pod-metrics grant is not emitted, but the billing
+# aggregator still lists pod metrics in the release namespace, so the operator's comp-ns-read
+# carries it there -- on the billing model alone, since collectUsages is forced off.
+expect-resource-group "under low_privilege the pod-metrics list is granted in the release namespace" \
+  union-operator-comp-ns-read pods "metrics.k8s.io"
+# The pod-metrics rule is the only thing the operator declares into comp-ns-read at these
+# values, so without it the role is not emitted at all.
+expect-manifest "and not with billing None" \
+  absent "name: union-operator-comp-ns-read" \
+  --set config.operator.billing.model=None
+expect-manifest "and not at full privilege, where the cluster-wide grant covers it" \
+  absent "name: union-operator-comp-ns-read" \
+  --set low_privilege=false
+
+# propeller's workflow garbage collector lists namespaces when limit-namespace is empty, "all"
+# or "all-namespaces", and deletes nothing if that List fails. It is a one-shot List, so the
+# grant is list alone; the complete set is asserted so a watch on namespaces would fail here.
+expect-verb-resources "propeller lists namespaces at full privilege, for the workflow GC" \
+  union-flytepropeller-work-ns-cluster-read list "flyteworkflows,namespaces,pods,podtemplates" \
+  --set low_privilege=false --set flytepropeller.enabled=true
+expect-verb-resources "and does not watch them" \
+  union-flytepropeller-work-ns-cluster-read watch "flyteworkflows,pods,podtemplates" \
+  --set low_privilege=false --set flytepropeller.enabled=true
+expect-verb-resources "and not when limit-namespace names one namespace" \
+  union-flytepropeller-work-ns-cluster-read list "flyteworkflows,pods,podtemplates" \
+  --set low_privilege=false --set flytepropeller.enabled=true \
+  --set config.core.propeller.limit-namespace=flytesnacks-development
+expect-manifest "and not under low_privilege, where limit-namespace is the release namespace" \
+  absent "name: union-flytepropeller-work-ns-cluster-read" \
+  --set flytepropeller.enabled=true
+
+# The apps controllers Get the connector-config ConfigMap and each app's PodDisruptionBudget
+# through a cache that is not namespace-scoped at full privilege, so the first Get starts a
+# cluster-wide informer and blocks until it syncs. configmaps follows apps.enabled; the PDB
+# read also needs PDB management on, since with it off the controller makes no PDB calls.
+expect-role-resource "the operator lists configmaps cluster-wide when apps are on" \
+  present union-operator-work-ns-cluster-read configmaps \
+  --set low_privilege=false --set apps.enabled=true
+expect-role-resource "but not when apps are off" \
+  absent union-operator-work-ns-cluster-read configmaps \
+  --set low_privilege=false --set apps.enabled=false
+expect-role-resource "PodDisruptionBudgets are not read while PDB management is off" \
+  absent union-operator-work-ns-cluster-read poddisruptionbudgets \
+  --set low_privilege=false --set apps.enabled=true
+expect-role-resource "and are once it is on" \
+  present union-operator-work-ns-cluster-read poddisruptionbudgets \
+  --set low_privilege=false --set apps.enabled=true \
+  --set config.operator.apps.controller.podDisruptionBudget.enabled=true
+expect-role-resource "but not with apps off, where the controller never starts" \
+  absent union-operator-work-ns-cluster-read poddisruptionbudgets \
+  --set low_privilege=false --set apps.enabled=false \
+  --set config.operator.apps.controller.podDisruptionBudget.enabled=true
+# Under low_privilege (app serving on the knative-operator path, gateway.enabled: false) the
+# apps cache is scoped to the release namespace, so the PDB read moves to the work-ns Role there.
+expect-role-resource "under low_privilege the PDB read and writes are in the release-namespace work-ns Role" \
+  present union-work-ns poddisruptionbudgets \
+  --set apps.enabled=true --set gateway.enabled=false \
+  --set config.operator.apps.controller.podDisruptionBudget.enabled=true
+expect-role-resource "and not while PDB management is off" \
+  absent union-work-ns poddisruptionbudgets \
+  --set apps.enabled=true --set gateway.enabled=false
+# At full privilege work-ns carries the writes, bound in each work namespace; the read stays in
+# work-ns-cluster-read above, since the cache it goes through is cluster-wide there.
+expect-role-resource "at full privilege work-ns carries the PDB writes" \
+  present union-work-ns poddisruptionbudgets \
+  --set low_privilege=false --set apps.enabled=true \
+  --set config.operator.apps.controller.podDisruptionBudget.enabled=true \
+  --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
+expect-verb-resources "both are list and watch, the complete watched set with apps and PDBs on" \
+  union-operator-work-ns-cluster-read watch \
+  "configmaps,configurations,namespaces,poddisruptionbudgets,pods,podtemplates,resourcequotas,revisions,services" \
+  --set low_privilege=false --set apps.enabled=true \
+  --set config.operator.apps.controller.podDisruptionBudget.enabled=true
+
+echo
 echo "App-serving ServiceAccounts"
 
 # App serving needs zero_trust on, apps on and low_privilege off; gateway/validate.yaml
@@ -2096,8 +2227,13 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 # claim in the docs.
 expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
   union-leaseworker-comp-ns-read get "endpoints"
-expect-verb-resources "and the operator's is its PodTemplate informer" \
-  union-operator-comp-ns-read get "podtemplates"
+# The operator's is the low_privilege billing aggregator's pod-metrics list: list on pods
+# (in metrics.k8s.io) and no get at all. It declares no PodTemplate read here any more; its
+# only PodTemplate informer is the apps workers', granted through the work-ns slots.
+expect-verb-resources "and the operator's is its pod-metrics list" \
+  union-operator-comp-ns-read list "pods"
+expect-verb-resources "with no get, which nothing in the operator calls here" \
+  union-operator-comp-ns-read get ""
 for v in create update patch delete deletecollection; do
   expect-verb-resources "leaseworker's comp-ns-read grants no ${v}" \
     union-leaseworker-comp-ns-read "${v}" ""
@@ -2111,26 +2247,34 @@ done
 #   patch              only where a component patches -- the wildcard contributors and
 #                      the webhook's mirrored objects. Neither the operator's own
 #                      resources nor the proxy's reads appear.
-#   deletecollection   flyteworkflows alone. The GC deletes workflows by label
-#                      selector; nothing else here is collected that way.
-READ_SET="'*',configmaps,deployments,events,flyteworkflows,flyteworkflows/finalizers,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
+#   deletecollection   nothing. Only propeller's garbage collector deletes workflows by
+#                      label selector, and flytepropeller is off at chart defaults.
+READ_SET="'*',configmaps,deployments,events,flyteworkflows,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,secrets"
 for v in get list watch; do
   expect-verb-resources "work-ns grants ${v} on its full default resource set" \
     union-work-ns "${v}" "${READ_SET}"
 done
-for v in create update; do
-  expect-verb-resources "work-ns grants ${v} on the writable subset" \
-    union-work-ns "${v}" \
-    "'*',configmaps,deployments,flyteworkflows,flyteworkflows/finalizers,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
-done
+expect-verb-resources "work-ns grants create on the writable subset" \
+  union-work-ns create \
+  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
+# flyteworkflows is no longer named under update: the operator's rule names only create and
+# delete, and flytepropeller is off at chart defaults. This pins declarations, not effective
+# access -- leaseworker's resource wildcard still conveys update and patch on flyteworkflows
+# (and its finalizers) here, so deletecollection below is the one verb actually withdrawn.
+expect-verb-resources "and update on the same subset less flyteworkflows" \
+  union-work-ns update \
+  "'*',configmaps,deployments,pods,podtemplates,replicasets/finalizers,resourcequotas,secrets"
 expect-verb-resources "work-ns grants patch only where something patches" \
   union-work-ns patch \
-  "'*',flyteworkflows,flyteworkflows/finalizers,pods,replicasets/finalizers,secrets"
+  "'*',pods,replicasets/finalizers,secrets"
 expect-verb-resources "work-ns grants delete on less than it creates" \
   union-work-ns delete \
-  "'*',configmaps,deployments,flyteworkflows,flyteworkflows/finalizers,pods,podtemplates,resourcequotas,secrets"
-expect-verb-resources "and deletecollection on the one resource collected that way" \
-  union-work-ns deletecollection "flyteworkflows,flyteworkflows/finalizers"
+  "'*',configmaps,deployments,flyteworkflows,pods,podtemplates,resourcequotas,secrets"
+expect-verb-resources "and deletecollection on nothing" \
+  union-work-ns deletecollection ""
+expect-verb-resources "until propeller is on, whose garbage collector is the one caller" \
+  union-work-ns deletecollection "flyteworkflows,flyteworkflows/finalizers" \
+  --set flytepropeller.enabled=true
 
 # And with app serving on, split identities, at full privilege -- where the pooled role
 # is a ClusterRole and picks up the three app-serving writers. Three verbs, chosen for
@@ -2145,15 +2289,15 @@ expect-verb-resources "and deletecollection on the one resource collected that w
 #           other verb or slot conveys.
 expect-verb-resources "work-ns grants get on its full app-serving resource set" \
   union-work-ns get \
-  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,pods/log,podtemplates,rayjobs,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,serviceaccounts,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 expect-verb-resources "and create on the subset that is created" \
   union-work-ns create \
-  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,endpoints/restricted,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,endpoints/restricted,events,flyteworkflows,horizontalpodautoscalers,images,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 expect-verb-resources "and update on the subset that is updated" \
   union-work-ns update \
-  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
+  "'*','*/finalizers','*/status',configmaps,configurations,deployments,endpoints,events,horizontalpodautoscalers,images,ingresses/status,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,podtemplates,replicasets/finalizers,resourcequotas,revisions,secrets,serverlessservices,serverlessservices/status,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # And patch, which is where scale-to-zero lives. kpa/scaler.go JSON-patches /spec/replicas on
 # the scale subresource of the PodAutoscaler's target, in the revision's namespace -- so a
@@ -2161,7 +2305,7 @@ expect-verb-resources "and update on the subset that is updated" \
 # and cold-start-from-zero while every other check in this file stays green.
 expect-verb-resources "and patch, which is the only thing conveying deployments/scale" \
   union-work-ns patch \
-  "'*','*/finalizers','*/status',deployments,deployments/scale,endpoints,events,flyteworkflows,flyteworkflows/finalizers,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,replicasets/finalizers,secrets,serverlessservices,serverlessservices/status,services" \
+  "'*','*/finalizers','*/status',deployments,deployments/scale,endpoints,events,horizontalpodautoscalers,images,ingresses,metrics,metrics/status,podautoscalers,podautoscalers/status,pods,replicasets/finalizers,secrets,serverlessservices,serverlessservices/status,services" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 
 # comp-ns-write does not render at chart defaults -- no enabled component declares into
@@ -2206,15 +2350,31 @@ expect-verb-resources "and carries no Secret of anyone else's" \
   union-knative-controller-comp-ns-write get "leases" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false --set config.operator.secretsWatcher.enabled=true
 
+# The cluster-config syncer Gets and Updates a fixed set of objects by name and does nothing
+# else, so its comp-ns-write rules carry get and update only, pinned by resourceNames.
+expect-verb-resources "the cluster-config syncer gets its targets" \
+  union-operator-comp-ns-write get "configmaps,deployments,podtemplates" \
+  --set config.operator.syncClusterConfig.enabled=true
+for v in create list watch patch delete; do
+  expect-verb-resources "and never ${v}s them" \
+    union-operator-comp-ns-write "${v}" "" \
+    --set config.operator.syncClusterConfig.enabled=true
+done
+expect-manifest "and is pinned to the propeller ConfigMap by name" \
+  present "    - flyte-propeller-config" \
+  --set config.operator.syncClusterConfig.enabled=true
+
 # Every read slot rejects every write verb. The comp-ns-read roles join the list now
 # that each component has its own: they are `-read` slots and the same suffix rule
-# applies to them.
+# applies to them. The operator's comp-ns-read is not rendered at these values (it holds
+# only the low_privilege pod-metrics list and the secrets watcher's reads); its write verbs
+# are pinned at chart defaults above.
 for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
          union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
          union-knative-controller-cluster-read union-knative-webhook-cluster-read \
          union-knative-autoscaler-cluster-read union-knative-activator-cluster-read \
          union-knative-kourier-cluster-read \
-         union-operator-comp-ns-read union-leaseworker-comp-ns-read \
+         union-leaseworker-comp-ns-read \
          union-knative-controller-comp-ns-read union-knative-webhook-comp-ns-read \
          union-knative-autoscaler-comp-ns-read union-knative-activator-comp-ns-read \
          union-knative-kourier-comp-ns-read; do

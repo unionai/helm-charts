@@ -246,7 +246,9 @@ Emit one slot's role and its bindings. Emits nothing when rules is empty.
 Args: dict with
   ctx         root context
   slot        one of dataplane.rbac.slotOrder
-  rules       {apiGroups, resources, verbs, resourceNames?} maps, in every slot.
+  rules       {apiGroups, resources, verbs, resourceNames?} maps, in every slot,
+              or {nonResourceURLs, verbs} in a cluster slot, where alone it
+              means anything.
               The verbs are checked against the slot's allowlist, which its name
               decides. Chart-derived and operator-supplied declarations look the
               same here, and both run the validation below.
@@ -264,9 +266,10 @@ aim an unvalidated rule at any slot, so the rule is constructed below instead.
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
 {{/*
-Under low_privilege, limit-namespace makes these caches namespace-scoped and the
-pooled work-ns Role already grants the same reads in the release namespace, so
-work-cluster emits nothing rather than failing.
+Under low_privilege, limit-namespace makes these caches namespace-scoped, so
+work-cluster emits nothing rather than failing. Each read here therefore needs a
+release-namespace counterpart for that mode: usually the pooled work-ns Role, or
+the component's comp-ns-read where the read belongs to that component alone.
 */}}
 {{- if and (eq $spec.kind "work-cluster") $lowPriv -}}
 {{- else -}}

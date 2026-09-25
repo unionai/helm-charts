@@ -103,8 +103,10 @@ in the default posture.
 `work-ns-cluster-read` is the exception that goes the other way. It exists for components
 that watch objects with an empty namespace, which the API server authorizes as a
 cluster-scope check that no number of per-namespace RoleBindings can satisfy. Under
-`low_privilege` those caches are namespace-scoped instead and the pooled `work-ns` role
-already covers them, so the slot emits nothing. Every one of these roles is `list`/`watch`
+`low_privilege` those caches are namespace-scoped instead, so the slot emits nothing, and
+each of its reads needs a release-namespace counterpart for that mode — usually in the
+pooled `work-ns` role, or in the component's own `comp-ns-read` where only that component
+makes the read. Every one of these roles is `list`/`watch`
 only today, but read the enforcement precisely: a slot whose name ends in `-read` admits
 `get`, `list` and `watch`, and the chart refuses to render if a rule in one names a write
 verb. So what is guaranteed at render time is read-only, not `list`/`watch`-only — a `get`
@@ -171,6 +173,31 @@ The image now gates that informer behind `ENABLE_INGRESS_TLS`, which defaults to
 with it off no Secret informer is registered at all — so the rule is gone. Setting that env
 var on `net-kourier-controller` puts the informer back and needs the grant with it; this
 chart does not set it.
+
+### Cluster reads gated on the code path that makes them
+
+At `low_privilege: false`, a cluster-wide read is granted only under the values that start the
+code path using it. Where that gate is more than "the component is enabled", it is:
+
+| Role | Resource | Granted when | Why | Under `low_privilege` |
+|---|---|---|---|---|
+| `union-operator-cluster-read` | `nodes` `list,watch` | `disableClusterPermissions` off, and billing model not `None` or `collectUsages.enabled` or `serverlessCollectUsages.enabled` (via `config.configOverrides`) | the operator's node informer, which startup waits on | not granted; the informer never starts |
+| `union-operator-cluster-read` | `nonResourceURLs: /metrics` `get` | always | the work queue's API-server scrape, which feeds its FlyteWorkflow-count and etcd-size throttles | not granted, to keep parity with the chart before the slot model, whose low_privilege Role could not convey it; the throttles are off there, as they always were |
+| `union-operator-work-ns-cluster-read` | `metrics.k8s.io` `pods` `list` | `collectUsages.enabled`, billing model `ResourceUsage` or `Shadow`, or `serverlessCollectUsages.enabled` with cluster permissions | the usage aggregators' pod-metrics list | `union-operator-comp-ns-read`, when the billing model is `ResourceUsage` or `Shadow` |
+| `union-flytepropeller-work-ns-cluster-read` | `namespaces` `list` | propeller's `limit-namespace` is empty, `all` or `all-namespaces` | the workflow garbage collector, which deletes nothing if the List fails | not needed; the collector reads only the release namespace |
+| `union-operator-work-ns-cluster-read` | `configmaps` `list,watch` | `apps.enabled` | see below | covered by `work-ns` |
+| `union-operator-work-ns-cluster-read` | `policy` `poddisruptionbudgets` `list,watch` | `apps.enabled` and `config.operator.apps.controller.podDisruptionBudget.enabled` | see below | `work-ns`, under the same gate, beside the writes |
+
+The last two are stopgaps. The apps controllers read the `connector-config` ConfigMap in the
+release namespace, and each app's PodDisruptionBudget, through a controller-runtime cache that
+is not namespace-scoped at full privilege. The first `Get` therefore starts a cluster-wide
+informer and blocks until it syncs. The ConfigMap grant goes away once the operator reads it
+through the manager's API reader or scopes the ConfigMap cache to the release namespace. The
+PodDisruptionBudget lives in each app's work namespace, which no cache entry can name in
+advance, so only reading it through the API reader removes that one.
+
+With PodDisruptionBudget management on, `work-ns` also carries `create`, `update` and `delete`
+on `poddisruptionbudgets`, so the operator can manage each app's PDB in its work namespace.
 
 ### Pooling
 

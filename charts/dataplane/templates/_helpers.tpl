@@ -691,9 +691,12 @@ Both the operator's config and the Roles backing it read this define, so a
 namespace cannot end up watched without being granted, or granted without being
 watched. The two drifted apart while each read its own condition.
 
-An explicit config.operator.secretsWatcher.namespaces wins, including an empty
-list -- the operator reads empty as "every namespace", so `hasKey` rather than
-truthiness is what distinguishes "unset" from "deliberately cluster-wide".
+An explicit config.operator.secretsWatcher.namespaces wins. An explicitly empty
+list is refused while the watcher is on: the operator reads empty as "every
+namespace" and lists pods cluster-wide, which no grant here authorizes, and the
+refusal ends the process at startup. Granting it would take cluster-wide update
+and patch on Deployments and ReplicaSets. `hasKey` rather than truthiness is
+what tells that case apart from "unset".
 
 Unset, it resolves to the release namespace plus the control plane's when the two
 share a cluster. Those are the only namespaces holding pods with the zone label
@@ -702,7 +705,10 @@ the watcher selects on; user task namespaces never carry it.
 {{- define "operator.secretsWatcher.namespaces" -}}
 {{- $sw := .Values.config.operator.secretsWatcher -}}
 {{- if hasKey $sw "namespaces" -}}
-{{- toYaml ($sw.namespaces | default list) -}}
+{{- if and $sw.enabled (not $sw.namespaces) -}}
+{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list. The operator reads an empty list as every namespace and lists pods cluster-wide, which this chart does not grant, so the operator would fail at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
+{{- end -}}
+{{- toYaml $sw.namespaces -}}
 {{- else -}}
 {{- $ns := list .Release.Namespace -}}
 {{- if .Values.controlplaneNamespace -}}

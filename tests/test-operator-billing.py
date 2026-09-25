@@ -403,7 +403,20 @@ data:
                     if doc
                 }
             )
-        self.assertEqual(*inventories)
+        # The billing model changes no workload or config object. The one thing it
+        # does change is RBAC: under low_privilege the operator lists pod metrics in
+        # the release namespace only for ResourceUsage and Shadow, and that rule is
+        # all its comp-ns-read Role holds here, so the Role and its binding render
+        # only for those models.
+        none, resource_usage = inventories
+        self.assertEqual(
+            {
+                ("rbac.authorization.k8s.io/v1", "Role", f"{NAMESPACE}-operator-comp-ns-read"),
+                ("rbac.authorization.k8s.io/v1", "RoleBinding", f"{NAMESPACE}-operator-comp-ns-read"),
+            },
+            resource_usage - none,
+        )
+        self.assertEqual(set(), none - resource_usage)
 
 
 if __name__ == "__main__":
