@@ -23,8 +23,6 @@ kinds of grant have no destination here:
                                    control-plane namespace. The emitter binds
                                    only in the release namespace and the work
                                    namespaces, so neither fits.
-  a role with no rules to carry    clusterresourcesync's system:auth-delegator
-                                   ClusterRoleBinding references a built-in role.
   hooks Helm deletes itself        the pre-upgrade hooks in common/ and webhook/,
                                    which carry hook-delete-policy.
   a verb with no slot              the OpenShift SCC Roles for imagebuilder and the

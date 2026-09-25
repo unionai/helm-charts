@@ -1335,6 +1335,29 @@ union-pod-webhook
 {{- end -}}
 
 {{/*
+The name the webhook binary gives the MutatingWebhookConfiguration it registers,
+which is the webhook.serviceName in whichever config the webhook Deployment
+mounts. With propeller enabled that is flyte-propeller-config, rendered from
+config.core.webhook through tpl; the binary falls back to its own default,
+flyte-pod-webhook, when the key is absent. Otherwise it is the minimal config
+from propeller.webhookConfigMinimal, which pins serviceName to
+flytepropellerwebhook.serviceName. The condition matches the configmap choice in
+webhook/deployment.yaml, where flyte-propeller-config wins over the other two.
+
+The RBAC that pins the webhook's get and update to that one object reads the
+name from here, so an override of config.core.webhook.serviceName moves the
+grant along with the object.
+*/}}
+{{- define "flytepropellerwebhook.registeredConfigName" -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- $webhook := (.Values.config.core | default dict).webhook | default dict -}}
+{{- tpl (dig "serviceName" "flyte-pod-webhook" $webhook | toString) . -}}
+{{- else -}}
+{{- include "flytepropellerwebhook.serviceName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Get the webhook secret name
 */}}
 {{- define "flytepropellerwebhook.secretName" -}}

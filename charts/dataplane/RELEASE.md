@@ -715,10 +715,10 @@ own copy of this table:
 
 | ServiceAccount | Grant | When |
 |---|---|---|
-| `union-clustersync-system` | `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings` at `get`/`create`/`update`/`patch`; `bind` on `union-work-ns` | `clusterresourcesync.enabled` at `low_privilege: false` |
+| `union-clustersync-system` | `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings` at `get`/`create`/`patch`; `bind` on `union-work-ns` | `clusterresourcesync.enabled` at `low_privilege: false` |
 | `union-clustersync-system` | `namespaces: [delete]`, on that rule only | additionally `unionProjectSyncConfig.cleanupNamespace: true` |
 | `nodeobserver-system` | `nodes: [update]` | `nodeobserver.enabled` |
-| the webhook's account | `mutatingwebhookconfigurations` at `get`/`create`/`update`/`patch` | `managedConfig: false` **and** `low_privilege: false` |
+| the webhook's account | `mutatingwebhookconfigurations` at `create`, plus `get`/`update` pinned by `resourceNames` to the one configuration it registers (`config.core.webhook.serviceName`, default `union-pod-webhook`) | `managedConfig: false` **and** `low_privilege: false` |
 | `flyte-webhook-cleanup` | `mutatingwebhookconfigurations: [get, delete]` | during a `pre-upgrade` hook only |
 
 `leaseworker`'s and `flytepropeller`'s cluster-wide wildcards are replaced by
@@ -734,10 +734,19 @@ cannot be used to grant any other role. Every namespaced Union grant that is *no
 table lands in the release namespace, a namespace listed in `namespaces.static`, or one
 `clusterresourcesync` provisions — never anywhere else.
 
-"Write-capable" here means state-mutating. It excludes the `create` on `tokenreviews` and
-`subjectaccessreviews` that `union-clustersync-auth-delegator` conveys through the built-in
-`system:auth-delegator`: those are non-mutating authentication and authorization reviews that
-happen to use `create`, and that binding is unchanged by this release.
+Both writes are cut to the calls each binary makes. `clusterresourcesync` applies every
+template as a create, then on `AlreadyExists` a get and a patch; it never issues an update,
+so the `update` its rules used to carry is gone. The webhook registers its
+`MutatingWebhookConfiguration` as a create, then on `AlreadyExists` a get and an update of
+that one object; it never patches, so `patch` is gone and `get`/`update` are pinned to the
+name. `create` cannot be pinned by `resourceNames`, because there is no name to match before
+the object exists.
+
+**`union-clustersync-auth-delegator` is removed.** It bound `union-clustersync-system` to the
+built-in `system:auth-delegator`, conveying `create` on `tokenreviews` and
+`subjectaccessreviews` cluster-wide. The controller never makes either review: it serves only
+unauthenticated metrics and pprof on port 10254. Anything outside this chart that references
+the binding by name stops matching.
 
 This table covers Union-authored components. Vendored third-party RBAC — the Knative Serving
 grants under `templates/gateway/` and the `kube-prometheus-stack` operator where it is enabled
@@ -788,7 +797,6 @@ is the list the slot roles do not cover**:
 |---|---|
 | the proxy's `<sa>-secret` `Role` | targets `proxy.secretsNamespace`, which is neither the release namespace nor a work namespace |
 | the operator's `<sa>-secrets-watcher` `Role` | targets the control-plane namespace, same reason; only with `config.operator.secretsWatcher.enabled` |
-| `union-clustersync-auth-delegator` | references the built-in `system:auth-delegator`, so there are no rules for the emitter to carry |
 | `flyte-webhook-cleanup-<release-ns>`, `<release>-pre-upgrade` | hook-scoped, carrying `helm.sh/hook-delete-policy` |
 | the OpenShift SCC `Role`s for imagebuilder and the Kourier gateway | grant `use` on a `SecurityContextConstraints` by name — a resource the slot model has no verb set for |
 
@@ -1145,7 +1153,8 @@ Also, in both modes:
   The chart now derives what the component needs from the templates it actually applies:
   `namespaces`, `serviceaccounts` and `resourcequotas` (the three default
   `clusterresourcesync.templates` entries) plus `rolebindings` and `bind` for the work-ns
-  binding, all at `get`/`create`/`update`/`patch`. `delete` on `namespaces` is added only
+  binding, all at `get`/`create`/`patch` — the controller applies with a create and, when
+  the object exists, a patch, and never updates. `delete` on `namespaces` is added only
   with `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace`.
   Those rules are chart-owned and cannot be withdrawn by an override.
 
@@ -1163,7 +1172,8 @@ Also, in both modes:
   `union-clustersync-resource` no longer exist.** Their rules are in the destination roles
   described above (`union-work-ns`, `union-webhook-work-ns-cluster-read`,
   `union-webhook-cluster-write`, `union-nodeobserver-cluster-{read,write}` and
-  `union-clusterresourcesync-cluster-write`). `union-clustersync-auth-delegator` is unchanged.
+  `union-clusterresourcesync-cluster-write`). `union-clustersync-auth-delegator` is removed
+  outright; see above.
   Any external tooling, audit policy or binding outside this chart that names the old objects
   must be updated.
 

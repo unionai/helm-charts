@@ -63,9 +63,8 @@ what is granted. What the ceiling does is refuse a declaration outright — wild
 write verb at all.
 
 The slots are not the chart's whole RBAC surface, and what sits outside them is outside for
-four different reasons: the destination is a namespace the operator names rather than one the
-emitter binds in (the proxy's Secret Role, the operator's secrets-watcher Role); the role is a
-built-in with no rules of its own to carry (`system:auth-delegator`); the object is a hook
+three different reasons: the destination is a namespace the operator names rather than one the
+emitter binds in (the proxy's Secret Role, the operator's secrets-watcher Role); the object is a hook
 that outlives nothing (the pre-upgrade cleanup); or the verb has no slot (`use` on a named
 SecurityContextConstraints, for imagebuilder and the Kourier gateway). Some of these do land
 in the release namespace — being outside the model is not the same as being outside the
@@ -290,15 +289,22 @@ than assuming some rows exclude others.
 | ClusterRole | Rendered when | Grant |
 |---|---|---|
 | `flyte-webhook-cleanup-<release-ns>` | always (upgrade hook) | `get`/`delete` on one named `MutatingWebhookConfiguration` |
-| `union-clusterresourcesync-cluster-write` | `low_privilege: false` + `clusterresourcesync.enabled` | get/create/update/patch on `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings`; `bind` on `<release-ns>-work-ns` |
+| `union-clusterresourcesync-cluster-write` | `low_privilege: false` + `clusterresourcesync.enabled` | get/create/patch on `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings`; `bind` on `<release-ns>-work-ns` |
 | `union-nodeobserver-cluster-write` | `nodeobserver.enabled` (either privilege mode) | `update` on `nodes` |
-| `union-webhook-cluster-write` | `low_privilege: false` + `flytepropellerwebhook.managedConfig: false` | get/create/update/patch on `mutatingwebhookconfigurations` |
+| `union-webhook-cluster-write` | `low_privilege: false` + `flytepropellerwebhook.managedConfig: false` | `create` on `mutatingwebhookconfigurations`; `get`/`update` on the one it registers, named by `config.core.webhook.serviceName` |
 | `union-knative-webhook-cluster-write` | app serving under zero trust | `update` on three named webhook configurations, plus `namespaces/finalizers` on the release namespace |
 
 `clusterresourcesync`'s is the irreducible one: it applies ServiceAccounts and
 ResourceQuotas *into a namespace on the sync that creates it*, holding no RoleBinding
 there yet, so those rules cannot be namespaced. Its `namespaces` rule gains `delete` only
 under `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace: true`.
+There is no `update` on any of them: the controller applies with a create and, when the
+object already exists, a get and a patch.
+
+The pod webhook's row is as narrow as its registration call allows. It creates its
+MutatingWebhookConfiguration and, if one already exists, gets and updates it; it never
+patches or deletes. `get` and `update` are pinned by `resourceNames` to the name it registers
+under. `create` cannot be, since there is no name to match before the object exists.
 
 **What that row still leaves.** Its `rolebindings` write is cluster-wide —
 RBAC has no way to confine a namespaced write to a subset of namespaces — and
@@ -333,10 +339,9 @@ or `resources`, so `apiGroups: ["*"], resources: ["*"], verbs: [get]` renders. A
 alongside this table.
 
 Beyond this table and that key, every cluster-scoped grant held by a Union identity is
-**read-only**,
-with one apparent exception that is not one: `clusterresourcesync` is also bound to the
-built-in `system:auth-delegator` ClusterRole, which conveys `create` on `tokenreviews` and
-`subjectaccessreviews`. Those are read-only authorization checks that mutate no state.
+**read-only**. (`clusterresourcesync` was once also bound to the built-in
+`system:auth-delegator`. That binding is gone: the controller serves only unauthenticated
+metrics and pprof and never makes a TokenReview or SubjectAccessReview.)
 
 `low_privilege` is not a whole-chart namespace boundary in either direction: the
 upgrade hook's ClusterRole is created in both modes, as are opencost's and metrics-server's

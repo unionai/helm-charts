@@ -1039,6 +1039,98 @@ expect-manifest "nor under low_privilege, which disables self-registration on it
   absent "name: union-webhook-cluster-write" \
   --set flytepropellerwebhook.managedConfig=false
 
+# expect-webhook-registration-grant <description> <configuration name> [helm --set flags...]
+# Asserts union-webhook-cluster-write renders EXACTLY as below: an unpinned create, and get
+# and update pinned to the one MutatingWebhookConfiguration the webhook registers. That is
+# every call the binary makes -- Create, then on AlreadyExists a Get and an Update -- so no
+# patch, delete, list or watch.
+#
+# Text rather than parsed fields for the reason given on expect-cleanup-grant-exact: none of
+# the field-reading helpers can see resourceNames, and the pin is the thing under test. The
+# name is a parameter because it follows whichever config the webhook mounts.
+function expect-webhook-registration-grant {
+  local desc=$1; shift
+  local name=$1; shift
+  local out got want
+  want="kind: ClusterRole
+metadata:
+  name: union-webhook-cluster-write
+rules:
+  - apiGroups:
+    - admissionregistration.k8s.io
+    resources:
+    - mutatingwebhookconfigurations
+    verbs:
+    - create
+  - apiGroups:
+    - admissionregistration.k8s.io
+    resourceNames:
+    - ${name}
+    resources:
+    - mutatingwebhookconfigurations
+    verbs:
+    - get
+    - update"
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           render failed: $(grep -o 'Error:.*' <<<"${out}" | head -c 200)"
+    failures=$((failures + 1)); return
+  fi
+  got=$(awk '
+    /^kind: ClusterRole$/ { buf = "kind: ClusterRole\n"; inrole = 1; keep = 0; next }
+    inrole && /^---$/ { if (keep) printf "%s", buf; inrole = 0; keep = 0; next }
+    inrole {
+      buf = buf $0 "\n"
+      if ($0 == "  name: union-webhook-cluster-write") keep = 1
+    }
+    END { if (inrole && keep) printf "%s", buf }
+  ' <<<"${out}")
+  # Command substitution strips the trailing newline from got; want has none either.
+  if [[ "${got}" == "${want}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           union-webhook-cluster-write does not match the expected grant"
+    diff <(echo "${want}") <(echo "${got}") | sed 's/^/             /'
+    failures=$((failures + 1))
+  fi
+}
+
+# Webhook only (propeller off): the mounted config is propeller.webhookConfigMinimal, which
+# pins serviceName to the chart's own name whatever config.core.webhook says.
+expect-webhook-registration-grant "get and update are pinned to the one configuration it registers" \
+  union-pod-webhook \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false
+expect-webhook-registration-grant "and an override the minimal config discards does not move the pin" \
+  union-pod-webhook \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false \
+  --set config.core.webhook.serviceName=elsewhere
+# Propeller on: the webhook mounts flyte-propeller-config, whose serviceName comes from
+# config.core.webhook through tpl, so the pin has to follow an override -- template and all.
+expect-webhook-registration-grant "with propeller on, the pin follows config.core.webhook.serviceName" \
+  union-pod-webhook \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true
+expect-webhook-registration-grant "including an override, rendered through tpl as the config is" \
+  my-hook-union \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
+  --set 'config.core.webhook.serviceName=my-hook-{{ .Release.Namespace }}'
+expect-manifest "and the config it pins to carries that same name" \
+  present "serviceName: my-hook-union" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
+  --set 'config.core.webhook.serviceName=my-hook-{{ .Release.Namespace }}'
+# With the key removed the binary falls back to its compiled-in default, so the pin must too.
+expect-webhook-registration-grant "and the binary's own default when the key is removed" \
+  flyte-pod-webhook \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
+  --set config.core.webhook.serviceName=null
+
 echo
 echo "- nodeobserver holds the same grant in both privilege modes"
 
@@ -1643,6 +1735,31 @@ expect-verb-resources "and exactly namespaces once cleanup is asked for" \
   union-clusterresourcesync-cluster-write delete "namespaces" \
   --set low_privilege=false --set clusterresourcesync.enabled=true \
   --set clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace=true
+
+# The controller applies with Create and, on AlreadyExists, Get then Patch. It never issues
+# an Update, so no rule may carry one -- including with cleanup on, which adds a verb to the
+# namespaces rule and is the likeliest place for one to creep back.
+expect-verb-resources "nothing is granted update" \
+  union-clusterresourcesync-cluster-write update "" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-verb-resources "not even with cleanup on" \
+  union-clusterresourcesync-cluster-write update "" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace=true
+expect-verb-resources "while patch, the verb it does use, covers every provisioned resource" \
+  union-clusterresourcesync-cluster-write patch \
+  "namespaces,resourcequotas,rolebindings,serviceaccounts" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+
+# The controller serves only unauthenticated metrics and pprof, and never makes a TokenReview
+# or SubjectAccessReview, so the system:auth-delegator binding it used to hold is gone.
+# metrics-server holds its own such binding, and is off here, so the second check is exact.
+expect-manifest "no auth-delegator binding for clusterresourcesync" \
+  absent "union-clustersync-auth-delegator" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-manifest "nor anything else binding system:auth-delegator" \
+  absent "name: system:auth-delegator" \
+  --set low_privilege=false --set clusterresourcesync.enabled=true
 
 # The extension point still works, and is not gated on namespace posture: namespaces.enabled
 # pre-seeds a subset, so a rule an operator adds still has to reach namespaces registered
