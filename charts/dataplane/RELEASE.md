@@ -1,8 +1,86 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.6
 
-### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`.
+
+### Dataplane images
+
+- uvol mount broker: serves a node-shared chunk cache to task pods as
+  `volumes.union.ai/kind=node-cache` ([cloud#18524](https://github.com/unionai/cloud/pull/18524)).
+  This is the image half of the chart's `uvolMountBroker.nodeCache` (below): a
+  2026.9.4 broker ignores the attribute, so the feature only works from this
+  image on.
+- Operator: App status conditions are capped so oversized messages no longer
+  break the inline status notification ([cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- Operator: fleet pool registries are rendered and the configured image
+  endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
+
+- uvol mount broker: mounts its published channel on first use rather than at
+  NodePublish, and gives that mount the pod's own SELinux label
+  ([cloud#18583](https://github.com/unionai/cloud/pull/18583)). Without this a
+  task pod on an SELinux-enforcing node cannot start: the container runtime
+  relabels the CSI target, walks into a premount nothing is serving yet, and
+  fails. Union Volumes have been unusable on those nodes since the broker
+  shipped in 2026.9.2.
+- Propeller webhook: can give a volume-mounting container an SELinux type it is
+  allowed to receive the broker's channel descriptor with
+  ([flyte#1017](https://github.com/unionai/flyte/pull/1017)). Off unless
+  enabled; see the `selinuxTaskPods` section below for what the type grants and
+  why it is not on by default.
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+Included submodule changes:
+[Flyte v1](https://github.com/unionai/flyte/compare/8b7a3dd29511...273cb0d62544)
+— this is where the webhook above comes from;
+[Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
+
+### Knative autoscaler resources
+
+The vendored Knative autoscaler now defaults to `limits: 4000m` CPU / `2000Mi`
+memory and `requests: 250m` / `128Mi` (was `1000m` / `1000Mi` and `100m` / `100Mi`),
+via `gateway.components.autoscaler.containers.autoscaler.resources`. It runs one
+decider per revision, including scaled-to-zero ones; on a dataplane with many
+revisions the 1-CPU cap throttled it until the liveness probe killed it in a
+loop, and no new Knative revision could become ready. Mirrors cloud#18669.
+
+### SELinux type for volume-mounting task pods (`selinuxTaskPods`)
+
+Off by default. On a node that enforces SELinux — Bottlerocket, so EKS Auto
+Mode, and RHCOS/OpenShift — the mount broker passes the task pod a `/dev/fuse`
+descriptor from a privileged domain, the kernel refuses a confined container
+that descriptor, and the volume client dies on the empty message. Nothing in
+the pod can recover it, so Union Volumes cannot be mounted there at all.
+
+Enabling this registers a propeller webhook that gives an SELinux type only to
+the containers that mount a broker channel volume, and only in pods carrying
+`volumes.union.ai/channel` (set by `flyteplugins-union`'s `allow_volumes()`).
+It never overrides a type the pod asked for itself.
+
+Turn it on only where the nodes need it:
+
+```yaml
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true
+config:
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
+```
+
+Read before enabling: the type moves the task container into a subject set
+that Bottlerocket's policy allows to write the node's API socket, which the
+unprivileged set is explicitly denied. A task pod gets no hostPath and so
+cannot reach that socket, but the permission is real and this is a
+security-team conversation, not a values change. Pod Security Admission's
+*baseline* profile also rejects the resulting pod, and a mutating webhook
+cannot exempt itself.
+
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
 
 On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
 broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for

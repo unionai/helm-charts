@@ -318,6 +318,13 @@ jobs:
               # the contract, so turn it on here — the functional volume scenario mounts
               # through it and asserts broker mode (values.k3d.yaml does the same for k3d).
               extra+=(--set "uvolMountBroker.enabled=true")
+              # SELinux type for volume-mounting task pods: off by default in
+              # the chart (it relaxes task-pod confinement), so turn it on here
+              # the same way. Without it the volume scenario cannot pass on a
+              # node that enforces SELinux — the broker's channel descriptor is
+              # refused and the client dies — which is the whole point of it.
+              extra+=(--set "flytepropellerwebhook.webhook.webhooks.selinuxTaskPods.enabled=true")
+              extra+=(--set "config.core.webhook.selinuxTaskPods.enabled=true")
             fi
             if [ "$chart" = "controlplane" ]; then
               appver="$(awk '/^appVersion:/{print $2}' "charts/$chart/Chart.yaml" | tr -d '"')"
@@ -463,6 +470,13 @@ jobs:
             for p in $(kubectl -n "$ns" get pods --no-headers 2>/dev/null | awk '{split($2,a,"/"); if ($3 ~ /CrashLoop|Error|Init|ImagePull/ || a[1] != a[2]) print $1}'); do
               echo "--- describe $ns/$p ---"; kubectl -n "$ns" describe pod "$p" | tail -25 || true
               echo "--- logs $ns/$p ---"; kubectl -n "$ns" logs "$p" --all-containers --tail=60 2>&1 | tail -60 || true
+            done
+            # The uvol mount broker is on the task pod's mount path, so a
+            # volume test that fails usually fails there — and the loop above
+            # never shows it, because the broker itself stays healthy. Its
+            # pods are few and its logs are terse, so dump them unconditionally.
+            for p in $(kubectl -n "$ns" get pods -l app.kubernetes.io/name=uvol-broker --no-headers 2>/dev/null | awk '{print $1}'); do
+              echo "--- logs $ns/$p (uvol broker) ---"; kubectl -n "$ns" logs "$p" --all-containers --tail=500 2>&1 | tail -500 || true
             done
           done
 
