@@ -44,11 +44,19 @@ def pytest_addoption(parser):
         action="store_true",
         help="Skip test_logs (needs a log backend; k3d has none).",
     )
+    parser.addoption(
+        "--skip-volume",
+        action="store_true",
+        help="Skip test_volume (needs the uvol mount broker installed and enabled).",
+    )
 
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "app: app-serving test, skipped with --skip-app")
     config.addinivalue_line("markers", "logs: log-persistence test, skipped with --skip-logs")
+    config.addinivalue_line(
+        "markers", "volume: mount-broker volume test, skipped with --skip-volume"
+    )
 
 
 # Run light/warming scenarios first, heaviest (app) last. The app deploy (two
@@ -59,21 +67,27 @@ _ORDER = {
     "test_image_builder": 1,
     "test_image_cache": 2,
     "test_io": 3,
-    "test_logs": 4,
-    "test_trigger": 5,
-    "test_reusable": 6,
-    "test_app": 7,
+    "test_volume": 4,
+    "test_logs": 5,
+    "test_trigger": 6,
+    "test_reusable": 7,
+    "test_app": 8,
 }
 
 
 def pytest_collection_modifyitems(config, items):
     skip_app = pytest.mark.skip(reason="--skip-app: app serving unsupported on this topology")
     skip_logs = pytest.mark.skip(reason="--skip-logs: no log backend on this topology")
+    skip_volume = pytest.mark.skip(
+        reason="--skip-volume: mount broker not enabled on this topology"
+    )
     for item in items:
         if config.getoption("--skip-app") and "app" in item.keywords:
             item.add_marker(skip_app)
         if config.getoption("--skip-logs") and "logs" in item.keywords:
             item.add_marker(skip_logs)
+        if config.getoption("--skip-volume") and "volume" in item.keywords:
+            item.add_marker(skip_volume)
     items.sort(key=lambda it: _ORDER.get(it.name.split("[")[0], 3))
 
 

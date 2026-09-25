@@ -1,4 +1,4 @@
-{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) }}
+{{- if include "serving.useVendoredGateway" . }}
 # Copyright 2018 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -43,7 +43,7 @@ spec:
         app: controller
         app.kubernetes.io/component: controller
         app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.16.0"
+        app.kubernetes.io/version: "1.23.0"
         {{- with $comp.labels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -52,8 +52,16 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      {{- with $comp.affinity }}
+      {{- with (merge (dict) ($comp.nodeSelector | default dict) (($.Values.scheduling | default dict).nodeSelector | default dict)) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($comp.affinity | default ($.Values.scheduling | default dict).affinity) }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (concat (($.Values.scheduling | default dict).tolerations | default list) ($comp.tolerations | default list)) }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: controller
@@ -64,7 +72,7 @@ spec:
           {{- if $container.image.repository }}
           image: {{ $container.image.repository }}{{- if $container.image.tag }}:{{ $container.image.tag }}{{- end }}
           {{- else }}
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/controller@sha256:5fb22b052e6bc98a1a6bbb68c0282ddb50744702acee6d83110302bc990666e9
+          image: gcr.io/knative-releases/knative.dev/serving/cmd/controller@sha256:ca5062ece0329d002a81940cf4268d7898866434d70049bb93f27d3a786d3292
           {{- end }}
           {{- with $container.command }}
           command:

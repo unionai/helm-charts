@@ -1,4 +1,4 @@
-{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) }}
+{{- if include "serving.useVendoredGateway" . }}
 # Copyright 2018 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -44,7 +44,7 @@ spec:
         app: autoscaler-hpa
         app.kubernetes.io/component: autoscaler-hpa
         app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.16.0"
+        app.kubernetes.io/version: "1.23.0"
         {{- with $comp.labels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -53,8 +53,16 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      {{- with $comp.affinity }}
+      {{- with (merge (dict) ($comp.nodeSelector | default dict) (($.Values.scheduling | default dict).nodeSelector | default dict)) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($comp.affinity | default ($.Values.scheduling | default dict).affinity) }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (concat (($.Values.scheduling | default dict).tolerations | default list) ($comp.tolerations | default list)) }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: controller
@@ -63,7 +71,7 @@ spec:
           {{- if $container.image.repository }}
           image: {{ $container.image.repository }}{{- if $container.image.tag }}:{{ $container.image.tag }}{{- end }}
           {{- else }}
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:64166849fc5fd9b03ab2c1ebca72e70b826cf30e731b1fa3cdf725cdd30d6210
+          image: gcr.io/knative-releases/knative.dev/serving/cmd/autoscaler-hpa@sha256:e2494132a71c23587ac8dd25bc5288f70261e592285487e1d19f8dea1f896133
           {{- end }}
           {{- with $container.command }}
           command:

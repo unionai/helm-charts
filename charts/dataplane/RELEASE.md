@@ -1,5 +1,503 @@
 # dataplane — Release Notes
 
+## 2026.9.6
+
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`.
+
+### Dataplane images
+
+- uvol mount broker: serves a node-shared chunk cache to task pods as
+  `volumes.union.ai/kind=node-cache` ([cloud#18524](https://github.com/unionai/cloud/pull/18524)).
+  This is the image half of the chart's `uvolMountBroker.nodeCache` (below): a
+  2026.9.4 broker ignores the attribute, so the feature only works from this
+  image on.
+- Operator: App status conditions are capped so oversized messages no longer
+  break the inline status notification ([cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- Operator: fleet pool registries are rendered and the configured image
+  endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
+
+- uvol mount broker: mounts its published channel on first use rather than at
+  NodePublish, and gives that mount the pod's own SELinux label
+  ([cloud#18583](https://github.com/unionai/cloud/pull/18583)). Without this a
+  task pod on an SELinux-enforcing node cannot start: the container runtime
+  relabels the CSI target, walks into a premount nothing is serving yet, and
+  fails. Union Volumes have been unusable on those nodes since the broker
+  shipped in 2026.9.2.
+- Propeller webhook: can give a volume-mounting container an SELinux type it is
+  allowed to receive the broker's channel descriptor with
+  ([flyte#1017](https://github.com/unionai/flyte/pull/1017)). Off unless
+  enabled; see the `selinuxTaskPods` section below for what the type grants and
+  why it is not on by default.
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+Included submodule changes:
+[Flyte v1](https://github.com/unionai/flyte/compare/8b7a3dd29511...273cb0d62544)
+— this is where the webhook above comes from;
+[Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
+
+### Knative autoscaler resources
+
+The vendored Knative autoscaler now defaults to `limits: 4000m` CPU / `2000Mi`
+memory and `requests: 250m` / `128Mi` (was `1000m` / `1000Mi` and `100m` / `100Mi`),
+via `gateway.components.autoscaler.containers.autoscaler.resources`. It runs one
+decider per revision, including scaled-to-zero ones; on a dataplane with many
+revisions the 1-CPU cap throttled it until the liveness probe killed it in a
+loop, and no new Knative revision could become ready. Mirrors cloud#18669.
+
+### SELinux type for volume-mounting task pods (`selinuxTaskPods`)
+
+Off by default. On a node that enforces SELinux — Bottlerocket, so EKS Auto
+Mode, and RHCOS/OpenShift — the mount broker passes the task pod a `/dev/fuse`
+descriptor from a privileged domain, the kernel refuses a confined container
+that descriptor, and the volume client dies on the empty message. Nothing in
+the pod can recover it, so Union Volumes cannot be mounted there at all.
+
+Enabling this registers a propeller webhook that gives an SELinux type only to
+the containers that mount a broker channel volume, and only in pods carrying
+`volumes.union.ai/channel` (set by `flyteplugins-union`'s `allow_volumes()`).
+It never overrides a type the pod asked for itself.
+
+Turn it on only where the nodes need it:
+
+```yaml
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true
+config:
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
+```
+
+Read before enabling: the type moves the task container into a subject set
+that Bottlerocket's policy allows to write the node's API socket, which the
+unprivileged set is explicitly denied. A task pod gets no hostPath and so
+cannot reach that socket, but the permission is real and this is a
+security-team conversation, not a values change. Pod Security Admission's
+*baseline* profile also rejects the resulting pod, and a mutating webhook
+cannot exempt itself.
+
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
+
+On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
+broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for
+it (`allow_volumes(shared_node_cache=True)` in flyteplugins-union) as an inline
+CSI volume tagged `volumes.union.ai/kind=node-cache`. Pods of one namespace on a
+node then share one chunk cache; other namespaces never see it; and — the point
+— the task pod carries no hostPath and no privilege: the bind mount is done by
+this DaemonSet. A pod that asks on a node without it fails `NodePublish` with
+`FailedPrecondition` rather than mounting anything privileged. Put the path on
+the node's fastest local disk and size it; each client evicts against its own
+budget. Pods of one namespace need not share a uid: the plugin mounts the
+shared directory with `--cache-mode 0666`. Verified end to end on dogfood-1
+(cloud#18524).
+
+## 2026.9.4
+
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`.
+
+### Dataplane images
+
+- Billing: GPU usage from user sidecars that request GPUs without an
+  accelerator type is now reported as billable usage (previously dropped).
+  Accelerator labels are aligned with the Flyte SDK ([cloud#18484](https://github.com/unionai/cloud/pull/18484)).
+- Operator-side mirrors of the chart's Knative Serving 1.23.0 gateway and
+  `KUBERNETES_MIN_VERSION` changes below ([cloud#18409](https://github.com/unionai/cloud/pull/18409),
+  [cloud#18486](https://github.com/unionai/cloud/pull/18486)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
+### Vendored Knative Serving gateway 1.16.0 → 1.23.0
+
+The default vendored gateway (`gateway.enabled: true`) moves to Knative Serving
+**1.23.0**: serving image digests, the vendored Serving CRDs (`crds/dataplane/`),
+and version labels (#588). `gateway.config.features.kubernetes.podspec-volumes-csi`
+is now `enabled`, so App serving pods can mount Union Volumes via inline CSI. The
+legacy `knative-operator` subchart (`gateway.enabled: false`) is unchanged.
+
+This skips Knative 1.17–1.22 as a direct manifest/CRD replacement; validate on a
+canary dataplane before fleet rollout. The 1.23 CRDs are additive supersets of
+1.16 (apply via ArgoCD or `kubectl apply --server-side -f crds/dataplane/`). See
+`charts/MIGRATION.md`.
+
+The `knative-serving-core` ClusterRole also regains upstream's `*/scale` patch
+rule, without which the 1.23 autoscaler cannot scale App revisions to or from
+zero (#593).
+
+### Ship the uvol mount broker (Union Volumes on self-managed) (#585)
+
+New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
+(`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
+on clusters that want Union Volumes. This is what makes Volumes mountable at
+all on a self-managed data plane; without it a task pod requesting one fails
+`NodePublish` with `driver volumes.union.ai not found`.
+
+The broker is a CSI node driver that premounts a FUSE channel per pod and hands
+the file descriptor to the in-pod client over a unix socket, so **task pods mount
+Volumes with no privileges**: no `CAP_SYS_ADMIN`, no `/dev/fuse`, no `hostPath`.
+Privilege stays confined to this DaemonSet.
+
+It runs as its own DaemonSet rather than a container in `union-nodeobserver`,
+and with `automountServiceAccountToken: false`: it never calls the Kubernetes
+API, so it holds no credential a privileged container could be made to misuse.
+That also lets it ship where the observer is not deployed, and lets the observer
+gate node readiness on it via `nodeobserver.config.criticalDaemonSets` — the
+`/readyz` probe reports whether kubelet has actually registered the driver, not
+merely that the process is up.
+
+### Remove the FUSE device-plugin DaemonSet (**breaking if you enabled it**)
+
+`fuseDevicePlugin` and its `examples/values-fuse-device-plugin.yaml` overlay are
+gone. It advertised the host `/dev/fuse` as the extended resource
+`smarter-devices/fuse`, so an unprivileged pod requesting it could perform an
+in-pod FUSE mount with `CAP_SYS_ADMIN`. The mount broker above supersedes it for
+Union Volumes and needs no capability in the task pod at all.
+
+**If you set `fuseDevicePlugin.enabled: true`,** this upgrade deletes that
+DaemonSet and the node stops advertising `smarter-devices/fuse`. Any pod whose
+template requests that resource becomes unschedulable — Helm will not warn you,
+because the removed key is simply ignored. Check for it before upgrading:
+
+```
+kubectl get pods -A -o json | grep -l 'smarter-devices/fuse'
+```
+
+Union Volumes do not use that resource, so if the plugin was enabled only for
+Volumes there is nothing to migrate — enable `uvolMountBroker` instead.
+
+Operator notes:
+
+- `uvolMountBroker.nodeSelector` defaults to empty (all nodes) deliberately.
+  Task pods carry no matching selector of their own, so any node a volume-using
+  task can land on and the broker cannot must not exist.
+- `uvolMountBroker.kubeletDir` must match the distribution's kubelet root
+  (k3s and some managed AMIs relocate it) or CSI registration fails.
+- The cpu request is a scheduling-latency knob, not a utilization estimate: the
+  broker sits on the task `open()` path. There is deliberately no cpu limit.
+
+### Eager API key bootstrap now enabled by default (#482)
+
+`config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
+operator mints the `EAGER_API_KEY` on the control plane and writes it to the task-pod
+secret store so eager/actions (v2) tasks can call back to the control plane. It relies
+on the proxy secret manager (`proxy.secretManager.enabled`), which is already on by
+default.
+
+> **Selfhosted operators:** under v2 every deployment runs eager/actions workloads, so
+> leave this on. The real dependency is on the **control plane**, not the dataplane:
+> minting `EAGER_API_KEY` requires a control plane that can produce the credential. If
+> your control plane registers OAuth clients on its IdP, no action is needed. If it
+> **can't** self-register (common with selfhosted Okta/Entra), you must first seed the
+> pre-created OAuth client credentials via the controlplane chart's
+> `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
+> fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
+
+### Knative Serving Kubernetes min-version gate relaxed (#594)
+
+The vendored Knative Serving 1.23 gateway hard-requires Kubernetes ≥ 1.34 at startup and otherwise
+crash-loops. This release sets `KUBERNETES_MIN_VERSION=v1.32.0` on the serving components
+(`gateway.components.*.containers.*.env`) to relax that gate so App Serving runs on the current
+fleet. Override it per-cluster if you must run lower.
+
+> **Kubernetes support for App Serving:** **1.34 and above is recommended.** **1.32 is the
+> minimum** supported for App Serving. Lower versions may work but are **not officially supported**
+> for App Serving.
+
+## 2026.9.3
+
+`version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
+`2026.9.3`. Chart version `2026.9.2` was not published; image version `2026.9.2`
+was published separately. This release includes the image changes since
+`2026.9.1`, including the system-log fix below.
+
+### Billing and tunnels
+
+- Decouple `config.operator.billing.model` from `operator.enableTunnelService`
+  (#590). Fresh installs default to `ResourceUsage` regardless of tunnel settings.
+  Set the model explicitly to `None` when billing must be disabled, including for
+  self-hosted deployments. Usage collection remains independently configurable.
+- Connected Helm upgrades preserve the installed billing model unless explicitly
+  overridden, including with `--reuse-values` and `--reset-values`. If the installed
+  model cannot be read or validated, supply the intended model explicitly.
+- Preview preservation with `helm upgrade --dry-run=server`. Offline
+  `helm template --is-upgrade` requires an explicit billing model. To deliberately
+  reset billing to the install default, set
+  `config.operator.billing.model=ResourceUsage` explicitly.
+
+### Dataplane images
+
+- System-log requests using namespace `auto` resolve to the operator proxy's own
+  namespace. Explicit namespaces pass through unchanged. This supplies the
+  dataplane half of the Settings > Clusters > Logs fix for Fleet and selfmanaged
+  installs ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+- A failed or evicted replica no longer cancels healthy replicas' live log
+  streams; unavailable replicas are reported inline
+  ([cloud#18335](https://github.com/unionai/cloud/pull/18335)).
+- `unionoperator` and `envoy` release images support both `linux/amd64` and
+  `linux/arm64`. Image-builder artifacts remain single-architecture
+  ([cloud#18396](https://github.com/unionai/cloud/pull/18396)).
+- Fast tasks are re-enqueued when their environment finishes initializing
+  ([cloud#18362](https://github.com/unionai/cloud/pull/18362)). Leaseworker event
+  caching distinguishes resource kinds, keeping same-named resources' events
+  separate ([cloud#18378](https://github.com/unionai/cloud/pull/18378)).
+- With the GPU fault watcher installed, pod-backed tasks attach structured GPU
+  fault details and classify critical hardware faults as system-retryable
+  failures. CRD-backed distributed GPU tasks are not covered by this change
+  ([cloud#17793](https://github.com/unionai/cloud/pull/17793)).
+- The volume mount broker adds channel-health metrics and abort support. A
+  channel with unchanged queued requests for five minutes and no client session
+  is aborted instead of remaining stuck; `autoAbortAfter: 0` disables that
+  behavior. Broker logging now honors `LOG_LEVEL` after configuration is loaded
+  ([cloud#18352](https://github.com/unionai/cloud/pull/18352),
+  [cloud#18376](https://github.com/unionai/cloud/pull/18376),
+  [cloud#18379](https://github.com/unionai/cloud/pull/18379),
+  [cloud#18375](https://github.com/unionai/cloud/pull/18375)).
+- Operator heartbeat reporting includes additional AWS accelerators and TPUs
+  ([cloud#18383](https://github.com/unionai/cloud/pull/18383)).
+
+### Upgrade order
+
+Upgrade the operator proxy on every dataplane served by a control plane before
+deploying the control-plane/console change that sends namespace `auto`. The old
+proxy treats `auto` as a literal namespace; publishing this chart does not upgrade
+existing clusters. Roll back the control plane and console before rolling back
+the dataplane ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+
+Image source: [cloud changes since release/2026.9.1](https://github.com/unionai/cloud/compare/release/2026.9.1...a60aefc8a9d2d4051576f71c818b239cf221bf4b).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/771e792c89aa11b30cbd2dab74c77e170efcecb6...4011364765dfea33d6431db11afdffef01ab1609)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/6390805ff6495b87b2d172c35ccd5e6fab5567a5...a2aec3f7210f450b35b34b9e924f3cef9f60ee2f).
+
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+### Fix missing task/app metrics on zero-trust data planes
+
+With `zero_trust.enabled`, this chart runs its own dataproxy, but never gave it the
+PromQL query templates it looks up per metric, so the metrics tab failed with
+`failed to do get template due to key EXECUTION_METRIC_* not found`. The chart now
+ships `dataproxy.taskMetrics` (the `promQuery` templates, including the new GPU health
+metrics, plus the DGX `agentQuery` mappings), kept in sync with the controlplane
+chart, and renders it into the zero-trust dataproxy config. Non-zero-trust renders are
+unchanged. If you worked around this with `config.configOverrides.dataproxy.taskMetrics`,
+you can drop that override
+([#582](https://github.com/unionai/helm-charts/pull/582)).
+
+## 2026.9.0
+
+`version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
+`2026.9.1`, picking up the new data-plane images plus the chart changes below. **Minor bump**: app serving now
+defaults to this chart's vendored Knative gateway. A data plane that already served
+apps via the `knative-operator` must run the `knative-migration` Job before/at this
+upgrade — see "App serving now defaults to the vendored Knative gateway" below.
+
+### Fix union-operator crash: drop the removed `operator.enabled` config key
+
+An internal Union change removed the `enabled` field from the operator config (the
+cluster healthy/ready flag is now derived internally), but this chart still rendered
+`operator.enabled` (from `config.operator.enabled`). The operator loads its config in
+strict mode, so the now-unknown key is fatal — a recent operator build crash-loops
+with `'config.Config' has invalid keys: enabled`. Stop rendering the key and drop the
+now-dead `config.operator.enabled` value + README row.
+
+### Apps wildcard TLS secret name is now configurable
+
+The Envoy `apps_https:8443` listener's TLS secret (mounted when
+`gateway.publicLoadBalancer.enabled`) is now `gateway.publicLoadBalancer.tlsSecretName`
+instead of a hardcoded `dataplane-apps-letsencrypt-tls`. The default is unchanged, so
+existing installs are unaffected; a bring-your-own-cert dataplane can now point the
+gateway at its own secret without prescribing cert-manager or a specific issuer. The
+value is **required (non-empty)** when `publicLoadBalancer.enabled` — the chart fails
+fast rather than rendering an Envoy that crash-loops on a missing cert. (TLS termination
+at the load balancer, i.e. an empty secret, is not yet supported.)
+
+### Image-builder existence probe now honors the configured registry
+
+Re-enabled the operator reverse-proxy `proxy.imageBuilderConfig` (`authenticationType`
++ `defaultRepository`), which had been commented out. Without it the image existence
+probe (`GetImage`) defaulted to the `noop` handler and returned 404 for every image, so
+every run rebuilt images that already existed in the registry. This wires only the probe
+(the build/push path is configured separately) and is a no-op for envs that don't set
+`imageBuilder.authenticationType`. `basicAuth` stays commented (cloud registries use
+workload identity).
+
+### App serving now defaults to the vendored Knative gateway
+
+App serving is delivered by this chart's **vendored Knative Serving + Kourier + Envoy
+gateway** by default (`gateway.enabled: true`, `knative-operator.enabled: false`),
+replacing the legacy `knative-operator` path. With `apps.enabled: true` the vendored
+control plane renders and the operator path is off — no extra flags needed
+([#520](https://github.com/unionai/helm-charts/pull/520)).
+
+**Migrating from the knative-operator path.** If your data plane already served apps via
+the `knative-operator`, its operator-installed `KnativeServing` conflicts with the
+vendored install — the `knative-migration` one-shot Job must run **before/at** the
+upgrade or it deadlocks:
+
+- **Automated (GitOps) — check your deployment tooling.** Deployments that render this
+  chart via GitOps can wire the migration as an ArgoCD **PreSync** hook (a
+  `knative-migration` Job supplied through `extraObjects`); where that's in place it runs
+  automatically with no manual action.
+- **Manual upgrades — run the equivalent steps yourself** (idempotent; the
+  `knative-operator` must be healthy first: `kubectl get deploy -n union knative-operator`):
+  1. Delete the operator's `KnativeServing` CR so its finalizer tears down what it
+     installed: `kubectl delete knativeserving -n union union-operator-serving`.
+  2. *(Helm-managed dataplane only)* stamp Helm ownership onto the 12 Knative Serving
+     CRDs — else `helm upgrade dataplane` fails with `invalid ownership metadata`: run
+     `knative-migration` with `adoption.enabled: true` and
+     `adoption.targetRelease`/`targetNamespace` matching your dataplane release.
+  3. Delete the operator's two CRDs:
+     `kubectl delete crd knativeservings.operator.knative.dev knativeeventings.operator.knative.dev`.
+
+  Verify: `kubectl get knativeserving -n union` → none; both operator CRDs → NotFound.
+  Ready-made Job + full detail: `charts/knative-migration/README.md`.
+
+**Reverting to the legacy operator path.** Set `gateway.enabled: false` and
+`knative-operator.enabled: true` (keep `apps.enabled` as you like); the chart renders
+the knative-operator delivery instead of the vendored gateway.
+
+Other changes:
+
+- Interruptible tasks route to Spot in a NAP-compatible way by default: the GPU
+  accelerator node-labels default to the GKE keys, and Spot routing uses a
+  toleration rather than a *required* `cloud.google.com/gke-spot` nodeAffinity
+  (which blocks NAP / Autopilot scale-up); the required affinities stay opt-in via
+  an environment overlay for non-NAP static Spot pools
+  ([#564](https://github.com/unionai/helm-charts/pull/564)).
+- Public serving gateway: Envoy front proxy + `service-public` and bootstrap
+  config for the vendored gateway's external entrypoint
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+- Gateway auth plugin now inherits the control plane's TLS trust. Against a
+  self-hosted control plane serving a self-signed intracluster certificate, the
+  plugin failed verification (`x509: certificate signed by unknown authority`) and
+  crash-looped the gateway, so the data plane never went healthy. New
+  `gateway.auth.insecureSkipVerify` (`null` = inherit
+  `config.union.connection.insecureSkipVerify`) and `gateway.auth.caFile` for an
+  explicit CA bundle. Defaults render byte-identically, so existing installs are
+  unaffected ([#571](https://github.com/unionai/helm-charts/pull/571)).
+- `flytecopilot` image moves to `cr.flyte.org/flyteorg/flyte-binary-v2:v2.0.45`
+  (was `cr.flyte.org/flyteorg/flytecopilot:v1.14.1`), following flyteorg/flyte#7575
+  ([#569](https://github.com/unionai/helm-charts/pull/569)).
+
+## 2026.8.5
+
+Chart-only release: `version` moves `2026.8.4` → `2026.8.5`; `appVersion` stays
+`2026.8.5`, so images are unchanged.
+
+- `storage.credentialsSecretRef` gains an optional `namespace` field so the
+  render-time secret `lookup` can read a fixed, pre-created namespace instead
+  of the release namespace — unblocks Omnistrate installs where the release
+  namespace is instance-derived and unknowable before the first install.
+  Empty/absent `namespace` keeps the exact current behavior
+  ([#567](https://github.com/unionai/helm-charts/pull/567)).
+- Interruptible node routing: `values.gcp.yaml` now routes `interruptible`
+  tasks to Spot nodes by default via the uniform `cloud.google.com/gke-spot`
+  label (node selector only — GKE labels Spot nodes but does not taint them),
+  matching the Azure default; AWS keeps commented guidance because its Spot
+  label is provisioner-specific
+  ([#561](https://github.com/unionai/helm-charts/pull/561)).
+- Leaseworker / union-operator control-plane connection liveness hardened by
+  default: `config.union.connection` sets `unaryRPCTimeout: 30s` and HTTP/2
+  keep-alive (`readIdleTimeout: 30s` / `pingTimeout: 10s`), so an idle
+  connection half-opened by a load balancer is detected and re-dialed instead
+  of silently stalling heartbeats and lease dispatch
+  ([#540](https://github.com/unionai/helm-charts/pull/540)).
+- `artifact-trigger` added to the `enabled-plugins` list rendered into the
+  leaseworker and propeller configmaps. Inventory-accuracy change — core
+  plugins currently load unconditionally, and propeller ignores unknown names
+  ([#511](https://github.com/unionai/helm-charts/pull/511)).
+
+## 2026.8.4
+
+`version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
+`2026.8.5`, picking up the new data-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+Chart changes:
+
+- Right-size default CPU/memory **requests** for data-plane services
+  (`leaseworker`, BuildKit image-builder, operator, connector,
+  cluster-resource-sync, node-observer, Kourier). **Limits are unchanged** —
+  BuildKit keeps unlimited memory and `leaseworker` keeps its `16Gi` limit (its
+  request drops `8Gi`→`512Mi`) — so only the idle reservation shrinks, improving
+  packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Every data-plane pod now honors the chart-level **global scheduling** default
+  (`.Values.scheduling.*`) — `flyteconnector` and all seven gateway components
+  gained `tolerations`/`nodeSelector` fields so they can schedule onto a tainted
+  pool. **Task-execution pods** inherit it too via the `task-template` PodTemplate
+  (`taskPodTemplate.{nodeSelector,affinity,tolerations}`). Per-service
+  `tolerations`/`nodeSelector` **inherit** from the global block (concat / merge,
+  service wins); `affinity` overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
+
+Image changes (`2026.8.3` → `2026.8.5`):
+
+- **Apps no longer freeze on "Deploying / Initializing" after an OOM kill or
+  crash.** When a container terminates non-zero *after* its revision became
+  ready, Knative's sticky `ContainerHealthy` condition leaves the revision
+  `Ready=False, reason=ExitCode<N>` while the KService reports only a generic
+  `RevisionMissing`, so the operator wrote a substate-less `PENDING` that the
+  status updater's anti-churn guard then dropped — the app's status stuck on a
+  stale condition with no path to recovery short of a redeploy. The reconciler
+  now reads the Revision reason and classifies it: `ExitCode137` (and a literal
+  `OOMKilled`) → `OOM_KILLED`, any other `ExitCode<N>` → `CRASH_LOOP`, each with
+  a short summary such as `Container exited with code 137 (out of memory)`
+  ([unionai/cloud#17871](https://github.com/unionai/cloud/pull/17871)).
+- **Kourier stops watching every Secret in the cluster.** The bundled
+  `net-kourier` build is bumped to pick up
+  [unionai/net-kourier#13](https://github.com/unionai/net-kourier/pull/13),
+  cutting the Serving ingress controller's apiserver watch load and cache
+  footprint on clusters with many Secrets
+  ([unionai/cloud#17870](https://github.com/unionai/cloud/pull/17870)).
+
+## 2026.8.3
+
+`version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
+`2026.8.3`, picking up the new data-plane images.
+
+Image changes (`2026.8.3`):
+
+- Reusable Ray clusters now correctly share one cluster across tasks in a
+  `TaskEnvironment` that sets a `pod_template`; previously each task got its
+  own cluster ([unionai/cloud#17825](https://github.com/unionai/cloud/pull/17825)).
+
+Chart changes:
+
+- Billing is set to `none` by default for selfhosted deployments
+  ([#548](https://github.com/unionai/helm-charts/pull/548)).
+- Monitoring: the data-plane overview dashboard is reworked for v2 metrics, a
+  v1 overview dashboard is added alongside it, new Karpenter and SLO dashboards
+  ship as opt-in ConfigMaps, and a new alerting rule flags unschedulable pods
+  ([#529](https://github.com/unionai/helm-charts/pull/529)).
+
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the data-plane images are unchanged.
+
+- A new opt-in `values.openshift.yaml` overlay configures rootless BuildKit with
+  a dedicated service account and SCC, disables host user namespaces, uses
+  `/tmp` for task working directories, persists Fluent Bit tail state, disables
+  the KnativeServing Helm hook, and provisions Kourier SCC access. BuildKit and
+  Kourier can use chart-created or existing SCCs
+  ([#516](https://github.com/unionai/helm-charts/pull/516)).
+- Leaseworker pod security context, Fluent Bit tail database path, and task/system
+  service-account image pull secrets are independently configurable
+  ([#514](https://github.com/unionai/helm-charts/pull/514)).
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
+
 ## 2026.8.1
 
 Lockstep `version` bump with the `controlplane` chart (`2026.8.0` -> `2026.8.1`).
@@ -11,6 +509,55 @@ Chart-only release: `version` moves `2026.7.2` → `2026.8.0` while `appVersion`
 `2026.7.2`, so the data-plane images are unchanged. This is a **minor** bump rather than
 a patch because it removes the legacy executor and retires several globals — see
 Migration below.
+
+### App serving: vendored gateway is now the default
+
+App serving is now delivered by this chart's vendored Knative Serving + Kourier +
+Envoy gateway (`gateway.enabled: true`), and the `knative-operator` subchart
+defaults to `enabled: false`. Fresh installs need no action. An existing data
+plane that still runs the `knative-operator` `KnativeServing` CR must migrate off
+it before (or as) it adopts this release, or the upgrade deadlocks: the
+operator's `KnativeServing` CR and its two CRDs are left behind, and the vendored
+gateway's Serving CRDs collide with the operator-installed ones on ownership.
+
+The `knative-operator` subchart is still available for the legacy delivery path
+during the transition — set `knative-operator.enabled: true` and
+`gateway.enabled: false`.
+
+#### Migrating off the knative-operator subchart
+
+The migration is a one-shot cleanup that, with the operator **still healthy**,
+runs three idempotent steps:
+
+1. Delete the `KnativeServing` CR. The operator's finalizer tears down every
+   Deployment, Service, ConfigMap, HPA, PDB, ClusterRole/Binding, and
+   WebhookConfiguration it installed.
+2. (Helm-install paths only) Stamp Helm ownership metadata (`meta.helm.sh/*`
+   annotations + `app.kubernetes.io/managed-by=Helm`) onto the 12 Knative
+   Serving CRDs the operator installed imperatively, so the data plane release
+   can adopt them.
+3. Delete the operator's two CRDs (`knativeservings.operator.knative.dev`,
+   `knativeeventings.operator.knative.dev`).
+
+Run the steps once, before the upgrade that flips `knative-operator` off.
+Re-running on an already-migrated cluster is a no-op. Three ways to run them:
+
+- **Use the `knative-migration` chart** (same repo) — a one-shot Job that runs
+  the three steps. It ships **without** hook annotations, so you choose when it
+  runs (Helm hook, below, or install it as plain resources and run it yourself).
+  See `charts/knative-migration/README.md`.
+- **Run the steps manually.** Execute the three `kubectl` steps yourself against
+  the target cluster while the operator is healthy.
+- **Configure your own Job with Helm hook annotations.** Wire the
+  `knative-migration` Job (or your own equivalent) into your release lifecycle
+  with Helm hooks so the cleanup runs at upgrade time, e.g.:
+
+  ```yaml
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-delete-policy: hook-succeeded,before-hook-creation
+    helm.sh/hook-weight: "10"
+  ```
 
 ### Removed: executor
 

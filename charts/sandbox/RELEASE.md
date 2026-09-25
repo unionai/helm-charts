@@ -1,5 +1,57 @@
 # sandbox — Release Notes
 
+## 2026.9.6
+
+Lockstep release with the `controlplane` / `dataplane` charts. `version` and the
+informational `appVersion` move to `2026.9.6`. No sandbox template or image changes.
+
+## 2026.9.4
+
+Lockstep release with the `controlplane` / `dataplane` charts. `version` and the
+informational `appVersion` move to `2026.9.4`. No sandbox template or image changes.
+
+## 2026.9.3
+
+Lockstep release with the dataplane billing and image update (#590).
+`version` and the informational `appVersion` move to `2026.9.3`.
+No sandbox template or image changes.
+
+## 2026.9.1
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.9.0` → `2026.9.1`); `appVersion` stays `2026.9.1`. No sandbox chart
+changes in this release.
+
+## 2026.9.0
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.5` → `2026.9.0`); `appVersion` is realigned to the release train
+(`2026.8.4` → `2026.9.1`). No sandbox chart changes in this release — the MinIO
+image stays pinned in `values.yaml` and is unaffected by `appVersion`.
+
+## 2026.8.5
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.4` → `2026.8.5`); `appVersion` stays `2026.8.4`. No sandbox chart
+changes in this release.
+
+## 2026.8.4
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.3` → `2026.8.4`); `appVersion` is realigned to the release train
+(`2026.7.2` → `2026.8.4`). No sandbox chart changes in this release — the MinIO
+image stays pinned in `values.yaml` and is unaffected by `appVersion`.
+
+## 2026.8.3
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.2` → `2026.8.3`). No functional changes in this release.
+
+## 2026.8.2
+
+Lockstep `version` bump with the control-plane and data-plane charts
+(`2026.8.1` → `2026.8.2`). No functional changes in this release.
+
 ## 2026.8.1
 
 Lockstep `version` bump (`2026.8.0` -> `2026.8.1`). No sandbox chart changes in this release.

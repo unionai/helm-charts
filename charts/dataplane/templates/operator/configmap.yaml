@@ -1,3 +1,4 @@
+{{- include "serving.validateGateway" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -25,7 +26,6 @@ data:
       {{- tpl (toYaml .) $ | nindent 6 }}
   {{- end }}
     operator:
-      enabled: {{ .Values.config.operator.enabled }}
       enableTunnelService: {{ .Values.operator.enableTunnelService }}
       {{- if include "dataplane.connectionConfig.emit" . }}
       # Path to the chart-rendered connection_config JSON the operator
@@ -39,7 +39,7 @@ data:
         {{- if include "apps.enabled" . }}
         {{- if .Values.tunnelService.apps.originURL }}
         appIngressOriginURL: {{ .Values.tunnelService.apps.originURL | quote }}
-        {{- else if .Values.zero_trust.enabled }}
+        {{- else if include "serving.useVendoredGateway" . }}
         appIngressOriginURL: "http://{{ include "gateway.fullname" . }}:{{ .Values.gateway.service.httpAppsPort }}"
         {{- else }}
         appIngressOriginURL: "http://kourier-internal"
@@ -84,10 +84,8 @@ data:
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- with .Values.config.operator.billing }}
       billing:
-        {{- tpl (toYaml .) $ | nindent 8 }}
-    {{- end }}
+        {{- include "operator.billing.config" . | nindent 8 }}
     {{- with .Values.config.operator.computeResourceManager }}
       computeResourceManager:
         {{- tpl (toYaml .) $ | nindent 8 }}
@@ -139,8 +137,10 @@ data:
       clusterSelector:
         type: local
       secureTunnelTenantURLPattern: "http://{{ include "union-operator.fullname" . }}-proxy:8080"
+    {{- with .Values.dataproxy.taskMetrics }}
       taskMetrics:
-        metricDelayToleranceDuration: 0s
+        {{- tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
   {{- end }}
   logger.yaml: |
 {{- with .Values.logging }}

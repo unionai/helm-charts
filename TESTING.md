@@ -25,13 +25,18 @@ make test                # confirm they match (validate == make helm-test)
 git add tests/generated && git commit
 ```
 
-## Release PRs — integration test suite
+## Integration test suite
 
-A **release PR** additionally runs `.github/workflows/integration-checks.yaml`:
-the candidate charts are installed onto standing canary clusters and exercised
-end-to-end across the full matrix — selfmanaged `aws` / `gcp` / `azure` / `k3d`
-and selfhosted `aws` / `gcp` — with a binary health gate and the pytest
-functional suite (`tests/functional/`).
+`.github/workflows/integration-checks.yaml` runs in two tiers:
+
+- The **k3d leg runs on every PR** to `main` — self-contained (ephemeral k3d
+  cluster installed with `charts/dataplane/values.k3d.yaml`), with a binary
+  health gate and the pytest functional suite (`tests/functional/`).
+- The **five cloud legs run on release PRs** (or with the
+  `run-integration-tests` label, or a `workflow_dispatch` with `force=true`):
+  the candidate charts are installed onto standing canary clusters and
+  exercised end-to-end — selfmanaged-dp `aws` / `gcp` / `azure` and selfhosted
+  `aws` / `gcp`.
 
 **A PR is classified as a release when either:**
 
@@ -75,3 +80,12 @@ branch → set **force** to `true`.)
 > `unionai/helm-charts`, and the integration legs can't obtain an OIDC token from
 > a fork regardless. A maintainer must first bring the change onto a same-repo
 > branch (e.g. `gh pr checkout <pr#>` then push to `origin`) and label/dispatch that.
+
+## Billing upgrade compatibility
+
+`make billing-test` runs `tests/test-operator-billing.py` using Helm against a
+read-only HTTP API fixture on localhost. It never connects to a real cluster. The
+test exercises real `helm upgrade --dry-run=server` value merging and ConfigMap
+lookup, including retained defaults under `--reuse-values`, explicit overrides,
+`--reset-values`, invalid prior configuration, and the full dataplane render.
+Set `HELM_BIN` to exercise another installed Helm version.

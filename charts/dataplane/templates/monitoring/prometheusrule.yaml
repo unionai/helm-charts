@@ -62,6 +62,12 @@ spec:
           expr: |
             leaseworker:active_run_leases{namespace="{{ .Release.Namespace }}"}
 
+        - record: union:dp:pods_unschedulable:sum
+          expr: |
+            sum by (namespace) (
+              kube_pod_status_unschedulable
+            )
+
     {{- if .Values.monitoring.alerting.enabled }}
     # --- Operational alerts (opt-in) ---
     # Basic health checks only. For SLO-based alerts, see monitoring.slos.
@@ -86,6 +92,15 @@ spec:
             severity: warning
           annotations:
             summary: "{{ "{{" }} $labels.pod {{ "}}" }} restarting frequently"
+
+        - alert: UnionDPPodsUnschedulable
+          expr: |
+            sum by (namespace) (kube_pod_status_unschedulable) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $labels.namespace {{ "}}" }} has pods that cannot be scheduled (insufficient capacity or taints) for 15m"
 
     {{- end }}
 

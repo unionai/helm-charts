@@ -131,7 +131,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropeller.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropeller.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropeller.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -144,7 +144,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropeller.scheduling.tolerations" -}}
-{{- with .Values.flytepropeller.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropeller.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -193,7 +193,7 @@ affinity:
 {{- end }}
 
 {{- define "leaseworker.scheduling.nodeSelector" -}}
-{{- with .Values.leaseworker.nodeSelector }}
+{{- with (merge (dict) (.Values.leaseworker.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -206,7 +206,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "leaseworker.scheduling.tolerations" -}}
-{{- with .Values.leaseworker.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.leaseworker.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -274,7 +274,7 @@ affinity:
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.nodeSelector" -}}
-{{- with .Values.flytepropellerwebhook.nodeSelector }}
+{{- with (merge (dict) (.Values.flytepropellerwebhook.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -287,7 +287,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "flytepropellerwebhook.scheduling.tolerations" -}}
-{{- with .Values.flytepropellerwebhook.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.flytepropellerwebhook.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -357,15 +357,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.selectorLabels" -}}
-app.kubernetes.io/name: fuse-device-plugin
+{{- define "uvolBroker.selectorLabels" -}}
+app.kubernetes.io/name: uvol-broker
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.labels" -}}
-{{- include "fuseDevicePlugin.selectorLabels" . }}
+{{- define "uvolBroker.labels" -}}
+{{- include "uvolBroker.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Effective PriorityClass name for the uvol broker (only invoked when the broker
+is enabled): explicit name wins; else when the chart creates the class, a
+release-scoped default (RFC 1123: lowercased, <=63 chars, no trailing '-').
+Empty name with priorityClass.create=false is rejected — the broker is critical
+infra and must have a deliberate class, so bring your own or let the chart make one.
+*/}}
+{{- define "uvolBroker.priorityClassName" -}}
+{{- if .Values.uvolMountBroker.priorityClassName -}}
+{{- .Values.uvolMountBroker.priorityClassName -}}
+{{- else if .Values.uvolMountBroker.priorityClass.create -}}
+{{- printf "%s-uvol-broker" .Release.Name | lower | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- fail "uvolMountBroker: priorityClassName is empty and priorityClass.create is false — set priorityClassName to bring your own class, or enable priorityClass.create." -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "nodeobserver.podLabels" -}}
@@ -391,7 +408,7 @@ affinity:
 {{- end }}
 
 {{- define "nodeobserver.scheduling.nodeSelector" -}}
-{{- with .Values.nodeobserver.nodeSelector }}
+{{- with (merge (dict) (.Values.nodeobserver.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -404,7 +421,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "nodeobserver.scheduling.tolerations" -}}
-{{- with .Values.nodeobserver.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.nodeobserver.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -486,7 +503,7 @@ affinity:
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.nodeSelector" -}}
-{{- with .Values.clusterresourcesync.nodeSelector }}
+{{- with (merge (dict) (.Values.clusterresourcesync.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -499,7 +516,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "clusterresourcesync.scheduling.tolerations" -}}
-{{- with .Values.clusterresourcesync.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.clusterresourcesync.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -585,7 +602,7 @@ affinity:
 {{- end }}
 
 {{- define "operator.scheduling.nodeSelector" -}}
-{{- with .Values.operator.nodeSelector }}
+{{- with (merge (dict) (.Values.operator.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -598,7 +615,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "operator.scheduling.tolerations" -}}
-{{- with .Values.operator.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.operator.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -699,7 +716,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_ACCESS_KEY_ID" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_ACCESS_KEY_ID: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
 {{- end }}
@@ -712,7 +729,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_SECRET_ACCESS_KEY" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_SECRET_ACCESS_KEY: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
 {{- end }}
@@ -796,7 +813,7 @@ affinity:
 {{- end }}
 
 {{- define "proxy.scheduling.nodeSelector" -}}
-{{- with .Values.proxy.nodeSelector }}
+{{- with (merge (dict) (.Values.proxy.nodeSelector | default dict) (.Values.scheduling.nodeSelector | default dict)) }}
 nodeSelector:
 {{ toYaml . | nindent 2 }}
 {{- end }}
@@ -809,7 +826,7 @@ nodeName: {{ toYaml . }}
 {{- end }}
 
 {{- define "proxy.scheduling.tolerations" -}}
-{{- with .Values.proxy.tolerations }}
+{{- with (concat (.Values.scheduling.tolerations | default list) (.Values.proxy.tolerations | default list)) }}
 tolerations:
 {{ toYaml . | nindent 2 }}
 {{- end }}

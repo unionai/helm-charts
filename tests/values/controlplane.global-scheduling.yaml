@@ -1,0 +1,75 @@
+# Global scheduling knob (#556) exercised through the generic service
+# deployment template AND the redis-consumer statefulset: both consume the
+# "unionai.tolerations" helper (list YAML via include), which regressed once by
+# being piped through map-only `fromYaml` (#557). Keep tolerations non-empty
+# here so the rendered corpus locks in list-shaped output.
+
+global:
+  UNION_HOST: "test.example.com"
+  UNION_ORG: "test-org"
+  INTERNAL_CLIENT_ID: "test-internal-client-id"
+  AUTH_TOKEN_URL: "https://test.example.com/oauth2/v1/token"
+
+dbHost: "db-instance-url"
+dbName: "dbName"
+dbUser: "dbUser"
+dbPass: "dbPass"
+bucketName: "bucketName"
+artifactsBucketName: "artifactsBucketName"
+
+configMap:
+  connection:
+    environment: staging
+    region: us-east-2
+    rootTenantURLPattern: dns:///fake-host.domain
+
+controlplane:
+  enabled: true
+
+scheduling:
+  tolerations:
+    - key: "cloud.google.com/gke-spot"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  nodeSelector:
+    union.ai/node-role: services
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: cloud.google.com/gke-spot
+                operator: In
+                values: ["true"]
+
+services:
+  executions:
+    redisConsumer:
+      enabled: true
+
+ingress:
+  host: fake-host.domain
+  tls:
+    - hosts:
+        - fake-host.domain
+      secretName: fake-host-tls-secret
+
+flyte:
+  common:
+    ingress:
+      tls:
+        secretName: fake-host-tls-secret
+      host: fake-host.domain
+  configmap:
+    admin:
+      admin:
+        endpoint: dns:///fake-host.domain
+        insecure: false
+    adminServer:
+      server:
+        security:
+          useAuth: false
+      connection:
+        rootTenantURLPattern: dns:///fake-host.domain

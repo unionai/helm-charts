@@ -4,6 +4,49 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## dataplane — vendored Knative Serving gateway bumped 1.16.0 → 1.23.0
+
+### What changed
+
+The dataplane chart's **vendored serving gateway** (`gateway.enabled: true`, the default —
+`templates/gateway/*`) now ships **Knative Serving 1.23.0** instead of 1.16.0:
+
+- The six serving component image digests (`activator`, `autoscaler`, `autoscaler-hpa`,
+  `controller`, `queue`, `webhook`) are updated to their 1.23.0 release digests.
+- The 12 vendored Serving CRDs (`charts/dataplane/crds/crd-*.knative.dev.yaml` + the
+  `crds/dataplane/` SSA mirror) are re-vendored from `knative-v1.23.0/serving-crds.yaml`
+  (`crds/dataplane/VERSION` → `v1.23.0`; regenerate with `make vendor-crds`).
+- `gateway.config.features.kubernetes.podspec-volumes-csi: "enabled"` is added — a flag that
+  first exists in Knative Serving ~1.20 and is default-disabled upstream.
+
+### Why
+
+Enabling `podspec-volumes-csi` lets an **inline CSI volume source** appear in a serving pod
+spec, which is what the `flyteplugins-union` CSI mount broker (`volumes.union.ai`,
+`allow_volumes`) uses to attach a **Union Volume** to a Flyte App serving pod without
+`CAP_SYS_ADMIN`/hostPath. Knative 1.16 predates the flag entirely, so this required the version
+bump. The bump also picks up seven releases of upstream fixes and generic ephemeral-volume
+support.
+
+### Operational impact
+
+- **CRDs** are applied by ArgoCD (or `kubectl apply --server-side -f crds/dataplane/`); the
+  1.23 Serving CRDs are additive supersets of 1.16.
+- **This skips seven minor versions.** Knative's supported upgrade path is sequential; here it
+  is a direct manifest/CRD replacement. **Validate on a canary dataplane before fleet rollout.**
+- **net-kourier / Envoy are union-built** (tag-based, coupled to `union.unionoperator.image.tag`,
+  not the serving release). Confirm the operator build's net-kourier is compatible with Serving
+  1.23's `networking.internal.knative.dev` Ingress API.
+- The **legacy `knative-operator` subchart** (`gateway.enabled: false`) is **not** changed —
+  it stays at `2026.6.0`. Only the default vendored-gateway path is bumped.
+
+### Rollback
+
+Revert the chart change. The 1.23 CRDs are backward-compatible with 1.16 serving images, so a
+partial rollback of just the serving Deployments is also safe.
+
+---
+
 ## controlplane — `services.identity.apiKeyOverrides` map → list (per-cluster seeded API keys)
 
 ### What changed

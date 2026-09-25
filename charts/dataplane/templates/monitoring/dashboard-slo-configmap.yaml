@@ -1,0 +1,22 @@
+{{- /*
+  SLO dashboard — shipped as its own ConfigMap, gated on the Union recording +
+  SLO rules being present. Every panel reads a union:dp:slo:* / union:dp:*
+  recording rule, which only exist when monitoring.prometheusRules.enabled and
+  monitoring.slos.enabled are set. Kept out of the dashboards/*.json glob (it
+  lives under files/) so deployments without the rules don't load blank panels.
+*/ -}}
+{{- if and .Values.monitoring.dashboards.enabled .Values.monitoring.prometheusRules.enabled .Values.monitoring.slos.enabled }}
+{{- $label := .Values.monitoring.dashboards.label | default "grafana_dashboard" }}
+{{- $labelValue := .Values.monitoring.dashboards.labelValue | default "1" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-dashboard-union-dataplane-slo
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{ $label }}: {{ $labelValue | quote }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+data:
+  union-dataplane-slo.json: |-
+{{ .Files.Get "files/dashboards/union-dataplane-slo.json" | replace "__NAMESPACE__" .Release.Namespace | indent 4 }}
+{{- end }}

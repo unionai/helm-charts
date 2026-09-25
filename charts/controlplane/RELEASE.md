@@ -1,5 +1,314 @@
 # controlplane — Release Notes
 
+## 2026.9.6
+
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Artifacts: typed partitions on artifact versions, with a monthly-partitioned
+  table behind them ([cloud#18522](https://github.com/unionai/cloud/pull/18522)).
+- Executions: run notifications no longer ride on Postgres `NOTIFY`; the
+  inline payload is capped and sized with `>=` ([cloud#18547](https://github.com/unionai/cloud/pull/18547),
+  [cloud#18544](https://github.com/unionai/cloud/pull/18544), [cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- `Inputs.context` is excluded from the root action cache key ([cloud#18567](https://github.com/unionai/cloud/pull/18567)).
+- Identity: cache prefetchers start staggered to avoid synchronized provider
+  enumerations ([cloud#18553](https://github.com/unionai/cloud/pull/18553)).
+- Console: runs can be searched by run ID as well as task name ([cloud#18395](https://github.com/unionai/cloud/pull/18395)).
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+
+## 2026.9.4
+
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Runs search matches run name as well as task name. The server accepts a
+  synthetic `search` run filter (`run_name` OR `task_name`), so searching a run
+  ID on the Runs page now finds it ([cloud#18391](https://github.com/unionai/cloud/pull/18391)).
+- Tasks record their type at registration and `ListTasks` can filter on
+  `task_type`. This adds a `tasks.task_type` column and partial index via a
+  schema migration; tasks registered before the upgrade read as an empty type
+  until re-registered ([cloud#18510](https://github.com/unionai/cloud/pull/18510)).
+- `RunSpec` carries the org's task resource settings (requests and max),
+  resolved from Settings at `CreateRun` time, including re-runs and recovers.
+  When no scope sets task resource settings, behavior is unchanged
+  ([cloud#18479](https://github.com/unionai/cloud/pull/18479)).
+- Apps can be served on multiple dataplanes. A new `app_dns_strategy` setting
+  (`shared` by default, preserving today's single tenant-wide app URL) or
+  `dataplane_specific` for per-cluster app URLs, plus cluster pinning for app
+  placement ([cloud#17548](https://github.com/unionai/cloud/pull/17548)).
+- Flyteadmin proxies the OAuth device authorization endpoint (`/auth/device`)
+  the same way it proxies `/auth/token`, so device-flow logins work with
+  non-default identity providers ([cloud#18436](https://github.com/unionai/cloud/pull/18436),
+  [flyte#1013](https://github.com/unionai/flyte/pull/1013)).
+- `DeleteCluster` / `UndeleteCluster` authorize against the org, so a cluster
+  record whose authz resource was already removed during teardown can still be
+  deleted; undelete restores the resource ([cloud#18491](https://github.com/unionai/cloud/pull/18491)).
+- Console: Metrics tab readability fixes for multi-pod, multi-GPU actions;
+  created-by / updated-by avatars on queues and clusters; Run details sidebar
+  refactor ([cloud#18415](https://github.com/unionai/cloud/pull/18415), [cloud#18494](https://github.com/unionai/cloud/pull/18494),
+  [cloud#18450](https://github.com/unionai/cloud/pull/18450)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
+## 2026.9.3
+
+`version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →
+`2026.9.3`. Chart version `2026.9.2` was not published; image version `2026.9.2`
+was published separately. Controlplane templates and values are unchanged.
+
+### Control-plane and console images
+
+- Settings > Clusters > Logs requests namespace `auto`, which the new operator
+  proxy resolves to its own namespace. The control plane forwards explicit
+  namespaces unchanged. Upgrade all connected dataplane proxies before deploying
+  these control-plane/console images; reverse that order for rollback
+  ([cloud#18400](https://github.com/unionai/cloud/pull/18400)).
+- Zero-trust metrics queries no longer require the control-plane tunnel
+  ([cloud#18296](https://github.com/unionai/cloud/pull/18296)). Untouched datetime
+  inputs retain fractional seconds through launch-form hydration, including
+  Recover and Rerun; directly editing the datetime widget can still reduce
+  precision ([cloud#18347](https://github.com/unionai/cloud/pull/18347)).
+- Artifact versions can be deleted, sorted, and filtered by creator or metadata;
+  artifact cards support fullscreen viewing. Deleting a version does not delete
+  its offloaded blob data
+  ([cloud#18307](https://github.com/unionai/cloud/pull/18307),
+  [cloud#18336](https://github.com/unionai/cloud/pull/18336)).
+- Queue resource caps are enforced when the leasor uses the `v2` scheduling
+  strategy. Strict FIFO and greedy-capacity policies control handling of work
+  that cannot currently fit; requests exceeding the whole cap fail as
+  unschedulable. Console controls and utilization/head-block displays require
+  the `queue-resource-caps` feature gate, which defaults off for selfhosted
+  installations. Existing caps survive unrelated console edits regardless of
+  that gate ([cloud#18295](https://github.com/unionai/cloud/pull/18295),
+  [cloud#18350](https://github.com/unionai/cloud/pull/18350)).
+- GPU faults appear with structured explanations in run errors and as markers on
+  GPU metric charts when fault data is available
+  ([cloud#17807](https://github.com/unionai/cloud/pull/17807)).
+- Cluster pages expose drain/deletion state and actions. Registration checks
+  names through organization-scoped listings and rejects duplicate Fleet names;
+  organizations can hold multiple Fleet deployment targets. Cluster-pool
+  heartbeats fill undefined configuration fields without replacing defined
+  values ([cloud#18193](https://github.com/unionai/cloud/pull/18193),
+  [cloud#18294](https://github.com/unionai/cloud/pull/18294),
+  [cloud#18285](https://github.com/unionai/cloud/pull/18285),
+  [cloud#18287](https://github.com/unionai/cloud/pull/18287),
+  [cloud#18393](https://github.com/unionai/cloud/pull/18393)).
+- Clusters, pools, and queues report creator/updater identity. Fleet applies
+  stored configuration revisions with persisted checkpoints and error details;
+  chart upgrades remain separate from that apply operation
+  ([cloud#18321](https://github.com/unionai/cloud/pull/18321),
+  [cloud#18297](https://github.com/unionai/cloud/pull/18297)).
+- Missing projects return NotFound to callers with organization-level project
+  visibility; the console shows a stable not-found page for invalid project or
+  domain URLs ([cloud#18394](https://github.com/unionai/cloud/pull/18394),
+  [cloud#18402](https://github.com/unionai/cloud/pull/18402),
+  [cloud#18405](https://github.com/unionai/cloud/pull/18405)).
+- ZITADEL username/password login now requires organization metadata
+  `union.login.capabilities.v1` with `password: true`; absent, invalid, or
+  unavailable metadata disables that login method
+  ([cloud#18338](https://github.com/unionai/cloud/pull/18338)). The self-serve
+  first-run tour is available behind the default-off `self-serve-tutorial` gate
+  ([cloud#18438](https://github.com/unionai/cloud/pull/18438)).
+- Image-build tasks accept pod annotations and a service account, complementing
+  the chart configuration introduced in 2026.9.1
+  ([cloud#18384](https://github.com/unionai/cloud/pull/18384)). Usage reporting
+  supports additional AWS accelerators/TPUs and configured self-serve Omnistrate
+  metering with coordinated submissions
+  ([cloud#18383](https://github.com/unionai/cloud/pull/18383),
+  [cloud#18088](https://github.com/unionai/cloud/pull/18088),
+  [cloud#18322](https://github.com/unionai/cloud/pull/18322)).
+
+### Upgrade and rollback considerations
+
+The images include cluster database migrations for per-cluster deployment-target
+keys, render diagnostics, authorship, and stored-apply state
+([cloud#18287](https://github.com/unionai/cloud/pull/18287),
+[cloud#18348](https://github.com/unionai/cloud/pull/18348),
+[cloud#18321](https://github.com/unionai/cloud/pull/18321),
+[cloud#18297](https://github.com/unionai/cloud/pull/18297)). The per-cluster key
+cannot be rolled back while an organization has multiple deployment targets.
+Treat a database downgrade as a separate compatibility review, not as part of a
+chart/image rollback.
+
+Flyte admin's execution-status watch avoids repeated closure reads and adds a
+concurrent index migration; a large executions table can extend the first
+upgrade while the index builds
+([cloud#18373](https://github.com/unionai/cloud/pull/18373),
+[cloud#18444](https://github.com/unionai/cloud/pull/18444)).
+
+The dataplane chart's billing/tunnel changes are described in its 2026.9.3 notes
+(#590). Image source: [cloud changes since release/2026.9.1](https://github.com/unionai/cloud/compare/release/2026.9.1...a60aefc8a9d2d4051576f71c818b239cf221bf4b).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/771e792c89aa11b30cbd2dab74c77e170efcecb6...4011364765dfea33d6431db11afdffef01ab1609)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/6390805ff6495b87b2d172c35ccd5e6fab5567a5...a2aec3f7210f450b35b34b9e924f3cef9f60ee2f).
+
+## 2026.9.1
+
+Chart-only release: `version` moves `2026.9.0` → `2026.9.1`; `appVersion` stays
+`2026.9.1`, so images are unchanged.
+
+- Build-image task pod options: new `imageBuilder.bootstrap.taskPodAnnotations`
+  (default `{}`) and `imageBuilder.bootstrap.taskServiceAccountName` (default `""`,
+  i.e. the namespace default SA) are applied to the pods that remote image builds run
+  in — not to the bootstrap Job pod. Useful for service-mesh sidecar control or a
+  dedicated build identity. Defaults leave rendered pods unchanged
+  ([#586](https://github.com/unionai/helm-charts/pull/586)).
+- Fix empty Apps response-time charts: the P50/P90/P95 PromQL templates rendered
+  `project=~"${{.Project}}"` (stray `$`), which never matched a project. Fixed in both
+  the `dataproxy` and `usage` query blocks
+  ([#582](https://github.com/unionai/helm-charts/pull/582)).
+- GPU health metrics: 16 new `EXECUTION_METRIC_GPU_*` query templates (temperature,
+  power, clock/throttle, tensor/DRAM activity, PCIe/NVLink throughput, last Xid, ECC
+  and remapped-row errors) in the `dataproxy` and `usage` blocks. They need the
+  matching dcgm-exporter fields; where those are not collected the queries return no
+  series ([#582](https://github.com/unionai/helm-charts/pull/582)).
+
+## 2026.9.0
+
+`version` moves `2026.8.5` → `2026.9.0` and `appVersion` moves `2026.8.5` →
+`2026.9.1`, picking up the new control-plane images plus the chart changes below. The minor bump tracks the
+data-plane chart's switch to the vendored Knative gateway (see
+`charts/dataplane/RELEASE.md`); the control-plane side of that work is the
+app-URL / authorization wiring below.
+
+- Self-hosted app serving: authorize app subdomains and compose public app URLs via
+  `publicURLPattern`, wired into the protected gRPC-route and ingress templates
+  ([#563](https://github.com/unionai/helm-charts/pull/563)).
+- App-serving config: public app URL composition + apps domain wiring and the
+  protected gRPC-route / ingress TLS surface for served apps
+  ([#522](https://github.com/unionai/helm-charts/pull/522)).
+
+## 2026.8.5
+
+Chart-only lockstep release: `version` moves `2026.8.4` → `2026.8.5`;
+`appVersion` stays `2026.8.5`, so images are unchanged. No control-plane
+template or values changes — this release carries data-plane chart changes
+only (see `charts/dataplane/RELEASE.md`).
+
+## 2026.8.4
+
+`version` moves `2026.8.3` → `2026.8.4` and `appVersion` moves `2026.8.3` →
+`2026.8.5`, picking up the new control-plane images plus the two chart changes
+below ([#552](https://github.com/unionai/helm-charts/pull/552),
+[#556](https://github.com/unionai/helm-charts/pull/556)); everything else ships
+in the images.
+
+### Chart changes
+
+- Right-size default CPU/memory **requests** for control-plane services (`actions`
+  + its router, `leasor`; `scylla` CPU only) to steady-state usage. **Limits are
+  unchanged**, so burst headroom is intact — only the idle reservation shrinks,
+  improving pod packing so the autoscaler consolidates onto fewer nodes. Override
+  `<service>.resources.requests.{cpu,memory}` to restore
+  ([#552](https://github.com/unionai/helm-charts/pull/552)).
+- Add a chart-level **global scheduling** default
+  (`.Values.scheduling.{affinity,nodeSelector,tolerations}`) honored by every
+  control-plane pod, with per-service overrides — steer the whole plane onto a
+  chosen node pool (e.g. Spot) with one value. Per-service `tolerations`/`nodeSelector`
+  **inherit** from the global block (concat / merge, service wins on conflicts);
+  `affinity` fully overrides. Inert by default
+  ([#556](https://github.com/unionai/helm-charts/pull/556)).
+- Fix the generic service Deployment template and the redis-consumer
+  StatefulSet rendering `tolerations` as an error object instead of a list
+  whenever any toleration was set (global or per-service) — [#556]'s
+  `fromYaml` on list YAML — which made `helm upgrade` fail with
+  `cannot unmarshal object into Go struct field PodSpec...tolerations`
+  ([#557](https://github.com/unionai/helm-charts/pull/557)).
+
+### Schema migrations (run automatically on upgrade)
+
+- `artifacts`: `artifacts_v2.created_by` moves from a proto-marshaled `bytea`
+  blob to a plain `varchar(255)` subject, with a partial index behind a new
+  `created_by` EQUAL filter on `ListArtifacts`. **Creator attribution on
+  artifacts created before the upgrade is reset to empty** — the blob only ever
+  held the subject. Rolling the image back requires running the migration's
+  rollback too, since the old code unmarshals the column
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833)).
+- `artifacts`: `llm_gateway_gateways` gains
+  `allow_anonymous_access boolean NOT NULL DEFAULT true`; existing gateways keep
+  their current behavior
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `executions`: a backdated `20260101000000_partition_action_events` migration
+  partitions `action_events` by `created_at` **on fresh databases only**. It is
+  triple-guarded — already partitioned → no-op, empty → convert, has rows →
+  no-op with a `NOTICE` — so an existing database upgrading through it is left
+  on the unpartitioned table
+  ([unionai/cloud#17817](https://github.com/unionai/cloud/pull/17817)).
+
+### Behavior
+
+- Artifacts resolve `created_by` into a full `EnrichedIdentity` (name, email) at
+  read time, degrading to a subject-only identity when the identity cache is
+  unavailable. **This chart leaves `services.artifacts.configMap.cache.identity`
+  at the global `enabled: false` default**, so the console keeps rendering the
+  raw OIDC subject until it is turned on for the artifacts service
+  ([unionai/cloud#17833](https://github.com/unionai/cloud/pull/17833),
+  [unionai/cloud#17866](https://github.com/unionai/cloud/pull/17866)).
+- LLM gateway: anonymous access on the backing app is now a user-settable
+  gateway option instead of a hardcoded `true`. It still defaults to on, so
+  OpenAI-compatible clients keep authenticating with the virtual key alone
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- `cluster`: additive IDL for the cluster drain lifecycle (`ClusterState`,
+  `UpdateClusterState`, `InternalClusterService.ReportClusterWorkloadDrained`)
+  and a `GetLifecycleStatus` RPC. The drain RPC is stubbed `Unimplemented` — no
+  behavior change yet ([unionai/cloud#17763](https://github.com/unionai/cloud/pull/17763),
+  [unionai/cloud#17834](https://github.com/unionai/cloud/pull/17834)).
+
+### Console (`unionconsole`)
+
+- The launch form's Settings tab gains a **Timeout** field (overall task-attempt
+  timeout, in seconds). An existing task timeout is prefilled on launch and
+  rerun, and can be edited or cleared before submit
+  ([unionai/cloud#16525](https://github.com/unionai/cloud/pull/16525)).
+- Cluster details renders a red error banner carrying `unhealthyReasons` when an
+  enabled cluster is unhealthy
+  ([unionai/cloud#17831](https://github.com/unionai/cloud/pull/17831)).
+- The LLM gateway deploy form and detail page expose the anonymous-access
+  setting (the Throughput card becomes a Configuration card)
+  ([unionai/cloud#17836](https://github.com/unionai/cloud/pull/17836)).
+- Flag-gated, off by default and inert for this chart: ClickHouse-backed org
+  dashboards and the new `/overview` org page
+  ([unionai/cloud#17663](https://github.com/unionai/cloud/pull/17663),
+  [unionai/cloud#17905](https://github.com/unionai/cloud/pull/17905)), and
+  self-serve onboarding tutorial cards on `/home`
+  ([unionai/cloud#17827](https://github.com/unionai/cloud/pull/17827)).
+
+## 2026.8.3
+
+`version` moves `2026.8.2` → `2026.8.3` and `appVersion` moves `2026.8.0` →
+`2026.8.3`, picking up the new control-plane images.
+
+- Service resource names now fall back to the service key instead of the chart
+  name when no `fullnameOverride`/`nameOverride` is set, so multi-service
+  releases render distinct fullnames
+  ([#544](https://github.com/unionai/helm-charts/pull/544)).
+- The console deployment always injects `UNION_ORG_OVERRIDE`, then appends any
+  user-provided `console.env` entries after it
+  ([#536](https://github.com/unionai/helm-charts/pull/536)).
+- Monitoring: the control-plane overview dashboard is reworked for v2 metrics
+  and a new v1 overview dashboard is added alongside it
+  ([#529](https://github.com/unionai/helm-charts/pull/529)).
+
+## 2026.8.2
+
+Chart-only release: `version` moves `2026.8.1` → `2026.8.2` while `appVersion`
+stays `2026.8.0`, so the control-plane images are unchanged.
+
+- AWS service-account identity annotations now support a configurable prefix via
+  `global.AWS_POD_IDENTITY_ANNOTATION_PREFIX`; the default remains
+  `eks.amazonaws.com` ([#513](https://github.com/unionai/helm-charts/pull/513)).
+- Actions shard coordination init containers now use
+  `actions.coordination.securityContext`, with non-root defaults suitable for
+  restricted Kubernetes distributions. Shard label values are rendered
+  consistently as strings across Deployments, Services, selectors, and pod
+  templates ([#515](https://github.com/unionai/helm-charts/pull/515)).
+
 ## 2026.8.1
 
 Adding redis-consumer service to control plane ([#525](https://github.com/unionai/helm-charts/pull/525)).

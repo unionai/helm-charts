@@ -1,4 +1,4 @@
-{{- if and .Values.zero_trust.enabled (include "apps.enabled" .) }}
+{{- if include "serving.useVendoredGateway" . }}
 # Copyright 2020 The Knative Authors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -102,10 +102,18 @@ spec:
         role: activator
         app.kubernetes.io/component: activator
         app.kubernetes.io/name: knative-serving
-        app.kubernetes.io/version: "1.16.0"
+        app.kubernetes.io/version: "1.23.0"
     spec:
-      {{- with $comp.affinity }}
+      {{- with (merge (dict) ($comp.nodeSelector | default dict) (($.Values.scheduling | default dict).nodeSelector | default dict)) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($comp.affinity | default ($.Values.scheduling | default dict).affinity) }}
       affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (concat (($.Values.scheduling | default dict).tolerations | default list) ($comp.tolerations | default list)) }}
+      tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: activator
@@ -116,7 +124,7 @@ spec:
           {{- if $container.image.repository }}
           image: {{ $container.image.repository }}{{- if $container.image.tag }}:{{ $container.image.tag }}{{- end }}
           {{- else }}
-          image: gcr.io/knative-releases/knative.dev/serving/cmd/activator@sha256:24c19cbee078925b91cd2e85082b581d53b218b410c083b1005dc06dc549b1d3
+          image: gcr.io/knative-releases/knative.dev/serving/cmd/activator@sha256:e5ab46f3b73fa2e3898fe47f6a3a0c2bd765596f4fb36ceb4c28c35d0a74b2e5
           {{- end }}
           {{- with $container.command }}
           command:

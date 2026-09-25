@@ -65,6 +65,27 @@ updateStatus:
     insecure: false
     # -- CP skips cert validation on the TLS handshake (self-signed CP cert envs).
     insecureSkipVerify: false
+    # -- DP-declared app serving. The dataplane reports where it serves apps
+    # (domain) and the TLS posture (insecure); the control plane builds an app's
+    # public_url as {scheme}://{subdomain}.{domain}. The dataplane owns the apps
+    # domain and its Ingress/DNS/TLS. connection_config v2 (apps.domain).
+    apps:
+      # -- Bare apps domain (no scheme, no subdomain) the dataplane serves apps
+      # under, with the dataplane name baked in so the URL routes to the DP
+      # running the app. Empty (default) disables self-reporting; the control
+      # plane then falls back to its global executions.apps.publicURLPattern
+      # (single-dataplane only).
+      #
+      # Recommended convention: a subdomain of the control-plane host so apps
+      # inherit control-plane SSO — "apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>",
+      # e.g. "apps.dp-1.union.example.com". SSO cookies set at the control-plane
+      # host propagate to its subdomains, and the per-dataplane label routes each
+      # app URL to the dataplane running it (required to run apps on more than one
+      # dataplane). A domain not under the control-plane host works but forgoes
+      # SSO-by-default — you then own its DNS/TLS and cookie setup.
+      domain: ""
+      # -- Serve app URLs over http:// instead of https:// when true. Default https.
+      insecure: false
 
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
@@ -154,6 +175,8 @@ clusterresourcesync:
         - configmaps
         - limitranges
         - namespaces
+        - persistentvolumeclaims
+        - persistentvolumes
         - podtemplates
         - pods
         - resourcequotas
@@ -328,6 +351,43 @@ clusterresourcesync:
   # Use this instead of overriding `templates` to avoid accidentally removing
   # the default namespace, service account, and resource quota templates.
   # Each entry has a `key` (filename stem) and `value` (Kubernetes manifest).
+  # syncresources renders each `value` once per project namespace ({{ namespace }} is
+  # substituted), so this is the non-low_privilege / multi-namespace injection point for a
+  # per-namespace read-only model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV +
+  # RO PVC per namespace (provisioning tooling substitutes the real bucket name).
+  # The PV is cluster-scoped, so name it per-namespace to avoid collisions:
+  #
+  #   - key: d_model_volume_pv
+  #     value: |
+  #       apiVersion: v1
+  #       kind: PersistentVolume
+  #       metadata:
+  #         name: flyte-metadata-{{ namespace }}
+  #       spec:
+  #         accessModes: ["ReadOnlyMany"]
+  #         capacity: { storage: 1Gi }
+  #         storageClassName: ""
+  #         persistentVolumeReclaimPolicy: Retain
+  #         mountOptions: ["implicit-dirs", "file-cache:max-size-mb:-1"]
+  #         claimRef: { namespace: {{ namespace }}, name: flyte-metadata-ro }
+  #         csi:
+  #           driver: gcsfuse.csi.storage.gke.io
+  #           volumeHandle: YOUR_MODEL_BUCKET
+  #           readOnly: true
+  #   - key: e_model_volume_pvc
+  #     value: |
+  #       apiVersion: v1
+  #       kind: PersistentVolumeClaim
+  #       metadata:
+  #         name: flyte-metadata-ro
+  #         namespace: {{ namespace }}
+  #       spec:
+  #         accessModes: ["ReadOnlyMany"]
+  #         storageClassName: ""
+  #         volumeName: flyte-metadata-{{ namespace }}
+  #         resources: { requests: { storage: 1Gi } }
+  #
+  # The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"`.
   additionalTemplates: []
   # -- Kubernetes resource configuration for the syncresources service
   resources:
@@ -335,7 +395,7 @@ clusterresourcesync:
       cpu: "1"
       memory: "500Mi"
     requests:
-      cpu: "500m"
+      cpu: "100m"
       memory: "100Mi"
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
@@ -456,6 +516,20 @@ config:
       certDir: /etc/webhook/certs
       serviceName: union-pod-webhook
       servicePort: "{{ .Values.flytepropellerwebhook.service.port }}"
+      # -- Let a volume-mounting task pod's container run in an SELinux type
+      # -- that may receive the mount broker's channel descriptor. Needed only
+      # -- where the node enforces SELinux (Bottlerocket, so EKS Auto Mode;
+      # -- RHCOS/OpenShift): there the broker's descriptor is refused and the
+      # -- volume client dies. OFF by default — it relaxes task-pod
+      # -- confinement, so a cluster that does not need it must not get it.
+      # -- An empty nodeOSImageSubstrings applies it wherever it is enabled
+      # -- instead of only on the distributions that need it: the webhook's
+      # -- role cannot read nodes (it is namespaced under low_privilege), so
+      # -- auto-detection would fail closed here and mutate nothing.
+      selinuxTaskPods:
+        enabled: false
+        type: spc_t
+        nodeOSImageSubstrings: []
       listenPort: "{{ .Values.flytepropellerwebhook.service.targetPort }}"
       secretManagerTypes:
       - Embedded
@@ -505,6 +579,7 @@ config:
           - echo
           - fast-task
           - connector-service
+          - artifact-trigger
         default-for-task-types:
           actor: fast-task
           container: container
@@ -521,17 +596,21 @@ config:
         default-memory: 100Mi
   # -- Configuration for the Union operator service
   operator:
-    # -- Enables the operator service
-    enabled: true
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
     limitNamespace: ""
     # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
     disableClusterPermissions: false
-    # -- Eager API key bootstrap. When enabled, the operator mints the eager API
-    # key on the control plane and writes it to the task-pod secret store.
-    # Requires the secret manager (proxy.secretManager.enabled).
+    # -- Eager API key bootstrap. When enabled, the operator mints the
+    # EAGER_API_KEY on the control plane and writes it to the task-pod secret
+    # store so eager/actions (v2) tasks can call back to the control plane.
+    # Enabled by default: under v2 every deployment runs eager/actions
+    # workloads. Requires the proxy secret manager (proxy.secretManager.enabled,
+    # on by default) and a control plane that can mint EAGER_API_KEY — either by
+    # registering an OAuth client on its IdP, or, for IdPs the CP can't
+    # self-register against, via the controlplane chart's
+    # identity.apiKeyOverrides seed.
     apiKey:
-      enabled: false
+      enabled: true
     # -- Compute resource manager configuration.
     computeResourceManager: {}
     # -- Organization namespace template override.
@@ -575,9 +654,11 @@ config:
     collectUsages:
       # -- Enable usage collection in the operator service.
       enabled: true
-    # -- Billing model: None, Legacy, Shadow, or ResourceUsage.
+    # -- Billing model: None, Legacy, Shadow, or ResourceUsage. Independent of tunnels.
+    # Defaults to ResourceUsage on install and preserves the installed model on upgrade.
+    # Set None explicitly for deployments with billing disabled, including self-hosted control planes.
     billing:
-      model: "ResourceUsage"
+      model: '{{ include "operator.billing.defaultModel" . }}'
     # -- Heartbeat check configuration.
     dependenciesHeartbeat:
       # -- Define the propeller health check endpoint.
@@ -613,14 +694,19 @@ config:
       objectStore:
         prefix: persisted-logs
         pathTemplate: "namespace-{{`{{.KubernetesNamespace}}`}}.pod-{{`{{.KubernetesPodName}}`}}.cont-{{`{{.KubernetesContainerName}}`}}"
-# Temporarily disable imageBuilderConfig
-#    imageBuilderConfig:
-#      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
-#      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
-#      basicAuth:
-#        registry: "{{ .Values.imageBuilder.defaultRepository }}"
-#        username: "{{ .Values.imageBuilder.basicAuth.username }}"
-#        passwordSecretName: "{{ .Values.imageBuilder.basicAuth.passwordSecretName }}"
+    # Wires the operator reverse-proxy's image existence probe (GetImage). Without
+    # authenticationType the probe handler defaults to noop and 404s every image, so
+    # every run rebuilds images that already exist in the registry. This does not
+    # enable/disable the image builder (the build/push path is configured separately).
+    imageBuilderConfig:
+      authenticationType: "{{ .Values.imageBuilder.authenticationType }}"
+      defaultRepository: "{{ .Values.imageBuilder.defaultRepository }}"
+      # basicAuth is only for basic-auth registries; cloud registries (google/aws/azure)
+      # authenticate via workload identity. Left commented (intended usage TBD).
+      # basicAuth:
+      #   registry: "{{ .Values.imageBuilder.defaultRepository }}"
+      #   username: "{{ .Values.imageBuilder.basicAuth.username }}"
+      #   passwordSecretName: "{{ .Values.imageBuilder.basicAuth.passwordSecretName }}"
   # -- Resource manager configuration
   resource_manager:
     # -- resource manager configuration
@@ -681,6 +767,14 @@ config:
       # -- InsecureSkipVerify controls whether a client verifies the server's certificate chain and host name.
       # Caution: shouldn't be used for production use cases
       insecureSkipVerify: false
+
+      # -- Per-unary RPC client-side deadline for control-plane Connect clients. 0 disables it, letting a half-open connection (e.g. an idle-dropped load-balancer flow on a separate-cluster dataplane) hang the leaseworker's claim/heartbeat RPC indefinitely.
+      unaryRPCTimeout: 30s
+
+      # -- HTTP/2 keepalive for the Connect transport. Pings an idle control-plane connection so it stays warm (below a load balancer's idle timeout) and closes it if a ping goes unanswered, forcing a reconnect. Unlike unaryRPCTimeout this also protects the leaseworker's server-streaming StreamLeases receive path; 0 (default) disables it and lets a half-open connection go undetected.
+      http2KeepAlive:
+        readIdleTimeout: 30s
+        pingTimeout: 10s
 
       # -- Minimum timeout for establishing a connection
       # minConnectTimeout: "10s"
@@ -974,8 +1068,8 @@ leaseworker:
       cpu: 8
       memory: 16Gi
     requests:
-      cpu: 4
-      memory: 8Gi
+      cpu: 300m
+      memory: 512Mi
   podLabels:
     app: leaseworker
     app.kubernetes.io/name: leaseworker
@@ -1293,6 +1387,33 @@ flytepropellerwebhook:
           matchLabels:
             inject-flyte-secrets: "true"
             organization: "{{ tpl .Values.orgName . }}"
+      # -- SELinux type for volume-mounting task pods. Off by default; needed
+      # -- only where the node's policy refuses the mount broker's attempt to
+      # -- label a volume channel for a confined pod (Bottlerocket, so EKS
+      # -- Auto Mode). Scoped to this org's pods like the secrets webhook,
+      # -- which keeps a webhook outage away from everything else — these
+      # -- webhooks fail closed.
+      selinuxTaskPods:
+        # -- Register the mutator's path. Keep in step with
+        # -- configmap core.webhook.selinuxTaskPods.enabled above.
+        enabled: false
+        # -- Name of the webhook
+        name: union-pod-webhook-selinux.flyte.org
+        # -- Path for the webhook
+        path: /mutate--v1-pod/selinux-task-pods
+        # -- Namespace selector for the webhook
+        namespaceSelector: {}
+        # -- Object selector for the webhook. Scoped twice over: to this org,
+        # -- like every other pod webhook here, AND to pods that actually carry
+        # -- a mount-broker channel volume. The chart builds the
+        # -- MutatingWebhookConfiguration, so the selector the propeller binary
+        # -- would have defaulted to never applies — it has to be set here.
+        # -- The label comes from flyteplugins-union's allow_volumes(); a
+        # -- cluster enabling this wants a plugin new enough to set it.
+        objectSelector:
+          matchLabels:
+            organization: "{{ tpl .Values.orgName . }}"
+            volumes.union.ai/channel: "true"
       # -- Managed image webhook configuration (requires Union operator support)
       managedImage:
         enabled: false
@@ -1370,9 +1491,9 @@ flyteconnector:
       ephemeral-storage: 100Mi
       memory: 1500Mi
     requests:
-      cpu: "1"
+      cpu: "100m"
       ephemeral-storage: 100Mi
-      memory: 1000Mi
+      memory: 384Mi
   # -- Default glob string for searching configuration files
   configPath: /etc/flyteconnector/config/*.yaml
   # -- Service settings for flyteconnector
@@ -1444,8 +1565,8 @@ image:
     pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
-    repository: "cr.flyte.org/flyteorg/flytecopilot"
-    tag: "v1.14.1"
+    repository: "cr.flyte.org/flyteorg/flyte-binary-v2"
+    tag: "v2.0.45"
     pullPolicy: IfNotPresent
   # -- Union envoy build for the zero-trust gateway.
   envoy:
@@ -1457,45 +1578,97 @@ metrics-server:
   enabled: false
 
 # -- nodeobserver contains the configuration information for the node observer service.
-fuseDevicePlugin:
-  # -- Enable the FUSE device-plugin DaemonSet. Advertises host /dev/fuse as an
-  # extended resource so unprivileged pods that request it (smarter-devices/fuse)
-  # can perform in-pod FUSE mounts with only CAP_SYS_ADMIN — no privileged pod.
-  # Opt-in: disabled by default; enable per cluster where unprivileged FUSE is wanted.
+uvolMountBroker:
+  # -- Enable the uvol mount broker DaemonSet: a CSI node driver that premounts
+  # FUSE channels and hands the fds to unprivileged in-pod clients, so task pods
+  # mount versioned Volumes with no CAP_SYS_ADMIN, no /dev/fuse and no hostPath.
+  # Opt-in: disabled by default; enable per cluster where Volumes are wanted.
   enabled: false
-  image:
-    repository: registry.gitlab.com/arm-research/smarter/smarter-device-manager
-    tag: v1.20.11
-    pullPolicy: IfNotPresent
-  # -- Devices the manager advertises (smarter-device-manager conf.yaml format).
-  # One entry per extended resource; nummaxdevices is the per-node claim count.
-  devices:
-    - devicematch: ^fuse$
-      nummaxdevices: 1000
-  # -- The plugin itself needs SYS_ADMIN to read host devices and register with
-  # kubelet; the workloads it serves stay unprivileged.
-  securityContext:
-    allowPrivilegeEscalation: false
-    capabilities:
-      drop: [ "ALL" ]
-      add: [ "SYS_ADMIN" ]
-  # -- Run only where unprivileged FUSE is wanted; empty = all nodes.
+  # -- CSI driver name. Task pods reference this exact string, so changing it
+  # requires the same change on the client side — leave it alone unless you know
+  # you need to.
+  driverName: volumes.union.ai
+  # -- kubelet's root directory, bind-mounted so the broker can premount inside
+  # kubelet-owned publish targets. Distributions that relocate it (k3s, some
+  # managed AMIs) must set this to match, or registration fails.
+  kubeletDir: /var/lib/kubelet
+  # -- Host directory for the per-volume unix sockets task pods connect to.
+  socketDir: /run/uvol
+  # -- Host directory for the broker's state journal, which is what lets kernel
+  # mounts and pod-held fds survive a broker restart.
+  stateDir: /var/lib/uvol/state
+  # -- Top-level metrics scope for every series the broker emits (uvol_broker:*
+  # — verb failures, journal write failures, CSI outcomes, active channels).
+  metricsScope: "uvol_broker"
+  # -- flytestdlib profutils port: /metrics, /healthcheck, pprof, and the
+  # /readyz endpoint the readinessProbe uses.
+  profilerPort: 10254
+  # -- Node-shared chunk cache for Union Volumes, served by the broker. A task
+  # pod that asks (`allow_volumes(shared_node_cache=True)`) gets a per-namespace
+  # subtree of `hostPath` bind-mounted by the broker — no hostPath and no
+  # privilege in the task pod; pods of one namespace on a node share one cache,
+  # other namespaces never see it. On by default, so a pod that asks gets it on
+  # every node; set `enabled: false` to refuse (the pod then fails NodePublish
+  # with FailedPrecondition rather than mounting anything privileged). Put
+  # `hostPath` on the node's fastest local disk (on EKS AMIs with instance
+  # store, under /mnt/k8s-disks/0) and budget it: each client evicts against its
+  # own limit.
+  nodeCache:
+    enabled: true
+    hostPath: /var/lib/uvol/node-cache
+  # -- Extra keys merged into the broker config block (for example
+  # autoAbortAfter). May include template values.
+  config: {}
+  # -- PriorityClass for the broker DaemonSet: schedules ahead of task pods so a
+  # node's broker isn't evicted out from under pods that need it to mount Volumes.
+  # Empty (with priorityClass.create) derives a release-scoped default; set an
+  # explicit name to override. Empty with create: false is rejected — the broker
+  # must have a deliberate class. Do NOT use a reserved system class (e.g.
+  # system-node-critical): GKE restricts those to kube-system, so the pods are
+  # rejected at creation.
+  priorityClassName: ""
+  # -- Whether the chart creates the PriorityClass (the name above, or a derived
+  # release-scoped default when empty). Set create: false to bring your own, which
+  # then requires priorityClassName. value applies only when create: true.
+  priorityClass:
+    create: true
+    value: 1000000
+  # -- Rolling update budget. The broker is on the task open() path, so a large
+  # value trades mount availability for upgrade speed.
+  maxUnavailable: 25%
+  # -- Must cover every node a volume-using task pod can land on: task pods
+  # carry no matching nodeSelector of their own, so any node without the broker
+  # fails NodePublish with "driver volumes.union.ai not found". Empty = all
+  # nodes, which is the safe default.
   nodeSelector: { }
-  # -- Tolerate everything so it lands on every (selected) node, incl. tainted.
+  # -- Tolerate everything, for the same reason: a tainted node that still runs
+  # task pods needs the broker.
   tolerations:
     - operator: Exists
   affinity: { }
-  # -- Override the priorityClass (defaults to operator.priorityClassName).
-  priorityClassName: ""
   # -- Additional pod annotations.
   podAnnotations: { }
+  # -- Additional pod environment variables.
+  podEnv: [ ]
+  # -- The cpu request is what the broker is guaranteed under contention, not a
+  # cap: there is deliberately no cpu limit — CFS throttling would inject worse
+  # tail latency than fair-share contention — so on an idle node the broker
+  # bursts past the request. What the request costs is node schedulability: the
+  # broker is a DaemonSet at system-node-critical, so every milli it requests
+  # leaves allocatable, and a request a task pod cannot fit around preempts
+  # that task pod rather than queueing it. Task pods sized to a node's full
+  # allocatable CPU are common, which makes the DaemonSet footprint the binding
+  # constraint, so the default is small; raise it per cluster where volume
+  # traffic warrants it. Measured at 60us of broker CPU per open with 8 volumes
+  # active, so 30m guarantees ~500 opens/s and 500m carries roughly 8,300.
+  # Memory is O(channels) at ~15 KiB each (~15 MiB at the 1024-channel node
+  # cap); the limit is a leak backstop, not an operating bound.
   resources:
-    limits:
-      cpu: 100m
-      memory: 15Mi
     requests:
-      cpu: 10m
-      memory: 15Mi
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      memory: 256Mi
 
 nodeobserver:
   # -- Enable or disable nodeobserver
@@ -1538,7 +1711,7 @@ nodeobserver:
       cpu: "1"
       memory: "500Mi"
     requests:
-      cpu: "500m"
+      cpu: "100m"
       memory: "100Mi"
   config:
     criticalDaemonSets: []
@@ -1605,8 +1778,8 @@ operator:
       cpu: "2"
       memory: "3Gi"
     requests:
-      cpu: "1"
-      memory: "1Gi"
+      cpu: "150m"
+      memory: "384Mi"
   # -- Appends additional volumes to the deployment spec. May include template values.
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
@@ -1632,6 +1805,13 @@ ingress:
 
   # -- Serving specific ingress configuration.
   serving:
+    # -- Emit the app-serving nginx Ingress (fronts the gateway via ingressClass).
+    # Default true: intracluster routes apps through the shared control-plane
+    # nginx. Set false on separate-cluster dataplanes, which have no shared nginx
+    # and instead expose the gateway Envoy via gateway.publicLoadBalancer —
+    # disable it there so the `<dp>-apps` Ingress isn't left dangling with no
+    # controller.
+    enabled: true
     # -- (Optional) Host override for serving ingress rule. Defaults to *.apps.<dataplane.cp.host>.
     hostOverride: '*.apps.{{ include "dataplane.cp.host" . }}'
     # -- Ingress class name
@@ -1973,6 +2153,12 @@ commonServiceAccount:
 
 taskPodTemplate:
   workingDir: ""
+  # -- nodeSelector applied to all task pods (via the task-template PodTemplate).
+  nodeSelector: {}
+  # -- affinity applied to all task pods (e.g. a preferred Spot nodeAffinity).
+  affinity: {}
+  # -- tolerations applied to all task pods (e.g. a Spot taint toleration).
+  tolerations: []
 
 # -- Union operator proxy configuration
 proxy:
@@ -2095,9 +2281,11 @@ storage:
   # -- Define custom configurations for the object storage.  Only used if the provider is set to "custom".
   custom: { }
   # -- Reference to a Kubernetes Secret containing storage credentials.
-  # When set, credentials are omitted from ConfigMaps. An init container reads two flat
-  # keys from the secret and writes the YAML credential fragment to a temporary volume,
-  # which is merged with the component's config at startup.
+  # When set, the chart reads two flat keys from the secret AT RENDER TIME (helm
+  # lookup) and inlines them into the rendered storage configuration; the raw
+  # accessKey/secretKey values are not read. The secret must therefore exist
+  # BEFORE the release is installed or upgraded, and rotating it requires a new
+  # render (helm upgrade) to take effect.
   #
   # Create the secret with flat keys:
   #   kubectl create secret generic storage-credentials -n <namespace> \
@@ -2109,6 +2297,11 @@ storage:
   credentialsSecretRef:
     # -- Name of the Kubernetes Secret. Leave empty to disable (credentials go in ConfigMaps).
     name: ""
+    # -- Namespace the secret lives in. Empty means the release namespace. Set
+    # this when the release namespace is not known before install (e.g. the
+    # platform names it at deploy time) so the secret can be created in a fixed,
+    # pre-agreed namespace ahead of the first render.
+    namespace: ""
     # -- Key in the secret that holds the access key ID.
     accessKeyIdKey: access_key_id
     # -- Key in the secret that holds the secret key.
@@ -2174,16 +2367,16 @@ serving:
           cpu: "2"
           memory: 2Gi
         requests:
-          cpu: "1"
-          memory: 1Gi
+          cpu: "100m"
+          memory: 256Mi
     net-kourier-controller:
       controller:
         limits:
           cpu: "1"
           memory: 1Gi
         requests:
-          cpu: 500m
-          memory: 500Mi
+          cpu: 100m
+          memory: 256Mi
 
   # -- Union authentication and authorization configuration.
   auth:
@@ -2191,10 +2384,12 @@ serving:
     # -- Disabling is common if not leveraging Union Cloud SSO.
     enabled: true
 
-# Enable the knative operator.  Required for app serving.
-# Note: The operator requires cluster-scoped RBAC (CRDs, ClusterRoles, namespaces, deployments).
+# Legacy app-serving delivery. Superseded by the vendored gateway
+# (`gateway.enabled: true`, the default). Only enable this when running the
+# knative-operator path (`gateway.enabled: false`); it requires cluster-scoped
+# RBAC (CRDs, ClusterRoles, namespaces, deployments).
 knative-operator:
-  enabled: true
+  enabled: false
   # Install into the release namespace rather than the default "knative-operator" namespace.
   # Requires knative-operator >= 2026.4.5 which evaluates this via tpl.
   namespaceOverride: '{{ .Release.Namespace }}'
@@ -2355,7 +2550,7 @@ imageBuilder:
     # -- Resource definitions
     resources:
       requests:
-        cpu: 4
+        cpu: 200m
         memory: 4Gi
         ephemeral-storage: 50Gi
 
@@ -2407,7 +2602,39 @@ ingress-nginx:
       name: dataplane
       controllerValue: union.ai/dataplane
 
-## -- Extra Kubernetes objects to deploy with the helm chart
+## -- Extra Kubernetes objects to deploy with the helm chart.
+## In low_privilege / single-namespace mode this is the injection point for a read-only
+## model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV + RO PVC mounting a GCS
+## bucket at its ROOT, so serving pods can stream a Flyte-produced Model artifact in place read-only
+## (provisioning tooling substitutes the real per-dataplane bucket name):
+##
+##   - apiVersion: v1
+##     kind: PersistentVolume
+##     metadata:
+##       name: flyte-metadata
+##     spec:
+##       accessModes: ["ReadOnlyMany"]
+##       capacity: { storage: 1Gi }        # ignored by gcsfuse; required by the API
+##       storageClassName: ""
+##       persistentVolumeReclaimPolicy: Retain
+##       mountOptions: ["implicit-dirs", "file-cache:max-size-mb:-1"]
+##       claimRef: { namespace: <release-namespace>, name: flyte-metadata-ro }
+##       csi:
+##         driver: gcsfuse.csi.storage.gke.io
+##         volumeHandle: YOUR_MODEL_BUCKET  # per-dataplane GCS bucket (worker WI reads it)
+##         readOnly: true
+##   - apiVersion: v1
+##     kind: PersistentVolumeClaim
+##     metadata: { name: flyte-metadata-ro, namespace: <release-namespace> }
+##     spec:
+##       accessModes: ["ReadOnlyMany"]
+##       storageClassName: ""
+##       volumeName: flyte-metadata
+##       resources: { requests: { storage: 1Gi } }
+##
+## The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"` for the GKE
+## sidecar-injector to mount it. For non-low_privilege (multi-namespace) clusters, prefer
+## `clusterresourcesync.additionalTemplates` so the volume is created per project namespace.
 extraObjects: []
 
 ## -- Automatically create namespaces to deploy into
@@ -2427,6 +2654,20 @@ monitoring:
   # (e.g., selfhosted mode where the controlplane owns the stack).
 
   # Dashboard ConfigMaps are auto-discovered by Grafana sidecar (NAMESPACE=ALL).
+  #
+  # Datasource / "No data": every panel reads the datasource selected by the
+  # dashboard $datasource variable — point it at whichever Prometheus scrapes
+  # this cluster. Some panels read core Kubernetes / kube-state metrics that a
+  # given deployment may scrape with an external stack (e.g. Google Cloud Managed
+  # Prometheus on GKE, or Azure Monitor managed Prometheus) rather than the
+  # embedded monitoring Prometheus. Against a datasource that does not carry
+  # those metrics such panels show "No data" — this is expected; point
+  # $datasource at the source that has them. Per-cloud specifics are documented
+  # in the values.{aws,gcp,azure}.yaml overlays.
+  #
+  # Optional dashboards ship only when their inputs exist:
+  #   - union-dataplane-karpenter — requires the karpenter.sh/v1 CRD.
+  #   - union-dataplane-slo       — requires prometheusRules.enabled AND slos.enabled.
   dashboards:
     enabled: true
     # Label and value used by the Grafana sidecar to discover dashboard ConfigMaps.
@@ -2562,17 +2803,72 @@ monitoring:
 # -- Vendored Knative Serving + Kourier + Envoy gateway. Rendered when
 # `zero_trust.enabled: true`; the templates gate on that flag directly.
 gateway:
+  # -- Deliver app serving via this chart's vendored Knative Serving + Kourier +
+  # Envoy gateway (raw manifests under templates/gateway/*) instead of the
+  # knative-operator subchart. Default delivery. When true and app serving is on
+  # (`apps.enabled`), the vendored control plane renders and `knative-operator`
+  # must be disabled. Zero trust requires this (it layers dataproxy routes on the
+  # Envoy gateway). Set false to fall back to the legacy knative-operator path.
+  enabled: true
   service:
     httpAppsPort: 80
     httpStaticPort: 8888
 
-  # -- Enables Union's auth integration across the kourier-gateway.
+  # -- Public internet-facing LoadBalancer for app serving. Separate-cluster
+  # dataplanes (not co-located with the control plane) have no shared CP ingress
+  # LB to borrow, so they expose the gateway Envoy directly: DNS
+  # `*.apps.<dp>.<domain>` -> this LB -> Envoy, with TLS terminated at Envoy
+  # (8444) using the letsencrypt wildcard cert. Off by default; enable and
+  # annotate it (external-dns hostname, internet-facing scheme) for
+  # separate-cluster dataplanes. Intracluster apps route through the shared CP
+  # ingress-nginx instead (`ingress.serving.class`), so this stays off there.
+  publicLoadBalancer:
+    enabled: false
+    # -- Annotations for the LoadBalancer Service — cloud LB scheme
+    # (internet-facing) + external-dns hostname. Set these for separate-cluster
+    # dataplanes; e.g. on AWS:
+    #   service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+    #   service.beta.kubernetes.io/aws-load-balancer-type: external
+    #   external-dns.alpha.kubernetes.io/hostname: "*.apps.<CLUSTER_NAME>.<CONTROLPLANE_HOST>"
+    annotations: {}
+    # -- Secret holding the apps wildcard TLS cert (tls.crt/tls.key) that Envoy's
+    # apps_https:8443 listener terminates. Required (non-empty) when
+    # publicLoadBalancer.enabled — the chart fails to render otherwise, as TLS
+    # termination at the load balancer is not yet supported. The dataplane does
+    # not create this secret — supply it however you issue certs (cert-manager
+    # Certificate, a corporate CA, ACM sync, …). The default matches the name our
+    # terraform renders via the letsencrypt DNS-01 issuer; override for a BYO cert.
+    tlsSecretName: dataplane-apps-letsencrypt-tls
+
+  # -- Union auth integration for the kourier gateway. The gateway Envoy calls the
+  # control plane to authenticate app requests (/me) and authorize them. All
+  # three URLs default off the control-plane host (global.CONTROLPLANE_HOST) when
+  # left empty, so apps get SSO out of the box — an app subdomain of the CP host
+  # shares its auth cookies. Override only to point app auth at a different
+  # tenant URL.
   auth:
     enable: true
+    # -- App auth (identity) endpoint. Empty -> https://<CONTROLPLANE_HOST>/me
     tenantAuthURL: ""
+    # -- App sign-in redirect target. Empty -> https://<CONTROLPLANE_HOST>/login
     tenantAuthSignInURL: ""
+    # -- Tenant control-plane base URL. Empty -> https://<CONTROLPLANE_HOST>
     tenantControlPlaneURL: ""
+    # -- Org override for auth. Empty -> orgName (global.ORG_NAME).
     organization: ""
+    # -- Skip verification of the control-plane TLS certificate when the gateway
+    # Envoy auth plugin dials it. The gateway reaches the same control plane as
+    # the operator; self-hosted control planes serve a self-signed intracluster
+    # cert there, so the plugin must trust its CA (caFile) or skip verification —
+    # otherwise it panics at init with x509: unknown authority. Null (default)
+    # inherits config.union.connection.insecureSkipVerify (the operator's
+    # posture); set true/false to override explicitly.
+    insecureSkipVerify: null
+    # -- Optional PEM CA-bundle path (mounted into the gateway container) used to
+    # verify the control-plane certificate. Preferred over insecureSkipVerify.
+    # Mount the bundle via gateway.components.envoy volumes/volumeMounts and point
+    # this at the mounted path.
+    caFile: ""
 
   components:
     envoy:
@@ -2596,8 +2892,8 @@ gateway:
               cpu: "2"
               memory: 2Gi
             requests:
-              cpu: "1"
-              memory: 1Gi
+              cpu: "100m"
+              memory: 256Mi
       hpa:
         minReplicas: 2
         maxReplicas: 10
@@ -2659,6 +2955,15 @@ gateway:
       containers:
         activator:
           image: {}
+          # Knative Serving 1.23 refuses to start unless the cluster is >= its built-in
+          # KubernetesMinVersion (v1.34.0); many dataplanes run older k8s (fleet default 1.32).
+          # A scan of the 1.23 source shows the server version is read only by the startup gate
+          # (cmd/*/main.go + sharedmain CheckMinimumVersion) with no other runtime version
+          # branching, so older k8s works -- relax the gate. Remove once clusters are >= 1.34.
+          # Ref: knative.dev/pkg/version.
+          env: &knativeMinVersionEnv
+            - name: KUBERNETES_MIN_VERSION
+              value: v1.32.0
       hpa:
         minReplicas: 2
         maxReplicas: 20
@@ -2693,6 +2998,7 @@ gateway:
       containers:
         controller:
           image: {}
+          env: *knativeMinVersionEnv
 
     autoscaler:
       replicas: 2
@@ -2711,6 +3017,15 @@ gateway:
       containers:
         autoscaler:
           image: {}
+          env: *knativeMinVersionEnv
+          # One decider per revision: a 1-CPU cap starves it on busy dataplanes.
+          resources:
+            requests:
+              cpu: 250m
+              memory: 128Mi
+            limits:
+              cpu: 4000m
+              memory: 2000Mi
 
     autoscaler-hpa:
       replicas: 2
@@ -2729,6 +3044,7 @@ gateway:
       containers:
         autoscaler-hpa:
           image: {}
+          env: *knativeMinVersionEnv
 
     webhook:
       replicas: 2
@@ -2747,6 +3063,7 @@ gateway:
       containers:
         webhook:
           image: {}
+          env: *knativeMinVersionEnv
       hpa:
         minReplicas: 2
         maxReplicas: 10
@@ -2798,6 +3115,18 @@ gateway:
       kubernetes.podspec-tolerations: "enabled"
       kubernetes.podspec-topologyspreadconstraints: "enabled"
       kubernetes.podspec-volumes-emptydir: "enabled"
+      kubernetes.podspec-volumes-hostpath: "enabled"
+      # Allow an inline CSI volume source in the pod spec (added in Knative
+      # Serving ~1.20, gated by this flag, default-disabled upstream). Enables the
+      # flyteplugins-union CSI mount broker (volumes.union.ai, allow_volumes) to
+      # attach a Union Volume to a serving pod without CAP_SYS_ADMIN/hostPath.
+      kubernetes.podspec-volumes-csi: "enabled"
+      # Allow a volumeMount to set mountPropagation. The uvol mount broker's inline
+      # CSI volume mounts its `uvol-channel` with mount propagation so the
+      # broker-premounted FUSE fd is visible in the container; Knative's webhook
+      # rejects the revision without this flag ("Volume Mount Propagation support is
+      # disabled"). Pairs with podspec-volumes-csi for allow_volumes() serving.
+      kubernetes.podspec-volumes-mount-propagation: "enabled"
     network:
       ingress-class: "kourier.ingress.networking.knative.dev"
     kourier: {}
@@ -2813,6 +3142,183 @@ gateway:
 # -- union-dataproxy backend. Rendered when `zero_trust.enabled: true`; the
 # templates gate on that flag directly.
 dataproxy:
+  # -- Task metrics query templates for the zero-trust dataproxy's
+  # -- GetActionAttemptMetrics / GetAppMetrics RPCs. Only rendered when
+  # -- zero_trust.enabled, which is the only mode that runs a dataproxy here.
+  # -- The dataproxy builds each PromQL query by looking up the metric name in
+  # -- this map (shared_service/clustermetrics/task_query_generator.go); a
+  # -- missing key fails the request with "failed to do get template due to key
+  # -- EXECUTION_METRIC_* not found", so the whole set has to be present.
+  # -- Kept in sync with the controlplane chart's
+  # -- services.dataproxy.configMap.dataproxy.taskMetrics -- the values are
+  # -- passed through `tpl`, hence the {{ "{{" }}...{{ "}}" }} escaping around
+  # -- the server-side Go template placeholders.
+  taskMetrics:
+    metricDelayToleranceDuration: 0s
+    promQuery:
+      queries:
+        EXECUTION_METRIC_APP_REQUESTS: |
+          sum(rate((
+            envoy_cluster_upstream_rq_xx{
+              job="serving-envoy",
+              project=~"{{ "{{" }}.Project{{ "}}" }}",
+              domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+              name=~"{{ "{{" }}.AppName{{ "}}" }}",
+              name!=""}
+          )[5m:])) by (project, domain, name, envoy_response_code_class)
+        EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
+          histogram_quantile(0.5, sum(rate((
+            envoy_cluster_upstream_rq_time_bucket{
+              job="serving-envoy",
+              project=~"{{ "{{" }}.Project{{ "}}" }}",
+              domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+              name=~"{{ "{{" }}.AppName{{ "}}" }}",
+              name!=""}
+          )[5m:])) by (project, domain, name, le))
+        EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
+          histogram_quantile(0.90, sum(rate((
+            envoy_cluster_upstream_rq_time_bucket{
+              job="serving-envoy",
+              project=~"{{ "{{" }}.Project{{ "}}" }}",
+              domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+              name=~"{{ "{{" }}.AppName{{ "}}" }}",
+              name!=""}
+          )[5m:])) by (project, domain, name, le))
+        EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
+          histogram_quantile(0.95, sum(rate((
+            envoy_cluster_upstream_rq_time_bucket{
+              job="serving-envoy",
+              project=~"{{ "{{" }}.Project{{ "}}" }}",
+              domain=~"{{ "{{" }}.Domain{{ "}}" }}",
+              name=~"{{ "{{" }}.AppName{{ "}}" }}",
+              name!=""}
+          )[5m:])) by (project, domain, name, le))
+        EXECUTION_METRIC_APP_REPLICA_COUNT: |
+          sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{ "{{" }}.Namespace{{ "}}" }}", pod=~"{{ "{{" }}.AppName{{ "}}" }}.*"} == 1) or vector(0)
+        EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
+          max by (namespace, pod) (
+            (
+              sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) >
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
+            )
+            or
+            sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})
+          ) *
+          on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+        EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
+          max by (namespace, pod) (
+            (
+              sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) >
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
+            )
+            or
+            sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})
+          ) *
+          on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+        EXECUTION_METRIC_CPU_UTILIZATION: |
+          (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m])) /
+            sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"})) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+        EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
+          (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}) /
+            sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} + DCGM_FI_DEV_FB_FREE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"})) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+        EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
+        EXECUTION_METRIC_GPU_UTILIZATION: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)) / 100.0
+        EXECUTION_METRIC_GPU_SM_ACTIVE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        # GPU health metrics. Reported per GPU device via the `gpu` label from dcgm-exporter.
+        # DCGM_FI_PROF_* fields and the violation counters must be enabled in the dcgm-exporter
+        # counter set; where they are not, these queries simply return no series.
+        # Counters are turned into rates over the same 5m window used by the CPU queries, except
+        # DCGM_FI_DEV_ECC_DBE_VOL_TOTAL which uses increase() so a counter reset on device
+        # reinitialization does not read as a drop, and DCGM_FI_DEV_XID_ERRORS which is a gauge
+        # carrying the last Xid code and is therefore never rated or scaled.
+        EXECUTION_METRIC_GPU_TEMPERATURE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_MEMORY_TEMPERATURE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEMORY_TEMP{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_POWER_USAGE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_POWER_USAGE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_SM_CLOCK: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_SM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_MEMORY_CLOCK: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_CLOCK{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_TENSOR_ACTIVE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_DRAM_ACTIVE: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_DRAM_ACTIVE{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_PCIE_TX_BYTES: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_TX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_PCIE_RX_BYTES: |
+          sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_RX_BYTES{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_NVLINK_BANDWIDTH: |
+          sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        # Xid is reduced with max rather than sum: the value is an error code, not a quantity.
+        EXECUTION_METRIC_GPU_XID_LAST_ERROR: |
+          max by (namespace, pod, gpu) (DCGM_FI_DEV_XID_ERRORS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_POWER_VIOLATION: |
+          sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_THERMAL_VIOLATION: |
+          sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[2m]) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_ECC_DBE_VOLATILE: |
+          sum by (namespace, pod, gpu) (increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"}[5m]) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_GPU_UNCORRECTABLE_REMAPPED_ROWS: |
+          sum by (namespace, pod, gpu) (DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_LIMIT_CPU: |
+          sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
+          sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_MEMORY_UTILIZATION: |
+          (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}) /
+            sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"})) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1)
+        EXECUTION_METRIC_REQUEST_CPU: |
+          sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="cpu"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
+          sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",resource="memory"} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_USED_CPU_AVG: |
+          sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""}[5m]) *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+        EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
+          sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",image!=""} *
+          on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{ "{{" }}.Namespace{{ "}}" }}",pod=~"{{ "{{" }}.PodName{{ "}}" }}",phase=~"Pending|Running"} == 1))
+    agentQuery:
+      mappings:
+        dgx_job:
+          queries:
+            EXECUTION_METRIC_ALLOCATED_CPU_AVG: "CPU_ALLOCATION:MEAN"
+            EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: "MEM_ALLOCATION:MEAN"
+            EXECUTION_METRIC_CPU_UTILIZATION: "CPU_UTILIZATION:MEAN"
+            EXECUTION_METRIC_MEMORY_UTILIZATION: "MEM_UTILIZATION:MEAN"
+            EXECUTION_METRIC_GPU_UTILIZATION: "GPU_UTILIZATION:MEAN"
   serviceAccount:
     create: true
     name: dataproxy-system
