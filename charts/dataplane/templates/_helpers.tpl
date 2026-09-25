@@ -691,12 +691,24 @@ Both the operator's config and the Roles backing it read this define, so a
 namespace cannot end up watched without being granted, or granted without being
 watched. The two drifted apart while each read its own condition.
 
-An explicit config.operator.secretsWatcher.namespaces wins. An explicitly empty
-list is refused while the watcher is on: the operator reads empty as "every
-namespace" and lists pods cluster-wide, which no grant here authorizes, and the
-refusal ends the process at startup. Granting it would take cluster-wide update
-and patch on Deployments and ReplicaSets. `hasKey` rather than truthiness is
-what tells that case apart from "unset".
+An explicit config.operator.secretsWatcher.namespaces wins, including an empty
+list, which the operator reads as "every namespace": it lists pods cluster-wide
+(operator/pkg/watcher/secret.go). `hasKey` rather than truthiness is what tells
+that case apart from "unset".
+
+At low_privilege: false that list is authorized: the operator's
+work-ns-cluster-read always grants pods list and watch cluster-wide. What
+follows it is not, everywhere. For each matched pod the watcher Gets its
+ReplicaSet and the Secrets it mounts, watches Secrets, and Gets and Updates the
+owning Deployment, all in the pod's namespace. Those are granted in the release
+namespace and in each work namespace bound to work-ns, and nowhere else. No
+secrets-watcher Role is emitted for an empty list, not even for
+controlplaneNamespace, so a zone-labelled pod anywhere else -- a co-located
+control plane's, typically -- is refused, and the operator exits at startup.
+List the namespaces instead when one exists.
+
+Under low_privilege an empty list is refused. Nothing cluster-wide is granted
+there, so the pod list itself is refused and the operator exits at startup.
 
 Unset, it resolves to the release namespace plus the control plane's when the two
 share a cluster. Those are the only namespaces holding pods with the zone label
@@ -705,10 +717,10 @@ the watcher selects on; user task namespaces never carry it.
 {{- define "operator.secretsWatcher.namespaces" -}}
 {{- $sw := .Values.config.operator.secretsWatcher -}}
 {{- if hasKey $sw "namespaces" -}}
-{{- if and $sw.enabled (not $sw.namespaces) -}}
-{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list. The operator reads an empty list as every namespace and lists pods cluster-wide, which this chart does not grant, so the operator would fail at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
+{{- if and $sw.enabled (not $sw.namespaces) .Values.low_privilege -}}
+{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list under low_privilege. The operator reads an empty list as every namespace and lists pods cluster-wide, and low_privilege grants nothing cluster-wide, so the operator would exit at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
 {{- end -}}
-{{- toYaml $sw.namespaces -}}
+{{- toYaml ($sw.namespaces | default list) -}}
 {{- else -}}
 {{- $ns := list .Release.Namespace -}}
 {{- if .Values.controlplaneNamespace -}}

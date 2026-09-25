@@ -820,6 +820,38 @@ expect-manifest "even with a serverless collector configured" \
   absent "name: union-operator-cluster-read" \
   --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
 
+# The gates read each value the way the operator will: rendered through tpl, and from
+# config-overrides.yaml only where config.yaml leaves the key out. The operator merges its
+# config files in lexical order with the later one winning, so a key the chart writes into
+# config.yaml beats the override.
+# `--set` cannot carry template braces, so the templated value goes through a values file.
+DCP_TPL="${WORK_DIR}/dcp-templated.yaml"
+cat > "${DCP_TPL}" <<'EOF'
+config:
+  operator:
+    disableClusterPermissions: '{{ "false" }}'
+EOF
+expect-role-resource "disableClusterPermissions is compared as rendered, not by truthiness" \
+  present union-operator-cluster-read nodes \
+  --set low_privilege=false --values "${DCP_TPL}"
+expect-role-resource "an override disables cluster permissions when the values key is unset" \
+  absent union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.configOverrides.operator.disableClusterPermissions=true
+expect-role-resource "an override enables collectUsages when the values key is unset" \
+  present union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=null \
+  --set config.configOverrides.operator.collectUsages.enabled=true
+expect-role-resource "but not over a values key config.yaml carries" \
+  absent union-operator-cluster-read nodes \
+  --set low_privilege=false --set config.operator.billing.model=None \
+  --set config.operator.collectUsages.enabled=false \
+  --set config.configOverrides.operator.collectUsages.enabled=true
+expect-role-resource "an override turns on PDB management when the values key is unset" \
+  present union-operator-work-ns-cluster-read poddisruptionbudgets \
+  --set low_privilege=false --set apps.enabled=true \
+  --set config.configOverrides.operator.apps.controller.podDisruptionBudget.enabled=true
+
 # The work queue's API-server scrape feeds its FlyteWorkflow-count and etcd-size throttles, and
 # a refused scrape leaves both off without a word. A nonResourceURLs rule means something only in
 # a ClusterRole, so it is granted at full privilege whatever the billing settings, and not at all
@@ -962,14 +994,25 @@ expect-binding-namespaces "and the grants follow the explicit list rather than c
   --set controlplaneNamespace=union-cp \
   --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
 # An explicitly empty list is the operator's way of asking for every namespace: it lists pods
-# cluster-wide, which nothing here grants, and the refusal ends the process at startup. Granting
-# it would take cluster-wide writes on Deployments and ReplicaSets, so the chart refuses it.
-expect-refusal "an explicitly empty list is refused while the watcher is on" \
-  "config.operator.secretsWatcher.namespaces is set to an empty list" \
+# cluster-wide. At full privilege work-ns-cluster-read authorizes that list, so the empty list
+# must survive as an empty list rather than being overwritten by the default -- and must not
+# be emitted twice, which a duplicate key would resolve silently in favour of the later one.
+expect-manifest "an explicitly empty list stays empty at full privilege" \
+  present "        namespaces: \[\]" \
   --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
   --set 'config.operator.secretsWatcher.namespaces=null'
-expect-refusal "and under low_privilege" \
-  "config.operator.secretsWatcher.namespaces is set to an empty list" \
+expect-manifest "and is not emitted twice" \
+  absent "          - union\$" \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set 'config.operator.secretsWatcher.namespaces=null'
+expect-role-resource "and the cluster-wide pod list it makes is granted" \
+  present union-operator-work-ns-cluster-read pods \
+  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set 'config.operator.secretsWatcher.namespaces=null'
+# Under low_privilege nothing cluster-wide is granted, so the pod list is refused and the
+# operator exits at startup. The chart refuses the combination instead.
+expect-refusal "under low_privilege an explicitly empty list is refused" \
+  "config.operator.secretsWatcher.namespaces is set to an empty list under low_privilege" \
   --set config.operator.secretsWatcher.enabled=true \
   --set 'config.operator.secretsWatcher.namespaces=null'
 # With the watcher off the list is never read, so it must not block the render.
