@@ -1,5 +1,62 @@
 # controlplane — Release Notes
 
+## 2026.9.6
+
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Artifacts: typed partitions on artifact versions, with a monthly-partitioned
+  table behind them ([cloud#18522](https://github.com/unionai/cloud/pull/18522)).
+- Executions: run notifications no longer ride on Postgres `NOTIFY`; the
+  inline payload is capped and sized with `>=` ([cloud#18547](https://github.com/unionai/cloud/pull/18547),
+  [cloud#18544](https://github.com/unionai/cloud/pull/18544), [cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- `Inputs.context` is excluded from the root action cache key ([cloud#18567](https://github.com/unionai/cloud/pull/18567)).
+- Identity: cache prefetchers start staggered to avoid synchronized provider
+  enumerations ([cloud#18553](https://github.com/unionai/cloud/pull/18553)).
+- Console: runs can be searched by run ID as well as task name ([cloud#18395](https://github.com/unionai/cloud/pull/18395)).
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+
+## 2026.9.4
+
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Runs search matches run name as well as task name. The server accepts a
+  synthetic `search` run filter (`run_name` OR `task_name`), so searching a run
+  ID on the Runs page now finds it ([cloud#18391](https://github.com/unionai/cloud/pull/18391)).
+- Tasks record their type at registration and `ListTasks` can filter on
+  `task_type`. This adds a `tasks.task_type` column and partial index via a
+  schema migration; tasks registered before the upgrade read as an empty type
+  until re-registered ([cloud#18510](https://github.com/unionai/cloud/pull/18510)).
+- `RunSpec` carries the org's task resource settings (requests and max),
+  resolved from Settings at `CreateRun` time, including re-runs and recovers.
+  When no scope sets task resource settings, behavior is unchanged
+  ([cloud#18479](https://github.com/unionai/cloud/pull/18479)).
+- Apps can be served on multiple dataplanes. A new `app_dns_strategy` setting
+  (`shared` by default, preserving today's single tenant-wide app URL) or
+  `dataplane_specific` for per-cluster app URLs, plus cluster pinning for app
+  placement ([cloud#17548](https://github.com/unionai/cloud/pull/17548)).
+- Flyteadmin proxies the OAuth device authorization endpoint (`/auth/device`)
+  the same way it proxies `/auth/token`, so device-flow logins work with
+  non-default identity providers ([cloud#18436](https://github.com/unionai/cloud/pull/18436),
+  [flyte#1013](https://github.com/unionai/flyte/pull/1013)).
+- `DeleteCluster` / `UndeleteCluster` authorize against the org, so a cluster
+  record whose authz resource was already removed during teardown can still be
+  deleted; undelete restores the resource ([cloud#18491](https://github.com/unionai/cloud/pull/18491)).
+- Console: Metrics tab readability fixes for multi-pod, multi-GPU actions;
+  created-by / updated-by avatars on queues and clusters; Run details sidebar
+  refactor ([cloud#18415](https://github.com/unionai/cloud/pull/18415), [cloud#18494](https://github.com/unionai/cloud/pull/18494),
+  [cloud#18450](https://github.com/unionai/cloud/pull/18450)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
 ## 2026.9.3
 
 `version` moves `2026.9.1` → `2026.9.3` and `appVersion` moves `2026.9.1` →

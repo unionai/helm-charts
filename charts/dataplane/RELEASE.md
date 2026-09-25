@@ -1,11 +1,135 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.6
 
-> **Release pending** — these changes are not yet cut to a version. At the next
-> release, rename this heading to `## <version>` and bump `Chart.yaml`.
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`.
 
-### Ship the uvol mount broker (Union Volumes on self-managed)
+### Dataplane images
+
+- uvol mount broker: serves a node-shared chunk cache to task pods as
+  `volumes.union.ai/kind=node-cache` ([cloud#18524](https://github.com/unionai/cloud/pull/18524)).
+  This is the image half of the chart's `uvolMountBroker.nodeCache` (below): a
+  2026.9.4 broker ignores the attribute, so the feature only works from this
+  image on.
+- Operator: App status conditions are capped so oversized messages no longer
+  break the inline status notification ([cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- Operator: fleet pool registries are rendered and the configured image
+  endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
+
+- uvol mount broker: mounts its published channel on first use rather than at
+  NodePublish, and gives that mount the pod's own SELinux label
+  ([cloud#18583](https://github.com/unionai/cloud/pull/18583)). Without this a
+  task pod on an SELinux-enforcing node cannot start: the container runtime
+  relabels the CSI target, walks into a premount nothing is serving yet, and
+  fails. Union Volumes have been unusable on those nodes since the broker
+  shipped in 2026.9.2.
+- Propeller webhook: can give a volume-mounting container an SELinux type it is
+  allowed to receive the broker's channel descriptor with
+  ([flyte#1017](https://github.com/unionai/flyte/pull/1017)). Off unless
+  enabled; see the `selinuxTaskPods` section below for what the type grants and
+  why it is not on by default.
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+Included submodule changes:
+[Flyte v1](https://github.com/unionai/flyte/compare/8b7a3dd29511...273cb0d62544)
+— this is where the webhook above comes from;
+[Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
+
+### Knative autoscaler resources
+
+The vendored Knative autoscaler now defaults to `limits: 4000m` CPU / `2000Mi`
+memory and `requests: 250m` / `128Mi` (was `1000m` / `1000Mi` and `100m` / `100Mi`),
+via `gateway.components.autoscaler.containers.autoscaler.resources`. It runs one
+decider per revision, including scaled-to-zero ones; on a dataplane with many
+revisions the 1-CPU cap throttled it until the liveness probe killed it in a
+loop, and no new Knative revision could become ready. Mirrors cloud#18669.
+
+### SELinux type for volume-mounting task pods (`selinuxTaskPods`)
+
+Off by default. On a node that enforces SELinux — Bottlerocket, so EKS Auto
+Mode, and RHCOS/OpenShift — the mount broker passes the task pod a `/dev/fuse`
+descriptor from a privileged domain, the kernel refuses a confined container
+that descriptor, and the volume client dies on the empty message. Nothing in
+the pod can recover it, so Union Volumes cannot be mounted there at all.
+
+Enabling this registers a propeller webhook that gives an SELinux type only to
+the containers that mount a broker channel volume, and only in pods carrying
+`volumes.union.ai/channel` (set by `flyteplugins-union`'s `allow_volumes()`).
+It never overrides a type the pod asked for itself.
+
+Turn it on only where the nodes need it:
+
+```yaml
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true
+config:
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
+```
+
+Read before enabling: the type moves the task container into a subject set
+that Bottlerocket's policy allows to write the node's API socket, which the
+unprivileged set is explicitly denied. A task pod gets no hostPath and so
+cannot reach that socket, but the permission is real and this is a
+security-team conversation, not a values change. Pod Security Admission's
+*baseline* profile also rejects the resulting pod, and a mutating webhook
+cannot exempt itself.
+
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
+
+On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
+broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for
+it (`allow_volumes(shared_node_cache=True)` in flyteplugins-union) as an inline
+CSI volume tagged `volumes.union.ai/kind=node-cache`. Pods of one namespace on a
+node then share one chunk cache; other namespaces never see it; and — the point
+— the task pod carries no hostPath and no privilege: the bind mount is done by
+this DaemonSet. A pod that asks on a node without it fails `NodePublish` with
+`FailedPrecondition` rather than mounting anything privileged. Put the path on
+the node's fastest local disk and size it; each client evicts against its own
+budget. Pods of one namespace need not share a uid: the plugin mounts the
+shared directory with `--cache-mode 0666`. Verified end to end on dogfood-1
+(cloud#18524).
+
+## 2026.9.4
+
+`version` and `appVersion` move `2026.9.3` → `2026.9.4`.
+
+### Dataplane images
+
+- Billing: GPU usage from user sidecars that request GPUs without an
+  accelerator type is now reported as billable usage (previously dropped).
+  Accelerator labels are aligned with the Flyte SDK ([cloud#18484](https://github.com/unionai/cloud/pull/18484)).
+- Operator-side mirrors of the chart's Knative Serving 1.23.0 gateway and
+  `KUBERNETES_MIN_VERSION` changes below ([cloud#18409](https://github.com/unionai/cloud/pull/18409),
+  [cloud#18486](https://github.com/unionai/cloud/pull/18486)).
+
+Image source: [cloud changes since release/2026.9.3](https://github.com/unionai/cloud/compare/release/2026.9.3...release/2026.9.4).
+Included submodule changes: [Flyte v1](https://github.com/unionai/flyte/compare/4011364765dfea33d6431db11afdffef01ab1609...8b7a3dd295114f10cbce4b7d4e7c8b06ca171d29)
+and [Flyte v2](https://github.com/flyteorg/flyte/compare/a2aec3f7210f450b35b34b9e924f3cef9f60ee2f...96825115189e6b51e9be48988adab79bdaef5974).
+
+### Vendored Knative Serving gateway 1.16.0 → 1.23.0
+
+The default vendored gateway (`gateway.enabled: true`) moves to Knative Serving
+**1.23.0**: serving image digests, the vendored Serving CRDs (`crds/dataplane/`),
+and version labels (#588). `gateway.config.features.kubernetes.podspec-volumes-csi`
+is now `enabled`, so App serving pods can mount Union Volumes via inline CSI. The
+legacy `knative-operator` subchart (`gateway.enabled: false`) is unchanged.
+
+This skips Knative 1.17–1.22 as a direct manifest/CRD replacement; validate on a
+canary dataplane before fleet rollout. The 1.23 CRDs are additive supersets of
+1.16 (apply via ArgoCD or `kubectl apply --server-side -f crds/dataplane/`). See
+`charts/MIGRATION.md`.
+
+The `knative-serving-core` ClusterRole also regains upstream's `*/scale` patch
+rule, without which the 1.23 autoscaler cannot scale App revisions to or from
+zero (#593).
+
+### Ship the uvol mount broker (Union Volumes on self-managed) (#585)
 
 New `uvolMountBroker` DaemonSet, ConfigMap and cluster-scoped `CSIDriver`
 (`volumes.union.ai`), disabled by default — set `uvolMountBroker.enabled: true`
@@ -56,7 +180,7 @@ Operator notes:
 - The cpu request is a scheduling-latency knob, not a utilization estimate: the
   broker sits on the task `open()` path. There is deliberately no cpu limit.
 
-### Eager API key bootstrap now enabled by default
+### Eager API key bootstrap now enabled by default (#482)
 
 `config.operator.apiKey.enabled` now defaults to `true`. When enabled, the dataplane
 operator mints the `EAGER_API_KEY` on the control plane and writes it to the task-pod
@@ -73,7 +197,7 @@ default.
 > `identity.apiKeyOverrides` (system key `EAGER_API_KEY`) — otherwise the bootstrap
 > fails. To opt a dataplane out entirely, set `config.operator.apiKey.enabled: false`.
 
-### Knative Serving Kubernetes min-version gate relaxed
+### Knative Serving Kubernetes min-version gate relaxed (#594)
 
 The vendored Knative Serving 1.23 gateway hard-requires Kubernetes ≥ 1.34 at startup and otherwise
 crash-loops. This release sets `KUBERNETES_MIN_VERSION=v1.32.0` on the serving components

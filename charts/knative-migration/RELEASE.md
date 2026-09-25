@@ -2,6 +2,16 @@
 
 `appVersion` tracks the migration tool's own `0.1.0`, not the control-plane / data-plane image tag.
 
+## 2026.9.6
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes.
+
+## 2026.9.4
+
+Lockstep chart-only release with the `controlplane` / `dataplane` charts.
+`appVersion` stays `0.1.0`; no migration-tool or template changes.
+
 ## 2026.9.3
 
 Lockstep chart-only release with the dataplane billing and image update (#590).
