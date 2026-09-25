@@ -25,6 +25,7 @@ from kubernetes.client import (
     V1EnvVarSource,
     V1ObjectFieldSelector,
     V1ConfigMapKeySelector,
+    V1SecretKeySelector,
     V1Volume,
     V1ProjectedVolumeSource,
     V1VolumeProjection,
@@ -58,6 +59,7 @@ build_image_task = ContainerTask(
     name="build-image",
     cache=flyte.Cache(behavior="auto"),
     image=f"{union_image_name_prefix}/build-image:{app_version}",
+    retries=2,
     inputs={"spec": str, "context": str, "target_image": str},
     outputs={"fully_qualified_image": str},
     pod_template=flyte.PodTemplate(
@@ -92,11 +94,28 @@ build_image_task = ContainerTask(
                             ),
                         ),
                         V1EnvVar(
+                            name="PROJECT",
+                            value_from=V1EnvVarSource(
+                                field_ref=V1ObjectFieldSelector(
+                                    field_path="metadata.labels['project']"
+                                )
+                            ),
+                        ),
+                        V1EnvVar(
+                            name="DOMAIN",
+                            value_from=V1EnvVarSource(
+                                field_ref=V1ObjectFieldSelector(
+                                    field_path="metadata.labels['domain']"
+                                )
+                            ),
+                        ),
+                        V1EnvVar(
                             name="UNION_BUILDKIT_URI",
                             value_from=V1EnvVarSource(
                                 config_map_key_ref=V1ConfigMapKeySelector(
                                     name=config_map_name,
                                     key="buildkit-uri",
+                                    optional=True,
                                 )
                             ),
                         ),
@@ -128,6 +147,26 @@ build_image_task = ContainerTask(
                                 config_map_key_ref=V1ConfigMapKeySelector(
                                     name=config_map_name,
                                     key="enable-image-optimization",
+                                    optional=True,
+                                )
+                            ),
+                        ),
+                        V1EnvVar(
+                            name="DEPOT_PROJECT_ID",
+                            value_from=V1EnvVarSource(
+                                secret_key_ref=V1SecretKeySelector(
+                                    name="depot-token",
+                                    key="DEPOT_PROJECT_ID",
+                                    optional=True,
+                                )
+                            ),
+                        ),
+                        V1EnvVar(
+                            name="DEPOT_TOKEN",
+                            value_from=V1EnvVarSource(
+                                secret_key_ref=V1SecretKeySelector(
+                                    name="depot-token",
+                                    key="DEPOT_TOKEN",
                                     optional=True,
                                 )
                             ),
