@@ -25,7 +25,7 @@ kinds of grant have no destination here:
                                    namespaces, so neither fits.
   a role with no rules to carry    clusterresourcesync's system:auth-delegator
                                    ClusterRoleBinding references a built-in role.
-  objects that outlive nothing     the pre-upgrade hooks in common/ and webhook/,
+  hooks Helm deletes itself        the pre-upgrade hooks in common/ and webhook/,
                                    which carry hook-delete-policy.
   a verb with no slot              the OpenShift SCC Roles for imagebuilder and the
                                    Kourier gateway, both via openshift.sccRbac.
@@ -107,8 +107,8 @@ project/domain, where user tasks run).
   cluster-read          ClusterRole  ClusterRoleBinding   no      unchanged
   cluster-write         ClusterRole  ClusterRoleBinding   no      unchanged
 
-Under full privilege, work-ns is never bound in the release namespace. Under
-low_privilege it is, because there the release namespace is the work namespace.
+Under full privilege, work-ns binds only outside the release namespace. Under
+low_privilege it binds there too, because the release namespace is the work namespace.
 
 Pooling: work-ns is the one pooled slot, and it is pooled for a reason that applies to
 no other. Its bindings are per work namespace, and not all of those namespaces exist
@@ -458,7 +458,7 @@ namespace clusterresourcesync provisions. Its consumer is
 clusterresourcesync/configmap.yaml, which keys it `ab_work_ns_binding` so it sorts
 between a_namespace and b_default_service_account (`_` is 0x5F, `b` is 0x62).
 
-That ordering is real, not decorative: the sync lists the mounted template directory
+That ordering matters: the sync lists the mounted template directory
 with a call that returns entries sorted by filename and applies them sequentially in
 one pass, so the key decides when this object is created relative to the others. Keep
 it directly after the Namespace, so a work namespace is reachable by union's

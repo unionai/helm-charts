@@ -179,7 +179,7 @@ chart does not set it.
 component, carrying that component's rules alone.
 
 **A pooled slot is one role bound to every ServiceAccount that declares into it.** The
-consequence is worth stating plainly: the pooled role holds the *union* of every declaring
+consequence: the pooled role holds the *union* of every declaring
 component's rules, so each declarer effectively holds every other declarer's rules in that
 destination. Splitting identities does not split this. `leaseworker` and `flytepropeller`
 each declare a resource wildcard into `work-ns`, so wherever either is enabled every other
@@ -262,9 +262,9 @@ one is that RoleBinding, with `roleRef` pointing at the ClusterRole of the same 
 **Its subjects are not every Union identity.** The chart binds only the accounts that
 declare into the `work-ns` slot, and which those are depends on what is enabled: under split
 identities with apps off it is four, and zero-trust app serving takes it to seven. Never
-compose the list by hand. Copy the subject list from a chart-rendered binding (`helm template --set
+compose the list by hand. Copy it from a chart-rendered binding instead — `helm template --set
 namespaces.enabled=true`, or the `ab_work_ns_binding.yaml` entry in `clusterresourcesync`'s
-ConfigMap) rather than composing it yourself. Adding accounts that do not declare into the
+ConfigMap. Adding accounts that do not declare into the
 slot hands them the pooled role's full write set in every work namespace — including
 `clusterresourcesync`, which is deliberately given `bind` on this role precisely so it can
 hand it out *without* holding it.
@@ -300,7 +300,7 @@ ResourceQuotas *into a namespace on the sync that creates it*, holding no RoleBi
 there yet, so those rules cannot be namespaced. Its `namespaces` rule gains `delete` only
 under `clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace: true`.
 
-**What that row still leaves, stated plainly.** Its `rolebindings` write is cluster-wide —
+**What that row still leaves.** Its `rolebindings` write is cluster-wide —
 RBAC has no way to confine a namespaced write to a subset of namespaces — and
 `<release-ns>-work-ns` is a resource-wildcard role. So a compromised `clusterresourcesync`
 could plant a `<release-ns>-work-ns` RoleBinding in a namespace this release does not own,
@@ -314,7 +314,7 @@ ServiceAccount already in it. Bound into a namespace that holds a stronger ident
 Read the pin as closing the direct substitution only.
 
 This is the accepted cost of provisioning namespaces at runtime, not an oversight. There is
-one way to not pay it and one way to bound it. **To not pay it,** `clusterresourcesync` has to
+one way to avoid it and one way to bound it. **To avoid it,** `clusterresourcesync` has to
 be off, with namespace provisioning and project mapping handled by something you trust.
 Pre-seeding with `namespaces.enabled: true` and `namespaces.static` is not enough on its own:
 static namespaces are a pre-seeded *subset*, so projects registered after install are still
@@ -338,7 +338,7 @@ with one apparent exception that is not one: `clusterresourcesync` is also bound
 built-in `system:auth-delegator` ClusterRole, which conveys `create` on `tokenreviews` and
 `subjectaccessreviews`. Those are read-only authorization checks that mutate no state.
 
-Note that `low_privilege` is not a whole-chart namespace boundary in either direction: the
+`low_privilege` is not a whole-chart namespace boundary in either direction: the
 upgrade hook's ClusterRole is created in both modes, as are opencost's and metrics-server's
 grants when those subcharts are enabled, and the `knative-operator` subchart — on by
 default — ships a cluster-scoped set of its own. A namespace-confined install identity is
@@ -389,7 +389,7 @@ because fluentbit is a DaemonSet on every node.
 
 Splitting identities is what breaks that, not renaming: at `commonServiceAccount.enabled:
 false` the slot bindings name the dedicated accounts, so the `union-system` ServiceAccount
-fluentbit still gets — the pin keeps the name — is the subject of no binding at all and holds
+that fluentbit still gets — the pin keeps the name — is the subject of no binding at all and holds
 nothing. If you want it isolated while keeping the shared account, set that key to a
 dedicated name and provision the account yourself.
 

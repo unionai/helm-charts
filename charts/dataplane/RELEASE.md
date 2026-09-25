@@ -125,13 +125,13 @@ canary dataplane before fleet rollout. The 1.23 CRDs are additive supersets of
 1.16 (apply via ArgoCD or `kubectl apply --server-side -f crds/dataplane/`). See
 `charts/MIGRATION.md`.
 
-The autoscaler also gains the scale-subresource patch rule, without which the 1.23
-autoscaler cannot scale App revisions to or from zero (#593). Upstream restored
-this on the vendored `knative-serving-core` ClusterRole as `apiGroups: ["*"]` on
-`"*/scale"`; this chart no longer vendors that role, and declares it as
-`apps/deployments/scale` `patch` in the autoscaler's `work-ns` slot — the
-revision's namespace is where the KPA patches, and the revision reconciler only
-ever names an `apps/v1` Deployment as the scale target.
+The autoscaler also gains the scale-subresource patch rule it needs to scale App
+revisions to and from zero (#593). Upstream restored this on the vendored
+`knative-serving-core` ClusterRole as `apiGroups: ["*"]` on `"*/scale"`. This chart no
+longer vendors that role. It declares the rule instead as `apps/deployments/scale`
+`patch` in the autoscaler's `work-ns` slot — the revision's namespace is where the KPA
+patches, and the revision reconciler only ever names an `apps/v1` Deployment as the
+scale target.
 
 ### Ship the uvol mount broker (Union Volumes on self-managed) (#585)
 
@@ -493,7 +493,7 @@ Image changes (`2026.8.3` → `2026.8.5`):
 
   **Every `low_privilege: true` deployment is namespace-scoped exactly as before**, and
   pre-seeds nothing regardless of `namespaces.enabled`. Only the
-  `namespaces.enabled: false` + `low_privilege: false` combination changes behaviour; see
+  `namespaces.enabled: false` + `low_privilege: false` combination changes behavior; see
   Migration.
 
 - **`commonServiceAccount.enabled` is now honored in every privilege mode.** The
@@ -516,7 +516,7 @@ Image changes (`2026.8.3` → `2026.8.5`):
   It does not change `Role` versus `ClusterRole` scope, but it does partition the existing
   grants across identities: the shared `union-system` account is the subject of every
   component's binding at once, where per-component accounts each hold only their own. A
-  compromised workload can no longer exercise the other components' grants. That is a real
+  compromised workload can now exercise only its own component's grants. That is a real
   reduction in each workload's effective permissions — plan the cloud-side bindings before
   flipping it, not after.
 
@@ -634,8 +634,8 @@ namespace. Because it is never bound in the release namespace at `low_privilege:
 in a work namespace stops at that namespace's edge. Under `low_privilege: true` the release
 namespace *is* the work namespace, so `union-work-ns` is a plain `Role` bound there, as before.
 
-That is a claim about `union-work-ns`, not about everything a given ServiceAccount can do. RBAC
-unions every binding a subject holds, so a component's effective permissions are the sum of its
+That claim is scoped to `union-work-ns` alone. RBAC unions every binding a subject holds, so a
+component's effective permissions are the sum of its
 slot roles *and* any role outside the slot model. One such grant exists at stock values: with
 `proxy.secretManager.enabled: true` and `type: K8s` (both defaults), the proxy holds `get`,
 `list`, `create`, `update` and `delete` on Secrets in `proxy.secretsNamespace`, which defaults
@@ -760,10 +760,10 @@ From the operator:
 - `namespaces` and `nodes` left its write rule. Both are cluster-scoped, so the namespaced
   `Role` that carried them under `low_privilege: true` never conveyed them at all. At
   `low_privilege: false` the operator keeps cluster-wide `namespaces: [list, watch]` while
-  `imageBuilder.enabled` (the default). `nodes` is now read-only and only where the node
+  `imageBuilder.enabled` (the default). `nodes` is now read-only, and only where the node
   informer actually runs — `billing.model: Legacy` or `Shadow`, with
   `disableClusterPermissions` unset — so the default `ResourceUsage` install has no `nodes`
-  grant at all, and neither has write on either.
+  grant at all. Write is gone from both resources in every mode.
 
   The `nodes` read is carried by a new `<release-namespace>-operator-cluster-read`
   `ClusterRole` and its `ClusterRoleBinding`, not by `-operator-work-ns-cluster-read`: the
@@ -1012,15 +1012,15 @@ is the `knative-operator` path (`gateway.enabled: false`), which installs its ow
   The effective grant does not change at the `commonServiceAccount.enabled: true` default, since
   `<release-ns>-work-ns` already carries `leaseworker`'s and `flytepropeller`'s resource wildcard.
 
-  **This is not the last cluster-wide Secret read, or even the widest.** One remains,
-  unchanged here and not narrowable today: the pod `webhook`, whose controller-runtime Secret
-  cache is unscoped unless propeller's `limit-namespace` is set — and it reads the same config
+  **A wider cluster-wide Secret read remains, untouched by this release and not narrowable
+  today: the pod `webhook`.** Its controller-runtime Secret cache is unscoped unless propeller's
+  `limit-namespace` is set — and it reads the same config
   key propeller does, so it cannot be scoped without pinning propeller's own informer. It
   holds `list`/`watch`, which returns every Secret's contents and enumerates them besides, so
   it is broader than the named `get` this change removed. If you are auditing what this
   release still exposes, that is the row to read; it is listed with its removal condition in
   [docs/rbac-union.md](docs/rbac-union.md#where-a-secrets-rule-belongs).
-  `knative-kourier`'s is gone — see the `net-kourier` bullet above.
+  `net-kourier`'s is gone — see the `net-kourier` bullet above.
 
 - **The work-namespace slot is pooled, and that cuts both ways.** Each of the five also
   receives every other declarer's rules in that one role, so `commonServiceAccount.enabled:
@@ -1038,8 +1038,9 @@ is the `knative-operator` path (`gateway.enabled: false`), which installs its ow
 ### Third-party subchart RBAC
 
 The chart now writes prometheus and kube-state-metrics RBAC itself (both pinned to
-`rbac.create: false`), so `low_privilege` decides it in both directions instead of only under
-`low_privilege`. Rationale and per-subchart detail: [docs/rbac.md](docs/rbac.md).
+`rbac.create: false`), so `low_privilege` governs it in both directions — narrowing to one
+namespace when true, widening to cluster-wide read when false. Rationale and per-subchart
+detail: [docs/rbac.md](docs/rbac.md).
 
 Two broken metrics families are fixed, both under `low_privilege`:
 

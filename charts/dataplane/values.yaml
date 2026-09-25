@@ -151,8 +151,8 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 clusterresourcesync:
   # -- Enable or disable the syncresources service. It creates the per-project/domain
   # namespaces and RBAC that task pods land in, driven by the top-level
-  # namespace_mapping. Required when low_privilege is false unless something else
-  # provisions those namespaces. Not rendered at all when low_privilege is true.
+  # namespace_mapping. The chart renders it only when low_privilege is false, where
+  # it is required unless something else provisions those namespaces.
   enabled: false
   # -- Override service account values for the syncresources service
   serviceAccount:
@@ -161,9 +161,9 @@ clusterresourcesync:
     # -- Additional annotations for the syncresources service account
     annotations: {}
   # -- Extra ClusterRole rules for the syncresources ServiceAccount. The chart derives
-  # what the syncresources service needs for its own templates (namespaces,
+  # what the syncresources service needs for its own templates: namespaces,
   # serviceaccounts, resourcequotas and the role binding that lets Union's components
-  # reach each new namespace), so this list is only for resource types your own
+  # reach each new namespace. This list is only for resource types your own
   # `templates` or `additionalTemplates` entries create.
   #
   # Verbs must come from get, list, watch, create, update, patch, delete,
@@ -171,9 +171,10 @@ clusterresourcesync:
   # which switches off Kubernetes' own escalation-prevention check, and on
   # `serviceaccounts` it conveys `impersonate`.
   #
-  # Only applies with low_privilege: false and clusterresourcesync.enabled: true.
-  # Anything set here is granted cluster-wide, even with namespaces.enabled: true,
-  # because the namespaces it applies to are not all known when the chart renders.
+  # This list applies only with low_privilege: false and clusterresourcesync.enabled:
+  # true. Anything set here is granted cluster-wide, even with namespaces.enabled:
+  # true, because clusterresourcesync creates project namespaces at runtime, after
+  # the chart renders.
   clusterRoleRules: []
   # -- Additional pod labels for the syncresources service
   podLabels: { }
@@ -377,8 +378,8 @@ clusterresourcesync:
   #
   # The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"`.
   #
-  # The chart derives syncresources' grant from its own default templates only, so an
-  # example like the one above also needs its resource types added to `clusterRoleRules`:
+  # The chart derives syncresources' grant from its own default templates only. An
+  # example like the one above needs its resource types added to `clusterRoleRules`:
   #
   #   clusterRoleRules:
   #     - apiGroups: [""]
@@ -1838,9 +1839,9 @@ prometheus:
     create: false
 
   server:
-    # Fixed names, so health checks, opencost and ingress work without extra config and
-    # the ClusterRole does not collide with kube-prometheus-stack's. The fixed
-    # ClusterRole name means only one dataplane per cluster.
+    # The names are fixed, so health checks, opencost and ingress can rely on them
+    # directly, and the ClusterRole avoids colliding with kube-prometheus-stack's.
+    # The fixed name means only one dataplane per cluster.
     fullnameOverride: "union-operator-prometheus"
     clusterRoleNameOverride: "union-operator-prometheus"
     useExistingClusterRoleName: ""
@@ -1898,9 +1899,10 @@ prometheus:
         cpu: "1"
         memory: "1Gi"
 
-  # The complete scrape_configs list (Helm replaces lists wholesale): this self-scrape,
-  # plus extraScrapeConfigs below. Setting it replaces the subchart's default cluster-wide
-  # discovery jobs, which scrape every pod, service and node in the cluster.
+  # This key holds the complete scrape_configs list (Helm replaces lists wholesale):
+  # this self-scrape, plus extraScrapeConfigs below. Setting it replaces the
+  # subchart's default cluster-wide discovery jobs, which scrape every pod, service
+  # and node in the cluster.
   serverFiles:
     prometheus.yml:
       scrape_configs:
@@ -2114,12 +2116,12 @@ prometheus:
       - deployments     # kube_deployment_spec_replicas, kube_deployment_status_replicas_*
       - daemonsets      # kube_daemonset_status_number_unavailable
       - resourcequotas  # kube_resourcequota
-    # Collect from the release namespace only. Not derived from low_privilege: at
-    # low_privilege: false, layer examples/values.full-privilege.yaml to also collect
-    # from the namespaces task pods run in.
+    # Collect from the release namespace only. This key is not derived from
+    # low_privilege: at low_privilege: false, layer examples/values.full-privilege.yaml
+    # to also collect from the namespaces task pods run in.
     releaseNamespace: true
-    # `metricRelabelings` here has no effect. Filtering happens in the
-    # kube-state-metrics scrape job's metric_relabel_configs above.
+    # Filtering happens in the kube-state-metrics scrape job's metric_relabel_configs
+    # above. This key is ignored.
   prometheus-node-exporter:
     enabled: false
   prometheus-pushgateway:
@@ -2127,10 +2129,9 @@ prometheus:
 
 # -- Scopes the RBAC for Union's own workloads, plus the prometheus and
 #  kube-state-metrics subcharts, to a single namespace: a Role instead of a ClusterRole.
-#  Also gates app serving, namespace creation and priorityclasses. This limits the
-#  functionality though. It is not a whole-chart namespace boundary: the Helm hook
-#  cleanup job creates a ClusterRole either way, as do opencost and metrics-server when
-#  enabled.
+#  Also gates app serving, namespace creation and priorityclasses; the tradeoffs are
+#  listed below. It is not a whole-chart namespace boundary: the Helm hook cleanup job
+#  creates a ClusterRole either way, as do opencost and metrics-server when enabled.
 #
 # This is the chart's only privilege axis. When true, no namespaces are created by
 # any route: `namespaces` is not consulted, clusterresourcesync is not rendered, and
@@ -2171,10 +2172,10 @@ low_privilege: true
 #
 # `work-ns` is a ClusterRole only so its rules are written once. Every binding
 # the chart emits for it is a namespaced RoleBinding, and a RoleBinding pointing
-# at a ClusterRole confines that role's rules to the binding's own namespace — so
-# it grants nothing in a namespace where no binding exists. Under
-# `low_privilege: true` the release namespace is the work namespace, and work-ns
-# is a plain Role bound there.
+# at a ClusterRole confines that role's rules to the binding's own namespace, so
+# it grants access only where a binding exists. Under `low_privilege: true` the
+# release namespace is the work namespace, and work-ns is a plain Role bound
+# there.
 #
 # Under `low_privilege: false`, something must create that RoleBinding in each
 # work namespace:
@@ -2189,9 +2190,9 @@ low_privilege: true
 #     nothing else creates work namespaces, so the binding is yours to create.
 #
 # Whatever creates the binding also needs `bind` on the `<release-ns>-work-ns`
-# ClusterRole. Kubernetes refuses to let a caller grant permissions it does not
-# hold itself, so creating the RoleBinding fails without it even where every
-# other permission is in place.
+# ClusterRole. Kubernetes limits a caller to granting only the permissions it
+# already holds itself, so the RoleBinding needs that `bind` grant even where
+# every other permission is in place.
 #
 # The chart cannot verify that any of these happened, and does not try. If
 # nothing creates the binding, the install renders clean and task pods fail with
@@ -2212,15 +2213,15 @@ low_privilege: true
 # This is also the only flag under which *this chart* authors app-serving RBAC.
 # With it off, app serving runs through the `knative-operator` subchart instead,
 # which ships its own ClusterRoles, bindings and ServiceAccounts and is enabled
-# by default — so "no zero trust" means Knative RBAC you did not write here, not
-# no Knative RBAC.
+# by default. So with zero trust off, Knative still gets RBAC — just written by
+# the knative-operator subchart instead of this chart.
 #
 # Adding app serving on top (`apps.enabled: true`) also requires
-# `low_privilege: false`: the Knative binaries read cluster-wide no matter how
-# their RBAC is written, and the chart refuses the combination. At the
+# `low_privilege: false`: the Knative binaries read cluster-wide regardless of
+# how their RBAC is written, and the chart refuses the combination. At the
 # `low_privilege: true` default, set `apps.enabled: false` — you keep the Envoy
-# gateway, dataproxy and tunnel ingress and give up app serving. What app serving
-# is granted is documented on the `apps` key below; see also
+# gateway, dataproxy and tunnel ingress and give up app serving. The `apps` key
+# below documents what app serving is granted; see also
 # docs/rbac.md#app-serving.
 zero_trust:
   enabled: false
@@ -2231,10 +2232,10 @@ controlplaneNamespace: ""
 
 # -- Run every component under one ServiceAccount (`name` below).
 #
-# Setting this false creates one ServiceAccount per component, and each new name
+# Setting this false creates one ServiceAccount per component. Each new name then
 # needs its own workload-identity binding on the cloud side before those workloads
-# can authenticate (an IRSA trust-policy subject on AWS, a
-# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential).
+# can authenticate — an IRSA trust-policy subject on AWS, a
+# roles/iam.workloadIdentityUser member on GCP, or an Azure federated credential.
 # The full set of names it switches to:
 #
 #   operator          -> operator-system
@@ -2249,8 +2250,8 @@ controlplaneNamespace: ""
 # pins to `union-system` so the shared account is used by default. That pin wins
 # over the per-component fallback, so fluentbit keeps running as `union-system`
 # unless you also set `fluentbit.serviceAccount.name` to a dedicated name. Its
-# `rbac.create` is false here, so that account holds no Kubernetes permissions —
-# only whatever cloud role is bound to it.
+# `rbac.create` is false here, so that account's only permissions come from
+# whatever cloud role is bound to it.
 #
 # It buys identity separation for cloud IAM; it is not a privilege boundary, and it
 # is independent of low_privilege — honored in both privilege modes.
@@ -2444,7 +2445,7 @@ tunnelService:
 # namespace and Kubernetes authorizes them as cluster-scope checks. No way of
 # writing the RBAC avoids that. Set both to run app serving.
 #
-# What that costs you, under `zero_trust.enabled: true`: six workloads grouped
+# Under `zero_trust.enabled: true`, app serving costs you six workloads grouped
 # into five components, each with its own `<release-ns>-knative-<component>-cluster-read`
 # ClusterRole. The five ClusterRoles exist in both identity modes; the five
 # *ServiceAccounts* only appear at `commonServiceAccount.enabled: false`, since
@@ -2461,10 +2462,10 @@ tunnelService:
 # namespace's finalizers.
 #
 # Everything else these binaries need is namespaced. Their release-namespace
-# grants are per-binary Roles, `<release-ns>-<component>-comp-ns-*`; their work
-# namespace grants land in the shared `<release-ns>-work-ns` role every other
-# component uses — including the controller's serviceaccounts and secrets reads
-# for image digest resolution, which are direct Gets in the Revision's own
+# grants are per-binary Roles, `<release-ns>-<component>-comp-ns-*`. Their
+# work-namespace grants land in the shared `<release-ns>-work-ns` role every
+# other component uses — including the controller's serviceaccounts and secrets
+# reads for image digest resolution, which are direct Gets in the Revision's own
 # namespace and so ride `<release-ns>-work-ns`, not a cluster role.
 # That one role being shared means each of the five also holds every other
 # declarer's rules in work namespaces, so `commonServiceAccount.enabled: false`
@@ -2473,8 +2474,8 @@ tunnelService:
 # Does NOT gate the Envoy gateway, which serves the static dataplane routes
 # zero trust depends on, nor the `knative-operator` subchart, which has its own
 # `knative-operator.enabled` condition evaluated by Helm at parse time. Turn the
-# subchart off on the ZERO-TRUST path, where this chart renders the Knative
-# workloads itself; leave it on otherwise, since it is what reconciles the
+# subchart off under `zero_trust.enabled: true`, where this chart renders the
+# Knative workloads itself. Leave it on otherwise, since it reconciles the
 # `KnativeServing` resource into workloads on the operator path.
 apps:
   enabled: null
@@ -2719,10 +2720,10 @@ ingress-nginx:
   enabled: false
   fullnameOverride: "dataplane-nginx"
 
-  # Confines the controller to the release namespace, where all of this chart's endpoints
-  # live, instead of reading secrets, configmaps, pods, endpoints and nodes cluster-wide.
-  # An Ingress in another namespace is then never reconciled; to serve one, set this and
-  # controller.scope.enabled below both to false. They must move together.
+  # This confines the controller to the release namespace, where all of this chart's
+  # endpoints live, instead of reading secrets, configmaps, pods, endpoints and nodes
+  # cluster-wide. An Ingress in another namespace stays unreconciled unless you set
+  # this and controller.scope.enabled below both to false — they must move together.
   # See docs/rbac.md.
   rbac:
     scope: true
@@ -2799,8 +2800,8 @@ namespaces:
   # does not change privilege scope — that is `low_privilege` alone — and is ignored
   # entirely under `low_privilege: true`, where work runs in the release namespace.
   #
-  # Leave it `false` when the namespaces are managed outside this chart, so Helm
-  # never takes ownership of them.
+  # Leave it `false` when the namespaces are managed outside this chart, so
+  # ownership of them stays outside Helm.
   enabled: false
   # -- Labels to set on every Namespace this chart creates. Applies only to the
   # `static` list below; namespaces clusterresourcesync creates at runtime are
@@ -2828,9 +2829,9 @@ namespaces:
   # own the namespace lifecycle outright.
   annotations:
     helm.sh/resource-policy: keep
-  # -- Work namespaces known at render time. Not the full set when `enabled` is
-  # false: clusterresourcesync creates one per project/domain as projects are
-  # registered, and those names are not known in advance.
+  # -- Work namespaces known at render time. This set is partial when `enabled` is
+  # false: clusterresourcesync creates one per project/domain as projects register,
+  # and those names become known only then.
   static:
     - flytesnacks-development
     - flytesnacks-staging
@@ -3326,18 +3327,17 @@ gateway:
       # rejects the revision without this flag ("Volume Mount Propagation support is
       # disabled"). Pairs with podspec-volumes-csi for allow_volumes() serving.
       kubernetes.podspec-volumes-mount-propagation: "enabled"
-      # Pinned off, and left off deliberately, because whether it could work at
-      # all depends on the identity mode. Dry-run validation makes the Knative
+      # This is pinned off deliberately, because whether it could work at all
+      # depends on the identity mode. Dry-run validation makes the Knative
       # webhook create a throwaway Pod in the app's namespace. At the default
       # shared account the webhook runs as `union-system`, which the pooled
       # work-ns RoleBinding grants `pods: create` in every work namespace, so the
       # dry-run request is authorized there. Under `commonServiceAccount.enabled:
       # false` the webhook has its own identity and declares into no
       # work-namespace slot, so every dry-run fails Forbidden. `enabled` runs the
-      # check for every Knative Service or Configuration submitted; `allowed`
-      # only for those that opt in with an annotation. Setting either
-      # still renders — the chart does not refuse it — but a feature that works in
-      # one identity mode and not the other is not one to turn on.
+      # check for every Knative Service or Configuration submitted; `allowed` runs
+      # it only for those that opt in with an annotation. Setting either still
+      # renders, but a feature that works in only one identity mode should stay off.
       kubernetes.podspec-dryrun: "disabled"
     kourier: {}
     autoscaler: {}

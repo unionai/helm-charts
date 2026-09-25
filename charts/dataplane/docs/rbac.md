@@ -14,8 +14,8 @@ namespace. Prometheus and kube-state-metrics get namespaced Roles and lose the m
 only exist cluster-wide: no Task-Level Monitoring, no `kube_node_*`, less accurate cost data.
 The full list is on the `low_privilege` key in `values.yaml`.
 
-`low_privilege: false` trades that back: the observability components may read cluster-wide.
-Read only — never writes and never secrets.
+`low_privilege: false` trades that back: the observability components may read cluster-wide,
+never write, and never touch secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
 along with these two subcharts, and gates [app serving](#app-serving), namespace creation and
@@ -29,8 +29,8 @@ that access — layer `examples/values.full-privilege.yaml` for that, below.
 ## Why we write prometheus and kube-state-metrics RBAC ourselves
 
 Helm values are static, so a subchart can't see `low_privilege`. Leaving RBAC to those two
-subcharts would mean a second values file that has to move with the flag every time, and
-forgetting it fails quietly. So both are pinned to `rbac.create: false` and
+subcharts would mean a second values file that has to move with the flag every time, with
+nothing at render time to catch it falling out of sync. So both are pinned to `rbac.create: false` and
 `templates/prometheus/rbac.yaml` writes the grant instead — a template can branch, a value
 can't. `templates/prometheus/validate.yaml` stops the render if either subchart's RBAC is
 switched back on.
@@ -146,8 +146,8 @@ hit this guard and fail the render rather than quietly matching.
 ## Notes
 
 **prometheus.** Read-only on services, endpoints, pods, ingresses, configmaps and
-endpointslices, plus nodes and the node metrics endpoints at `low_privilege: false`. No
-secrets and no writes, either way.
+endpointslices, plus nodes and the node metrics endpoints at `low_privilege: false`. It never
+reads secrets and never writes, either way.
 
 Cluster-scoped resources are dropped from the namespaced Role rather than carried over.
 Naming them there is legal but never matches, which is how `kubernetes-cadvisor` spent three
@@ -187,9 +187,9 @@ collector fails the render, and so does a cluster-scoped one under `low_privileg
 [What the flag can't reach](#what-the-flag-cant-reach) for the collection scope.
 
 The binding names kube-state-metrics' real ServiceAccount, worked out from the subchart's
-own naming rules. The hand-written binding it replaced named one that didn't exist, for
-every release name — no `kube_*` metrics for three months anywhere the chart's own RBAC was
-used, which until now meant every `low_privilege` install.
+own naming rules. The hand-written binding it replaced named a ServiceAccount that didn't
+exist, for every release name. No release collected `kube_*` metrics for three months
+anywhere the chart's own RBAC ran — until now, that meant every `low_privilege` install.
 
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in

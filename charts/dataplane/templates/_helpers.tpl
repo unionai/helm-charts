@@ -1163,8 +1163,8 @@ Emits "true"/"" rather than "true"/"false" so callers can write
 
 Defaults to off, because low_privilege is on by default and the two cannot both be
 set (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
-literal false — a literal counts as set, which would stop the deprecated
-serving.enabled from ever being read.
+literal false — a literal counts as set, so it would always win over the deprecated
+serving.enabled.
 */}}
 {{- define "apps.enabled" -}}
 {{- $apps := .Values.apps | default dict -}}
