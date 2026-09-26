@@ -2668,13 +2668,19 @@ else
   echo "  FAILED   the max-features zero-trust render: $(grep -o 'Error:.*' "${MAX_ZT}" | head -c 300)"
 fi
 
+audit_status=0
 scope_report=$(cd "${SCRIPT_DIR}/.." && uv run --quiet python tests/lib/rbac_scope_audit.py \
   --allowlist "${SCOPE_ALLOWLIST}" --chart "${CHART}" --fixtures "${SCRIPT_DIR}/values" \
-  --namespace "${NAMESPACE}" "${scope_renders[@]}" 2>&1) || true
+  --namespace "${NAMESPACE}" "${scope_renders[@]}" 2>&1) || audit_status=$?
 echo "${scope_report}"
 checks=$((checks + $(grep -cE '^  (ok|FAILED) ' <<<"${scope_report}" || true)))
 failures=$((failures + $(grep -cE '^  FAILED ' <<<"${scope_report}" || true)))
-if ! grep -qE '^  (ok|FAILED) ' <<<"${scope_report}"; then
+# The audit exits nonzero when it reports a failure. Exiting nonzero without one means it
+# crashed partway, and the renders after the crash were never audited.
+if [[ ${audit_status} -ne 0 ]] && ! grep -qE '^  FAILED ' <<<"${scope_report}"; then
+  checks=$((checks + 1)); failures=$((failures + 1))
+  echo "  FAILED   the scope audit exited ${audit_status} without reporting a failure"
+elif ! grep -qE '^  (ok|FAILED) ' <<<"${scope_report}"; then
   checks=$((checks + 1)); failures=$((failures + 1))
   echo "  FAILED   the scope audit produced no results"
 fi
