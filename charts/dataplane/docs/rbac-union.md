@@ -11,20 +11,25 @@ are independent, and each answers a different question.
 
 | Key | Default | Question it answers |
 |---|---|---|
-| `low_privilege` | `true` | How wide is the grant? |
+| `singleNamespace` | `true` | Does Union run in one namespace or many? |
 | `namespaces.enabled` / `namespaces.static` | `false` / a six-name list | Which work namespaces exist at install time? |
 | `commonServiceAccount.enabled` | `true` | How many identities hold the grants? |
 
-**`low_privilege` is the only privilege axis.** It alone decides whether a component's
+**`singleNamespace` is the only scope axis.** It alone decides whether a component's
 grant is a namespaced `Role` or a `ClusterRole`. At the `true` default every Union
 workload runs in the release namespace, no work namespaces are created by any route,
-`namespaces` is not consulted at all, and `clusterresourcesync` is not rendered.
+`namespaces` is not consulted at all, and `clusterresourcesync` is not rendered. The
+cluster-scoped reads that remain are a fixed allowlist, enforced by
+`tests/test-rbac-guards.sh` and listed in
+[rbac.md](rbac.md#what-singlenamespace-still-reads-cluster-wide). `low_privilege` is the
+key's older name and still works as an alias; the chart refuses to render if both are set
+and disagree.
 
-**`namespaces.enabled` pre-seeds namespaces; it does not change privilege.** It creates
-the Namespace objects named in `namespaces.static` and, at `low_privilege: false`, their
+**`namespaces.enabled` pre-seeds namespaces; it does not change scope.** It creates
+the Namespace objects named in `namespaces.static` and, at `singleNamespace: false`, their
 work-namespace RoleBindings. It changes no role's rules and widens no role's scope — but
 those bindings are what make the `work-ns` grant effective in each listed namespace, so it
-does decide *where* that grant lands. It is ignored entirely under `low_privilege: true`.
+does decide *where* that grant lands. It is ignored entirely under `singleNamespace: true`.
 
 **`commonServiceAccount.enabled` shares identity; it changes no rule.** The set of roles the
 chart emits is the same either way; which workload can exercise which is not. See
@@ -44,7 +49,7 @@ one role per slot from those declarations. Two destinations matter:
 - the **work namespaces** — one per project/domain, holding user tasks, apps and image
   builds.
 
-| Slot | Object | Bound by | Verbs allowed | Shared? | At `low_privilege: true` |
+| Slot | Object | Bound by | Verbs allowed | Shared? | At `singleNamespace: true` |
 |---|---|---|---|---|---|
 | `comp-ns-read` | `Role` | `RoleBinding`, release ns | `get,list,watch` | per component | unchanged |
 | `comp-ns-write` | `Role` | `RoleBinding`, release ns | `get,list,watch,create,update,patch,delete,deletecollection` | per component | unchanged |
@@ -82,7 +87,7 @@ the cluster-scoped names are qualified at all.
 **`work-ns` is a `ClusterRole` only so its rules are written once.** Every binding the
 chart emits for it is a namespaced `RoleBinding`, and a `RoleBinding` that references a
 `ClusterRole` confines that role's rules to the binding's own namespace. It grants nothing
-in a namespace where no binding exists. Under `low_privilege: false` it is never bound in
+in a namespace where no binding exists. Under `singleNamespace: false` it is never bound in
 the release namespace, so the `work-ns` role itself conveys nothing there — a component that
 can create any Pod in a work namespace gets no reach over Union's own Deployments or Secrets
 *through that role*.
@@ -94,16 +99,17 @@ proxy's account holds `get,list,create,update,delete` on Secrets in the release 
 account is `union-system`. To reason about what an identity can do, enumerate every binding
 naming it — not just the slots it declares into.
 
-The two `cluster-*` slots survive `low_privilege: true`. What they carry is cluster-scoped
+The two `cluster-*` slots survive `singleNamespace: true`. What they carry is cluster-scoped
 in both modes — `nodes`, for instance — so narrowing them is not possible and refusing to
 render them would only move the failure to runtime. `nodeobserver` is the component this
 is visible on: both slots it declares are cluster slots, so it holds `ClusterRoles` even
-in the default posture.
+in the default posture. So does the operator, whose node informer reads through
+`cluster-read` in both modes.
 
 `work-ns-cluster-read` is the exception that goes the other way. It exists for components
 that watch objects with an empty namespace, which the API server authorizes as a
 cluster-scope check that no number of per-namespace RoleBindings can satisfy. Under
-`low_privilege` those caches are namespace-scoped instead, so the slot emits nothing, and
+`singleNamespace` those caches are namespace-scoped instead, so the slot emits nothing, and
 each of its reads needs a release-namespace counterpart for that mode — usually in the
 pooled `work-ns` role, or in the component's own `comp-ns-read` where only that component
 makes the read. Every one of these roles is `list`/`watch`
@@ -176,21 +182,21 @@ chart does not set it.
 
 ### Cluster reads gated on the code path that makes them
 
-At `low_privilege: false`, a cluster-wide read is granted only under the values that start the
+Outside single-namespace mode, a cluster-wide read is granted only under the values that start the
 code path using it. Where that gate is more than "the component is enabled", it is:
 
-| Role | Resource | Granted when | Why | Under `low_privilege` |
+| Role | Resource | Granted when | Why | Under `singleNamespace` |
 |---|---|---|---|---|
-| `union-operator-cluster-read` | `nodes` `list,watch` | `disableClusterPermissions` off, and billing model not `None` or `collectUsages.enabled` or `serverlessCollectUsages.enabled` (via `config.configOverrides`) | the operator's node informer, which startup waits on | not granted; the informer never starts |
-| `union-operator-cluster-read` | `nonResourceURLs: /metrics` `get` | always | the work queue's API-server scrape, which feeds its FlyteWorkflow-count and etcd-size throttles | not granted, to keep parity with the chart before the slot model, whose low_privilege Role could not convey it; the throttles are off there, as they always were |
-| `union-operator-work-ns-cluster-read` | `metrics.k8s.io` `pods` `list` | `collectUsages.enabled`, billing model `ResourceUsage` or `Shadow`, or `serverlessCollectUsages.enabled` with cluster permissions | the usage aggregators' pod-metrics list | `union-operator-comp-ns-read`, when the billing model is `ResourceUsage` or `Shadow` |
+| `union-operator-cluster-read` | `nodes` `list,watch` | `disableClusterPermissions` off, and billing model not `None` or `collectUsages.enabled` or `serverlessCollectUsages.enabled` (via `config.configOverrides`) | the operator's node informer, which startup waits on | the same grant, on the same gate: nodes are cluster-scoped, so it is on the single-namespace allowlist |
+| `union-operator-cluster-read` | `nonResourceURLs: /metrics` `get` | always | the work queue's API-server scrape, which feeds its FlyteWorkflow-count and etcd-size throttles | not granted, to keep parity with the chart before the slot model, whose single-namespace Role could not convey it; the throttles are off there, as they always were |
+| `union-operator-work-ns-cluster-read` | `metrics.k8s.io` `pods` `list` | `collectUsages.enabled`, billing model `ResourceUsage` or `Shadow`, or `serverlessCollectUsages.enabled` with cluster permissions | the usage aggregators' pod-metrics list | `union-operator-comp-ns-read`, on the same conditions |
 | `union-flytepropeller-work-ns-cluster-read` | `namespaces` `list` | propeller's `limit-namespace` is empty, `all` or `all-namespaces` | the workflow garbage collector, which deletes nothing if the List fails | not needed; the collector reads only the release namespace |
 | `union-operator-work-ns-cluster-read` | `configmaps` `list,watch` | `apps.enabled` | see below | covered by `work-ns` |
 | `union-operator-work-ns-cluster-read` | `policy` `poddisruptionbudgets` `list,watch` | `apps.enabled` and `config.operator.apps.controller.podDisruptionBudget.enabled` | see below | `work-ns`, under the same gate, beside the writes |
 
 The last two are stopgaps. The apps controllers read the `connector-config` ConfigMap in the
 release namespace, and each app's PodDisruptionBudget, through a controller-runtime cache that
-is not namespace-scoped at full privilege. The first `Get` therefore starts a cluster-wide
+is not namespace-scoped outside single-namespace mode. The first `Get` therefore starts a cluster-wide
 informer and blocks until it syncs. The ConfigMap grant goes away once the operator reads it
 through the manager's API reader or scopes the ConfigMap cache to the release namespace. The
 PodDisruptionBudget lives in each app's work namespace, which no cache entry can name in
@@ -209,8 +215,8 @@ consequence: the pooled role holds the *union* of every declaring
 component's rules, so each declarer effectively holds every other declarer's rules in that
 destination. Splitting identities does not split this. `leaseworker` and `flytepropeller`
 each declare a resource wildcard into `work-ns`, so wherever either is enabled every other
-`work-ns` declarer inherits it. At `low_privilege: false` that reach is confined **to work
-namespaces**, because that is the only place the role is bound. At `low_privilege: true`
+`work-ns` declarer inherits it. At `singleNamespace: false` that reach is confined **to work
+namespaces**, because that is the only place the role is bound. At `singleNamespace: true`
 the release namespace *is* the work namespace, so it applies there — over Union's own
 objects — which is the trade that mode makes.
 
@@ -224,7 +230,7 @@ one object per component, and named `<release-ns>-<component>-comp-ns-{read,writ
 
 ## Who creates the work-namespace binding
 
-Under `low_privilege: false`, something must create a `RoleBinding` named
+Under `singleNamespace: false`, something must create a `RoleBinding` named
 `<release-ns>-work-ns` in each work namespace. There are three routes, and they are not
 mutually exclusive:
 
@@ -251,14 +257,14 @@ it can hand out that role and no other, and never holds the role's own permissio
 
 **This is the most confusing consequence of the model, and on its own it is not a defect.**
 
-At `low_privilege: false` with `namespaces.enabled: false` — the default full-privilege
+At `singleNamespace: false` with `namespaces.enabled: false` — the default multi-namespace
 posture — the `union-work-ns` ClusterRole renders with **no binding at all**. That is
 expected *provided one of the runtime routes above is actually in play*: the per-namespace
 RoleBindings are created as `clusterresourcesync` provisions each namespace, and a
 `helm template` run cannot show an object that does not exist yet.
 
 It is not expected when no route is. `clusterresourcesync.enabled` also defaults to `false`,
-so `low_privilege: false` on its own — with `namespaces.enabled` left at `false` and no
+so `singleNamespace: false` on its own — with `namespaces.enabled` left at `false` and no
 external provisioner — renders exactly the same unbound ClusterRole and never binds it. That
 render is indistinguishable from the healthy one, which is why the check below is on the
 cluster and not on the manifest.
@@ -298,7 +304,7 @@ hand it out *without* holding it.
 **A capability audit of this chart is only valid where the pooled slot is bound.** An
 audit that walks bindings to work out what an identity can do will report the entire
 contents of `union-work-ns` as lost if it runs against a render where that role is unbound
-— which is exactly the default full-privilege render. That reads as a catastrophic
+— which is exactly the default multi-namespace render. That reads as a catastrophic
 regression and is a measurement artifact. Audit against a posture with the bindings
 present (`--set namespaces.enabled=true`, or a live cluster after the first sync), and key
 capability tuples on `(serviceaccount, scope, apiGroup, resource, verb)` without
@@ -308,7 +314,7 @@ one missing in the *release* namespace.
 ## The cluster-scoped write surface
 
 Most of what this chart grants is namespaced. The cluster-scoped, state-mutating grants
-held by Union identities are these. Their conditions are compatible: a full-privilege
+held by Union identities are these. Their conditions are compatible: a multi-namespace
 zero-trust install with `clusterresourcesync`, `nodeobserver` and an unmanaged pod-webhook
 config renders all five at once, so treat the whole table as the maximum surface rather
 than assuming some rows exclude others.
@@ -316,9 +322,9 @@ than assuming some rows exclude others.
 | ClusterRole | Rendered when | Grant |
 |---|---|---|
 | `flyte-webhook-cleanup-<release-ns>` | always (upgrade hook) | `get`/`delete` on one named `MutatingWebhookConfiguration` |
-| `union-clusterresourcesync-cluster-write` | `low_privilege: false` + `clusterresourcesync.enabled` | get/create/patch on `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings`; `bind` on `<release-ns>-work-ns` |
-| `union-nodeobserver-cluster-write` | `nodeobserver.enabled` (either privilege mode) | `update` on `nodes` |
-| `union-webhook-cluster-write` | `low_privilege: false` + `flytepropellerwebhook.managedConfig: false` | `create` on `mutatingwebhookconfigurations`; `get`/`update` on the one it registers, named by `config.core.webhook.serviceName` |
+| `union-clusterresourcesync-cluster-write` | `singleNamespace: false` + `clusterresourcesync.enabled` | get/create/patch on `namespaces`, `serviceaccounts`, `resourcequotas`, `rolebindings`; `bind` on `<release-ns>-work-ns` |
+| `union-nodeobserver-cluster-write` | `nodeobserver.enabled` (either scope mode) | `update` on `nodes` |
+| `union-webhook-cluster-write` | `singleNamespace: false` + `flytepropellerwebhook.managedConfig: false` | `create` on `mutatingwebhookconfigurations`; `get`/`update` on the one it registers, named by `config.core.webhook.serviceName` |
 | `union-knative-webhook-cluster-write` | app serving under zero trust | `update` on three named webhook configurations, plus `namespaces/finalizers` on the release namespace |
 
 `clusterresourcesync`'s is the irreducible one: it applies ServiceAccounts and
@@ -370,10 +376,14 @@ Beyond this table and that key, every cluster-scoped grant held by a Union ident
 `system:auth-delegator`. That binding is gone: the controller serves only unauthenticated
 metrics and pprof and never makes a TokenReview or SubjectAccessReview.)
 
-`low_privilege` is not a whole-chart namespace boundary in either direction: the
+Under `singleNamespace: true` only two rows of this table can render: the upgrade hook's,
+which is pinned to one name, and nodeobserver's, the one unpinned cluster-scoped write the
+mode allows. `tests/test-rbac-guards.sh` asserts exactly that.
+
+`singleNamespace` is not a whole-chart namespace boundary in either direction: the
 upgrade hook's ClusterRole is created in both modes, as are opencost's and metrics-server's
-grants when those subcharts are enabled, and the `knative-operator` subchart — on by
-default — ships a cluster-scoped set of its own. A namespace-confined install identity is
+grants when those subcharts are enabled, and the `knative-operator` subchart, when enabled,
+ships a cluster-scoped set of its own. A namespace-confined install identity is
 not enough to deploy this chart.
 
 ## Identities

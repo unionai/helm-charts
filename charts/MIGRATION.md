@@ -4,6 +4,76 @@ Tracking the migration story for the helm-charts cloud overlays. New entries at 
 
 ---
 
+## dataplane — `low_privilege` becomes `singleNamespace`, and stops disabling usage collection
+
+### What changed
+
+`low_privilege` is renamed `singleNamespace`. The flag always decided scope — whether Union
+runs in the release namespace with namespaced Roles, or across per-project namespaces with
+ClusterRoles — and the new name says so. What `singleNamespace: true` promises:
+
+- Union's workloads, tasks and apps included, run in the release namespace, and every grant
+  that can be namespaced is.
+- Cluster-scoped reads come only from a fixed allowlist, each entry tied to the code that
+  needs it (`charts/dataplane/docs/rbac.md#what-singlenamespace-still-reads-cluster-wide`),
+  enforced by `tests/test-rbac-guards.sh`.
+- No cluster-scoped writes, except ones pinned to named objects (the legacy webhook cleanup
+  hook). nodeobserver, off by default, is the one listed exception.
+
+**`low_privilege` still works, as an alias.** Nothing needs to change in an overlay that sets
+it: `low_privilege: true` and `low_privilege: false` resolve exactly as before. Both keys are
+now unset in `values.yaml`, and unset means single-namespace, as before. Setting both keys to
+different values fails the render, and so does a quoted string (`"false"`) for either, which
+previously read as true.
+
+**Single-namespace mode no longer switches features off.** It used to force
+`config.operator.collectUsages.enabled` to `false` and `config.operator.disableClusterPermissions`
+to `true`. Both now follow their own values:
+
+- `collectUsages` is on by default, so single-namespace operators start collecting usage. The
+  operator already confines its pod and pod-metrics reads to `limitNamespace`, so the
+  pod-metrics grant stays a Role in the release namespace.
+- `disableClusterPermissions` defaults to off, so the operator's node informer now runs in
+  single-namespace mode, and the chart adds a ClusterRole and ClusterRoleBinding,
+  `<release-ns>-operator-cluster-read`, granting `nodes` `list` and `watch`. That is the new
+  cluster-scoped read. The informer also enables GPU attribution by node label, the
+  Legacy/Shadow node-based billing collector, and cloud-provider detection from node labels.
+
+The RBAC gates that decide those grants now parse the operator's boolean flags the way the
+operator does (`strconv.ParseBool`): a string `"True"` or `"1"` counts as on, and a value the
+operator cannot parse fails the render.
+
+### Operational impact
+
+- **A new cluster-scoped read on every single-namespace dataplane**: `nodes` `list`/`watch`
+  for the operator's ServiceAccount. An install identity confined to the release namespace
+  already could not deploy this chart (see the README's RBAC section), but the dataplane now
+  holds a cluster-scoped read it did not before.
+- **Usage collection starts** on single-namespace dataplanes, and the operator's config
+  checksum changes, so the operator and proxy roll on upgrade.
+- To keep the old behavior, set it explicitly:
+
+  ```yaml
+  config:
+    operator:
+      disableClusterPermissions: true   # no node informer, no nodes grant
+      collectUsages:
+        enabled: false
+  ```
+
+  With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
+  defaults to the top-level `provider`): the operator cannot detect it from node labels.
+- An `extraScrapeConfigs` override copied from an older `values.yaml` may still read
+  `.Values.low_privilege`. It keeps working while overlays set `low_privilege`, but reads
+  as unset under `singleNamespace` alone; replace it with `include "singleNamespace" .`.
+
+### Rollback
+
+Revert the chart change. Overlays that set `low_privilege` need no edit either way; one that
+switched to `singleNamespace` must switch back.
+
+---
+
 ## dataplane — vendored Knative Serving gateway bumped 1.16.0 → 1.23.0
 
 ### What changed

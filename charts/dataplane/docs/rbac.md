@@ -9,26 +9,65 @@ axis — see [rbac-union.md](rbac-union.md).
 
 ## The rule
 
-`low_privilege: true` — the chart default — confines the observability components to one
-namespace. Prometheus and kube-state-metrics get namespaced Roles and lose the metrics that
-only exist cluster-wide: no Task-Level Monitoring, no `kube_node_*`, less accurate cost data.
-The full list is on the `low_privilege` key in `values.yaml`.
+`singleNamespace: true` — the chart default — runs Union in the release namespace and
+confines the observability components to it. Prometheus and kube-state-metrics get
+namespaced Roles and lose the metrics that only exist cluster-wide: no Task-Level
+Monitoring, no `kube_node_*`, less accurate cost data. The full list is on the
+`singleNamespace` key in `values.yaml`. `low_privilege` is the key's older name and still
+works as an alias.
 
-`low_privilege: false` trades that back: the observability components may read cluster-wide,
-never write, and never touch secrets.
+`singleNamespace: false` trades that back: the observability components may read
+cluster-wide, never write, and never touch secrets.
 
 The flag is not a whole-chart namespace boundary. It scopes Union-authored workload RBAC
 along with these two subcharts, and gates [app serving](#app-serving), namespace creation and
-priorityclasses — but the Helm hook cleanup job creates a ClusterRole in either mode, and
-opencost and metrics-server are cluster-scoped when enabled. See the table below, and the
-README's RBAC section for what that means for your install identity.
+priorityclasses — but a short list of cluster-scoped reads remains in single-namespace mode
+([below](#what-singlenamespace-still-reads-cluster-wide)), the Helm hook cleanup job creates
+a ClusterRole in either mode, and opencost and metrics-server are cluster-scoped when
+enabled. See the table below, and the README's RBAC section for what that means for your
+install identity.
 
 The flag decides RBAC by itself. It can't decide how much kube-state-metrics collects with
 that access — layer `examples/values.full-privilege.yaml` for that, below.
 
+## What singleNamespace still reads cluster-wide
+
+Single-namespace mode is a promise about scope, not a promise of zero cluster-scoped access.
+Some reads have no namespaced form, and the chart grants them rather than switch off the
+feature that needs them. The list is fixed: `tests/test-rbac-guards.sh` renders every
+single-namespace fixture, plus two renders with every optional component on, and fails if a
+ClusterRole bound by a ClusterRoleBinding grants anything not on it.
+
+| ClusterRole | Grant | When | Why |
+|---|---|---|---|
+| `<ns>-operator-cluster-read` | `nodes` list, watch | on by default | The operator's node informer (`operator/cmd/root.go`). It runs unless `config.operator.disableClusterPermissions` is set, whenever any usage collector does, and startup blocks until it syncs. It backs the Legacy/Shadow billing collector and attributes a GPU to the node's accelerator label when the pod spec names none. Nodes are cluster-scoped, so `limitNamespace` cannot confine it. |
+| `<ns>-nodeobserver-cluster-read` | `nodes` get, `pods` list | `nodeobserver.enabled` | nodeobserver reads the node it runs on, and lists that node's pods with an empty namespace and a `spec.nodeName` field selector — a cluster-scope request. |
+| `dataplane-nginx-ingressclass` | `ingressclasses` get, list, watch | `ingress-nginx.enabled` | A scoped ingress-nginx controller still reads IngressClass, which is cluster-scoped; without it the controller ignores every Ingress this chart renders. |
+| `flyte-webhook-cleanup-<ns>` | `mutatingwebhookconfigurations` get, delete, on `flyte-pod-webhook` only | pre-upgrade hook | Deletes the webhook configuration chart versions before 2026.4.7 left behind. |
+
+Writes are held to a stricter rule: a cluster-scoped write must be pinned to named objects.
+The cleanup hook's `delete` above is the only pinned write. nodeobserver's `nodes` `update` —
+it removes its startup taint from the node it runs on — is the one unpinned exception, since
+node names are not known at render time; it is off by default.
+
+Two things single-namespace mode still withholds, because they are not on the list: the
+operator's `/metrics` scrape of the API server, which feeds its FlyteWorkflow-count and
+etcd-size throttles (they stay off), and prometheus' node and cadvisor discovery.
+
+The operator used to avoid the nodes read by forcing `disableClusterPermissions` on and
+`collectUsages` off in this mode. It no longer does: both follow their own values. The
+operator confines its pod and pod-metrics reads to `limitNamespace` itself
+(`usageNamespace` in `operator/cmd/root.go`), so usage collection needs nothing
+cluster-wide beyond the nodes read.
+
+Third-party subcharts that ship their own RBAC — kube-prometheus-stack (`monitoring`),
+metrics-server, opencost, knative-operator, ingress-nginx's own controller RBAC,
+dcgm-exporter and fluent-bit — are outside this list. `singleNamespace` does not govern
+them, and all are off by default except fluent-bit, which renders no RBAC here.
+
 ## Why we write prometheus and kube-state-metrics RBAC ourselves
 
-Helm values are static, so a subchart can't see `low_privilege`. Leaving RBAC to those two
+Helm values are static, so a subchart can't see `singleNamespace`. Leaving RBAC to those two
 subcharts would mean a second values file that has to move with the flag every time, with
 nothing at render time to catch it falling out of sync. So both are pinned to `rbac.create: false` and
 `templates/prometheus/rbac.yaml` writes the grant instead — a template can branch, a value
@@ -52,18 +91,18 @@ The defaults are set for the namespaced install, so nothing is requested that ca
 granted: four collectors, release namespace only. Asking for more without the grant doesn't
 fail loudly — kube-state-metrics keeps running and logs the denial every few seconds for the
 life of the pod. `templates/prometheus/rbac.yaml` refuses to render a cluster-scoped
-collector under `low_privilege` rather than let that start.
+collector under `singleNamespace` rather than let that start.
 
-`examples/values.full-privilege.yaml` is the other half of `low_privilege: false`: it adds
+`examples/values.full-privilege.yaml` is the other half of `singleNamespace: false`: it adds
 the `nodes` and `namespaces` collectors and drops `--namespaces`, so `kube_node_*`,
 `kube_namespace_labels` and task pods in project namespaces are all collected. Without it,
-`low_privilege: false` grants the cluster-wide read but still collects like a namespaced
+`singleNamespace: false` grants the cluster-wide read but still collects like a namespaced
 install. Task pod *utilization* doesn't depend on this — `container_*` comes from the
 cadvisor job, which is node-scoped and namespace-blind — but requests and limits do.
 
 ## What each subchart gets
 
-| Subchart | Default | `low_privilege: true` | `low_privilege: false` |
+| Subchart | Default | `singleNamespace: true` | `singleNamespace: false` |
 |---|---|---|---|
 | prometheus | on | namespaced Role (ours) | ClusterRole (ours) |
 | kube-state-metrics | on | namespaced Role, 4 collectors | ClusterRole, 6 with the overlay |
@@ -79,9 +118,9 @@ Out of scope: the deprecated knative-operator and kube-prometheus-stack subchart
 
 ## App serving
 
-App serving is off by default and requires `low_privilege: false`.
-`templates/gateway/validate.yaml` refuses `apps.enabled: true` alongside `low_privilege: true`,
-naming both exits. Since `low_privilege` defaults on, `apps.enabled` defaults off — so the
+App serving is off by default and requires `singleNamespace: false`.
+`templates/gateway/validate.yaml` refuses `apps.enabled: true` alongside `singleNamespace: true`,
+naming both exits. Since `singleNamespace` defaults on, `apps.enabled` defaults off — so the
 default install is self-consistent and never meets the refusal.
 
 The refusal covers the vendored delivery path — `serving.useVendoredGateway`, i.e.
@@ -114,8 +153,9 @@ can be namespaced is. It is because of what the *images* do:
   the same silent shape the prometheus and kube-state-metrics guards exist to prevent, with no
   values key to guard on.
 
-So app serving reads every namespace in the cluster, which is the one thing `low_privilege:
-true` promises it does not. The webhook configurations make that concrete from the other
+So app serving reads every namespace in the cluster, which `singleNamespace: true` promises
+Union's workloads do not: its cluster-scoped reads are a fixed list, and Knative's are not
+on it. The webhook configurations make that concrete from the other
 direction: every rule is `scope: "*"` with no `namespaceSelector`, so admission intercepts
 cluster-wide regardless of what RBAC says.
 
@@ -135,31 +175,31 @@ that has to be kept in step.
 gate on `serving.renderGateway` — `gateway.enabled` with either app serving or zero trust —
 so under zero trust they survive `apps.enabled: false` on their own. They hold no
 cluster-scoped RBAC, and their static dataplane routes are what zero trust is. So the choice
-the guard forces is app serving vs. `low_privilege`, never zero trust vs. `low_privilege`.
+the guard forces is app serving vs. `singleNamespace`, never zero trust vs. `singleNamespace`.
 
 `tests/values/dataplane.aws.zero-trust{,-overrides,-serving-enabled}.yaml` turn app serving on
-and so pin `low_privilege: false`; `-apps-disabled` leaves it at the default, which is what
-makes it prove `apps.enabled` beats `serving.enabled` — a regression reading it as true would
-hit this guard and fail the render rather than quietly matching.
+and so pin `low_privilege: false`, the alias; `-apps-disabled` leaves scope at the default,
+which is what makes it prove `apps.enabled` beats `serving.enabled` — a regression reading it
+as true would hit this guard and fail the render rather than quietly matching.
 `tests/test-rbac-guards.sh` asserts the refusal itself, which no golden can.
 
 ## Notes
 
 **prometheus.** Read-only on services, endpoints, pods, ingresses, configmaps and
-endpointslices, plus nodes and the node metrics endpoints at `low_privilege: false`. It never
+endpointslices, plus nodes and the node metrics endpoints at `singleNamespace: false`. It never
 reads secrets and never writes, either way.
 
 Cluster-scoped resources are dropped from the namespaced Role rather than carried over.
 Naming them there is legal but never matches, which is how `kubernetes-cadvisor` spent three
 months returning 403s. For the same reason that scrape job isn't rendered under
-`low_privilege`: it needs cluster-wide node discovery, and it's the only source of
+`singleNamespace`: it needs cluster-wide node discovery, and it's the only source of
 `container_cpu_usage_seconds_total` and `container_memory_working_set_bytes`. Those panels
-read "no data" in low-privilege mode, by design.
+read "no data" in single-namespace mode, by design.
 
 Verified on a live cluster: with only the namespaced Role, prometheus finds and scrapes
 every target in its own namespace — 4/4 up, no RBAC errors.
 
-At `low_privilege: false` the ClusterRole name is a fixed string, so **one dataplane per
+At `singleNamespace: false` the ClusterRole name is a fixed string, so **one dataplane per
 cluster** is the supported model. Nothing enforces it: `helm install` refuses a second
 release on ownership, but ArgoCD — the deployment path this chart is built for — applies
 shared resources unless the Application sets `FailOnSharedResource=true`. There, the later
@@ -167,9 +207,9 @@ sync can rewrite the binding subject to its own namespace without blocking — s
 most a `SharedResourceWarning` condition — and the first release's prometheus stops being
 authorized. Treat this as a constraint to respect, not one you'll reliably be stopped at.
 
-The cluster-wide read at `low_privilege: false` is wider than the rendered scrape jobs use —
+The cluster-wide read at `singleNamespace: false` is wider than the rendered scrape jobs use —
 every job but `kubernetes-cadvisor` discovers with `own_namespace: true`. That is deliberate.
-`low_privilege: false` is a choice of permission posture, not a permission set derived from
+`singleNamespace: false` is a choice of permission posture, not a permission set derived from
 the jobs: Helm can't parse arbitrary `prometheus.extraScrapeConfigs` to work out what a job
 added there will need, so the grant tracks the pinned subchart's own read-only discovery
 profile instead. Concretely, it's what lets a job added there reach `prometheus.io/scrape`
@@ -183,13 +223,13 @@ full-privilege overlay adds `nodes` and `namespaces`, which cost `kube_node_*` a
 aggregates, so pod-level dashboards degrade rather than simply losing node panels.
 
 Grants are derived from whatever `collectors` names, so the two always match: an unmapped
-collector fails the render, and so does a cluster-scoped one under `low_privilege`. See
+collector fails the render, and so does a cluster-scoped one under `singleNamespace`. See
 [What the flag can't reach](#what-the-flag-cant-reach) for the collection scope.
 
 The binding names kube-state-metrics' real ServiceAccount, worked out from the subchart's
 own naming rules. The hand-written binding it replaced named a ServiceAccount that didn't
 exist, for every release name. No release collected `kube_*` metrics for three months
-anywhere the chart's own RBAC ran — until now, that meant every `low_privilege` install.
+anywhere the chart's own RBAC ran — until now, that meant every single-namespace install.
 
 Don't add `metricRelabelings` here — nothing in the dependency tree reads it. The filter
 that actually runs is the scrape job's `metric_relabel_configs` in
@@ -258,9 +298,9 @@ it. Under scoped RBAC that gets you the silent non-reconciliation the guard exis
 prevent. Like `rbac.create: false` above, a raw passthrough is yours to keep consistent; use
 `controller.scope.namespace`, which is checked.
 
-**opencost.** Cluster-wide `get`/`list`/`watch` whenever it's enabled, in either privilege
+**opencost.** Cluster-wide `get`/`list`/`watch` whenever it's enabled, in either scope
 mode — it prices the whole cluster, so a namespaced grant would give it nothing to price, and
-the subchart offers no key to narrow it. `low_privilege` does not reach it. `tests/values/
+the subchart offers no key to narrow it. `singleNamespace` does not reach it. `tests/values/
 dataplane.opencost.yaml` pins the grant so a subchart bump that widens it shows up in review.
 
 **metrics-server.** Left as-is; it's cluster-scoped by design. It needs an APIService, the
