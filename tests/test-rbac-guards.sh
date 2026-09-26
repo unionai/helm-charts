@@ -4,7 +4,8 @@
 # templates/ingress-nginx/validate.yaml, templates/gateway/validate.yaml and
 # templates/common/rbac.yaml.
 #
-# It also covers the values-key combinations no snapshot fixture pins.
+# It also covers the values-key combinations no snapshot fixture pins, and audits every
+# single-namespace render against the cluster-scope allowlist near the end of this file.
 #
 # The snapshot suite only diffs renders that succeed, so it cannot see a guard at all. Each
 # case here asserts either that a guard refuses bad values or that it leaves a working
@@ -411,7 +412,7 @@ echo "Running RBAC guard tests..."
 echo "- supported configurations still render"
 expect-render "chart defaults"
 expect-render "full-privilege overlay" \
-  --set low_privilege=false \
+  --set singleNamespace=false \
   --set prometheus.kube-state-metrics.releaseNamespace=false \
   --set 'prometheus.kube-state-metrics.collectors={pods,deployments,daemonsets,resourcequotas,nodes,namespaces}'
 expect-render "explicit prometheus + kube-state-metrics ServiceAccount names" \
@@ -456,14 +457,14 @@ echo "- collectors stay in step with the grant"
 expect-refusal "a collector with no rule mapped for it" \
   "has no rule for" \
   --set 'prometheus.kube-state-metrics.collectors={pods,secrets}'
-expect-refusal "a cluster-scoped collector under low_privilege" \
+expect-refusal "a cluster-scoped collector under singleNamespace" \
   "cluster-scoped and cannot be granted" \
   --set 'prometheus.kube-state-metrics.collectors={pods,nodes}'
 expect-refusal "an empty collector list, which the subchart reads as all 28" \
   "must name at least one collector" \
   --set prometheus.kube-state-metrics.collectors=null
 
-echo "- subchart-native RBAC stays off, so low_privilege keeps governing it"
+echo "- subchart-native RBAC stays off, so singleNamespace keeps governing it"
 expect-refusal "prometheus.rbac.create" \
   "prometheus.rbac.create must stay false" \
   --set prometheus.rbac.create=true
@@ -516,17 +517,17 @@ expect-render "kube-state-metrics.namespaceOverride naming the release namespace
   --set "prometheus.kube-state-metrics.namespaceOverride=${NAMESPACE}"
 
 # The kube-prometheus-stack subchart owns its own RBAC and no template in this chart reaches
-# it, so low_privilege has to leave it alone. That used to be pinned by a second 12.5k-line
-# monitoring golden that differed from the first only by the generic privilege delta; these
-# two checks assert the same negative against both privilege modes for three lines.
-echo "- low_privilege does not reach the kube-prometheus-stack subchart's RBAC"
-expect-manifest "the subchart's prometheus ClusterRole is there under low_privilege" \
+# it, so singleNamespace has to leave it alone. That used to be pinned by a second 12.5k-line
+# monitoring golden that differed from the first only by the generic scope delta; these
+# two checks assert the same negative against both scope modes for three lines.
+echo "- singleNamespace does not reach the kube-prometheus-stack subchart's RBAC"
+expect-manifest "the subchart's prometheus ClusterRole is there under singleNamespace" \
   present "name: monitoring-prometheus" \
   --set monitoring.enabled=true --set clusterresourcesync.enabled=true
-expect-manifest "and is unchanged at full privilege" \
+expect-manifest "and is unchanged outside singleNamespace" \
   present "name: monitoring-prometheus" \
   --set monitoring.enabled=true --set clusterresourcesync.enabled=true \
-  --set low_privilege=false
+  --set singleNamespace=false
 
 echo "- values that are inert do not block a deploy"
 expect-render "kube-state-metrics off, stale rbac.create left behind" \
@@ -605,22 +606,22 @@ expect-render "watch namespace set but the subchart renders no controller RBAC" 
 
 # The Knative binaries take the shared, unfiltered informers and never scope them to a
 # namespace, so app serving reads cluster-wide however its RBAC is written and requires
-# low_privilege: false. The snapshot suite covers the rendering; the refusal, and what still
+# singleNamespace: false. The snapshot suite covers the rendering; the refusal, and what still
 # renders after it, are asserted here.
 #
 # These probe the emitter-produced roles, not the vendored objects they replaced. Any name
 # here works only while app serving is a registry component, so a silently dropped registry
 # entry fails this section rather than passing it.
-echo "- app serving and low_privilege are refused together, not silently reconciled"
+echo "- app serving and singleNamespace are refused together, not silently reconciled"
 # knative-operator must be disabled alongside zero_trust (Helm evaluates that subchart
 # condition at parse time), and orgName is what the Envoy auth filter is keyed on.
 zt=(--set zero_trust.enabled=true --set knative-operator.enabled=false --set orgName=test-org)
-expect-manifest "the stack renders with apps on and low_privilege off" present "name: union-knative-controller-cluster-read" \
-  "${zt[@]}" --set apps.enabled=true --set low_privilege=false
+expect-manifest "the stack renders with apps on and singleNamespace off" present "name: union-knative-controller-cluster-read" \
+  "${zt[@]}" --set apps.enabled=true --set singleNamespace=false
 expect-manifest "and its Kourier half with it" present "name: union-knative-kourier-cluster-read" \
-  "${zt[@]}" --set apps.enabled=true --set low_privilege=false
-expect-refusal "apps on at the low_privilege default" \
-  "requires low_privilege: false" \
+  "${zt[@]}" --set apps.enabled=true --set singleNamespace=false
+expect-refusal "apps on at the singleNamespace default" \
+  "requires singleNamespace: false" \
   "${zt[@]}" --set apps.enabled=true
 
 # App serving is off by default, so a zero-trust deploy that sets nothing else renders.
@@ -636,25 +637,25 @@ expect-manifest "and keeps the Envoy gateway" \
 # null so it keeps deciding.
 expect-manifest "the deprecated serving.enabled still turns app serving on" \
   present "name: union-knative-controller-cluster-read" \
-  "${zt[@]}" --set serving.enabled=true --set low_privilege=false
+  "${zt[@]}" --set serving.enabled=true --set singleNamespace=false
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: union-knative-controller-cluster-read" \
-  "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set low_privilege=false
+  "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set singleNamespace=false
 
-# low_privilege decides privilege scope, namespaces.enabled decides whether work namespaces
+# singleNamespace decides scope, namespaces.enabled decides whether work namespaces
 # are pre-seeded, and commonServiceAccount.enabled decides identity sharing. The snapshot
 # fixtures pin the combinations a deployment uses; these pin that the three axes are actually
 # independent, including the combinations no fixture covers.
-echo "- the privilege, namespace and identity axes are independent"
+echo "- the scope, namespace and identity axes are independent"
 # These assert on `kind: Namespace`, not on the retention annotation. Asserting the annotation
 # is absent cannot tell "no Namespace rendered" from "a Namespace rendered unprotected", and
 # the second is the state worth catching.
-expect-manifest "namespaces.enabled pre-seeds at full privilege" \
+expect-manifest "namespaces.enabled pre-seeds outside singleNamespace" \
   present "kind: Namespace" \
-  --set low_privilege=false --set namespaces.enabled=true
+  --set singleNamespace=false --set namespaces.enabled=true
 expect-manifest "and namespaces.enabled: false leaves the Namespace objects to someone else" \
   absent "kind: Namespace" \
-  --set low_privilege=false --set namespaces.enabled=false
-expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces.enabled says" \
+  --set singleNamespace=false --set namespaces.enabled=false
+expect-manifest "singleNamespace still suppresses pre-seeding, whatever namespaces.enabled says" \
   absent "kind: Namespace" \
   --set namespaces.enabled=true
 
@@ -662,65 +663,65 @@ expect-manifest "low_privilege still suppresses pre-seeding, whatever namespaces
 # chart creates, so they carry the retention policy an operator's deployment tool needs.
 expect-manifest "pre-seeded namespaces carry the default Helm retention policy" \
   present "helm.sh/resource-policy: keep" \
-  --set low_privilege=false --set namespaces.enabled=true
+  --set singleNamespace=false --set namespaces.enabled=true
 expect-manifest "operator annotations merge with it rather than replacing it" \
   present "argocd.argoproj.io/sync-options: Prune=false" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
 expect-manifest "and the Helm default survives that merge" \
   present "helm.sh/resource-policy: keep" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.annotations.argocd\.argoproj\.io/sync-options=Prune=false'
 expect-manifest "nulling the default drops it, for tooling that owns the lifecycle" \
   absent "helm.sh/resource-policy: keep" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.annotations.helm\.sh/resource-policy=null'
 expect-manifest "namespaces.labels lands on the pre-seeded namespaces" \
   present "pod-security.kubernetes.io/enforce: baseline" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.labels.pod-security\.kubernetes\.io/enforce=baseline'
 expect-manifest "a custom namespaces.static list replaces the defaults" \
   present "name: my-only-namespace" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.static={my-only-namespace}'
 expect-manifest "and the hardcoded six are gone with it" \
   absent "name: flytesnacks-development" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.static={my-only-namespace}'
 
 # The bug this replaces: namespaces.enabled defaults false, so `or (not namespaces.enabled)
-# low_privilege` made a default full-privilege install look single-namespace and gated off the
+# singleNamespace` made a default multi-namespace install look single-namespace and gated off the
 # component that creates namespaces for newly registered projects.
-expect-manifest "clusterresourcesync renders at full privilege with namespaces.enabled unset" \
+expect-manifest "clusterresourcesync renders outside singleNamespace with namespaces.enabled unset" \
   present "name: union-syncresources" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
-expect-manifest "and is still suppressed under low_privilege, where nothing needs it" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-manifest "and is still suppressed under singleNamespace, where nothing needs it" \
   absent "name: union-syncresources" \
   --set clusterresourcesync.enabled=true
 
-expect-manifest "commonServiceAccount.enabled: false is honored under low_privilege" \
+expect-manifest "commonServiceAccount.enabled: false is honored under singleNamespace" \
   present "serviceAccountName: operator-system" \
   --set commonServiceAccount.enabled=false
 expect-manifest "and the shared identity is still the default there" \
   absent "serviceAccountName: operator-system"
 
-# The identity axis is independent of the privilege axis, so the per-component name has to
-# survive the switch to low_privilege: false. The slot emitter builds every subject list from
+# The identity axis is independent of the scope axis, so the per-component name has to
+# survive the switch to singleNamespace: false. The slot emitter builds every subject list from
 # one component registry, so the risk is no longer per-template drift -- it is that pooling
 # and identity get wired to each other. These pin that they are not: the pooled role's
-# subject list follows commonServiceAccount.enabled on both sides of the privilege switch,
+# subject list follows commonServiceAccount.enabled on both sides of the scope switch,
 # and the per-component cluster roles do the same.
-expect-binding-subject "the pooled work-ns role binds every declarer at low privilege" \
+expect-binding-subject "the pooled work-ns role binds every declarer under singleNamespace" \
   RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
   --set commonServiceAccount.enabled=false
 expect-binding-subject "and collapses to one subject when they share an identity" \
   RoleBinding union-work-ns union-system
 expect-binding-subject "a per-component cluster role binds the per-component identity" \
   ClusterRoleBinding union-operator-work-ns-cluster-read operator-system \
-  --set commonServiceAccount.enabled=false --set low_privilege=false
+  --set commonServiceAccount.enabled=false --set singleNamespace=false
 expect-binding-subject "and the shared identity reaches it by default" \
   ClusterRoleBinding union-operator-work-ns-cluster-read union-system \
-  --set low_privilege=false
+  --set singleNamespace=false
 
 # The per-component names are what an operator builds cloud workload-identity bindings
 # from, so pin the two the values.yaml comment calls out specially: buildkit is enabled
@@ -742,83 +743,140 @@ expect-manifest "and an explicit name override partitions it" \
 echo
 echo "- the work-ns role reaches work namespaces and nowhere else"
 
-# The security claim of the slot split, stated as a location: under full privilege the pooled
-# work-ns role is never bound where union's own Deployments and Secrets live. Under low
-# privilege the release namespace *is* the work namespace, so it is bound there on purpose.
-expect-binding-namespaces "work-ns binds only the listed work namespaces at full privilege" \
+# The security claim of the slot split, stated as a location: outside singleNamespace the pooled
+# work-ns role is never bound where union's own Deployments and Secrets live. Under
+# singleNamespace the release namespace *is* the work namespace, so it is bound there on purpose.
+expect-binding-namespaces "work-ns binds only the listed work namespaces outside singleNamespace" \
   RoleBinding union-work-ns flytesnacks-development,flytesnacks-staging \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.static={flytesnacks-development,flytesnacks-staging}'
 # No static list means no namespace is known at render time, so the chart emits no binding
 # at all and whatever provisions the namespaces owes each one. That the chart stays out of it
 # is only half the claim; the provisioner section below pins the other half.
 expect-binding-namespaces "and binds nowhere when no work namespace is known at render time" \
   RoleBinding union-work-ns "" \
-  --set low_privilege=false
-expect-binding-namespaces "under low_privilege it binds the release namespace, which is the work namespace" \
+  --set singleNamespace=false
+expect-binding-namespaces "under singleNamespace it binds the release namespace, which is the work namespace" \
   RoleBinding union-work-ns union
 
 # work-ns-cluster-read exists because a caller that lists with an empty namespace is
-# authorized as a cluster-scope check. Under low_privilege those caches are namespace-scoped
+# authorized as a cluster-scope check. Under singleNamespace those caches are namespace-scoped
 # and the pooled Role already covers them, so the slot emits nothing at all.
-expect-manifest "work-ns-cluster-read is emitted at full privilege" \
+expect-manifest "work-ns-cluster-read is emitted outside singleNamespace" \
   present "name: union-operator-work-ns-cluster-read" \
-  --set low_privilege=false
-expect-manifest "and not at all under low_privilege" \
+  --set singleNamespace=false
+expect-manifest "and not at all under singleNamespace" \
   absent "name: union-operator-work-ns-cluster-read"
 
 # The node informer's grant lives in cluster-read, not work-ns-cluster-read: nodes are read for
-# usage attribution, not to reach across the namespaces tasks run in, and at full privilege the
+# usage attribution, not to reach across the namespaces tasks run in, and outside singleNamespace the
 # two slots produce the same object anyway. operator/cmd/root.go starts the informer whenever
 # cluster permissions are not disabled and any usage collector runs -- a billing model other
 # than None, collectUsages.enabled, or serverlessCollectUsages.enabled -- and startup blocks until
-# it syncs. The default full-privilege install (ResourceUsage, collectUsages on) is the case that
+# it syncs. The default multi-namespace install (ResourceUsage, collectUsages on) is the case that
 # hung without the grant, so it is the first one pinned.
-expect-role-resource "the node informer's grant appears at full privilege with default billing" \
+expect-role-resource "the node informer's grant appears outside singleNamespace with default billing" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false
+  --set singleNamespace=false
 expect-role-resource "and under Legacy billing with usage collection off" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set singleNamespace=false --set config.operator.billing.model=Legacy \
   --set config.operator.collectUsages.enabled=false
 expect-role-resource "and under billing None while collectUsages is on" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=None
+  --set singleNamespace=false --set config.operator.billing.model=None
 # serverlessCollectUsages has no chart key; configOverrides is the only way it reaches the
 # operator, so that is the path the gate reads.
 expect-role-resource "and under billing None when only serverless collection is on" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false \
   --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
-# At full privilege the role also carries the API server /metrics scrape, so it renders in
-# every withheld case there and the check is on the nodes rule. Under low_privilege the role
+# Outside singleNamespace the role also carries the API server /metrics scrape, so it renders in
+# every withheld case there and the check is on the nodes rule. Under singleNamespace the role
 # carries nothing and emitSlot drops it, so those cases assert the whole role is gone:
 # expect-role-resource refuses a missing role (it would make `absent` vacuous).
 expect-role-resource "and not with billing None and both usage collectors off" \
   absent union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false
 # operator.billing.config validates the resolved model against the four canonical spellings and
 # fails the render, so the gate compares canonical names and a lower-cased model never reaches it.
 expect-refusal "and a lower-cased model is refused before the gate ever sees it" \
   "config.operator.billing.model must resolve to None, Legacy, Shadow, or ResourceUsage" \
-  --set low_privilege=false --set config.operator.billing.model=legacy
+  --set singleNamespace=false --set config.operator.billing.model=legacy
 # disableClusterPermissions stops the informer outright, so the grant goes with it.
 expect-role-resource "and is withheld when cluster permissions are disabled outright" \
   absent union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set singleNamespace=false --set config.operator.billing.model=Legacy \
   --set config.operator.disableClusterPermissions=true
-# cluster-read is emitted in both privilege modes, so unlike work-ns-cluster-read it cannot
-# withhold this grant for us. low_privilege forces the operator's disableClusterPermissions
-# true (operator/configmap.yaml), so the informer never starts here and the grant must be
-# absent -- a gate reading the raw .Values would emit it into every low_privilege install.
-expect-manifest "and is withheld under low_privilege, where the informer never starts" \
+# singleNamespace does not touch disableClusterPermissions, so the informer runs there on the
+# same conditions and the grant follows it. It is a cluster-scoped read, and it is on the
+# singleNamespace allowlist below.
+expect-role-resource "the node informer's grant appears under singleNamespace with default billing" \
+  present union-operator-cluster-read nodes
+expect-role-resource "and with billing None while collectUsages is on" \
+  present union-operator-cluster-read nodes \
+  --set config.operator.billing.model=None
+# Under singleNamespace the role carries nothing else, so emitSlot drops it when the rule goes.
+expect-manifest "but not with billing None and both usage collectors off" \
   absent "name: union-operator-cluster-read" \
-  --set config.operator.billing.model=Legacy
-expect-manifest "even with a serverless collector configured" \
+  --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false
+expect-manifest "nor when cluster permissions are disabled outright" \
   absent "name: union-operator-cluster-read" \
-  --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
+  --set config.operator.disableClusterPermissions=true
+# expect-collect-usages <description> <expected value> [helm --set flags...]
+# Asserts the value of collectUsages.enabled in the operator's config.yaml. expect-manifest
+# greps one line at a time, and `enabled:` alone matches half the config.
+function expect-collect-usages {
+  local desc=$1; shift
+  local want=$1; shift
+  local out got
+  checks=$((checks + 1))
+  if ! out=$(render "$@" 2>&1); then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' <<<"${out}" | head -c 300)"
+    failures=$((failures + 1))
+    return
+  fi
+  got=$(awk '/^      collectUsages:$/ { n = 1; next } n && /^        enabled:/ { print $2; exit }' <<<"${out}")
+  if [[ "${got}" == "${want}" ]]; then
+    echo "  ok       ${desc}"
+  else
+    echo "  FAILED   ${desc}"
+    echo "           collectUsages.enabled in the operator config"
+    echo "           want: ${want}"
+    echo "           got:  ${got:-<not in the render>}"
+    failures=$((failures + 1))
+  fi
+}
+
+# singleNamespace used to force collectUsages off and disableClusterPermissions on. Pin that
+# it no longer writes either into the operator's config.
+expect-collect-usages "singleNamespace leaves collectUsages on" "true"
+expect-collect-usages "and low_privilege, its alias, does too" "true" --set low_privilege=true
+expect-manifest "and writes no disableClusterPermissions of its own" \
+  absent "disableClusterPermissions:"
+
+# The operator decodes these flags with mapstructure's WeaklyTypedInput, so a string goes
+# through strconv.ParseBool. The gates parse the same way: a string "True" or "1" is on, "0" is
+# off, and anything ParseBool rejects is refused, since the operator would fail to load it.
+expect-role-resource "a string \"True\" turns collectUsages on for the gate, as for the operator" \
+  present union-operator-cluster-read nodes \
+  --set config.operator.billing.model=None --set-string config.operator.collectUsages.enabled=True
+expect-role-resource "and so does a string \"1\"" \
+  present union-operator-cluster-read nodes \
+  --set config.operator.billing.model=None --set-string config.operator.collectUsages.enabled=1
+expect-manifest "a string \"0\" turns it off" \
+  absent "name: union-operator-cluster-read" \
+  --set config.operator.billing.model=None --set-string config.operator.collectUsages.enabled=0
+expect-manifest "a string \"T\" disables cluster permissions" \
+  absent "name: union-operator-cluster-read" \
+  --set-string config.operator.disableClusterPermissions=T
+expect-refusal "a value ParseBool rejects is refused" \
+  "which the operator cannot read as a boolean" \
+  --set-string config.operator.collectUsages.enabled=yes
 
 # The gates read each value the way the operator will: rendered through tpl, and from
 # config-overrides.yaml only where config.yaml leaves the key out. The operator merges its
@@ -833,35 +891,35 @@ config:
 EOF
 expect-role-resource "disableClusterPermissions is compared as rendered, not by truthiness" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --values "${DCP_TPL}"
+  --set singleNamespace=false --values "${DCP_TPL}"
 expect-role-resource "an override disables cluster permissions when the values key is unset" \
   absent union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.configOverrides.operator.disableClusterPermissions=true
+  --set singleNamespace=false --set config.configOverrides.operator.disableClusterPermissions=true
 expect-role-resource "an override enables collectUsages when the values key is unset" \
   present union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=null \
   --set config.configOverrides.operator.collectUsages.enabled=true
 expect-role-resource "but not over a values key config.yaml carries" \
   absent union-operator-cluster-read nodes \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false \
   --set config.configOverrides.operator.collectUsages.enabled=true
 expect-role-resource "an override turns on PDB management when the values key is unset" \
   present union-operator-work-ns-cluster-read poddisruptionbudgets \
-  --set low_privilege=false --set apps.enabled=true \
+  --set singleNamespace=false --set apps.enabled=true \
   --set config.configOverrides.operator.apps.controller.podDisruptionBudget.enabled=true
 
 # The work queue's API-server scrape feeds its FlyteWorkflow-count and etcd-size throttles, and
 # a refused scrape leaves both off without a word. A nonResourceURLs rule means something only in
-# a ClusterRole, so it is granted at full privilege whatever the billing settings, and not at all
-# under low_privilege (the whole-role absence above already covers that mode).
-expect-role-resource "the API server /metrics scrape is granted at full privilege" \
+# a ClusterRole, so it is granted outside singleNamespace whatever the billing settings, and not at all
+# under singleNamespace (the whole-role absence above already covers that mode).
+expect-role-resource "the API server /metrics scrape is granted outside singleNamespace" \
   present union-operator-cluster-read /metrics \
-  --set low_privilege=false
+  --set singleNamespace=false
 expect-role-resource "including with billing and usage collection off" \
   present union-operator-cluster-read /metrics \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false
 
 # comp-ns-write is empty at stock values -- both its declaring features are off by default --
@@ -888,25 +946,25 @@ echo "- the runtime provisioner supplies the work-ns binding the chart cannot"
 # clusterresourcesync has to. Three grants must appear together: the RoleBinding it is told to
 # create per namespace, ordinary authority to create a RoleBinding at all, and the `bind`
 # grant without which the API server refuses to let it reference a role it does not hold.
-# Any one missing leaves a full-privilege install whose work namespaces are unreachable, and
+# Any one missing leaves a multi-namespace install whose work namespaces are unreachable, and
 # no snapshot of the release namespace alone would show it.
-expect-manifest "the work-ns RoleBinding is handed to the provisioner at full privilege" \
+expect-manifest "the work-ns RoleBinding is handed to the provisioner outside singleNamespace" \
   present "ab_work_ns_binding.yaml" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-role-resource "and the bind grant that lets it reference the pooled role" \
   present union-clusterresourcesync-cluster-write clusterroles \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # expect-role-resource matches a line anywhere in the role, so this pins the resourceNames
 # entry rather than the verb: a bind grant that lost its resourceNames, or aimed at another
 # role, would stop naming union-work-ns here.
 expect-role-resource "confined by resourceNames to the one chart-authored role" \
   present union-clusterresourcesync-cluster-write union-work-ns \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # clusterRoleRules is an operator override, so the ordinary rolebindings authority is emitted
 # from the template too. Withdrawing it would fail silently: clean render, refused sync.
 expect-role-resource "and ordinary rolebindings authority survives an emptied override" \
   present union-clusterresourcesync-cluster-write rolebindings \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules=null'
 
 # namespaces.static is a pre-seeded SUBSET, not the complement of runtime provisioning:
@@ -915,11 +973,11 @@ expect-role-resource "and ordinary rolebindings authority survives an emptied ov
 # namespace registered after install unreachable.
 expect-manifest "and both are still handed over when the chart also pre-seeds namespaces" \
   present "ab_work_ns_binding.yaml" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 expect-role-resource "with the bind grant kept in the same posture" \
   present union-clusterresourcesync-cluster-write clusterroles \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
 # Both writers can land on the same namespace in that posture, so they must agree exactly or
@@ -927,11 +985,11 @@ expect-role-resource "with the bind grant kept in the same posture" \
 # since the subject list is the field most likely to diverge.
 expect-provisioner-matches-chart "and the two writers agree on the object, shared identity" \
   flytesnacks-development \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 expect-provisioner-matches-chart "and with per-component identities and propeller on" \
   flytesnacks-development \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}' \
   --set commonServiceAccount.enabled=false --set flytepropeller.enabled=true
 
@@ -943,10 +1001,10 @@ echo "- leaseworker and flytepropeller declare into slots instead of owning role
 # What must be absent is the cluster-wide ClusterRoleBinding it used to carry.
 expect-binding-subject "the cluster-wide union-leaseworker ClusterRoleBinding is gone" \
   ClusterRoleBinding union-leaseworker "" \
-  --set low_privilege=false
+  --set singleNamespace=false
 expect-manifest "and flytepropeller-role with it" \
   absent "name: flytepropeller-role" \
-  --set low_privilege=false --set flytepropeller.enabled=true
+  --set singleNamespace=false --set flytepropeller.enabled=true
 
 # Their wildcards now live in the pooled role, bound per work namespace rather than
 # cluster-wide. The subject list is registry order, and it is what says both components
@@ -975,14 +1033,14 @@ echo "- the secrets watcher stays inside the namespaces it is granted"
 # namespace it holds nothing in ends the process. So the chart names the namespaces itself.
 expect-manifest "the watch list is the release namespace alone by default" \
   present "          - union\$" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false
 expect-manifest "and picks up the control plane namespace when one is set" \
   present "          - union-cp\$" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set controlplaneNamespace=union-cp
 expect-manifest "an explicit namespaces list wins over the default" \
   absent "          - union-cp\$" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set controlplaneNamespace=union-cp \
   --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
 # ...and the grants follow it, in both directions. Config and RBAC read one define precisely
@@ -990,29 +1048,29 @@ expect-manifest "an explicit namespaces list wins over the default" \
 # but not granted is a Forbidden the watcher dies on.
 expect-binding-namespaces "and the grants follow the explicit list rather than controlplaneNamespace" \
   RoleBinding operator-system-secrets-watcher somewhere-else \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set controlplaneNamespace=union-cp \
   --set 'config.operator.secretsWatcher.namespaces={somewhere-else}'
 # An explicitly empty list is the operator's way of asking for every namespace: it lists pods
-# cluster-wide. At full privilege work-ns-cluster-read authorizes that list, so the empty list
+# cluster-wide. Outside singleNamespace work-ns-cluster-read authorizes that list, so the empty list
 # must survive as an empty list rather than being overwritten by the default -- and must not
 # be emitted twice, which a duplicate key would resolve silently in favour of the later one.
-expect-manifest "an explicitly empty list stays empty at full privilege" \
+expect-manifest "an explicitly empty list stays empty outside singleNamespace" \
   present "        namespaces: \[\]" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set 'config.operator.secretsWatcher.namespaces=null'
 expect-manifest "and is not emitted twice" \
   absent "          - union\$" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set 'config.operator.secretsWatcher.namespaces=null'
 expect-role-resource "and the cluster-wide pod list it makes is granted" \
   present union-operator-work-ns-cluster-read pods \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set 'config.operator.secretsWatcher.namespaces=null'
-# Under low_privilege nothing cluster-wide is granted, so the pod list is refused and the
+# Under singleNamespace nothing cluster-wide is granted, so the pod list is refused and the
 # operator exits at startup. The chart refuses the combination instead.
-expect-refusal "under low_privilege an explicitly empty list is refused" \
-  "config.operator.secretsWatcher.namespaces is set to an empty list under low_privilege" \
+expect-refusal "under singleNamespace an explicitly empty list is refused" \
+  "config.operator.secretsWatcher.namespaces is set to an empty list under singleNamespace" \
   --set config.operator.secretsWatcher.enabled=true \
   --set 'config.operator.secretsWatcher.namespaces=null'
 # With the watcher off the list is never read, so it must not block the render.
@@ -1020,19 +1078,19 @@ expect-render "but not while the watcher is off" \
   --set 'config.operator.secretsWatcher.namespaces=null'
 
 # The control plane half is a Role in someone else's namespace, so the slot emitter cannot
-# carry it. It was previously gated on low_privilege, which left the watcher listing control
-# plane pods at full privilege with no grant to read them.
-expect-binding-namespaces "the control plane Role is bound in the control plane namespace at full privilege" \
+# carry it. It was previously gated on singleNamespace, which left the watcher listing control
+# plane pods outside singleNamespace with no grant to read them.
+expect-binding-namespaces "the control plane Role is bound in the control plane namespace outside singleNamespace" \
   RoleBinding operator-system-secrets-watcher union-cp \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false \
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false \
   --set controlplaneNamespace=union-cp
-expect-binding-namespaces "and still under low_privilege" \
+expect-binding-namespaces "and still under singleNamespace" \
   RoleBinding operator-system-secrets-watcher union-cp \
   --set config.operator.secretsWatcher.enabled=true \
   --set controlplaneNamespace=union-cp
 expect-manifest "and nothing is emitted when the control plane is elsewhere" \
   absent "name: operator-system-secrets-watcher" \
-  --set config.operator.secretsWatcher.enabled=true --set low_privilege=false
+  --set config.operator.secretsWatcher.enabled=true --set singleNamespace=false
 
 echo
 echo "- namespaces.static and the release namespace"
@@ -1041,17 +1099,17 @@ echo "- namespaces.static and the release namespace"
 # components run, undoing the split above with nothing in the render to show it.
 expect-refusal "listing the release namespace in namespaces.static is refused" \
   "must not contain the release namespace" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.static={union,flytesnacks-development}'
 expect-refusal "an empty namespaces.static with namespaces.enabled is refused" \
   "requires a non-empty namespaces.static" \
-  --set low_privilege=false --set namespaces.enabled=true \
+  --set singleNamespace=false --set namespaces.enabled=true \
   --set 'namespaces.static=null'
 
-# Both guards read namespaces.static, which low_privilege ignores entirely. Firing there
+# Both guards read namespaces.static, which singleNamespace ignores entirely. Firing there
 # would report a fault that is not one: work-ns is bound in the release namespace in that
 # mode by design.
-expect-render "neither guard fires under low_privilege, where namespaces.static is ignored" \
+expect-render "neither guard fires under singleNamespace, where namespaces.static is ignored" \
   --set namespaces.enabled=true \
   --set 'namespaces.static={union}'
 expect-render "including with an empty list" \
@@ -1063,52 +1121,52 @@ echo "- the webhook reaches work namespaces instead of the whole cluster"
 
 # union-webhook-role was the largest cluster-wide write union held: apiGroups ['*'] over
 # secrets, pods and replicasets/finalizers, conveyed by a ClusterRoleBinding at
-# low_privilege: false. It is gone in both modes, and its resources are in the pooled
+# singleNamespace: false. It is gone in both modes, and its resources are in the pooled
 # work-ns role, which is only ever referenced from namespaced RoleBindings.
-expect-manifest "the cluster-wide union-webhook-role is gone at full privilege" \
+expect-manifest "the cluster-wide union-webhook-role is gone outside singleNamespace" \
   absent "name: union-webhook-role" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
-expect-manifest "and under low_privilege, where it was a Role" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-manifest "and under singleNamespace, where it was a Role" \
   absent "name: union-webhook-role"
 expect-role-resource "its resources are in the pooled work-ns role instead" \
   present union-work-ns replicasets/finalizers \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # The whole point of the move: where the webhook's writes are bound. Not the release
-# namespace at full privilege, and no ClusterRoleBinding carrying them anywhere.
+# namespace outside singleNamespace, and no ClusterRoleBinding carrying them anywhere.
 expect-binding-namespaces "and bound only in the work namespaces the chart knows" \
   RoleBinding union-work-ns flytesnacks-development \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
-# The Secret cache is the one grant that has to stay cluster-scoped, and only at full
-# privilege: under low_privilege limit-namespace scopes the cache and the pooled work-ns
+# The Secret cache is the one grant that has to stay cluster-scoped, and only outside
+# singleNamespace: under singleNamespace limit-namespace scopes the cache and the pooled work-ns
 # Role already covers the single namespace. work-ns-cluster-read is the slot that renders
 # empty there, which is why the rule sits in it.
-expect-role-resource "the webhook's cluster-wide Secret read appears at full privilege" \
+expect-role-resource "the webhook's cluster-wide Secret read appears outside singleNamespace" \
   present union-webhook-work-ns-cluster-read secrets \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
-expect-manifest "and not at all under low_privilege" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-manifest "and not at all under singleNamespace" \
   absent "name: union-webhook-work-ns-cluster-read"
 # It exists to serve image-pull-secret mirroring, so it goes when that is switched off.
 expect-manifest "nor when image-pull-secret injection is disabled" \
   absent "name: union-webhook-work-ns-cluster-read" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets.enabled=false
 
 # mutatingwebhookconfigurations create cannot be confined by resourceNames -- RBAC has no
 # name to match before the object exists -- so it is emitted only where the webhook really
 # self-registers. propeller/configmap.yaml sets disableCreateMutatingWebhookConfig under
-# `or low_privilege (and webhook.enabled managedConfig)`, so both halves of that expression
-# have to be false. A gate on managedConfig alone would grant it under low_privilege, where
+# `or singleNamespace (and webhook.enabled managedConfig)`, so both halves of that expression
+# have to be false. A gate on managedConfig alone would grant it under singleNamespace, where
 # the binary is configured never to use it.
 expect-manifest "the self-registration grant appears when the webhook registers itself" \
   present "name: union-webhook-cluster-write" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false
 expect-manifest "and not when Helm manages the configuration" \
   absent "name: union-webhook-cluster-write" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
-expect-manifest "nor under low_privilege, which disables self-registration on its own" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-manifest "nor under singleNamespace, which disables self-registration on its own" \
   absent "name: union-webhook-cluster-write" \
   --set flytepropellerwebhook.managedConfig=false
 
@@ -1174,45 +1232,46 @@ rules:
 # pins serviceName to the chart's own name whatever config.core.webhook says.
 expect-webhook-registration-grant "get and update are pinned to the one configuration it registers" \
   union-pod-webhook \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false
 expect-webhook-registration-grant "and an override the minimal config discards does not move the pin" \
   union-pod-webhook \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false \
   --set config.core.webhook.serviceName=elsewhere
 # Propeller on: the webhook mounts flyte-propeller-config, whose serviceName comes from
 # config.core.webhook through tpl, so the pin has to follow an override -- template and all.
 expect-webhook-registration-grant "with propeller on, the pin follows config.core.webhook.serviceName" \
   union-pod-webhook \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true
 expect-webhook-registration-grant "including an override, rendered through tpl as the config is" \
   my-hook-union \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
   --set 'config.core.webhook.serviceName=my-hook-{{ .Release.Namespace }}'
 expect-manifest "and the config it pins to carries that same name" \
   present "serviceName: my-hook-union" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
   --set 'config.core.webhook.serviceName=my-hook-{{ .Release.Namespace }}'
 # With the key removed the binary falls back to its compiled-in default, so the pin must too.
 expect-webhook-registration-grant "and the binary's own default when the key is removed" \
   flyte-pod-webhook \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set flytepropellerwebhook.managedConfig=false --set flytepropeller.enabled=true \
   --set config.core.webhook.serviceName=null
 
 echo
-echo "- nodeobserver holds the same grant in both privilege modes"
+echo "- nodeobserver holds the same grant in both scope modes"
 
-# Its rules were never conveyable by the namespaced Role low_privilege emitted: nodes is
-# cluster-scoped, and nodeobserver lists pods with an empty namespace plus a spec.nodeName
-# field selector, which the API server authorizes as a cluster-scope request. Both slots are
-# cluster slots for that reason, so the grant is identical either side of the switch. This is
-# the one place in the chart where low_privilege does not narrow anything, and it is
-# deliberate -- pinning both directions is what stops someone "fixing" it back to a Role.
+# Its rules were never conveyable by the namespaced Role earlier releases emitted in
+# single-namespace mode: nodes is cluster-scoped, and nodeobserver lists pods with an empty
+# namespace plus a spec.nodeName field selector, which the API server authorizes as a
+# cluster-scope request. Both slots are cluster slots for that reason, so the grant is
+# identical either side of the switch. singleNamespace narrows none of it, deliberately --
+# pinning both directions is what stops someone "fixing" it back to a Role. Its reads are on
+# the singleNamespace allowlist below, and its node write is the one listed exception there.
 # union-nodeobserver cannot be checked with a grep, for the same reason union-leaseworker
 # could not: a ConfigMap and a DaemonSet of that name still ship, so the name is in the
 # render either way. What this asserts is narrower than "the old objects are gone" -- it
@@ -1221,7 +1280,7 @@ echo "- nodeobserver holds the same grant in both privilege modes"
 expect-binding-subject "nothing binds the old union-nodeobserver Role any more" \
   RoleBinding union-nodeobserver "" \
   --set nodeobserver.enabled=true
-expect-role-resource "nodes read is a ClusterRole under low_privilege" \
+expect-role-resource "nodes read is a ClusterRole under singleNamespace" \
   present union-nodeobserver-cluster-read nodes \
   --set nodeobserver.enabled=true
 expect-role-resource "and the pods list with it" \
@@ -1234,9 +1293,9 @@ expect-role-resource "the node write is split into its own cluster role" \
 # renders are rule-identical. The dataplane.nodeobserver and dataplane.nodeobserver-full-priv
 # snapshots are what pin equality, since comparing across two renders is not something this
 # harness can express.
-expect-role-resource "and carries nodes at full privilege too" \
+expect-role-resource "and carries nodes outside singleNamespace too" \
   present union-nodeobserver-cluster-write nodes \
-  --set nodeobserver.enabled=true --set low_privilege=false \
+  --set nodeobserver.enabled=true --set singleNamespace=false \
   --set clusterresourcesync.enabled=true
 expect-manifest "nothing renders when nodeobserver is off" \
   absent "name: union-nodeobserver-cluster-read"
@@ -1740,8 +1799,8 @@ EXPECTED
 }
 
 expect-cleanup-grant-exact "its grant is exactly the four objects its Job deletes"
-expect-cleanup-grant-exact "and at full privilege too" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+expect-cleanup-grant-exact "and outside singleNamespace too" \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # Dropped from the expected text above to keep the grant readable, so pinned here instead:
 # without hook-delete-policy these objects outlive the upgrade they exist for.
 expect-manifest "and every cleanup object is hook-scoped" \
@@ -1752,16 +1811,16 @@ expect-manifest "and every cleanup object is hook-scoped" \
 # and `dig` alone will not traverse -- so both are read through a defaulted map. Without that,
 # a values file the chart accepted before this release aborts the render.
 expect-render "an explicitly null imagePullSecrets block still renders" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set-json 'config.core.webhook.embeddedSecretManagerConfig.imagePullSecrets=null'
 # The parent, not just the leaf. A first version of the fix defaulted only imagePullSecrets
 # and still chained through embeddedSecretManagerConfig, so nulling the parent went on
 # failing -- the reported case was fixed and the class was not.
 expect-render "and an explicitly null embeddedSecretManagerConfig around it" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set-json 'config.core.webhook.embeddedSecretManagerConfig=null'
 expect-render "and an explicitly null unionProjectSyncConfig" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set-json 'clusterresourcesync.config.cluster_resources.unionProjectSyncConfig=null'
 
 echo
@@ -1772,25 +1831,25 @@ echo "- clusterresourcesync's grant is derived, not an operator default"
 # it likes. Nothing in the chart's own templates creates them.
 expect-role-resource "cluster-wide secrets are no longer granted" \
   absent union-clusterresourcesync-cluster-write secrets \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-role-resource "nor roles" \
   absent union-clusterresourcesync-cluster-write roles \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-role-resource "nor clusterrolebindings" \
   absent union-clusterresourcesync-cluster-write clusterrolebindings \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # What the default templates do create, which is what the derived rules cover.
 expect-role-resource "the namespaces the default template creates are granted" \
   present union-clusterresourcesync-cluster-write namespaces \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-role-resource "and the serviceaccounts and resourcequotas that follow them" \
   present union-clusterresourcesync-cluster-write resourcequotas \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # Derived, so an operator emptying the override cannot withdraw them. Task 5 shipped the
 # same property for the rolebindings rule; it now covers the whole grant.
 expect-role-resource "and none of it depends on the clusterRoleRules override" \
   present union-clusterresourcesync-cluster-write namespaces \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules=null'
 
 # Bound to the namespaces rule specifically, not merely present somewhere in the role. The
@@ -1800,13 +1859,13 @@ expect-role-resource "and none of it depends on the clusterRoleRules override" \
 # so this pair is the only thing standing behind that conditional.
 expect-verb-resources "nothing is granted delete by default" \
   union-clusterresourcesync-cluster-write delete "" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 # The complete set, not just "namespaces is in it". Asserting the whole set is what catches a
 # cleanup-gated `delete` landing on resourcequotas or on the emitter's clusterroles bind rule
 # -- resources no one would have thought to write an absence case for.
 expect-verb-resources "and exactly namespaces once cleanup is asked for" \
   union-clusterresourcesync-cluster-write delete "namespaces" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace=true
 
 # The controller applies with Create and, on AlreadyExists, Get then Patch. It never issues
@@ -1814,38 +1873,38 @@ expect-verb-resources "and exactly namespaces once cleanup is asked for" \
 # namespaces rule and is the likeliest place for one to creep back.
 expect-verb-resources "nothing is granted update" \
   union-clusterresourcesync-cluster-write update "" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-verb-resources "not even with cleanup on" \
   union-clusterresourcesync-cluster-write update "" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set clusterresourcesync.config.cluster_resources.unionProjectSyncConfig.cleanupNamespace=true
 expect-verb-resources "while patch, the verb it does use, covers every provisioned resource" \
   union-clusterresourcesync-cluster-write patch \
   "namespaces,resourcequotas,rolebindings,serviceaccounts" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 
 # The controller serves only unauthenticated metrics and pprof, and never makes a TokenReview
 # or SubjectAccessReview, so the system:auth-delegator binding it used to hold is gone.
 # metrics-server holds its own such binding, and is off here, so the second check is exact.
 expect-manifest "no auth-delegator binding for clusterresourcesync" \
   absent "union-clustersync-auth-delegator" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 expect-manifest "nor anything else binding system:auth-delegator" \
   absent "name: system:auth-delegator" \
-  --set low_privilege=false --set clusterresourcesync.enabled=true
+  --set singleNamespace=false --set clusterresourcesync.enabled=true
 
 # The extension point still works, and is not gated on namespace posture: namespaces.enabled
 # pre-seeds a subset, so a rule an operator adds still has to reach namespaces registered
 # later, which no RoleBinding written now can cover.
 expect-role-resource "operator-supplied rules are granted cluster-wide" \
   present union-clusterresourcesync-cluster-write widgets \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
   --set 'clusterresourcesync.clusterRoleRules[0].verbs={get,list,watch}'
 expect-role-resource "including where the chart also pre-seeds namespaces" \
   present union-clusterresourcesync-cluster-write widgets \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}' \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
@@ -1856,13 +1915,13 @@ expect-role-resource "including where the chart also pre-seeds namespaces" \
 # `impersonate`. The old default carried both resources at verbs ['*'].
 expect-refusal "a wildcard verb in clusterRoleRules is refused" \
   'names verb "*", which is not allowed here' \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}' \
   --set 'clusterresourcesync.clusterRoleRules[0].verbs={*}'
 expect-refusal "and so is escalate, spelled out" \
   'names verb "escalate", which is not allowed here' \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={rbac.authorization.k8s.io}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={roles}' \
   --set 'clusterresourcesync.clusterRoleRules[0].verbs={escalate}'
@@ -1870,7 +1929,7 @@ expect-refusal "and so is escalate, spelled out" \
 # any role, which is the check resourceNames on the chart's own bind rule exists to enforce.
 expect-refusal "nor bind, which only the emitter may write" \
   'names verb "bind", which is not allowed here' \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={rbac.authorization.k8s.io}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={clusterroles}' \
   --set 'clusterresourcesync.clusterRoleRules[0].verbs={bind}'
@@ -1879,30 +1938,30 @@ expect-refusal "nor bind, which only the emitter may write" \
 # verbs key, since every chart-authored declaration already names its own.
 expect-refusal "an operator-supplied rule with no verbs key at all is refused" \
   'requires a verbs key on every rule' \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={example.com}' \
   --set 'clusterresourcesync.clusterRoleRules[0].resources={widgets}'
 
-# clusterresourcesync renders nothing under low_privilege, so it must not join the registry
+# clusterresourcesync renders nothing under singleNamespace, so it must not join the registry
 # there either: its ServiceAccount does not exist, and the emitter would bind rules to a
 # subject that is never created.
-expect-manifest "no clusterresourcesync RBAC under low_privilege, even when enabled" \
+expect-manifest "no clusterresourcesync RBAC under singleNamespace, even when enabled" \
   absent "name: union-clusterresourcesync-cluster-write" \
   --set clusterresourcesync.enabled=true
 # Nor does it join the pooled work-ns role: it has to reach a namespace before any binding
 # exists there, so all of its rules are cluster-scoped and its identity is not a work-ns
 # subject. Adding it would also change the object the provisioner is handed.
 #
-# This has to run at low_privilege: false. Under low_privilege the registry excludes
+# This has to run at singleNamespace: false. Under singleNamespace the registry excludes
 # clusterresourcesync outright, so the same assertion there passes whatever the slot
 # declaration says -- which is how a first version of this case let the mutation through.
 expect-binding-subject "and it stays out of the pooled work-ns subject list" \
   RoleBinding union-work-ns union-system \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 expect-binding-subject "with per-component identities too, where it would be visible" \
   RoleBinding union-work-ns leaseworker,operator-system,proxy-system,union-webhook-system \
-  --set low_privilege=false --set clusterresourcesync.enabled=true \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
   --set commonServiceAccount.enabled=false \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 
@@ -1913,106 +1972,109 @@ echo "- cluster-wide reads follow the code paths that make them"
 # ResourceUsage/Shadow model, the serverless one on serverlessCollectUsages with cluster
 # permissions. pods is also in this role's core rule, so the check is on the apiGroups of the
 # rules carrying pods rather than on the resource name.
-expect-resource-group "the pod-metrics list appears at full privilege with default billing" \
+expect-resource-group "the pod-metrics list appears outside singleNamespace with default billing" \
   union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
-  --set low_privilege=false
+  --set singleNamespace=false
 expect-resource-group "and under ResourceUsage billing with collectUsages off" \
   union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
-  --set low_privilege=false --set config.operator.collectUsages.enabled=false
+  --set singleNamespace=false --set config.operator.collectUsages.enabled=false
 expect-resource-group "but not under Legacy billing with collectUsages off, which reads nodes instead" \
   union-operator-work-ns-cluster-read pods "(core)" \
-  --set low_privilege=false --set config.operator.billing.model=Legacy \
+  --set singleNamespace=false --set config.operator.billing.model=Legacy \
   --set config.operator.collectUsages.enabled=false
 expect-resource-group "nor with billing None and both usage collectors off" \
   union-operator-work-ns-cluster-read pods "(core)" \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false
 expect-resource-group "and back when only serverless collection is on" \
   union-operator-work-ns-cluster-read pods "(core),metrics.k8s.io" \
-  --set low_privilege=false --set config.operator.billing.model=None \
+  --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false \
   --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
 
-# Under low_privilege the cluster-wide pod-metrics grant is not emitted, but the billing
-# aggregator still lists pod metrics in the release namespace, so the operator's comp-ns-read
-# carries it there -- on the billing model alone, since collectUsages is forced off.
-expect-resource-group "under low_privilege the pod-metrics list is granted in the release namespace" \
+# Under singleNamespace the cluster-wide pod-metrics grant is not emitted, but the usage
+# aggregators still list pod metrics in the release namespace, so the operator's comp-ns-read
+# carries it there, on the same conditions as the cluster-wide grant.
+expect-resource-group "under singleNamespace the pod-metrics list is granted in the release namespace" \
   union-operator-comp-ns-read pods "metrics.k8s.io"
+expect-resource-group "and with billing None, while collectUsages is on" \
+  union-operator-comp-ns-read pods "metrics.k8s.io" \
+  --set config.operator.billing.model=None
 # The pod-metrics rule is the only thing the operator declares into comp-ns-read at these
 # values, so without it the role is not emitted at all.
-expect-manifest "and not with billing None" \
+expect-manifest "and not with billing None and collectUsages off" \
   absent "name: union-operator-comp-ns-read" \
-  --set config.operator.billing.model=None
-expect-manifest "and not at full privilege, where the cluster-wide grant covers it" \
+  --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false
+expect-manifest "and not outside singleNamespace, where the cluster-wide grant covers it" \
   absent "name: union-operator-comp-ns-read" \
-  --set low_privilege=false
+  --set singleNamespace=false
 
 # propeller's workflow garbage collector lists namespaces when limit-namespace is empty, "all"
 # or "all-namespaces", and deletes nothing if that List fails. It is a one-shot List, so the
 # grant is list alone; the complete set is asserted so a watch on namespaces would fail here.
-expect-verb-resources "propeller lists namespaces at full privilege, for the workflow GC" \
+expect-verb-resources "propeller lists namespaces outside singleNamespace, for the workflow GC" \
   union-flytepropeller-work-ns-cluster-read list "flyteworkflows,namespaces,pods,podtemplates" \
-  --set low_privilege=false --set flytepropeller.enabled=true
+  --set singleNamespace=false --set flytepropeller.enabled=true
 expect-verb-resources "and does not watch them" \
   union-flytepropeller-work-ns-cluster-read watch "flyteworkflows,pods,podtemplates" \
-  --set low_privilege=false --set flytepropeller.enabled=true
+  --set singleNamespace=false --set flytepropeller.enabled=true
 expect-verb-resources "and not when limit-namespace names one namespace" \
   union-flytepropeller-work-ns-cluster-read list "flyteworkflows,pods,podtemplates" \
-  --set low_privilege=false --set flytepropeller.enabled=true \
+  --set singleNamespace=false --set flytepropeller.enabled=true \
   --set config.core.propeller.limit-namespace=flytesnacks-development
-expect-manifest "and not under low_privilege, where limit-namespace is the release namespace" \
+expect-manifest "and not under singleNamespace, where limit-namespace is the release namespace" \
   absent "name: union-flytepropeller-work-ns-cluster-read" \
   --set flytepropeller.enabled=true
 
 # The apps controllers Get the connector-config ConfigMap and each app's PodDisruptionBudget
-# through a cache that is not namespace-scoped at full privilege, so the first Get starts a
+# through a cache that is not namespace-scoped outside singleNamespace, so the first Get starts a
 # cluster-wide informer and blocks until it syncs. configmaps follows apps.enabled; the PDB
 # read also needs PDB management on, since with it off the controller makes no PDB calls.
 expect-role-resource "the operator lists configmaps cluster-wide when apps are on" \
   present union-operator-work-ns-cluster-read configmaps \
-  --set low_privilege=false --set apps.enabled=true
+  --set singleNamespace=false --set apps.enabled=true
 expect-role-resource "but not when apps are off" \
   absent union-operator-work-ns-cluster-read configmaps \
-  --set low_privilege=false --set apps.enabled=false
+  --set singleNamespace=false --set apps.enabled=false
 expect-role-resource "PodDisruptionBudgets are not read while PDB management is off" \
   absent union-operator-work-ns-cluster-read poddisruptionbudgets \
-  --set low_privilege=false --set apps.enabled=true
+  --set singleNamespace=false --set apps.enabled=true
 expect-role-resource "and are once it is on" \
   present union-operator-work-ns-cluster-read poddisruptionbudgets \
-  --set low_privilege=false --set apps.enabled=true \
+  --set singleNamespace=false --set apps.enabled=true \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
 expect-role-resource "but not with apps off, where the controller never starts" \
   absent union-operator-work-ns-cluster-read poddisruptionbudgets \
-  --set low_privilege=false --set apps.enabled=false \
+  --set singleNamespace=false --set apps.enabled=false \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
-# Under low_privilege (app serving on the knative-operator path, gateway.enabled: false) the
+# Under singleNamespace (app serving on the knative-operator path, gateway.enabled: false) the
 # apps cache is scoped to the release namespace, so the PDB read moves to the work-ns Role there.
-expect-role-resource "under low_privilege the PDB read and writes are in the release-namespace work-ns Role" \
+expect-role-resource "under singleNamespace the PDB read and writes are in the release-namespace work-ns Role" \
   present union-work-ns poddisruptionbudgets \
   --set apps.enabled=true --set gateway.enabled=false \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
 expect-role-resource "and not while PDB management is off" \
   absent union-work-ns poddisruptionbudgets \
   --set apps.enabled=true --set gateway.enabled=false
-# At full privilege work-ns carries the writes, bound in each work namespace; the read stays in
+# Outside singleNamespace work-ns carries the writes, bound in each work namespace; the read stays in
 # work-ns-cluster-read above, since the cache it goes through is cluster-wide there.
-expect-role-resource "at full privilege work-ns carries the PDB writes" \
+expect-role-resource "outside singleNamespace work-ns carries the PDB writes" \
   present union-work-ns poddisruptionbudgets \
-  --set low_privilege=false --set apps.enabled=true \
+  --set singleNamespace=false --set apps.enabled=true \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true \
   --set namespaces.enabled=true --set 'namespaces.static={flytesnacks-development}'
 expect-verb-resources "both are list and watch, the complete watched set with apps and PDBs on" \
   union-operator-work-ns-cluster-read watch \
   "configmaps,configurations,namespaces,poddisruptionbudgets,pods,podtemplates,resourcequotas,revisions,services" \
-  --set low_privilege=false --set apps.enabled=true \
+  --set singleNamespace=false --set apps.enabled=true \
   --set config.operator.apps.controller.podDisruptionBudget.enabled=true
 
 echo
 echo "App-serving ServiceAccounts"
 
-# App serving needs zero_trust on, apps on and low_privilege off; gateway/validate.yaml
+# App serving needs zero_trust on, apps on and singleNamespace off; gateway/validate.yaml
 # refuses anything else. Everything below carries that triple.
-APPS=(--set zero_trust.enabled=true --set apps.enabled=true --set low_privilege=false
+APPS=(--set zero_trust.enabled=true --set apps.enabled=true --set singleNamespace=false
       --set global.ORG_NAME=test-org --set clusterresourcesync.enabled=true)
 
 # The invariant this whole task exists to protect. Both identity modes, because the shared
@@ -2023,10 +2085,10 @@ expect-no-dangling-subjects "and none does with per-component identities either"
   "${APPS[@]}" --set commonServiceAccount.enabled=false
 # Also without app serving, so the check keeps covering the rest of the chart once
 # templates/gateway/rbac.yaml is gone.
-expect-no-dangling-subjects "nor anywhere else in the chart, at either privilege" \
+expect-no-dangling-subjects "nor anywhere else in the chart, at either scope" \
   --set commonServiceAccount.enabled=false
-expect-no-dangling-subjects "nor at full privilege with per-component identities" \
-  --set commonServiceAccount.enabled=false --set low_privilege=false \
+expect-no-dangling-subjects "nor outside singleNamespace with per-component identities" \
+  --set commonServiceAccount.enabled=false --set singleNamespace=false \
   --set clusterresourcesync.enabled=true
 
 # The five names. At the default they all collapse onto the common account and no per-binary
@@ -2270,7 +2332,7 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 # claim in the docs.
 expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
   union-leaseworker-comp-ns-read get "endpoints"
-# The operator's is the low_privilege billing aggregator's pod-metrics list: list on pods
+# The operator's is the singleNamespace usage aggregators' pod-metrics list: list on pods
 # (in metrics.k8s.io) and no get at all. It declares no PodTemplate read here any more; its
 # only PodTemplate informer is the apps workers', granted through the work-ns slots.
 expect-verb-resources "and the operator's is its pod-metrics list" \
@@ -2284,7 +2346,7 @@ for v in create update patch delete deletecollection; do
     union-operator-comp-ns-read "${v}" ""
 done
 
-# The pooled work-ns role at chart defaults (low_privilege, so it is a Role in the
+# The pooled work-ns role at chart defaults (singleNamespace, so it is a Role in the
 # release namespace). Pinned for all eight verbs. The read three cover every resource
 # any declarer names; the write five do not, and the gaps are the point:
 #   patch              only where a component patches -- the wildcard contributors and
@@ -2319,7 +2381,7 @@ expect-verb-resources "until propeller is on, whose garbage collector is the one
   union-work-ns deletecollection "flyteworkflows,flyteworkflows/finalizers" \
   --set flytepropeller.enabled=true
 
-# And with app serving on, split identities, at full privilege -- where the pooled role
+# And with app serving on, split identities, outside singleNamespace -- where the pooled role
 # is a ClusterRole and picks up the three app-serving writers. Three verbs, chosen for
 # what they separate:
 #   get     the widest, and the only one carrying serviceaccounts -- knative's digest
@@ -2410,7 +2472,7 @@ expect-manifest "and is pinned to the propeller ConfigMap by name" \
 # Every read slot rejects every write verb. The comp-ns-read roles join the list now
 # that each component has its own: they are `-read` slots and the same suffix rule
 # applies to them. The operator's comp-ns-read is not rendered at these values (it holds
-# only the low_privilege pod-metrics list and the secrets watcher's reads); its write verbs
+# only the singleNamespace pod-metrics list and the secrets watcher's reads); its write verbs
 # are pinned at chart defaults above.
 for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
          union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
@@ -2477,6 +2539,144 @@ if grep -q 'hasSuffix "-read" $.slot' "${CHART}/templates/_rbac.tpl"; then
 else
   echo "  FAILED   the -read suffix derivation is gone; read slots now admit write verbs"
   checks=$((checks + 1)); failures=$((failures + 1))
+fi
+
+echo
+echo "- singleNamespace resolves from either key, and low_privilege is only an alias"
+
+# low_privilege is the older name for singleNamespace. The cloud repo's generated overlays set
+# it explicitly, so it has to keep deciding scope on its own; the two may not disagree. The
+# operator's limitNamespace is the observable: it is written only in single-namespace mode.
+expect-manifest "neither key set means single-namespace" \
+  present "limitNamespace: ${NAMESPACE}"
+expect-manifest "singleNamespace: true is single-namespace" \
+  present "limitNamespace: ${NAMESPACE}" \
+  --set singleNamespace=true
+expect-manifest "singleNamespace: false is multi-namespace" \
+  absent "limitNamespace: ${NAMESPACE}" \
+  --set singleNamespace=false
+expect-manifest "low_privilege: true alone is single-namespace" \
+  present "limitNamespace: ${NAMESPACE}" \
+  --set low_privilege=true
+expect-manifest "low_privilege: false alone is multi-namespace" \
+  absent "limitNamespace: ${NAMESPACE}" \
+  --set low_privilege=false
+expect-manifest "both set and agreeing is honored" \
+  absent "limitNamespace: ${NAMESPACE}" \
+  --set singleNamespace=false --set low_privilege=false
+expect-refusal "both set and disagreeing is refused" \
+  "singleNamespace is false but low_privilege is true" \
+  --set singleNamespace=false --set low_privilege=true
+expect-refusal "and refused the other way round too" \
+  "singleNamespace is true but low_privilege is false" \
+  --set singleNamespace=true --set low_privilege=false
+# A quoted "false" is a non-empty string and would read as true, so it is refused.
+expect-refusal "a string is refused rather than read for truthiness" \
+  "singleNamespace must be a YAML boolean" \
+  --set-string singleNamespace=false
+expect-refusal "for the alias too" \
+  "low_privilege must be a YAML boolean" \
+  --set-string low_privilege=false
+
+echo
+echo "- under singleNamespace, cluster-scoped grants come only from the allowlist"
+
+# The promise singleNamespace makes, checked over every fixture that resolves to it and two
+# renders with every optional component on. Each ClusterRole a ClusterRoleBinding binds must
+# be covered here rule for rule, a cluster-scoped write must be pinned to named objects, and
+# Roles stay in the release namespace. tests/lib/rbac_scope_audit.py does the parsing.
+#
+# Adding an entry widens what singleNamespace means. Name the code that needs it, and prefer a
+# namespaced grant or a disabled feature when either will do.
+#
+# Format: <ClusterRole> <read|pinned-write|unpinned-write> <apiGroup|core> <resource> <verbs>
+#         [resourceNames]
+SCOPE_ALLOWLIST="${WORK_DIR}/scope-allowlist.txt"
+cat > "${SCOPE_ALLOWLIST}" <<'EOF'
+# The operator's node informer (cloud operator/cmd/root.go, `nodeInformer`). It runs unless
+# disableClusterPermissions is set and some usage collector runs, and startup blocks until it
+# syncs. It backs the Legacy/Shadow billing collector and GPU attribution by node label.
+# Nodes are cluster-scoped, so limit-namespace cannot confine it.
+union-operator-cluster-read read core nodes list,watch
+
+# nodeobserver (cloud nodeobserver/), off by default. It reads the node it runs on and lists
+# that node's pods with an empty namespace and a spec.nodeName field selector, which the API
+# server authorizes as a cluster-scope request.
+union-nodeobserver-cluster-read read core nodes get
+union-nodeobserver-cluster-read read core pods list
+# The one unpinned cluster-scoped write: nodeobserver removes its startup taint from the node
+# it runs on (nodeobserver/pkg/observer/observer.go). Node names are not known at render
+# time, so resourceNames cannot pin it.
+union-nodeobserver-cluster-write unpinned-write core nodes update
+
+# ingress-nginx with its RBAC scoped to the release namespace (templates/ingress-nginx/
+# ingressclass-rbac.yaml). IngressClass is cluster-scoped; without the read the controller
+# ignores every Ingress that sets spec.ingressClassName.
+dataplane-nginx-ingressclass read networking.k8s.io ingressclasses get,list,watch
+
+# The pre-upgrade hook that deletes the MutatingWebhookConfiguration chart versions before
+# 2026.4.7 left behind (templates/webhook/pre-upgrade-cleanup.yaml). Pinned to its one name.
+flyte-webhook-cleanup-union read admissionregistration.k8s.io mutatingwebhookconfigurations get flyte-pod-webhook
+flyte-webhook-cleanup-union pinned-write admissionregistration.k8s.io mutatingwebhookconfigurations delete flyte-pod-webhook
+
+# The secrets watcher's Role in controlplaneNamespace (templates/operator/serviceaccount.yaml).
+# An intracluster control plane's services have no watcher of their own.
+outside-namespace operator-system-secrets-watcher
+
+# Third-party subcharts that ship their own RBAC, all off by default. singleNamespace does not
+# govern them; enabling one adds its ClusterRoles whatever the scope. prometheus is not here:
+# the chart writes its RBAC itself and follows singleNamespace.
+subchart monitoring
+subchart metrics-server
+subchart opencost
+subchart knative-operator
+subchart ingress-nginx
+subchart dcgm-exporter
+subchart fluentbit
+EOF
+
+# Every optional component that can render under singleNamespace, twice: once with app serving
+# on the knative-operator path, once on the zero-trust stack, where app serving is refused.
+max_features=(
+  --set nodeobserver.enabled=true --set uvolMountBroker.enabled=true
+  --set flytepropeller.enabled=true --set imageBuilder.enabled=true
+  --set config.operator.secretsWatcher.enabled=true
+  --set config.operator.syncClusterConfig.enabled=true
+  --set controlplaneNamespace=union-cp
+  --set config.operator.billing.model=Shadow
+  --set config.configOverrides.operator.serverlessCollectUsages.enabled=true
+  --set ingress-nginx.enabled=true --set monitoring.enabled=true
+  --set metrics-server.enabled=true --set opencost.enabled=true --set cost.enabled=true
+  --set dcgm-exporter.enabled=true --set commonServiceAccount.enabled=false
+)
+MAX_APPS="${WORK_DIR}/max-apps.yaml"
+MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"
+scope_renders=()
+if render "${max_features[@]}" --set apps.enabled=true --set gateway.enabled=false \
+    --set knative-operator.enabled=true \
+    --set config.operator.apps.controller.podDisruptionBudget.enabled=true >"${MAX_APPS}" 2>&1; then
+  scope_renders+=(--render "every component, app serving on the knative-operator path=${MAX_APPS}")
+else
+  checks=$((checks + 1)); failures=$((failures + 1))
+  echo "  FAILED   the max-features render with app serving: $(grep -o 'Error:.*' "${MAX_APPS}" | head -c 300)"
+fi
+if render "${max_features[@]}" --set zero_trust.enabled=true --set knative-operator.enabled=false \
+    --set orgName=test-org >"${MAX_ZT}" 2>&1; then
+  scope_renders+=(--render "every component, zero trust=${MAX_ZT}")
+else
+  checks=$((checks + 1)); failures=$((failures + 1))
+  echo "  FAILED   the max-features zero-trust render: $(grep -o 'Error:.*' "${MAX_ZT}" | head -c 300)"
+fi
+
+scope_report=$(cd "${SCRIPT_DIR}/.." && uv run --quiet python tests/lib/rbac_scope_audit.py \
+  --allowlist "${SCOPE_ALLOWLIST}" --chart "${CHART}" --fixtures "${SCRIPT_DIR}/values" \
+  --namespace "${NAMESPACE}" "${scope_renders[@]}" 2>&1) || true
+echo "${scope_report}"
+checks=$((checks + $(grep -cE '^  (ok|FAILED) ' <<<"${scope_report}" || true)))
+failures=$((failures + $(grep -cE '^  FAILED ' <<<"${scope_report}" || true)))
+if ! grep -qE '^  (ok|FAILED) ' <<<"${scope_report}"; then
+  checks=$((checks + 1)); failures=$((failures + 1))
+  echo "  FAILED   the scope audit produced no results"
 fi
 
 if [[ ${failures} -ne 0 ]]; then

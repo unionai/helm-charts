@@ -394,6 +394,8 @@ data:
                 CHART / "examples/values-test-certs.yaml",
                 "--set-string",
                 f"config.operator.billing.model={model}",
+                "--set",
+                "config.operator.collectUsages.enabled=false",
             )
             self.assertEqual(model, self.operator(result.stdout)["billing"]["model"])
             inventories.append(
@@ -404,15 +406,19 @@ data:
                 }
             )
         # The billing model changes no workload or config object. The one thing it
-        # does change is RBAC: under low_privilege the operator lists pod metrics in
-        # the release namespace only for ResourceUsage and Shadow, and that rule is
-        # all its comp-ns-read Role holds here, so the Role and its binding render
-        # only for those models.
+        # does change is RBAC. With collectUsages off, only a ResourceUsage or Shadow
+        # model starts the usage aggregator, which under singleNamespace lists pod
+        # metrics in the release namespace (the operator's comp-ns-read Role holds
+        # only that rule here), and only a model other than None starts the node
+        # informer, whose cluster-wide nodes read is all the operator's cluster-read
+        # role holds under singleNamespace.
         none, resource_usage = inventories
         self.assertEqual(
             {
                 ("rbac.authorization.k8s.io/v1", "Role", f"{NAMESPACE}-operator-comp-ns-read"),
                 ("rbac.authorization.k8s.io/v1", "RoleBinding", f"{NAMESPACE}-operator-comp-ns-read"),
+                ("rbac.authorization.k8s.io/v1", "ClusterRole", f"{NAMESPACE}-operator-cluster-read"),
+                ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", f"{NAMESPACE}-operator-cluster-read"),
             },
             resource_usage - none,
         )

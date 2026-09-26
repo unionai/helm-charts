@@ -3312,7 +3312,6 @@ data:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
       limitNamespace: union
-      disableClusterPermissions: true
       apps:
         enabled: 'false'
       syncClusterConfig:
@@ -3331,7 +3330,7 @@ data:
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
-        enabled: false
+        enabled: true
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
@@ -3517,7 +3516,7 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
+    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -4313,6 +4312,34 @@ data:
     
   rules: |
     {}
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - list
+    - watch
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5520,7 +5547,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "74697504e05ce8857148dea1a3c55bcfa2846ad03b81ec3344c9b4c381e8909"
+        configChecksum: "616b95acc638f8f52b8077ef7575de428a55db23c625d02e0060d3d4f26c9f6"
         prometheus.io/scrape: "true"
       labels:
         
@@ -5660,7 +5687,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "74697504e05ce8857148dea1a3c55bcfa2846ad03b81ec3344c9b4c381e8909"
+        configChecksum: "616b95acc638f8f52b8077ef7575de428a55db23c625d02e0060d3d4f26c9f6"
         prometheus.io/scrape: "true"
       labels:
         

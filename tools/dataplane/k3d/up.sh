@@ -288,7 +288,7 @@ phase_route() {
 
 phase_functional() {
   echo ">> [functional] pytest tests/functional"
-  # APP_NAMESPACE = k3d's release namespace (low_privilege pins the app ksvc there);
+  # APP_NAMESPACE = k3d's release namespace (singleNamespace pins the app ksvc there);
   # the code default is "dataplane" (standing legs), so k3d must set it explicitly.
   CONTROL_PLANE_URL="https://$CP_HOST" CLUSTER_NAME="$CLUSTER" ORG_NAME="$ORG" \
     APP_NAMESPACE="$UNION_NS" \

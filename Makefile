@@ -26,9 +26,9 @@ snapshot-generator-test:
 
 # Renders the dataplane chart against values the RBAC guards should accept and
 # values they should refuse. helm-test only diffs renders that succeed, so it
-# cannot see a guard at all.
+# cannot see a guard at all. Its single-namespace scope audit runs under uv.
 .PHONY: rbac-guard-test
-rbac-guard-test:
+rbac-guard-test: requirements
 	bash ./tests/test-rbac-guards.sh
 
 # Gate on fully qualified image references. Reads the checked-in

@@ -4043,7 +4043,6 @@ data:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
       limitNamespace: union
-      disableClusterPermissions: true
       apps:
         enabled: 'false'
       syncClusterConfig:
@@ -4062,7 +4061,7 @@ data:
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
-        enabled: false
+        enabled: true
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
@@ -4256,7 +4255,7 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
+    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -5395,6 +5394,20 @@ rules:
 
 
 ---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - list
+    - watch
+---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/clusterrolebinding.yaml
 kind: ClusterRoleBinding
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5490,6 +5503,20 @@ subjects:
     namespace: union
 
 
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
 ---
 # Source: dataplane/charts/monitoring/charts/grafana/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7453,7 +7480,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9cea23b84b4c60dbe5873e69a621e6892f1a322ee728fdfbef99e86cd4e7a26"
+        configChecksum: "514c7e5abbb8005b1a0e513aa47dfd5cfe64f429feb67e06229e54dcd2b1b8d"
         
       labels:
         
@@ -7591,7 +7618,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "9cea23b84b4c60dbe5873e69a621e6892f1a322ee728fdfbef99e86cd4e7a26"
+        configChecksum: "514c7e5abbb8005b1a0e513aa47dfd5cfe64f429feb67e06229e54dcd2b1b8d"
         
       labels:
         

@@ -3312,7 +3312,6 @@ data:
         enableDirectToAppIngress: false
         deploymentToRestart: union-operator-proxy
       limitNamespace: union
-      disableClusterPermissions: true
       apps:
         enabled: 'false'
       syncClusterConfig:
@@ -3331,7 +3330,7 @@ data:
         userRole: 'test-worker-iam-role-arn'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
-        enabled: false
+        enabled: true
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
@@ -3520,7 +3519,7 @@ data:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
+    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
     # Flyte propeller metrics for execution info and fast task duration.
     # No-op when propeller is not deployed (no pods match the label selector).
     - job_name: 'flytepropeller'
@@ -4316,6 +4315,34 @@ data:
     
   rules: |
     {}
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-operator-cluster-read
+rules:
+  - apiGroups:
+    - ""
+    resources:
+    - nodes
+    verbs:
+    - list
+    - watch
+---
+# Source: dataplane/templates/common/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-operator-cluster-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-operator-cluster-read
+subjects:
+  - kind: ServiceAccount
+    name: union-system
+    namespace: union
 ---
 # Source: dataplane/templates/common/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -5521,7 +5548,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f1120705aa880a4471e0abd7226a8ab91975eeefc68a0f390bc2e11b8f8f106"
+        configChecksum: "aa3e7c1224cb88fcbf5e661bce2936a832941db75a42f5781d286db745d6d59"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -5660,7 +5687,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f1120705aa880a4471e0abd7226a8ab91975eeefc68a0f390bc2e11b8f8f106"
+        configChecksum: "aa3e7c1224cb88fcbf5e661bce2936a832941db75a42f5781d286db745d6d59"
         
       labels:
         

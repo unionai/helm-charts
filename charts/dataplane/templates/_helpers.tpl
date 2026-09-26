@@ -696,7 +696,7 @@ list, which the operator reads as "every namespace": it lists pods cluster-wide
 (operator/pkg/watcher/secret.go). `hasKey` rather than truthiness is what tells
 that case apart from "unset".
 
-At low_privilege: false that list is authorized: the operator's
+At singleNamespace: false that list is authorized: the operator's
 work-ns-cluster-read always grants pods list and watch cluster-wide. What
 follows it is not, everywhere. For each matched pod the watcher Gets its
 ReplicaSet and the Secrets it mounts, watches Secrets, and Gets and Updates the
@@ -707,8 +707,9 @@ controlplaneNamespace, so a zone-labelled pod anywhere else -- a co-located
 control plane's, typically -- is refused, and the operator exits at startup.
 List the namespaces instead when one exists.
 
-Under low_privilege an empty list is refused. Nothing cluster-wide is granted
-there, so the pod list itself is refused and the operator exits at startup.
+Under singleNamespace an empty list is refused. No cluster-wide pod read is
+granted there, so the pod list itself is refused and the operator exits at
+startup.
 
 Unset, it resolves to the release namespace plus the control plane's when the two
 share a cluster. Those are the only namespaces holding pods with the zone label
@@ -717,8 +718,8 @@ the watcher selects on; user task namespaces never carry it.
 {{- define "operator.secretsWatcher.namespaces" -}}
 {{- $sw := .Values.config.operator.secretsWatcher -}}
 {{- if hasKey $sw "namespaces" -}}
-{{- if and $sw.enabled (not $sw.namespaces) .Values.low_privilege -}}
-{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list under low_privilege. The operator reads an empty list as every namespace and lists pods cluster-wide, and low_privilege grants nothing cluster-wide, so the operator would exit at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
+{{- if and $sw.enabled (not $sw.namespaces) (include "singleNamespace" .) -}}
+{{- fail "config.operator.secretsWatcher.namespaces is set to an empty list under singleNamespace. The operator reads an empty list as every namespace and lists pods cluster-wide, and singleNamespace grants no cluster-wide pod read, so the operator would exit at startup. List the namespaces to watch, or remove the key to watch the release namespace (and controlplaneNamespace, when set)." -}}
 {{- end -}}
 {{- toYaml ($sw.namespaces | default list) -}}
 {{- else -}}
@@ -1179,8 +1180,8 @@ present in values.yaml, just null).
 Emits "true"/"" rather than "true"/"false" so callers can write
 `if include "apps.enabled" .` — the literal string "false" is truthy.
 
-Defaults to off, because low_privilege is on by default and the two cannot both be
-set (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
+Defaults to off, because singleNamespace is on by default and the vendored gateway
+refuses app serving under it (gateway/validate.yaml). Keep apps.enabled null in values.yaml rather than a
 literal false — a literal counts as set, so it would always win over the deprecated
 serving.enabled.
 */}}
@@ -1668,27 +1669,96 @@ Otherwise, build it from imagebuilder.defaultRegistry plus the provider-specific
 {{- end -}}
 
 {{/*
-Returns "true" under low_privilege, the empty string otherwise.
+Returns "true" when the release runs single-namespace, the empty string
+otherwise. Every template reads scope through this define, and it is the only
+place in the chart that reads either values key.
 
-low_privilege: true means no namespaces are created, so every workload runs in
-the release namespace. Templates key their namespace-scoping config
-(limitNamespace, limit-namespace, namespace_mapping) off this helper, and
-clusterresourcesync renders only when it is empty.
+singleNamespace: true means Union's workloads, tasks and apps included, run in
+the release namespace, and every grant that can be namespaced is. No namespaces
+are created, clusterresourcesync is not rendered, and the templates key their
+namespace-scoping config (limitNamespace, limit-namespace, namespace_mapping)
+and the choice of Role over ClusterRole off this define. It does not promise
+zero cluster-scoped access: the cluster-scoped reads that remain are a fixed
+list, enforced by tests/test-rbac-guards.sh.
 
-This does not decide RBAC kind. The templates that choose Role over ClusterRole
-read .Values.low_privilege directly; this helper resolves to the same value, so
-routing them through it would change nothing today.
+low_privilege is the older name for the same setting and is read as an alias,
+so an overlay that sets only low_privilege behaves exactly as it did. The
+resolution is:
+
+  neither set                  true
+  one set                      that value
+  both set, and they agree     that value
+  both set, and they disagree  the render fails
+
+"Set" means present and not null, which is why values.yaml leaves both keys
+out: a default there would count as set and could never be told apart from an
+overlay's choice.
+
+Each must be a YAML boolean. A quoted "false" is a non-empty string and would
+read as true under Go-template truthiness, so a string is refused rather than
+guessed at.
 
 namespaces.enabled is deliberately not read here: it pre-seeds a fixed list of
-work namespaces and says nothing about privilege. Folding it in meant a default
-full-privilege install looked single-namespace and suppressed clusterresourcesync.
-
-low_privilege must be a YAML boolean. This helper and every other low_privilege
-gate read it for Go-template truthiness, where the string "false" is truthy and
-so silently means true.
+work namespaces and says nothing about scope. Folding it in meant a default
+multi-namespace install looked single-namespace and suppressed
+clusterresourcesync.
 */}}
 {{- define "singleNamespace" -}}
-{{- if .Values.low_privilege -}}true{{- end -}}
+{{- $set := dict -}}
+{{- range $key := list "singleNamespace" "low_privilege" -}}
+{{- $v := index $.Values $key -}}
+{{- if not (kindIs "invalid" $v) -}}
+{{- if not (kindIs "bool" $v) -}}
+{{- fail (printf "%s must be a YAML boolean (true or false), not %q. A quoted string is truthy whatever it says, so the chart refuses it rather than guess which scope was meant." $key (toString $v)) -}}
+{{- end -}}
+{{- $_ := set $set $key $v -}}
+{{- end -}}
+{{- end -}}
+{{- if and (hasKey $set "singleNamespace") (hasKey $set "low_privilege") (ne $set.singleNamespace $set.low_privilege) -}}
+{{- fail (printf "singleNamespace is %v but low_privilege is %v. low_privilege is the older name for singleNamespace, so the two cannot disagree. Set singleNamespace alone, or set both to the same value." $set.singleNamespace $set.low_privilege) -}}
+{{- end -}}
+{{- $single := true -}}
+{{- if hasKey $set "singleNamespace" -}}
+{{- $single = $set.singleNamespace -}}
+{{- else if hasKey $set "low_privilege" -}}
+{{- $single = $set.low_privilege -}}
+{{- end -}}
+{{- if $single -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Reads a boolean the way the operator does, and returns "true" or the empty
+string.
+
+The operator decodes its config with mapstructure's WeaklyTypedInput, so a
+string goes through strconv.ParseBool, which accepts 1, t, T, TRUE, true and
+True (and the matching false forms), an empty string is false, and a number is
+true when it is not zero. An RBAC gate that compared the rendered string to
+"true" would read `"True"` as false while the operator read it as true, and
+withhold a grant the operator then waits on. A string outside those forms fails
+the operator's config load, so it fails the render here instead.
+
+A string is passed through tpl first, as the config templates do before the
+operator sees it. Null is false, which is the operator's default for every flag
+read through this define.
+
+Takes a dict: value, ctx (the root context), key (for the error message).
+*/}}
+{{- define "dataplane.parseBool" -}}
+{{- $v := .value -}}
+{{- if kindIs "bool" $v -}}
+{{- if $v -}}true{{- end -}}
+{{- else if kindIs "string" $v -}}
+{{- $s := tpl $v .ctx -}}
+{{- if has $s (list "1" "t" "T" "TRUE" "true" "True") -}}true
+{{- else if not (has $s (list "" "0" "f" "F" "FALSE" "false" "False")) -}}
+{{- fail (printf "%s is %q, which the operator cannot read as a boolean. Use true or false." .key $s) -}}
+{{- end -}}
+{{- else if or (kindIs "int" $v) (kindIs "int64" $v) (kindIs "float64" $v) -}}
+{{- if ne (float64 $v) 0.0 -}}true{{- end -}}
+{{- else if not (kindIs "invalid" $v) -}}
+{{- fail (printf "%s is %v, which the operator cannot read as a boolean. Use true or false." .key $v) -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -1722,7 +1792,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
-{{- else if and (eq $key "prometheus") $.Values.low_privilege }}
+{{- else if and (eq $key "prometheus") (include "singleNamespace" $) }}
 {{- else }}
 {{- $_ := set $heartbeat $key $value }}
 {{- end }}
@@ -1745,7 +1815,7 @@ union-pod-webhook
 {{- $_ := set $webhook "serviceName" (include "flytepropellerwebhook.serviceName" .) }}
 {{- $_ := set $webhook "secretName" (include "flytepropellerwebhook.secretName" .) }}
 {{- $_ := set $webhook "localCert" true }}
-{{- if or .Values.low_privilege (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
+{{- if or (include "singleNamespace" .) (and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.managedConfig) }}
 {{- $_ := set $webhook "disableCreateMutatingWebhookConfig" true }}
 {{- end }}
 {{- if include "singleNamespace" . }}

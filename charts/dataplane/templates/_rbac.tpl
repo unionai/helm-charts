@@ -63,7 +63,7 @@ produced a wrong inventory in this file before.
 {{/*
 The one entry whose gate is not just an enabled key: clusterresourcesync's own
 templates render only outside singleNamespace, so joining the registry under
-low_privilege would emit RBAC for a ServiceAccount that does not exist. Its
+singleNamespace would emit RBAC for a ServiceAccount that does not exist. Its
 subject is `union-` prefixed because the ServiceAccount is, unlike every other
 component here.
 */}}
@@ -96,7 +96,7 @@ Grants are split by where they apply: the components namespace (the release
 namespace, where union's own workloads run) versus the work namespaces (per
 project/domain, where user tasks run).
 
-  slot                  object       binding              pooled  low_privilege: true
+  slot                  object       binding              pooled  singleNamespace: true
   --------------------  -----------  -------------------  ------  -------------------
   comp-ns-read          Role         RoleBinding, rel ns  no      unchanged
   comp-ns-write         Role         RoleBinding, rel ns  no      unchanged
@@ -105,8 +105,8 @@ project/domain, where user tasks run).
   cluster-read          ClusterRole  ClusterRoleBinding   no      unchanged
   cluster-write         ClusterRole  ClusterRoleBinding   no      unchanged
 
-Under full privilege, work-ns binds only outside the release namespace. Under
-low_privilege it binds there too, because the release namespace is the work namespace.
+Outside singleNamespace, work-ns binds only outside the release namespace. Under
+singleNamespace it binds there too, because the release namespace is the work namespace.
 
 Pooling: work-ns is the one pooled slot, and it is pooled for a reason that applies to
 no other. Its bindings are per work namespace, and not all of those namespaces exist
@@ -154,10 +154,10 @@ above.
           namespaced and per-component.
           false -> one role per declaring component
   kind    comp, work, cluster, work-cluster. A `cluster` slot is emitted as a
-          ClusterRole plus ClusterRoleBinding in both privilege modes: what it
-          carries is cluster-scoped in both, so low_privilege cannot narrow it
+          ClusterRole plus ClusterRoleBinding in both scope modes: what it
+          carries is cluster-scoped in both, so singleNamespace cannot narrow it
           and refusing to render it only moves the failure to runtime.
-          `work-cluster` emits nothing under low_privilege.
+          `work-cluster` emits nothing under singleNamespace.
 */}}
 {{- define "dataplane.rbac.slotSpec" -}}
 comp-ns-read:
@@ -266,7 +266,7 @@ aim an unvalidated rule at any slot, so the rule is constructed below instead.
 {{- $name := include "dataplane.rbac.slotRoleName" (dict "ctx" $ctx "slot" .slot "component" (.component | default "")) -}}
 {{- $lowPriv := include "singleNamespace" $ctx -}}
 {{/*
-Under low_privilege, limit-namespace makes these caches namespace-scoped, so
+Under singleNamespace, limit-namespace makes these caches namespace-scoped, so
 work-cluster emits nothing rather than failing. Each read here therefore needs a
 release-namespace counterpart for that mode: usually the pooled work-ns Role, or
 the component's comp-ns-read where the read belongs to that component alone.
@@ -309,7 +309,7 @@ rule alongside.
 {{- $resolved = concat $resolved (fromYamlArray (include "dataplane.rbac.provisionerBindRule" $ctx) | default list) -}}
 {{- end -}}
 {{/*
-`work` is a ClusterRole under full privilege only so its rules are defined once
+`work` is a ClusterRole outside singleNamespace only so its rules are defined once
 for all namespaces. Per-namespace RoleBindings are its only bindings, so it
 grants nothing cluster-wide.
 */}}

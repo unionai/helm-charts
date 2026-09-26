@@ -151,7 +151,7 @@ userRoleAnnotationValue: "arn:aws:iam::ACCOUNT_ID:role/flyte_project_role"
 clusterresourcesync:
   # -- Enable or disable the syncresources service. It creates the per-project/domain
   # namespaces and RBAC that task pods land in, driven by the top-level
-  # namespace_mapping. The chart renders it only when low_privilege is false, where
+  # namespace_mapping. The chart renders it only when singleNamespace is false, where
   # it is required unless something else provisions those namespaces.
   enabled: false
   # -- Override service account values for the syncresources service
@@ -171,7 +171,7 @@ clusterresourcesync:
   # which switches off Kubernetes' own escalation-prevention check, and on
   # `serviceaccounts` it conveys `impersonate`.
   #
-  # This list applies only with low_privilege: false and clusterresourcesync.enabled:
+  # This list applies only with singleNamespace: false and clusterresourcesync.enabled:
   # true. Anything set here is granted cluster-wide, even with namespaces.enabled:
   # true, because clusterresourcesync creates project namespaces at runtime, after
   # the chart renders.
@@ -341,7 +341,7 @@ clusterresourcesync:
   # the default namespace, service account, and resource quota templates.
   # Each entry has a `key` (filename stem) and `value` (Kubernetes manifest).
   # syncresources renders each `value` once per project namespace ({{ namespace }} is
-  # substituted), so this is the non-low_privilege / multi-namespace injection point for a
+  # substituted), so this is the multi-namespace injection point for a
   # per-namespace read-only model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV +
   # RO PVC per namespace (provisioning tooling substitutes the real bucket name).
   # The PV is cluster-scoped, so name it per-namespace to avoid collisions:
@@ -521,7 +521,7 @@ config:
       # -- confinement, so a cluster that does not need it must not get it.
       # -- An empty nodeOSImageSubstrings applies it wherever it is enabled
       # -- instead of only on the distributions that need it: the webhook's
-      # -- role cannot read nodes (it is namespaced under low_privilege), so
+      # -- role cannot read nodes (it is namespaced under singleNamespace), so
       # -- auto-detection would fail closed here and mutate nothing.
       selinuxTaskPods:
         enabled: false
@@ -595,7 +595,10 @@ config:
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
     limitNamespace: ""
-    # -- Disable cluster-wide permissions. Auto-set when low_privilege is true.
+    # -- Stop the operator's node informer, and with it the Legacy/Shadow node-based
+    # billing collector, the serverless usage aggregator and GPU attribution by node
+    # label. Drops the operator's cluster-wide nodes read. Independent of
+    # singleNamespace, which no longer sets it.
     disableClusterPermissions: false
     # -- Eager API key bootstrap. When enabled, the operator mints the
     # EAGER_API_KEY on the control plane and writes it to the task-pod secret
@@ -644,8 +647,8 @@ config:
       gcpProjectId: "{{ tpl .Values.storage.gcp.projectId . }}"
       # -- Cloud provider the cluster runs on (aws, gcp, azure, oci, or metal). Selects the GPU
       # accelerator node label used for usage attribution and tags billable usage. Defaults to the
-      # top-level `provider`. When empty, if the operator isn't running in low privilege mode then the operator
-      # falls back to detecting it from node labels.
+      # top-level `provider`. When empty, the operator falls back to detecting it from node
+      # labels, which needs its node informer (disableClusterPermissions: false).
       cloudProvider: '{{ tpl (.Values.provider | default "" | toString) . }}'
     # -- Configuration for the usage reporting service.
     collectUsages:
@@ -1167,12 +1170,12 @@ leaseworker:
   # priorityClass.create: false. Set to "" to run without one. Do NOT use a reserved
   # system class (e.g. system-cluster-critical): GKE's gcp-critical-pods
   # ResourceQuota restricts those to kube-system. The pod still references this class
-  # under low_privilege when it is externally managed (priorityClass.create: false) —
+  # under singleNamespace when it is externally managed (priorityClass.create: false) —
   # referencing needs no cluster RBAC; only creation does (see priorityClass.create).
   priorityClassName: union-leaseworker
   # -- Whether the chart creates the (cluster-scoped) PriorityClass named by
-  # priorityClassName above. Skipped under low_privilege (namespace-only installs
-  # can't create cluster resources) — pair with a class you create out-of-band. Set
+  # priorityClassName above. Skipped under singleNamespace, because a PriorityClass
+  # is cluster-wide scheduling policy — pair with a class you create out-of-band. Set
   # create: false to bring your own class, or in multi-dataplane-per-cluster setups
   # (the PriorityClass would otherwise be created once per dataplane). value is used
   # only when create: true.
@@ -1197,12 +1200,12 @@ flytepropeller:
   # class below. Set to your own existing class to bring your own, or "" for none. Do
   # NOT use a reserved system class (e.g. system-cluster-critical): GKE's
   # gcp-critical-pods ResourceQuota restricts those to kube-system. The pod still
-  # references this class under low_privilege when it is externally managed
+  # references this class under singleNamespace when it is externally managed
   # (priorityClass.create: false) — referencing needs no cluster RBAC; only creation does.
   priorityClassName: "union-flytepropeller"
   # -- Whether the chart creates the (cluster-scoped) PriorityClass named above. Only
-  # rendered when flytepropeller.enabled. Skipped under low_privilege (namespace-only
-  # installs can't create cluster resources). Set create: false to bring your own class,
+  # rendered when flytepropeller.enabled. Skipped under singleNamespace, because a
+  # PriorityClass is cluster-wide scheduling policy. Set create: false to bring your own class,
   # or in multi-dataplane-per-cluster setups. value is used only when create: true.
   priorityClass:
     create: true
@@ -1834,7 +1837,7 @@ ingress:
 prometheus:
   enabled: true
   # Leave false: the dataplane chart creates Prometheus's RBAC itself, scoped to match
-  # low_privilege. See docs/rbac.md.
+  # singleNamespace. See docs/rbac.md.
   rbac:
     create: false
 
@@ -1990,8 +1993,8 @@ prometheus:
           action: keep
     # cAdvisor container metrics for CPU and memory tracking (Infrastructure panels).
     # Scrapes the kubelet cadvisor endpoint via the API server proxy.
-    # Needs cluster-scoped node access, so it is only rendered when low_privilege is false.
-    {{- if not .Values.low_privilege }}
+    # Needs cluster-scoped node access, so it is only rendered when singleNamespace is false.
+    {{- if not (include "singleNamespace" .) }}
     - job_name: 'kubernetes-cadvisor'
       metrics_path: /metrics
       scheme: https
@@ -2104,7 +2107,7 @@ prometheus:
   kube-state-metrics:
     enabled: true
     # Leave false: the dataplane chart creates this RBAC itself, scoped to match
-    # low_privilege. See docs/rbac.md.
+    # singleNamespace. See docs/rbac.md.
     rbac:
       create: false
     # Helm replaces lists wholesale, so this is the whole list. It is limited to
@@ -2117,8 +2120,9 @@ prometheus:
       - daemonsets      # kube_daemonset_status_number_unavailable
       - resourcequotas  # kube_resourcequota
     # Collect from the release namespace only. This key is not derived from
-    # low_privilege: at low_privilege: false, layer examples/values.full-privilege.yaml
-    # to also collect from the namespaces task pods run in.
+    # singleNamespace: with singleNamespace: false, layer
+    # examples/values.full-privilege.yaml to also collect from the namespaces task
+    # pods run in.
     releaseNamespace: true
     # Filtering happens in the kube-state-metrics scrape job's metric_relabel_configs
     # above. This key is ignored.
@@ -2127,38 +2131,57 @@ prometheus:
   prometheus-pushgateway:
     enabled: false
 
-# -- Scopes the RBAC for Union's own workloads, plus the prometheus and
-#  kube-state-metrics subcharts, to a single namespace: a Role instead of a ClusterRole.
-#  Also gates app serving, namespace creation and priorityclasses; the tradeoffs are
-#  listed below. It is not a whole-chart namespace boundary: the Helm hook cleanup job
-#  creates a ClusterRole either way, as do opencost and metrics-server when enabled.
+# -- Runs the dataplane in one namespace, the release namespace. Unset means
+#  true. `low_privilege` is the older name for this key and still works as an
+#  alias; set one of the two, or both to the same value.
 #
-# This is the chart's only privilege axis. When true, no namespaces are created by
-# any route: `namespaces` is not consulted, clusterresourcesync is not rendered, and
-# all workloads run in the release namespace. `namespaces.enabled` on its own pre-seeds
-# a fixed list of work namespaces and does not change privilege.
+# What `singleNamespace: true` promises:
+# - Union's workloads, tasks and apps included, run in the release namespace, and
+#   every grant that can be namespaced is: Union's own components, prometheus and
+#   kube-state-metrics get Roles instead of ClusterRoles. No namespaces are
+#   created: `namespaces` is not consulted and clusterresourcesync is not rendered.
+# - Cluster-scoped reads come only from a fixed allowlist, each entry tied to the
+#   code that needs it. tests/test-rbac-guards.sh enforces the list; docs/rbac.md
+#   explains each entry.
+# - No cluster-scoped writes, except ones pinned to named objects (the pre-upgrade
+#   hook that deletes the legacy flyte-pod-webhook). nodeobserver, which is off by
+#   default, is the one exception: it removes a taint from the node it runs on,
+#   and RBAC cannot pin that to a node name.
 #
-# Write this as an unquoted YAML boolean. A quoted `"false"` is a non-empty string
-# and reads as true, here and for every other boolean in this chart.
+# It is a scope flag, not a privilege flag: it does not switch features off to
+# avoid cluster-scoped reads. Usage collection and the operator's node informer
+# run in both modes; config.operator.disableClusterPermissions turns the informer
+# off if you need to.
 #
-# Known tradeoffs when low_privilege is enabled:
-# - App serving cannot run: the Knative Serving / Kourier stack needs cluster-scoped RBAC
-#   that cannot be narrowed, so the chart refuses `apps.enabled: true` here rather than
-#   deploying apps that never start. Set `apps.enabled: false` to run the zero-trust
-#   dataplane without it; the Envoy gateway, dataproxy and tunnel ingress work either way.
+# `namespaces.enabled` on its own pre-seeds a fixed list of work namespaces and
+# does not change scope.
+#
+# Write this as an unquoted YAML boolean. The chart refuses a string, because a
+# quoted `"false"` would otherwise read as true.
+#
+# Known tradeoffs when singleNamespace is true:
+# - App serving cannot run on the zero-trust stack: the Knative binaries read
+#   cluster-wide however their RBAC is written, so the chart refuses
+#   `apps.enabled: true` there rather than deploying apps that never start. Set
+#   `apps.enabled: false` to run the zero-trust dataplane without it; the Envoy
+#   gateway, dataproxy and tunnel ingress work either way.
 # - Task-Level Monitoring (TLM) metrics are unavailable: cadvisor scraping requires
 #   cluster-scoped node discovery, and kube-state-metrics is limited to the release
-#   namespace (no cross-namespace pod resource metrics for task execution pods).
-#   Console CPU/memory charts for task executions will show "no data."
-# - Node-level metrics (kube_node_*, node_*) are not collected by the namespace-scoped
-#   kube-state-metrics instance.
-# - Cost calculation accuracy is reduced without node-level resource and pricing metrics.
-# - There are likely additional features that require cluster-scoped permissions and
-#   will not function in low_privilege mode. This list will be expanded as they are
-#   identified.
+#   namespace. Console CPU/memory charts for task executions will show "no data."
+# - Node-level metrics (kube_node_*, node_*) are not collected by the
+#   namespace-scoped kube-state-metrics instance.
+# - Cost calculation accuracy is reduced without node-level resource and pricing
+#   metrics.
+# - The chart does not create the leaseworker and flytepropeller PriorityClasses,
+#   which are cluster-wide scheduling policy. Bring your own and set
+#   `priorityClass.create: false`.
+# - The operator's API-server throttles stay off: they read the API server's own
+#   /metrics, which is not on the allowlist.
+# - There are likely additional features that need cluster-scoped access and will
+#   not work in single-namespace mode. This list will grow as they are identified.
 #
-# See docs/rbac.md for what each subchart gets in each mode.
-low_privilege: true
+# See docs/rbac.md for what each component and subchart gets in each mode.
+singleNamespace: null
 
 # RBAC layout, and the one thing this chart cannot do for you.
 #
@@ -2173,11 +2196,11 @@ low_privilege: true
 # `work-ns` is a ClusterRole only so its rules are written once. Every binding
 # the chart emits for it is a namespaced RoleBinding, and a RoleBinding pointing
 # at a ClusterRole confines that role's rules to the binding's own namespace, so
-# it grants access only where a binding exists. Under `low_privilege: true` the
+# it grants access only where a binding exists. Under `singleNamespace: true` the
 # release namespace is the work namespace, and work-ns is a plain Role bound
 # there.
 #
-# Under `low_privilege: false`, something must create that RoleBinding in each
+# Under `singleNamespace: false`, something must create that RoleBinding in each
 # work namespace:
 #
 #   - this chart, when `namespaces.enabled: true` and `namespaces.static` is
@@ -2217,9 +2240,9 @@ low_privilege: true
 # the knative-operator subchart instead of this chart.
 #
 # Adding app serving on top (`apps.enabled: true`) also requires
-# `low_privilege: false`: the Knative binaries read cluster-wide regardless of
+# `singleNamespace: false`: the Knative binaries read cluster-wide regardless of
 # how their RBAC is written, and the chart refuses the combination. At the
-# `low_privilege: true` default, set `apps.enabled: false` — you keep the Envoy
+# `singleNamespace: true` default, set `apps.enabled: false` — you keep the Envoy
 # gateway, dataproxy and tunnel ingress and give up app serving. The `apps` key
 # below documents what app serving is granted; see also
 # docs/rbac.md#app-serving.
@@ -2254,7 +2277,7 @@ controlplaneNamespace: ""
 # whatever cloud role is bound to it.
 #
 # It buys identity separation for cloud IAM; it is not a privilege boundary, and it
-# is independent of low_privilege — honored in both privilege modes.
+# is independent of singleNamespace — honored in both scope modes.
 commonServiceAccount:
   enabled: true
   name: union-system
@@ -2436,10 +2459,10 @@ tunnelService:
 # `serving.enabled`; when both are set this one wins. Left unset (null) so the
 # deprecated flag can still take effect — the effective default is `false`.
 #
-# Under `zero_trust.enabled: true`, app serving requires `low_privilege: false`,
-# and the chart refuses `enabled: true` alongside `low_privilege: true`. That
+# Under `zero_trust.enabled: true`, app serving requires `singleNamespace: false`,
+# and the chart refuses `enabled: true` alongside `singleNamespace: true`. That
 # applies to the zero-trust stack only — on the knative-operator path app serving
-# renders at either privilege setting. The reason is the Knative
+# renders at either scope setting. The reason is the Knative
 # images, not the manifests: their informers are the shared, unfiltered ones and
 # nothing scopes them to a namespace, so each binary's reads go out with an empty
 # namespace and Kubernetes authorizes them as cluster-scope checks. No way of
@@ -2759,7 +2782,7 @@ ingress-nginx:
       controllerValue: union.ai/dataplane
 
 ## -- Extra Kubernetes objects to deploy with the helm chart.
-## In low_privilege / single-namespace mode this is the injection point for a read-only
+## In single-namespace mode this is the injection point for a read-only
 ## model volume. Example — a gcsfuse (GKE Cloud Storage FUSE) PV + RO PVC mounting a GCS
 ## bucket at its ROOT, so serving pods can stream a Flyte-produced Model artifact in place read-only
 ## (provisioning tooling substitutes the real per-dataplane bucket name):
@@ -2789,16 +2812,16 @@ ingress-nginx:
 ##       resources: { requests: { storage: 1Gi } }
 ##
 ## The mounting pod also needs the annotation `gke-gcsfuse/volumes: "true"` for the GKE
-## sidecar-injector to mount it. For non-low_privilege (multi-namespace) clusters, prefer
+## sidecar-injector to mount it. For multi-namespace clusters, prefer
 ## `clusterresourcesync.additionalTemplates` so the volume is created per project namespace.
 extraObjects: []
 
 namespaces:
   # -- Pre-seed a fixed list of work namespaces, named in `static` below. Off by
   # default: clusterresourcesync creates work namespaces as projects are registered,
-  # so a full-privilege dataplane does not need them known at render time. This key
-  # does not change privilege scope — that is `low_privilege` alone — and is ignored
-  # entirely under `low_privilege: true`, where work runs in the release namespace.
+  # so a multi-namespace dataplane does not need them known at render time. This key
+  # does not change scope — that is `singleNamespace` alone — and is ignored
+  # entirely under `singleNamespace: true`, where work runs in the release namespace.
   #
   # Leave it `false` when the namespaces are managed outside this chart, so
   # ownership of them stays outside Helm.

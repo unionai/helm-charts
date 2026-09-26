@@ -2,8 +2,8 @@
 RBAC for prometheus and kube-state-metrics. Both subcharts run with rbac.create: false, so
 that a single flag decides the posture:
 
-  low_privilege: true   Role + RoleBinding in the release namespace
-  low_privilege: false  ClusterRole + ClusterRoleBinding
+  singleNamespace: true   Role + RoleBinding in the release namespace
+  singleNamespace: false  ClusterRole + ClusterRoleBinding
 
 The rules are the subcharts' own. Nothing cluster-scoped goes in the namespaced variant:
 naming it in a Role is legal but never matches, so it only hides the denial. Prometheus'
@@ -14,7 +14,7 @@ is refused outright. See docs/rbac.md.
 
 {{- $prom := .Values.prometheus }}
 {{- $ksm := index $prom "kube-state-metrics" }}
-{{- $lowPriv := .Values.low_privilege }}
+{{- $single := eq (include "singleNamespace" .) "true" }}
 
 {{- /* ServiceAccount names, derived the way each subchart derives them. The trunc and
        trimSuffix matter: a long or dash-suffixed override would otherwise bind a name that
@@ -45,16 +45,16 @@ is refused outright. See docs/rbac.md.
 {{- if not (hasKey $ksmRules $c) }}
 {{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which templates/prometheus/rbac.yaml has no rule for, so it would run unauthorized. Add it to the $ksmRules map there (and to $ksmClusterScoped if it is cluster-scoped). Mapped collectors: %s." $c (join ", " (keys $ksmRules | sortAlpha))) }}
 {{- end }}
-{{- if and $lowPriv (has $c $ksmClusterScoped) }}
-{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which is cluster-scoped and cannot be granted under low_privilege: true. kube-state-metrics would ask for it, be denied, and log the denial every few seconds for the life of the pod. Drop it, or layer examples/values.full-privilege.yaml, which sets low_privilege: false and collects it." $c) }}
+{{- if and $single (has $c $ksmClusterScoped) }}
+{{- fail (printf "prometheus.kube-state-metrics.collectors names %q, which is cluster-scoped and cannot be granted under singleNamespace: true. kube-state-metrics would ask for it, be denied, and log the denial every few seconds for the life of the pod. Drop it, or layer examples/values.full-privilege.yaml, which sets singleNamespace: false and collects it." $c) }}
 {{- end }}
 {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
+kind: {{ ternary "Role" "ClusterRole" $single }}
 metadata:
   name: union-operator-prometheus-rbac
-  {{- if $lowPriv }}
+  {{- if $single }}
   namespace: {{ .Release.Namespace }}
   {{- end }}
   labels:
@@ -63,7 +63,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources:
-      {{- if not $lowPriv }}
+      {{- if not $single }}
       - nodes
       - nodes/proxy
       - nodes/metrics
@@ -91,17 +91,17 @@ rules:
       - get
       - list
       - watch
-  {{- if not $lowPriv }}
+  {{- if not $single }}
   {{- /* No namespaced form exists for a nonResourceURL. */}}
   - nonResourceURLs: ["/metrics"]
     verbs: ["get"]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $lowPriv }}
+kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $single }}
 metadata:
   name: union-operator-prometheus-rbac
-  {{- if $lowPriv }}
+  {{- if $single }}
   namespace: {{ .Release.Namespace }}
   {{- end }}
   labels:
@@ -113,15 +113,15 @@ subjects:
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
+  kind: {{ ternary "Role" "ClusterRole" $single }}
   name: union-operator-prometheus-rbac
 {{- if $ksm.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
+kind: {{ ternary "Role" "ClusterRole" $single }}
 metadata:
   name: {{ $ksmName }}
-  {{- if $lowPriv }}
+  {{- if $single }}
   namespace: {{ .Release.Namespace }}
   {{- end }}
   labels:
@@ -136,10 +136,10 @@ rules:
 {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $lowPriv }}
+kind: {{ ternary "RoleBinding" "ClusterRoleBinding" $single }}
 metadata:
   name: {{ $ksmName }}
-  {{- if $lowPriv }}
+  {{- if $single }}
   namespace: {{ .Release.Namespace }}
   {{- end }}
   labels:
@@ -151,7 +151,7 @@ subjects:
     namespace: {{ .Release.Namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: {{ ternary "Role" "ClusterRole" $lowPriv }}
+  kind: {{ ternary "Role" "ClusterRole" $single }}
   name: {{ $ksmName }}
 {{- end }}
 {{- end }}
