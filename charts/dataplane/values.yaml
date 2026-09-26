@@ -1622,11 +1622,16 @@ uvolMountBroker:
   # loop-attaches and mounts for the pod (small-file workloads get in-kernel
   # metadata instead of a FUSE round trip per file operation). Attaching makes
   # the node kernel parse filesystem bytes the tenant controls, so it is an
-  # explicit, permanent opt-in for TRUSTED workloads: only pods in these
-  # namespaces may use it. Empty (the default) disables it; there is no wildcard.
+  # explicit, permanent opt-in for TRUSTED workloads.
   block:
-    # -- Namespaces allowed to use block-mode Volumes.
-    namespaces: []
+    # -- Pods allowed to use block-mode Volumes. A pod is allowed when ANY rule
+    # matches; a rule matches when EVERY field it sets matches the pod:
+    # `namespace`, `serviceAccount`, or both (kubelet supplies them, so a task
+    # cannot forge them). A serviceAccount-only rule matches that name in every
+    # namespace. Empty (the default) disables block mode; a rule that sets
+    # neither field is rejected at broker start. Example:
+    # `[{namespace: builders}, {namespace: ci, serviceAccount: buildkit}]`
+    allow: []
     # -- Thaw a block mount the client froze (around a Volume commit) after this
     # long, so a client that dies mid-commit cannot wedge the image's writers.
     freezeMax: 60s
