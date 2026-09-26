@@ -63,9 +63,22 @@ operator cannot parse fails the render.
 
   With cluster permissions disabled, set `config.operator.clusterData.cloudProvider` (it
   defaults to the top-level `provider`): the operator cannot detect it from node labels.
-- An `extraScrapeConfigs` override copied from an older `values.yaml` may still read
-  `.Values.low_privilege`. It keeps working while overlays set `low_privilege`, but reads
-  as unset under `singleNamespace` alone; replace it with `include "singleNamespace" .`.
+- **Use one name for the scope flag across every values file you layer.** The examples
+  `examples/values.full-privilege.yaml`, `values.zero-trust.yaml` and `values-legacy.yaml` now
+  set `singleNamespace: false`. Layered with an overlay that sets `low_privilege: true`, the
+  later file used to win; now the render fails with
+  `singleNamespace is false but low_privilege is true`. The refusal is deliberate — picking
+  either value would silently flip scope. Migrate overlays to `singleNamespace`, or, while
+  some files still use the old name, set the same value under both.
+- **Replace `.Values.low_privilege` in your own templated values.** `low_privilege` is no
+  longer set in `values.yaml`, so unless an overlay sets it, `.Values.low_privilege` is empty
+  and `{{ if not .Values.low_privilege }}` is true at the single-namespace default. Around the
+  `kubernetes-cadvisor` job in a `prometheus.extraScrapeConfigs` override (a guard copied from
+  a pre-release revision of this chart's `values.yaml`), that renders the job where
+  prometheus holds only a Role, and the scrape fails with `403`. Use
+  `{{ if not (include "singleNamespace" .) }}`, as the chart's `values.yaml` now does. The
+  same goes for any other value the chart renders through `tpl` — `extraObjects` and the
+  `config.*` blocks. `prometheus.serverFiles` is not rendered through `tpl` at all.
 
 ### Rollback
 

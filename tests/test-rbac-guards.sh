@@ -2570,6 +2570,12 @@ expect-refusal "both set and disagreeing is refused" \
 expect-refusal "and refused the other way round too" \
   "singleNamespace is true but low_privilege is false" \
   --set singleNamespace=true --set low_privilege=false
+# The shipped examples set singleNamespace: false. Layered with an overlay that still says
+# low_privilege: true, the later file used to win; now neither does, since either would
+# silently flip scope. charts/MIGRATION.md tells users to use one name.
+expect-refusal "an example layered with a low_privilege: true overlay is refused" \
+  "singleNamespace is false but low_privilege is true" \
+  --set low_privilege=true --values "${CHART}/examples/values.full-privilege.yaml"
 # A quoted "false" is a non-empty string and would read as true, so it is refused.
 expect-refusal "a string is refused rather than read for truthiness" \
   "singleNamespace must be a YAML boolean" \
