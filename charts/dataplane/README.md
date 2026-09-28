@@ -39,6 +39,73 @@ Usage collection remains separate: `config.operator.collectUsages.enabled: true`
 can report dashboard usage with billing set to `None`. Task monitoring retains its
 existing Prometheus and RBAC requirements.
 
+## Multi-architecture user image builds
+
+Multi-architecture user builds are opt-in. Publishing multi-architecture Union
+images makes the components runnable on both architectures; it does not enable
+multi-architecture user builds by itself. Use operator and image-builder task and
+frontend images that include the multi-architecture build support from
+[cloud #18539](https://github.com/unionai/cloud/pull/18539) and
+[cloud #18679](https://github.com/unionai/cloud/pull/18679). The chart's existing
+image version defaults are not changed by this configuration feature.
+
+To deploy a second BuildKit daemon for ARM:
+
+```yaml
+imageBuilder:
+  buildkit:
+    enabled: true
+    arm:
+      enabled: true
+      # Optional: select a dedicated ARM pool and tolerate its taints.
+      nodeSelector: {}
+      tolerations: []
+```
+
+Provide schedulable amd64 and arm64 nodes yourself; Helm does not provision node
+pools. Both pools need sufficient CPU, memory, and ephemeral storage for the
+configured BuildKit requests. ARM inherits the primary builder's replica count,
+autoscaling, resources, image, security, service account, and storage configuration.
+It merges `arm.nodeSelector` over the shared selector, pins architecture to
+`arm64`, and appends `arm.tolerations` to shared tolerations. The standard GKE ARM
+architecture toleration is included. The primary builder is pinned to `amd64`
+when multi-architecture builds are enabled; its existing immutable selector is
+preserved. Each architecture has its own Service, HPA, and PDB when applicable.
+The ARM Service is internal (`ClusterIP`) and uses the configured BuildKit port.
+
+Alternatively, use an existing ARM daemon:
+
+```yaml
+imageBuilder:
+  buildkitUri: tcp://buildkit-amd64.builders.svc.cluster.local:1234
+  buildkitUriArm: tcp://buildkit-arm64.builders.svc.cluster.local:1234
+  buildkit:
+    enabled: false
+```
+
+An external ARM URI requires a primary BuildKit endpoint. Do not combine
+`buildkitUriArm` with `buildkit.arm.enabled`; Depot-only configurations do not use
+this BuildKit path. The ARM URI is written to the operator configuration and,
+in single-namespace mode, directly to `build-image-config` as well.
+
+Test on a self-managed staging installation using the intended image versions:
+
+1. Render/install with ARM disabled, then submit a fresh ImageSpec build and
+   verify existing single-architecture behavior.
+2. Enable ARM, wait for both deployments, and confirm their Service endpoints
+   belong exclusively to nodes of the corresponding architecture. Verify the
+   build task receives `UNION_BUILDKIT_URI_ARM` after configuration sync.
+3. Submit a fresh ImageSpec build through Union. Inspect both the resulting image
+   index and each platform's actual image config; require `linux/amd64` and
+   `linux/arm64`. Run the same final image on native nodes of both architectures.
+4. Exercise concurrent builds and rollout capacity. Disable ARM again and verify
+   a fresh build returns to single-architecture behavior.
+
+Run the chart regression checks locally with `make buildkit-arm-test`. They cover
+both namespace modes, service isolation, autoscaling, external endpoints,
+OpenShift settings, and disabled defaults. These checks do not replace live
+builds against the customer's registry.
+
 ## Quick start
 
 ### 1. Add the Helm repository

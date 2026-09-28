@@ -1,10 +1,11 @@
+{{- define "imagebuilder.buildkit.deployment" -}}
 {{- if (include "imagebuilder.buildkit.enabled" .) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "imagebuilder.buildkit.fullname" . }}
+  name: {{ include "imagebuilder.buildkit.workloadName" . }}
   labels:
-    {{- include "imagebuilder.buildkit.labels" . | nindent 4 }}
+    {{- include "imagebuilder.buildkit.workloadLabels" . | nindent 4 }}
 spec:
   strategy:
     type: {{ .Values.imageBuilder.buildkit.deploymentStrategy }}
@@ -13,7 +14,7 @@ spec:
   {{- end }}
   selector:
     matchLabels:
-      {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 6 }}
+      {{- include "imagebuilder.buildkit.workloadSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       {{- if or .Values.imageBuilder.buildkit.rootless .Values.imageBuilder.buildkit.podAnnotations (and .Values.imageBuilder.buildkit.openShift.enabled .Values.imageBuilder.buildkit.openShift.securityContextConstraints.pinRequiredSCC) }}
@@ -30,7 +31,7 @@ spec:
       {{- end }}
       labels:
         platform.union.ai/zone: "dataplane"
-        {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 8 }}
+        {{- include "imagebuilder.buildkit.workloadSelectorLabels" . | nindent 8 }}
     spec:
       {{- if hasKey .Values.imageBuilder.buildkit "hostUsers" }}
       hostUsers: {{ .Values.imageBuilder.buildkit.hostUsers }}
@@ -112,7 +113,13 @@ spec:
       {{- with .Values.imageBuilder.buildkit.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 6 }}
       {{- end }}
-      {{- with .Values.imageBuilder.buildkit.nodeSelector }}
+      {{- $nodeSelector := deepCopy .Values.imageBuilder.buildkit.nodeSelector }}
+      {{- if .buildkitArm }}
+      {{- $nodeSelector = mergeOverwrite $nodeSelector (.Values.imageBuilder.buildkit.arm.nodeSelector | default dict) (dict "kubernetes.io/arch" "arm64") }}
+      {{- else if or (.Values.imageBuilder.buildkit.arm | default dict).enabled .Values.imageBuilder.buildkitUriArm }}
+      {{- $_ := set $nodeSelector "kubernetes.io/arch" "amd64" }}
+      {{- end }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
@@ -121,10 +128,24 @@ spec:
           requiredDuringSchedulingIgnoredDuringExecution:
           - labelSelector:
               matchLabels:
-                {{- include "imagebuilder.buildkit.selectorLabels" . | nindent 16 }}
+                {{- include "imagebuilder.buildkit.workloadSelectorLabels" . | nindent 16 }}
             topologyKey: "kubernetes.io/hostname"
-      {{- with .Values.imageBuilder.buildkit.tolerations }}
+      {{- $tolerations := .Values.imageBuilder.buildkit.tolerations }}
+      {{- if .buildkitArm }}
+      {{- $tolerations = concat $tolerations (.Values.imageBuilder.buildkit.arm.tolerations | default list) (list (dict "key" "kubernetes.io/arch" "operator" "Equal" "value" "arm64" "effect" "NoSchedule")) }}
+      {{- end }}
+      {{- with $tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
       {{- end }}
 {{- end -}}
+{{- end -}}
+
+{{- include "imagebuilder.buildkit.deployment" . }}
+{{- if and (include "imagebuilder.buildkit.enabled" .) (.Values.imageBuilder.buildkit.arm | default dict).enabled }}
+{{- $arm := include "imagebuilder.buildkit.deployment" (merge (dict "buildkitArm" true) .) }}
+{{- if $arm }}
+---
+{{ $arm }}
+{{- end }}
+{{- end }}
