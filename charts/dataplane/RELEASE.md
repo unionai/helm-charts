@@ -529,6 +529,20 @@ Image changes (`2026.8.3` → `2026.8.5`):
   render. Previously only the literal string `true` counted, so the chart could withhold the
   nodes grant while the operator waited on it at startup.
 
+### Proxy image-builder repository and tunnel proxy restart
+
+- **The operator-proxy no longer crash-loops when `imageBuilder.defaultRepository` is unset.**
+  `config.proxy.imageBuilderConfig.defaultRepository` passed the raw value through, so it
+  rendered empty wherever the registry path is derived from `imageBuilder.registryName`. It
+  now uses the same helper as `image-builder.default-repository`, and the two keys always
+  agree. This bug is also on earlier releases.
+- **The operator can restart the proxy after rotating the tunnel token again.** The tunnel
+  updater gets and updates the `union-operator-proxy` Deployment. The RBAC rework had
+  dropped that grant, so the restart was denied and the proxy kept the old token until
+  restarted by hand. The operator's `comp-ns-write` Role now grants `deployments`
+  `get`/`update`, limited to `union-operator-proxy`, whenever `operator.enableTunnelService`
+  is on (the default).
+
 ### Privilege and namespace axes
 
 - **`singleNamespace` is now the chart's only scope axis; `namespaces.enabled` no longer
