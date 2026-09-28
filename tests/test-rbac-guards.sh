@@ -922,15 +922,20 @@ expect-role-resource "including with billing and usage collection off" \
   --set singleNamespace=false --set config.operator.billing.model=None \
   --set config.operator.collectUsages.enabled=false
 
-# comp-ns-write is empty at stock values -- both its declaring features are off by default --
-# so no snapshot fixture renders it. Turning one on is the only way to see the slot at all.
+# comp-ns-write renders at stock values because the tunnel is on by default: the tunnel
+# updater restarts the proxy after rotating its token, a Get and an Update of that one
+# Deployment. With the tunnel and the other declaring features off, nothing declares into it.
 # The name is per-component: the comp-ns slots are one Role per declarer, so a check written
 # against the old shared `union-comp-ns-write` would now pass vacuously.
-expect-manifest "comp-ns-write appears once a component declares into it" \
-  present "name: union-operator-comp-ns-write" \
-  --set config.operator.secretsWatcher.enabled=true
-expect-manifest "and is absent at stock values, where nothing declares" \
-  absent "name: union-operator-comp-ns-write"
+expect-manifest "comp-ns-write appears at stock values, for the tunnel's proxy restart" \
+  present "name: union-operator-comp-ns-write"
+expect-role-resource "and grants the restart on deployments" \
+  present union-operator-comp-ns-write deployments
+expect-role-resource "confined by resourceNames to the proxy Deployment" \
+  present union-operator-comp-ns-write union-operator-proxy
+expect-manifest "and is absent once the tunnel is off, where nothing declares" \
+  absent "name: union-operator-comp-ns-write" \
+  --set operator.enableTunnelService=false
 # And the shared object is gone in both directions: no slot emits a role named for the slot
 # alone any more except work-ns, so the un-prefixed name must not appear at all.
 expect-manifest "no component shares a comp-ns Role with another" \
