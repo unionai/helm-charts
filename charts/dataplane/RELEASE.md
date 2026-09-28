@@ -1,5 +1,16 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+- uvol mount broker: block-mode Volumes (`uvolMountBroker.block.allow`,
+  `uvolMountBroker.block.freezeMax`). The broker attaches a Volume's ext4 image
+  as a loop device for pods its rules allow
+  ([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
+  `block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
+  `low_privilege` is false, and disables block mode when it is true. Set an
+  explicit list to restrict it, or `[]` to disable it. A broker image without
+  block support ignores the setting.
+
 ## 2026.9.6
 
 `version` and `appVersion` move `2026.9.4` → `2026.9.6`.
