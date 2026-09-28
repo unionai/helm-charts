@@ -1384,6 +1384,22 @@ union-pod-webhook
 {{- end -}}
 
 {{/*
+The Secret the legacy provider's init-certs container writes: webhook.secretName
+in the config the webhook mounts. propeller.webhookConfigMinimal sets it to the
+name above for the leaseworker and webhook-only configs. With flytepropeller
+enabled the webhook mounts propeller's config instead, which sets it only if
+config.core.webhook.secretName does, and otherwise the binary's default applies
+(flytepropeller/pkg/secret/config/config.go).
+*/}}
+{{- define "flytepropellerwebhook.initCertsSecretName" -}}
+{{- if .Values.flytepropeller.enabled -}}
+{{- dig "secretName" "flyte-pod-webhook" (.Values.config.core.webhook | default dict) -}}
+{{- else -}}
+{{- include "flytepropellerwebhook.secretName" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Get the webhook service DNS names for certificate generation
 */}}
 {{- define "flytepropellerwebhook.certDnsNames" -}}

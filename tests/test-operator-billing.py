@@ -396,6 +396,11 @@ data:
                 f"config.operator.billing.model={model}",
                 "--set",
                 "config.operator.collectUsages.enabled=false",
+                # The image builder's release-namespace informers also land in the
+                # operator's comp-ns-read, in every billing model. Off here, so that
+                # Role is present only when the billing model puts it there.
+                "--set",
+                "imageBuilder.enabled=false",
             )
             self.assertEqual(model, self.operator(result.stdout)["billing"]["model"])
             inventories.append(
@@ -408,8 +413,8 @@ data:
         # The billing model changes no workload or config object. The one thing it
         # does change is RBAC. With collectUsages off, only a ResourceUsage or Shadow
         # model starts the usage aggregator, which under singleNamespace lists pod
-        # metrics in the release namespace (the operator's comp-ns-read Role holds
-        # only that rule here), and only a model other than None starts the node
+        # metrics in the release namespace (with the image builder off, the operator's
+        # comp-ns-read Role holds only that rule here), and only a model other than None starts the node
         # informer, whose cluster-wide nodes read is all the operator's cluster-read
         # role holds under singleNamespace.
         none, resource_usage = inventories

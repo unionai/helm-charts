@@ -19,6 +19,8 @@ difference matters when auditing. Slots are organized by destination, and three
 kinds of grant have no destination here:
 
   a namespace the operator names   proxy's Secret Role in proxy.secretsNamespace,
+                                   the webhook's and leaseworker's secret-read
+                                   Role beside it,
                                    the operator's secrets-watcher Role in the
                                    control-plane namespace. The emitter binds
                                    only in the release namespace and the work
@@ -289,6 +291,17 @@ slot named -read cannot be given a write allowlist by mistake.
 {{- $allow = fromYamlArray (include "dataplane.rbac.verbs.read" $ctx) -}}
 {{- end -}}
 {{- range $rule := $rules -}}
+{{/*
+An all-groups wildcard belongs to work-ns alone, where it is the deliberate
+namespace-admin grant described in docs/rbac.md. Anywhere else it reaches every
+API group the cluster will ever serve, CRDs installed later included, either
+cluster-wide or in the release namespace where union's own Secrets sit. A
+resource wildcard inside a named group is not refused here: the Knative
+controllers read their own groups that way.
+*/}}
+{{- if and (ne $spec.kind "work") (has "*" ($rule.apiGroups | default list)) -}}
+{{- fail (printf "RBAC slot %q has a rule with apiGroups [\"*\"] (resources %v). Only the work-ns slot may name every API group. Name the groups this rule needs." $.slot $rule.resources) -}}
+{{- end -}}
 {{- if not $rule.verbs -}}
 {{- fail (printf "RBAC slot %q requires a verbs key on every rule, and the rule for resources %v has none or an empty one. Name the verbs that rule needs; %q allows %v." $.slot $rule.resources $.slot $allow) -}}
 {{- end -}}
@@ -403,6 +416,57 @@ subjects:
 {{- end }}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+The operator-supplied taskPluginClusterReadRules, as rules ready for a
+work-ns-cluster-read declaration. leaseworker and flytepropeller include this,
+because they are the components that run task plugins, and each gets its own
+copy in its own ClusterRole. It is a per-component include and not a chart-level
+slot because the emitter binds each non-pooled role to the one component that
+declared it. A shared object would need a registry entry with several
+ServiceAccounts, which nothing else here needs.
+
+Validated here as well as in emitSlot. emitSlot refuses write verbs, since the
+slot name ends in -read, and an all-groups wildcard, since the slot is not
+work-ns. It admits a resource wildcard inside a named group, which is right for
+the Knative declarations but not for an operator-supplied list of CRDs. So this
+refuses every wildcard, including one emitSlot would pass. It also repeats the
+verb check, because emitSlot drops work-ns-cluster-read under singleNamespace
+before validating it, and a bad value should fail the same way in both modes.
+
+Returns a YAML list, empty when the key is unset.
+*/}}
+{{- define "dataplane.rbac.taskPluginClusterReadRules" -}}
+{{- $out := list -}}
+{{- range $i, $rule := .Values.taskPluginClusterReadRules | default list -}}
+{{- if not (kindIs "map" $rule) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d] is not a map. Each entry names apiGroups and resources, and optionally verbs." $i) -}}
+{{- end -}}
+{{- range $k, $_ := $rule -}}
+{{- if not (has $k (list "apiGroups" "resources" "verbs")) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d] has key %q. Only apiGroups, resources and verbs are allowed: the grant is a cluster-wide read of whole resource types, so resourceNames and nonResourceURLs have no place in it." $i $k) -}}
+{{- end -}}
+{{- end -}}
+{{- if or (not $rule.apiGroups) (not $rule.resources) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d] needs non-empty apiGroups and resources." $i) -}}
+{{- end -}}
+{{- range $f := list "apiGroups" "resources" "verbs" -}}
+{{- range $v := (index $rule $f | default list) -}}
+{{- if contains "*" (toString $v) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d].%s contains %q. Wildcards are not allowed here: this is a cluster-wide grant, and a wildcard would extend it to resource types installed after this render. Name the CRDs your plugins watch." $i $f $v) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $read := fromYamlArray (include "dataplane.rbac.verbs.read" $) -}}
+{{- range $v := $rule.verbs | default list -}}
+{{- if not (has $v $read) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d].verbs names %q. Only %v are allowed: the plugin's writes happen inside work namespaces, where the work-ns role already grants them." $i $v $read) -}}
+{{- end -}}
+{{- end -}}
+{{- $out = append $out (dict "apiGroups" $rule.apiGroups "resources" $rule.resources "verbs" ($rule.verbs | default (list "list" "watch"))) -}}
+{{- end -}}
+{{- toYaml $out -}}
 {{- end -}}
 
 {{/*

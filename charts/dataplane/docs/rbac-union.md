@@ -69,7 +69,8 @@ write verb at all.
 
 The slots are not the chart's whole RBAC surface, and what sits outside them is outside for
 three different reasons: the destination is a namespace the operator names rather than one the
-emitter binds in (the proxy's Secret Role, the operator's secrets-watcher Role); the object is a hook
+emitter binds in (the proxy's Secret Role, the `<release-ns>-secret-read` Role for the webhook's
+and leaseworker's Secret reads beside it, the operator's secrets-watcher Role); the object is a hook
 that outlives nothing (the pre-upgrade cleanup); or the verb has no slot (`use` on a named
 SecurityContextConstraints, for imagebuilder and the Kourier gateway). Some of these do land
 in the release namespace — being outside the model is not the same as being outside the
@@ -191,6 +192,8 @@ code path using it. Where that gate is more than "the component is enabled", it 
 | `union-operator-cluster-read` | `nonResourceURLs: /metrics` `get` | always | the work queue's API-server scrape, which feeds its FlyteWorkflow-count and etcd-size throttles | not granted, to keep parity with the chart before the slot model, whose single-namespace Role could not convey it; the throttles are off there, as they always were |
 | `union-operator-work-ns-cluster-read` | `metrics.k8s.io` `pods` `list` | `collectUsages.enabled`, billing model `ResourceUsage` or `Shadow`, or `serverlessCollectUsages.enabled` with cluster permissions | the usage aggregators' pod-metrics list | `union-operator-comp-ns-read`, on the same conditions |
 | `union-flytepropeller-work-ns-cluster-read` | `namespaces` `list` | propeller's `limit-namespace` is empty, `all` or `all-namespaces` | the workflow garbage collector, which deletes nothing if the List fails | not needed; the collector reads only the release namespace |
+| `union-leaseworker-work-ns-cluster-read` | `events.k8s.io` `events` `list,watch` | always | the shared Kubernetes event watcher (`leaseworker/plugin/k8s/event_watcher.go`), a raw informer built with no namespace option; refused, it leaves event enrichment empty without blocking startup | not granted: the informer ignores the limit namespace, so only a cluster-wide read would serve it, and that is not on the allowlist. Needs a leaseworker change |
+| `union-leaseworker-work-ns-cluster-read`, `union-flytepropeller-work-ns-cluster-read` | whatever `taskPluginClusterReadRules` lists, `list,watch` | the key is set | CRD-backed task plugins' informers, which watch every namespace; see [rbac.md](rbac.md#plugin-crd-reads-at-singlenamespace-false) | not granted, and not needed: plugin informers are confined to the release namespace, which `work-ns` covers |
 | `union-operator-work-ns-cluster-read` | `configmaps` `list,watch` | `apps.enabled` | see below | covered by `work-ns` |
 | `union-operator-work-ns-cluster-read` | `policy` `poddisruptionbudgets` `list,watch` | `apps.enabled` and `config.operator.apps.controller.podDisruptionBudget.enabled` | see below | `work-ns`, under the same gate, beside the writes |
 
@@ -204,6 +207,31 @@ advance, so only reading it through the API reader removes that one.
 
 With PodDisruptionBudget management on, `work-ns` also carries `create`, `update` and `delete`
 on `poddisruptionbudgets`, so the operator can manage each app's PDB in its work namespace.
+
+### Release-namespace grants do not come from `work-ns`
+
+At `singleNamespace: false` the release namespace is not a work namespace and `work-ns` is
+not bound there. So every call a component makes into the release namespace needs its own
+`comp-ns-read` or `comp-ns-write` rule. Several of these calls used to be authorized only
+because every component shared `union-system` with the proxy, whose Secret Role happens to
+cover the release namespace. With per-component ServiceAccounts, or with the proxy's
+secret manager set to something other than `K8s`, they were refused. They are now declared
+by the component that makes them:
+
+| Role | Grant | Granted when | Code path |
+|---|---|---|---|
+| `union-operator-comp-ns-read` | `configmaps` `get,list,watch` on `union-operator`; `secrets` `list,watch` | `imageBuilder.enabled` | the image builder's reference-ConfigMap informer and mirror-secrets deleter, both of which startup waits on |
+| `union-operator-comp-ns-write` | `secrets` `get,update` on `operator.secretName` | `operator.enableTunnelService` | the tunnel token Secret |
+| `union-operator-comp-ns-write` | `secrets` `create`; `get,update` on the API key state Secret | `config.operator.apiKey.enabled` | the Eager API key cache |
+| `union-operator-comp-ns-write` | `configmaps` `update` on `connector-config` | `apps.enabled` | the apps controllers' connector registry |
+| `union-webhook-comp-ns-read`, `-comp-ns-write` | `pods` `get`; `replicasets/finalizers` `update` | `singleNamespace: false` and `flytepropellerwebhook.managedConfig: false` | registering the MutatingWebhookConfiguration with the pod's ownerReferences |
+| `union-webhook-comp-ns-write` | `secrets` `create`; `get,update` on the certificate Secret | `flytepropellerwebhook.certificate.provider: legacy` | the `init-certs` init container |
+| `<release-ns>-secret-read` in `proxy.secretsNamespace` | `secrets` `get` | the webhook's secret manager type is `K8s`, except under `singleNamespace` with the secrets in the release namespace | the webhook's secret injection and the leaseworker connector plugin's secret reads |
+
+Under `singleNamespace: true` these overlap with `work-ns`, which is bound in the release
+namespace there. They are emitted in that mode anyway, apart from the two whose code path
+only runs outside it, so that a component's release-namespace access does not depend on
+another component's wildcard.
 
 ### Pooling
 
@@ -367,9 +395,10 @@ That row is also the one you can extend. Anything set in
 `clusterresourcesync.clusterRoleRules` — the escape hatch for resource types your own
 `templates` or `additionalTemplates` entries create — is appended to that same ClusterRole,
 cluster-wide, and the allowlist it passes through permits `create`, `update`, `patch`,
-`delete` and `deletecollection`. It refuses a wildcard *verb* — but not a wildcard `apiGroups`
-or `resources`, so `apiGroups: ["*"], resources: ["*"], verbs: [get]` renders. Audit that key
-alongside this table.
+`delete` and `deletecollection`. It refuses a wildcard *verb* and an all-groups
+`apiGroups: ["*"]`, but not a resource wildcard inside a named group, so
+`apiGroups: [""], resources: ["*"], verbs: [get]` renders and reads every core resource,
+Secrets included. Audit that key alongside this table.
 
 Beyond this table and that key, every cluster-scoped grant held by a Union identity is
 **read-only**. (`clusterresourcesync` was once also bound to the built-in

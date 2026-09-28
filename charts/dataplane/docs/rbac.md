@@ -5,7 +5,76 @@ here too — it isn't a subchart, but it's the one component the flag governs by
 render at all.
 
 For Union's own components — the slot model, the work-namespace bindings and the identity
-axis — see [rbac-union.md](rbac-union.md).
+axis — see [rbac-union.md](rbac-union.md). Two points about them are covered here as well,
+because they decide what either scope mode is worth: [the work-ns
+wildcard](#the-work-ns-wildcard), and [plugin CRD reads at `singleNamespace:
+false`](#plugin-crd-reads-at-singlenamespace-false).
+
+## The work-ns wildcard
+
+The pooled `<release-ns>-work-ns` role grants `apiGroups: ['*']`, `resources: ['*']` with
+every verb except `deletecollection`. That is deliberate, and it is not the security
+boundary.
+
+Any identity that can create a pod in a namespace is already admin of that namespace. The
+pod can name any ServiceAccount there and mount any Secret there, so it acts with every
+permission those identities hold. Union's components have to create task pods in every work
+namespace, so they have that power whatever the rest of the rule list says. Narrowing
+work-ns to named resources would make the role harder to read without making it safer.
+
+The boundary is in two other places:
+
+- **Where work-ns is bound.** At `singleNamespace: false` it is bound only in the work
+  namespaces, by a RoleBinding the chart or `clusterresourcesync` writes in each one. It is
+  never bound in the release namespace, where Union's own Deployments and Secrets live, and
+  the chart refuses a `namespaces.static` that lists it. What a component needs in the
+  release namespace comes from its own `comp-ns-read` and `comp-ns-write` Roles.
+- **The cluster-scoped grants.** These are listed rule by rule in
+  [rbac-union.md](rbac-union.md#the-cluster-scoped-write-surface), and in single-namespace
+  mode they are held to the allowlist below.
+
+The chart enforces that the all-groups wildcard stays in work-ns: `dataplane.rbac.emitSlot`
+refuses `apiGroups: ['*']` in every other slot, and `tests/test-rbac-guards.sh` checks every
+rendered role. A resource wildcard inside a named group is allowed outside work-ns only for
+the Knative controllers' reads of their own API groups.
+
+**Under `singleNamespace: true` the release namespace is the work namespace.** work-ns is a
+Role bound there, so the wildcard applies to Union's own objects too, and any component
+bound to it can read Union's own Secrets and change its Deployments. That blast radius is
+accepted as the cost of running in one namespace. Use `singleNamespace: false` if the
+components that launch tasks must not be able to reach Union's own Secrets and Deployments.
+
+## Plugin CRD reads at `singleNamespace: false`
+
+At `singleNamespace: false` no limit namespace is set, so a CRD-backed task plugin's
+informer watches its resource across every namespace. work-ns covers the plugin's calls
+inside each work namespace, but a watch across all namespaces is authorized at cluster
+scope, which no RoleBinding can grant. List the plugins' CRDs in
+`taskPluginClusterReadRules`, and each entry is granted `list` and `watch` cluster-wide to
+leaseworker and, when it is enabled, flytepropeller:
+
+```yaml
+taskPluginClusterReadRules:
+  - apiGroups: [sparkoperator.k8s.io]         # spark
+    resources: [sparkapplications]
+  - apiGroups: [ray.io]                        # ray, and fastray's idle-cluster reaper
+    resources: [rayjobs, rayclusters]
+  - apiGroups: [kubernetes.dask.org]           # dask
+    resources: [daskjobs]
+  - apiGroups: [kubeflow.org]                  # kubeflow
+    resources: [pytorchjobs, tfjobs, mpijobs]
+  - apiGroups: [jobset.x-k8s.io]               # clustered-task
+    resources: [jobsets]
+```
+
+The chart does not derive this list from `enabled_plugins`, because it cannot see which
+CRDs are installed or what a plugin outside the stock set watches. A wildcard in any field
+fails the render, as does any verb other than `get`, `list` or `watch`. The plugins'
+writes (create, delete, patch) stay in work-ns.
+
+Under `singleNamespace: true` the key renders nothing. Plugin informers are confined to the
+release namespace there, which work-ns covers, so the key never adds to the single-namespace
+allowlist.
 
 ## The rule
 
@@ -50,9 +119,15 @@ The cleanup hook's `delete` above is the only pinned write. nodeobserver's `node
 it removes its startup taint from the node it runs on — is the one unpinned exception, since
 node names are not known at render time; it is off by default.
 
-Two things single-namespace mode still withholds, because they are not on the list: the
+Some things single-namespace mode still withholds, because they are not on the list: the
 operator's `/metrics` scrape of the API server, which feeds its FlyteWorkflow-count and
-etcd-size throttles (they stay off), and prometheus' node and cadvisor discovery.
+etcd-size throttles (they stay off); prometheus' node and cadvisor discovery; and the
+leaseworker's Kubernetes event watcher, which watches `events.k8s.io` events in every
+namespace even when a limit namespace is set. Until the leaseworker scopes that informer,
+task status in this mode is not enriched with Kubernetes events.
+
+`taskPluginClusterReadRules` never adds to this list: its entries are emitted only at
+`singleNamespace: false`.
 
 The operator used to avoid the nodes read by forcing `disableClusterPermissions` on and
 `collectUsages` off in this mode. It no longer does: both follow their own values. The

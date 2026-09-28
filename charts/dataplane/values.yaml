@@ -2224,6 +2224,56 @@ singleNamespace: null
 # `<release-ns>-work-ns` in that namespace, with `roleRef` pointing at the
 # ClusterRole of the same name and one `ServiceAccount` subject per Union
 # identity in the release namespace.
+#
+# The work-ns role deliberately grants every verb but deletecollection on every
+# resource (`apiGroups: ['*']`, `resources: ['*']`). A grant that can create pods
+# in a namespace is already admin of that namespace: the pod can run as any
+# ServiceAccount there and mount any Secret. So the boundary is which namespaces
+# work-ns is bound in, plus the cluster-scoped grants, and not the rule list.
+# See docs/rbac.md#the-work-ns-wildcard.
+
+# -- Cluster-wide list/watch for the CRDs your task plugins run. Only used with
+# `singleNamespace: false`.
+#
+# A CRD-backed task plugin (Spark, Ray, Dask, Kubeflow and so on) starts an
+# informer on its resource that watches every namespace, because no limit
+# namespace is set at `singleNamespace: false`. The work-ns role covers the
+# plugin's create, get, list, watch, delete and patch inside each work
+# namespace. A RoleBinding cannot authorize a watch across all namespaces,
+# though, so without an entry here the plugin's informer is refused. The chart
+# does not derive these from `enabled_plugins`: it cannot see which CRDs are
+# installed, or what a plugin outside the stock set watches.
+#
+# Each entry names `apiGroups` and `resources`. `verbs` may be left out, and
+# defaults to [list, watch]. If it is given, it may only name get, list and
+# watch. A wildcard in any field fails the render, and so does a write verb.
+# Entries are granted to leaseworker and, when enabled, flytepropeller, each in
+# its own `<release-ns>-<component>-work-ns-cluster-read` ClusterRole.
+#
+# Under `singleNamespace: true` this renders nothing. Plugin informers are
+# confined to the release namespace there, which work-ns already covers, so the
+# single-namespace cluster-scope allowlist is unaffected.
+#
+# Entries for the stock plugins:
+#
+#   taskPluginClusterReadRules:
+#     # spark
+#     - apiGroups: [sparkoperator.k8s.io]
+#       resources: [sparkapplications]
+#     # ray. The fastray plugin also lists RayClusters and RayJobs across all
+#     # namespaces to reap idle clusters, so it needs this entry too.
+#     - apiGroups: [ray.io]
+#       resources: [rayjobs, rayclusters]
+#     # dask
+#     - apiGroups: [kubernetes.dask.org]
+#       resources: [daskjobs]
+#     # kubeflow
+#     - apiGroups: [kubeflow.org]
+#       resources: [pytorchjobs, tfjobs, mpijobs]
+#     # clustered-task
+#     - apiGroups: [jobset.x-k8s.io]
+#       resources: [jobsets]
+taskPluginClusterReadRules: []
 
 # -- Opt-in zero-trust dataplane mode. When true, installs the Envoy gateway,
 # the dataproxy backend and the tunnel-service dataplane ingress. Adding

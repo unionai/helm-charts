@@ -924,7 +924,8 @@ expect-role-resource "including with billing and usage collection off" \
 
 # comp-ns-write renders at stock values because the tunnel is on by default: the tunnel
 # updater restarts the proxy after rotating its token, a Get and an Update of that one
-# Deployment. With the tunnel and the other declaring features off, nothing declares into it.
+# Deployment. With the tunnel, the Eager API key cache and the other declaring features off,
+# nothing declares into it.
 # The name is per-component: the comp-ns slots are one Role per declarer, so a check written
 # against the old shared `union-comp-ns-write` would now pass vacuously.
 expect-manifest "comp-ns-write appears at stock values, for the tunnel's proxy restart" \
@@ -935,7 +936,7 @@ expect-role-resource "confined by resourceNames to the proxy Deployment" \
   present union-operator-comp-ns-write union-operator-proxy
 expect-manifest "and is absent once the tunnel is off, where nothing declares" \
   absent "name: union-operator-comp-ns-write" \
-  --set operator.enableTunnelService=false
+  --set operator.enableTunnelService=false --set config.operator.apiKey.enabled=false
 # And the shared object is gone in both directions: no slot emits a role named for the slot
 # alone any more except work-ns, so the un-prefixed name must not appear at all.
 expect-manifest "no component shares a comp-ns Role with another" \
@@ -2005,14 +2006,15 @@ expect-resource-group "under singleNamespace the pod-metrics list is granted in 
 expect-resource-group "and with billing None, while collectUsages is on" \
   union-operator-comp-ns-read pods "metrics.k8s.io" \
   --set config.operator.billing.model=None
-# The pod-metrics rule is the only thing the operator declares into comp-ns-read at these
-# values, so without it the role is not emitted at all.
+# With the image builder off, the pod-metrics rule is the only thing the operator declares
+# into comp-ns-read at these values, so without it the role is not emitted at all.
 expect-manifest "and not with billing None and collectUsages off" \
   absent "name: union-operator-comp-ns-read" \
-  --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false
+  --set config.operator.billing.model=None --set config.operator.collectUsages.enabled=false \
+  --set imageBuilder.enabled=false
 expect-manifest "and not outside singleNamespace, where the cluster-wide grant covers it" \
   absent "name: union-operator-comp-ns-read" \
-  --set singleNamespace=false
+  --set singleNamespace=false --set imageBuilder.enabled=false
 
 # propeller's workflow garbage collector lists namespaces when limit-namespace is empty, "all"
 # or "all-namespaces", and deletes nothing if that List fails. It is a one-shot List, so the
@@ -2337,13 +2339,17 @@ expect-provisioner-matches-chart "the provisioner's binding still matches the ch
 # claim in the docs.
 expect-verb-resources "leaseworker's comp-ns-read is its Endpoints watch and nothing else" \
   union-leaseworker-comp-ns-read get "endpoints"
-# The operator's is the singleNamespace usage aggregators' pod-metrics list: list on pods
-# (in metrics.k8s.io) and no get at all. It declares no PodTemplate read here any more; its
-# only PodTemplate informer is the apps workers', granted through the work-ns slots.
-expect-verb-resources "and the operator's is its pod-metrics list" \
-  union-operator-comp-ns-read list "pods"
-expect-verb-resources "with no get, which nothing in the operator calls here" \
-  union-operator-comp-ns-read get ""
+# The operator's is the singleNamespace usage aggregators' pod-metrics list (list on pods, in
+# metrics.k8s.io) and the image builder's two release-namespace informers: its reference
+# ConfigMap, which it also Gets once at start, and image-pull Secrets. It declares no
+# PodTemplate read here any more; its only PodTemplate informer is the apps workers',
+# granted through the work-ns slots.
+expect-verb-resources "and the operator's is its pod-metrics list and the image builder's informers" \
+  union-operator-comp-ns-read list "configmaps,pods,secrets"
+expect-verb-resources "with get only on the image builder's reference ConfigMap" \
+  union-operator-comp-ns-read get "configmaps"
+expect-verb-resources "and no get at all with the image builder off" \
+  union-operator-comp-ns-read get "" --set imageBuilder.enabled=false
 for v in create update patch delete deletecollection; do
   expect-verb-resources "leaseworker's comp-ns-read grants no ${v}" \
     union-leaseworker-comp-ns-read "${v}" ""
@@ -2461,14 +2467,15 @@ expect-verb-resources "and carries no Secret of anyone else's" \
   "${APPS[@]}" --set commonServiceAccount.enabled=false --set config.operator.secretsWatcher.enabled=true
 
 # The cluster-config syncer Gets and Updates a fixed set of objects by name and does nothing
-# else, so its comp-ns-write rules carry get and update only, pinned by resourceNames.
+# else, so its comp-ns-write rules carry get and update only, pinned by resourceNames. The
+# Eager API key cache, on by default, writes a Secret into the same Role, so it is off here.
+SYNCER=(--set config.operator.syncClusterConfig.enabled=true --set config.operator.apiKey.enabled=false
+  --set operator.enableTunnelService=false)
 expect-verb-resources "the cluster-config syncer gets its targets" \
-  union-operator-comp-ns-write get "configmaps,deployments,podtemplates" \
-  --set config.operator.syncClusterConfig.enabled=true
+  union-operator-comp-ns-write get "configmaps,deployments,podtemplates" "${SYNCER[@]}"
 for v in create list watch patch delete; do
   expect-verb-resources "and never ${v}s them" \
-    union-operator-comp-ns-write "${v}" "" \
-    --set config.operator.syncClusterConfig.enabled=true
+    union-operator-comp-ns-write "${v}" "" "${SYNCER[@]}"
 done
 expect-manifest "and is pinned to the propeller ConfigMap by name" \
   present "    - flyte-propeller-config" \
@@ -2476,10 +2483,10 @@ expect-manifest "and is pinned to the propeller ConfigMap by name" \
 
 # Every read slot rejects every write verb. The comp-ns-read roles join the list now
 # that each component has its own: they are `-read` slots and the same suffix rule
-# applies to them. The operator's comp-ns-read is not rendered at these values (it holds
-# only the singleNamespace pod-metrics list and the secrets watcher's reads); its write verbs
-# are pinned at chart defaults above.
+# applies to them. The operator's comp-ns-read renders at these values for the image
+# builder's informers, and its write verbs are also pinned at chart defaults above.
 for r in union-operator-work-ns-cluster-read union-proxy-work-ns-cluster-read \
+         union-operator-comp-ns-read \
          union-leaseworker-work-ns-cluster-read union-webhook-work-ns-cluster-read \
          union-knative-controller-cluster-read union-knative-webhook-cluster-read \
          union-knative-autoscaler-cluster-read union-knative-activator-cluster-read \
@@ -2545,6 +2552,267 @@ else
   echo "  FAILED   the -read suffix derivation is gone; read slots now admit write verbs"
   checks=$((checks + 1)); failures=$((failures + 1))
 fi
+
+echo
+echo "- work-ns alone holds the all-groups wildcard"
+
+# The rules of one role through tests/lib/rbac_rules.py, one line per (group, resource):
+# `<group> <resource> <verbs> <resourceNames>`. resourceNames are part of the line, which is
+# what the awk helpers above cannot see, so a pin that loses its name fails here.
+function role-rules {
+  local role=$1 file=$2
+  (cd "${SCRIPT_DIR}/.." && uv run --quiet python tests/lib/rbac_rules.py rules "${role}" <"${file}")
+}
+
+# expect-rule <description> <present|absent> <role> "<group> <resource> <verbs> <names>"
+#   [helm --set flags...]
+# Asserts one normalized grant line is or is not in a named role. verbs and names are
+# sorted and comma-joined; names is `-` for a rule with no resourceNames. The line must
+# match whole, so present means that exact verb set with that exact pin -- not a wider rule
+# that happens to include it. absent passes when the role is missing altogether, since a
+# gate that drops the grant may drop the role with it; present fails closed on a missing
+# role.
+function expect-rule {
+  local desc=$1 want=$2 role=$3 line=$4; shift 4
+  local out got
+  checks=$((checks + 1))
+  out="${WORK_DIR}/expect-rule.yaml"
+  if ! render "$@" >"${out}" 2>&1; then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' "${out}" | head -c 300)"
+    failures=$((failures + 1)); return
+  fi
+  got=$(role-rules "${role}" "${out}")
+  if grep -qxF -- "${line}" <<<"${got}"; then
+    if [[ "${want}" == "present" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected ${role} not to carry '${line}', but it does"
+      failures=$((failures + 1))
+    fi
+  else
+    if [[ "${want}" == "absent" ]]; then
+      echo "  ok       ${desc}"
+    else
+      echo "  FAILED   ${desc}"
+      echo "           expected ${role} to carry '${line}'"
+      echo "           it carries: $(paste -sd';' - <<<"${got}")"
+      failures=$((failures + 1))
+    fi
+  fi
+}
+
+# expect-wildcards-contained <description> [helm --set flags...]
+# Asserts that outside the pooled union-work-ns role, no rule names apiGroups ['*'], and a
+# resource wildcard appears only in the two Knative cluster-read roles, read-only, inside
+# their own named groups. Each of those is pinned whole, so a new group joining one of
+# them, or a write verb, fails here.
+#
+# work-ns keeps `*` on purpose: creating pods in a namespace is already admin of it, so
+# the boundary is where work-ns is bound (docs/rbac.md, "The work-ns wildcard"). Everywhere
+# else a wildcard reaches resource types nobody reviewed -- cluster-wide, or in the release
+# namespace where Union's own Secrets sit. emitSlot refuses the all-groups form; this
+# checks the rendered result, which also covers RBAC written outside the emitter.
+KNATIVE_READ_WILDCARDS="ClusterRole/union-knative-autoscaler-cluster-read apiGroups=autoscaling.internal.knative.dev,networking.internal.knative.dev resources=* verbs=list,watch
+ClusterRole/union-knative-controller-cluster-read apiGroups=serving.knative.dev,autoscaling.internal.knative.dev,networking.internal.knative.dev,caching.internal.knative.dev resources=* verbs=list,watch"
+function expect-wildcards-contained {
+  local desc=$1; shift
+  local out got stray
+  checks=$((checks + 1))
+  out="${WORK_DIR}/expect-wildcards.yaml"
+  if ! render "$@" >"${out}" 2>&1; then
+    echo "  FAILED   ${desc}"
+    echo "           expected the render to succeed, but it was refused:"
+    echo "           $(grep -o 'Error:.*' "${out}" | head -c 300)"
+    failures=$((failures + 1)); return
+  fi
+  got=$(cd "${SCRIPT_DIR}/.." && uv run --quiet python tests/lib/rbac_rules.py wildcards union-work-ns <"${out}")
+  stray=$(grep -vxF -f <(printf '%s\n' "${KNATIVE_READ_WILDCARDS}") <<<"${got}" || true)
+  if [[ -n "${stray}" ]]; then
+    echo "  FAILED   ${desc}"
+    echo "           wildcard rules outside union-work-ns:"
+    sed 's/^/             /' <<<"${stray}"
+    failures=$((failures + 1))
+  else
+    echo "  ok       ${desc}"
+  fi
+}
+
+# Every optional Union component on, at both scopes and both identity modes, with the
+# plugin key set so its entries are in the sweep too. The zero-trust app-serving render is
+# the one that carries the Knative roles.
+WILD_ALL=(--set nodeobserver.enabled=true --set uvolMountBroker.enabled=true
+  --set flytepropeller.enabled=true --set imageBuilder.enabled=true
+  --set config.operator.secretsWatcher.enabled=true
+  --set config.operator.syncClusterConfig.enabled=true
+  --set flytepropellerwebhook.managedConfig=false
+  --set flytepropellerwebhook.certificate.provider=legacy
+  --set 'taskPluginClusterReadRules[0].apiGroups={ray.io}'
+  --set 'taskPluginClusterReadRules[0].resources={rayjobs,rayclusters}')
+expect-wildcards-contained "single namespace, every component" "${WILD_ALL[@]}"
+expect-wildcards-contained "multi-namespace, every component, shared identity" \
+  "${WILD_ALL[@]}" --set singleNamespace=false --set clusterresourcesync.enabled=true
+expect-wildcards-contained "multi-namespace, every component, per-component identities" \
+  "${WILD_ALL[@]}" --set singleNamespace=false --set clusterresourcesync.enabled=true \
+  --set commonServiceAccount.enabled=false
+expect-wildcards-contained "multi-namespace with zero-trust app serving" \
+  "${WILD_ALL[@]}" "${APPS[@]}" --set commonServiceAccount.enabled=false
+expect-refusal "the emitter refuses an all-groups rule outside work-ns" \
+  'Only the work-ns slot may name every API group' \
+  --set singleNamespace=false --set clusterresourcesync.enabled=true \
+  --set 'clusterresourcesync.clusterRoleRules[0].apiGroups={*}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].resources={pods}' \
+  --set 'clusterresourcesync.clusterRoleRules[0].verbs={get}'
+# The positive half: work-ns itself still carries the wildcard, so the sweep above is not
+# passing because the role vanished from its exemption.
+expect-rule "and work-ns keeps its wildcard" present union-work-ns \
+  "* * create,delete,get,list,patch,update,watch -" --set singleNamespace=false
+
+echo
+echo "- taskPluginClusterReadRules grants plugin CRD reads at multi-namespace only"
+
+PLUGIN_RAY=(--set 'taskPluginClusterReadRules[0].apiGroups={ray.io}'
+  --set 'taskPluginClusterReadRules[0].resources={rayjobs,rayclusters}')
+expect-rule "leaseworker gets the entry, defaulted to list and watch" present \
+  union-leaseworker-work-ns-cluster-read "ray.io rayclusters list,watch -" \
+  "${PLUGIN_RAY[@]}" --set singleNamespace=false
+expect-rule "flytepropeller gets the same entry when it is enabled" present \
+  union-flytepropeller-work-ns-cluster-read "ray.io rayclusters list,watch -" \
+  "${PLUGIN_RAY[@]}" --set singleNamespace=false --set flytepropeller.enabled=true
+expect-rule "an explicit get is admitted" present \
+  union-leaseworker-work-ns-cluster-read "ray.io rayjobs get -" \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].verbs={get}' --set singleNamespace=false
+expect-manifest "nothing renders under singleNamespace" \
+  absent "rayclusters" "${PLUGIN_RAY[@]}"
+expect-manifest "and nothing renders when the key is unset" \
+  absent "rayclusters" --set singleNamespace=false
+expect-refusal "an all-groups wildcard is refused" \
+  'taskPluginClusterReadRules[0].apiGroups contains "*"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].apiGroups={*}' --set singleNamespace=false
+# The emitter admits a resource wildcard inside a named group, so this is the refusal only
+# the key's own validation makes.
+expect-refusal "a resource wildcard inside a named group is refused" \
+  'taskPluginClusterReadRules[0].resources contains "*"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].resources={*}' --set singleNamespace=false
+expect-refusal "a wildcard verb is refused" \
+  'taskPluginClusterReadRules[0].verbs contains "*"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].verbs={*}' --set singleNamespace=false
+expect-refusal "a write verb is refused" \
+  'taskPluginClusterReadRules[0].verbs names "create"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].verbs={create}' --set singleNamespace=false
+# The emitter drops work-ns-cluster-read under singleNamespace before validating it, so
+# without the key's own check these would render there and fail only after a scope change.
+expect-refusal "a write verb is refused under singleNamespace too" \
+  'taskPluginClusterReadRules[0].verbs names "create"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].verbs={create}'
+expect-refusal "and so is a wildcard" \
+  'taskPluginClusterReadRules[0].resources contains "*"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].resources={*}'
+expect-refusal "resourceNames is refused" \
+  'has key "resourceNames"' \
+  "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].resourceNames={x}' --set singleNamespace=false
+
+echo
+echo "- the leaseworker's event watcher is granted at multi-namespace only"
+
+# leaseworker/plugin/k8s/event_watcher.go builds its informer with no namespace option, and
+# leaseworker/plugin/loader.go always starts it.
+expect-rule "multi-namespace: events.k8s.io events, list and watch" present \
+  union-leaseworker-work-ns-cluster-read "events.k8s.io events list,watch -" \
+  --set singleNamespace=false --set commonServiceAccount.enabled=false
+# Not grantable there without a cluster-wide read the allowlist does not carry; it needs the
+# informer to take the limit namespace first.
+expect-manifest "singleNamespace: no leaseworker cluster read at all" \
+  absent "name: union-leaseworker-work-ns-cluster-read"
+
+echo
+echo "- release-namespace calls are granted to the component that makes them"
+
+# At singleNamespace: false the release namespace is not a work namespace, so none of these
+# may lean on work-ns. Each is checked at its gate, on and off. The shared-identity default is
+# where it matters most: several of these were covered only through the proxy's Secret Role.
+MULTI=(--set singleNamespace=false)
+expect-rule "operator, imageBuilder on, apps off: the reference ConfigMap, pinned" present \
+  union-operator-comp-ns-read "core configmaps get,list,watch union-operator" "${MULTI[@]}"
+expect-rule "and the mirror-secrets deleter's Secret informer" present \
+  union-operator-comp-ns-read "core secrets list,watch -" "${MULTI[@]}"
+expect-rule "neither with imageBuilder off" absent \
+  union-operator-comp-ns-read "core configmaps get,list,watch union-operator" \
+  "${MULTI[@]}" --set imageBuilder.enabled=false
+expect-rule "the Secret informer neither" absent \
+  union-operator-comp-ns-read "core secrets list,watch -" \
+  "${MULTI[@]}" --set imageBuilder.enabled=false
+expect-rule "the reference ConfigMap grant is there under singleNamespace too" present \
+  union-operator-comp-ns-read "core configmaps get,list,watch union-operator"
+
+expect-rule "operator, tunnel: the token Secret, pinned to operator.secretName" present \
+  union-operator-comp-ns-write "core secrets get,update union-secret-auth" "${MULTI[@]}"
+expect-rule "and it follows operator.secretName" present \
+  union-operator-comp-ns-write "core secrets get,update custom-auth" \
+  "${MULTI[@]}" --set operator.secretName=custom-auth
+expect-rule "not with the tunnel off" absent \
+  union-operator-comp-ns-write "core secrets get,update union-secret-auth" \
+  "${MULTI[@]}" --set operator.enableTunnelService=false
+
+expect-rule "operator, Eager API key: create, unpinned" present \
+  union-operator-comp-ns-write "core secrets create -" "${MULTI[@]}"
+expect-rule "and get/update pinned to the state Secret" present \
+  union-operator-comp-ns-write "core secrets get,update union-operator-apikey-state" "${MULTI[@]}"
+expect-rule "the pin follows apiKey.stateSecretName" present \
+  union-operator-comp-ns-write "core secrets get,update custom-state" \
+  "${MULTI[@]}" --set config.operator.apiKey.stateSecretName=custom-state
+expect-rule "no create with the API key off" absent \
+  union-operator-comp-ns-write "core secrets create -" \
+  "${MULTI[@]}" --set config.operator.apiKey.enabled=false
+
+expect-rule "operator, apps: connector-config update, pinned" present \
+  union-operator-comp-ns-write "core configmaps update connector-config" "${APPS[@]}"
+expect-rule "not with apps off" absent \
+  union-operator-comp-ns-write "core configmaps update connector-config" "${MULTI[@]}"
+
+UNMANAGED=(--set flytepropellerwebhook.managedConfig=false)
+expect-rule "webhook, self-registering: its own pod, for the ownerReferences" present \
+  union-webhook-comp-ns-read "core pods get -" "${MULTI[@]}" "${UNMANAGED[@]}"
+expect-rule "and the ReplicaSet finalizers OwnerReferencesPermissionEnforcement checks" present \
+  union-webhook-comp-ns-write "apps replicasets/finalizers update -" "${MULTI[@]}" "${UNMANAGED[@]}"
+for v in create update patch delete deletecollection list watch; do
+  expect-verb-resources "and its comp-ns-read grants no ${v}" \
+    union-webhook-comp-ns-read "${v}" "" "${MULTI[@]}" "${UNMANAGED[@]}"
+done
+expect-rule "neither when Helm manages the configuration" absent \
+  union-webhook-comp-ns-read "core pods get -" "${MULTI[@]}"
+expect-rule "nor under singleNamespace, where it never registers" absent \
+  union-webhook-comp-ns-read "core pods get -" "${UNMANAGED[@]}"
+
+LEGACY=(--set flytepropellerwebhook.certificate.provider=legacy)
+expect-rule "webhook, legacy certs: create, unpinned" present \
+  union-webhook-comp-ns-write "core secrets create -" "${MULTI[@]}" "${LEGACY[@]}"
+expect-rule "and get/update on the Secret init-certs writes" present \
+  union-webhook-comp-ns-write "core secrets get,update union-pod-webhook" "${MULTI[@]}" "${LEGACY[@]}"
+expect-rule "which is the binary's default when the webhook mounts propeller's config" present \
+  union-webhook-comp-ns-write "core secrets get,update flyte-pod-webhook" \
+  "${MULTI[@]}" "${LEGACY[@]}" --set flytepropeller.enabled=true
+expect-rule "nothing with another provider" absent \
+  union-webhook-comp-ns-write "core secrets create -" "${MULTI[@]}"
+
+expect-rule "the secrets-namespace read: get only" present \
+  union-secret-read "core secrets get -" "${MULTI[@]}"
+expect-binding-subject "bound to the shared identity by default" \
+  RoleBinding union-secret-read union-system "${MULTI[@]}"
+expect-binding-subject "and to the webhook and leaseworker identities when split" \
+  RoleBinding union-secret-read union-webhook-system,leaseworker \
+  "${MULTI[@]}" --set commonServiceAccount.enabled=false
+expect-binding-namespaces "in proxy.secretsNamespace" \
+  RoleBinding union-secret-read other-secrets \
+  "${MULTI[@]}" --set proxy.secretManager.namespace=other-secrets
+expect-binding-namespaces "not under singleNamespace with the secrets in the release namespace" \
+  RoleBinding union-secret-read ""
+expect-binding-namespaces "but under singleNamespace with them elsewhere" \
+  RoleBinding union-secret-read other-secrets --set proxy.secretManager.namespace=other-secrets
+expect-binding-namespaces "and not when the secret manager is not K8s" \
+  RoleBinding union-secret-read "" "${MULTI[@]}" --set proxy.secretManager.type=AWS
 
 echo
 echo "- singleNamespace resolves from either key, and low_privilege is only an alias"
@@ -2648,6 +2916,7 @@ EOF
 
 # Every optional component that can render under singleNamespace, twice: once with app serving
 # on the knative-operator path, once on the zero-trust stack, where app serving is refused.
+# taskPluginClusterReadRules is set so the audit proves it adds nothing in this mode.
 max_features=(
   --set nodeobserver.enabled=true --set uvolMountBroker.enabled=true
   --set flytepropeller.enabled=true --set imageBuilder.enabled=true
@@ -2659,6 +2928,10 @@ max_features=(
   --set ingress-nginx.enabled=true --set monitoring.enabled=true
   --set metrics-server.enabled=true --set opencost.enabled=true --set cost.enabled=true
   --set dcgm-exporter.enabled=true --set commonServiceAccount.enabled=false
+  --set flytepropellerwebhook.managedConfig=false
+  --set flytepropellerwebhook.certificate.provider=legacy
+  --set 'taskPluginClusterReadRules[0].apiGroups={ray.io}'
+  --set 'taskPluginClusterReadRules[0].resources={rayjobs,rayclusters}'
 )
 MAX_APPS="${WORK_DIR}/max-apps.yaml"
 MAX_ZT="${WORK_DIR}/max-zero-trust.yaml"
