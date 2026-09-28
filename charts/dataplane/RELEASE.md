@@ -545,38 +545,34 @@ Image changes (`2026.8.3` → `2026.8.5`):
 
 ### Release-namespace grants, plugin CRD reads and the work-ns wildcard
 
-- **The operator no longer hangs at startup at `singleNamespace: false` with apps off.** The
-  image builder watches its reference ConfigMap, `union-operator`, in the release namespace,
-  and startup waits for that watch to sync. The only grant covering it was the cluster-wide
-  ConfigMap read, which is emitted only with apps on. The operator's `comp-ns-read` Role now
-  grants `configmaps` `get`/`list`/`watch` pinned to `union-operator`, and `secrets`
-  `list`/`watch` for the image builder's mirror-secrets deleter, whenever
-  `imageBuilder.enabled` is on (the default).
-- **Release-namespace calls are granted to the component that makes them.** At
-  `singleNamespace: false` the release namespace is not a work namespace, so work-ns does not
-  reach it. Several calls were authorized only because every component shared `union-system`
-  with the proxy's Secret Role, and were refused with `commonServiceAccount.enabled: false`.
-  New grants, each pinned by `resourceNames` where the name is fixed:
+- **The reworked RBAC grants release-namespace calls to the component that makes them.** At
+  `singleNamespace: false` the release namespace is not a work namespace, so the work-ns role
+  does not reach it. Each call a component makes there is declared in its own `comp-ns-read`
+  or `comp-ns-write` Role, pinned by `resourceNames` where the name is fixed. None of them
+  depends on sharing `union-system` with the proxy's Secret Role:
+  - operator, with `imageBuilder.enabled` (the default): `configmaps` `get`/`list`/`watch` on
+    the image builder's reference ConfigMap, `union-operator`, and `secrets` `list`/`watch`
+    for its mirror-secrets deleter. Both informers block operator startup until they sync.
   - operator: the tunnel token Secret (`operator.secretName`) `get`/`update`; the Eager API
     key state Secret `get`/`update`, plus `create`; `connector-config` `update` with apps on.
-    The `connector-config` update was refused in every identity mode.
   - webhook: `pods` `get` and `replicasets/finalizers` `update` when it registers its own
-    MutatingWebhookConfiguration (`singleNamespace: false`, `managedConfig: false`). The
-    `pods` `get` was refused in every identity mode, and a refused Get stops the webhook.
-    With `certificate.provider: legacy`, the certificate Secret: `create`, and `get`/`update`
-    on its name.
-  - webhook and leaseworker: a new `<release-ns>-secret-read` Role in
-    `proxy.secretsNamespace` granting `secrets` `get`, for the K8s secret manager's reads.
-- **The leaseworker can watch Kubernetes events at `singleNamespace: false`.** Its event
-  watcher ignores the limit namespace, and with per-component identities nothing granted it,
-  so task status went without event enrichment. `<release-ns>-leaseworker-work-ns-cluster-read`
-  now grants `events.k8s.io` `events` `list`/`watch`. Under `singleNamespace` the watcher is
-  still refused, because it needs a cluster-wide read that is not on the allowlist. It needs
-  a leaseworker change first.
+    MutatingWebhookConfiguration (`singleNamespace: false`, `managedConfig: false`). With
+    `certificate.provider: legacy`, the certificate Secret: `create`, and `get`/`update` on
+    its name.
+  - webhook and leaseworker: a `<release-ns>-secret-read` Role in `proxy.secretsNamespace`
+    granting `secrets` `get`, for the K8s secret manager's reads.
+- **The leaseworker's event watcher is granted at `singleNamespace: false`.** The watcher
+  ignores the limit namespace, so it needs a cluster-wide read:
+  `<release-ns>-leaseworker-work-ns-cluster-read` grants `events.k8s.io` `events`
+  `list`/`watch`. Under `singleNamespace` that read is not on the allowlist, so the watcher
+  is refused and task status is not enriched with Kubernetes events until the leaseworker
+  scopes its informer.
 - **New `taskPluginClusterReadRules`.** At `singleNamespace: false`, CRD-backed task plugins
   (Spark, Ray, Dask, Kubeflow, JobSet) watch their CRDs across every namespace, which no
   work-namespace binding can authorize. List them here and leaseworker and flytepropeller get
-  cluster-wide `list`/`watch` on them. A wildcard or a write verb fails the render. It renders
+  cluster-wide `list`/`watch` on them. The key is for CRDs only: the core group, the other
+  built-in groups (`apps`, `batch` and every group without a dot), `rbac.authorization.k8s.io`
+  and `certificates.k8s.io` fail the render, as does a wildcard or a write verb. It renders
   nothing under `singleNamespace`. See
   [docs/rbac.md](docs/rbac.md#plugin-crd-reads-at-singlenamespace-false).
 - **`apiGroups: ["*"]` is refused outside the work-ns role.** work-ns keeps its wildcard on

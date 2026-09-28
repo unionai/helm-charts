@@ -212,11 +212,10 @@ on `poddisruptionbudgets`, so the operator can manage each app's PDB in its work
 
 At `singleNamespace: false` the release namespace is not a work namespace and `work-ns` is
 not bound there. So every call a component makes into the release namespace needs its own
-`comp-ns-read` or `comp-ns-write` rule. Several of these calls used to be authorized only
-because every component shared `union-system` with the proxy, whose Secret Role happens to
-cover the release namespace. With per-component ServiceAccounts, or with the proxy's
-secret manager set to something other than `K8s`, they were refused. They are now declared
-by the component that makes them:
+`comp-ns-read` or `comp-ns-write` rule. Without one, a call would be authorized only by accident: through the
+proxy's Secret Role when every component shares `union-system` with the proxy, and not at all
+with per-component ServiceAccounts or a secret manager other than `K8s`. So each is declared
+by the component that makes it:
 
 | Role | Grant | Granted when | Code path |
 |---|---|---|---|

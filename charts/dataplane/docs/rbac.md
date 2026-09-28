@@ -69,7 +69,10 @@ taskPluginClusterReadRules:
 
 The chart does not derive this list from `enabled_plugins`, because it cannot see which
 CRDs are installed or what a plugin outside the stock set watches. A wildcard in any field
-fails the render, as does any verb other than `get`, `list` or `watch`. The plugins'
+fails the render, as does any verb other than `get`, `list` or `watch`. So does a built-in
+group: the key is for CRDs, and a cluster-wide read of the core group would reach every
+Secret. The core group `""`, every group without a dot (a CRD's group always has one), and
+`rbac.authorization.k8s.io` and `certificates.k8s.io` are refused. The plugins'
 writes (create, delete, patch) stay in work-ns.
 
 Under `singleNamespace: true` the key renders nothing. Plugin informers are confined to the

@@ -458,6 +458,20 @@ Returns a YAML list, empty when the key is unset.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{/*
+The key is for CRD-backed plugins, so built-in groups are refused. A CRD's group
+must contain a dot, so a dotless group is always built in: the core group,
+where a cluster-wide read reaches every Secret, and apps, batch and the rest,
+whose pod specs can carry credentials in env. rbac.authorization.k8s.io would
+expose the cluster's whole privilege map, and certificates.k8s.io its
+certificate requests. The rest of k8s.io is not refused by suffix, because
+plugin CRDs live there too (sparkoperator.k8s.io).
+*/}}
+{{- range $g := $rule.apiGroups -}}
+{{- if or (not (contains "." (toString $g))) (has (toString $g) (list "rbac.authorization.k8s.io" "certificates.k8s.io")) -}}
+{{- fail (printf "taskPluginClusterReadRules[%d].apiGroups names %q, a built-in Kubernetes group. This key is for the CRDs of CRD-backed task plugins, such as sparkoperator.k8s.io or ray.io; it grants cluster-wide reads, so built-in groups (the core group \"\", groups without a dot, rbac.authorization.k8s.io, certificates.k8s.io) are refused." $i $g) -}}
+{{- end -}}
+{{- end -}}
 {{- $read := fromYamlArray (include "dataplane.rbac.verbs.read" $) -}}
 {{- range $v := $rule.verbs | default list -}}
 {{- if not (has $v $read) -}}

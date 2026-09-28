@@ -2710,6 +2710,32 @@ expect-refusal "a write verb is refused under singleNamespace too" \
 expect-refusal "and so is a wildcard" \
   'taskPluginClusterReadRules[0].resources contains "*"' \
   "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].resources={*}'
+# The key is for plugin CRDs. A core-group entry would hand leaseworker and flytepropeller
+# cluster-wide Secret reads, so built-in groups are refused, in both modes.
+expect-refusal "the core group is refused" \
+  'taskPluginClusterReadRules[0].apiGroups names "", a built-in Kubernetes group' \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":[""],"resources":["secrets"]}]' \
+  --set singleNamespace=false
+expect-refusal "under singleNamespace too" \
+  'taskPluginClusterReadRules[0].apiGroups names "", a built-in Kubernetes group' \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":[""],"resources":["secrets"]}]'
+expect-refusal "a dotless built-in group is refused" \
+  'apiGroups names "apps", a built-in Kubernetes group' \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":["apps"],"resources":["deployments"]}]' \
+  --set singleNamespace=false
+expect-refusal "rbac.authorization.k8s.io is refused" \
+  'apiGroups names "rbac.authorization.k8s.io", a built-in Kubernetes group' \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":["rbac.authorization.k8s.io"],"resources":["clusterroles"]}]' \
+  --set singleNamespace=false
+expect-refusal "certificates.k8s.io is refused" \
+  'apiGroups names "certificates.k8s.io", a built-in Kubernetes group' \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":["certificates.k8s.io"],"resources":["certificatesigningrequests"]}]' \
+  --set singleNamespace=false
+# A plugin CRD group under k8s.io is still admitted: the refusal is not a suffix match.
+expect-rule "a plugin CRD under k8s.io is admitted" present \
+  union-leaseworker-work-ns-cluster-read "sparkoperator.k8s.io sparkapplications list,watch -" \
+  --set-json 'taskPluginClusterReadRules=[{"apiGroups":["sparkoperator.k8s.io"],"resources":["sparkapplications"]}]' \
+  --set singleNamespace=false
 expect-refusal "resourceNames is refused" \
   'has key "resourceNames"' \
   "${PLUGIN_RAY[@]}" --set 'taskPluginClusterReadRules[0].resourceNames={x}' --set singleNamespace=false
