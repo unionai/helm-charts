@@ -74,7 +74,7 @@ billing-test: requirements
 
 .PHONY: buildkit-arm-test
 buildkit-arm-test: requirements
-	helm dependency build $(CHART_DIR)
+	helm dependency update $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
 
 .PHONY: kubeconform-test
