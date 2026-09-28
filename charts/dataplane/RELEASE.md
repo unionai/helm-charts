@@ -2,14 +2,34 @@
 
 ## Unreleased
 
-- uvol mount broker: block-mode Volumes (`uvolMountBroker.block.allow`,
-  `uvolMountBroker.block.freezeMax`). The broker attaches a Volume's ext4 image
-  as a loop device for pods its rules allow
-  ([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
-  `block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
-  `low_privilege` is false, and disables block mode when it is true. Set an
-  explicit list to restrict it, or `[]` to disable it. A broker image without
-  block support ignores the setting.
+### uvol mount broker on by default
+
+`uvolMountBroker.enabled` now defaults to `true`. Agent Sessions workspaces, and
+any task that mounts a Union Volume, reach it through the broker's
+`volumes.union.ai` CSI driver; on a dataplane installed from the chart defaults
+those pods sat in `FailedMount` ("driver name volumes.union.ai not found in the
+list of registered CSI drivers"). The managed clusters that use Volumes already
+set it per cluster, so this changes nothing there.
+
+The broker is a privileged DaemonSet (host root, `CAP_SYS_ADMIN`, `/dev/fuse`),
+pinned by its default `nodeSelector` to `flyte.org/node-role: worker` — the
+nodes task pods can land on. A cluster that will not use Volumes can keep it off
+with `uvolMountBroker.enabled: false`.
+
+`values.openshift.yaml` keeps it off: the chart ships no
+SecurityContextConstraints for the broker, so OpenShift would refuse its pods.
+OpenShift installs are unchanged.
+
+### uvol mount broker: block-mode Volumes
+
+`uvolMountBroker.block.allow` and `uvolMountBroker.block.freezeMax` configure
+block-mode Volumes: the broker attaches a Volume's ext4 image as a loop device
+for pods its rules allow
+([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
+`block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
+`low_privilege` is false, and disables block mode when it is true. Set an
+explicit list to restrict it, or `[]` to disable it. A broker image without
+block support ignores the setting.
 
 ## 2026.9.6
 
