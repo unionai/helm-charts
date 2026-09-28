@@ -11,6 +11,24 @@ Role). It is served at `union-k8s-ro.<appsDomain>` behind the app-serving edge a
 authorized at the org level. The Knative `kubernetes.podspec-serviceaccount` feature
 flag is now enabled so the revision can use that ServiceAccount.
 
+### uvol mount broker on by default
+
+`uvolMountBroker.enabled` now defaults to `true`. Agent Sessions workspaces, and
+any task that mounts a Union Volume, reach it through the broker's
+`volumes.union.ai` CSI driver; on a dataplane installed from the chart defaults
+those pods sat in `FailedMount` ("driver name volumes.union.ai not found in the
+list of registered CSI drivers"). The managed clusters that use Volumes already
+set it per cluster, so this changes nothing there.
+
+The broker is a privileged DaemonSet (host root, `CAP_SYS_ADMIN`, `/dev/fuse`),
+pinned by its default `nodeSelector` to `flyte.org/node-role: worker` — the
+nodes task pods can land on. A cluster that will not use Volumes can keep it off
+with `uvolMountBroker.enabled: false`.
+
+`values.openshift.yaml` keeps it off: the chart ships no
+SecurityContextConstraints for the broker, so OpenShift would refuse its pods.
+OpenShift installs are unchanged.
+
 ## 2026.9.6
 
 `version` and `appVersion` move `2026.9.4` → `2026.9.6`.
