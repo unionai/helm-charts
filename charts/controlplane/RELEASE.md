@@ -1,5 +1,24 @@
 # controlplane — Release Notes
 
+## 2026.9.7
+
+`version` and `appVersion` move `2026.9.6` → `2026.9.7`. Controlplane templates
+and values are unchanged.
+
+### Control-plane and console images
+
+- Leasor: routes debug MCP by the server's partition, honoring org overrides
+  ([cloud#18715](https://github.com/unionai/cloud/pull/18715)), and uses canonical GPU accelerator strings internally ([cloud#18731](https://github.com/unionai/cloud/pull/18731)).
+- Fleet: the customer can choose the dataplane namespace ([cloud#18541](https://github.com/unionai/cloud/pull/18541)).
+- Billing: direct Metronome AWS Marketplace integration, enabled ([cloud#18588](https://github.com/unionai/cloud/pull/18588), [cloud#18719](https://github.com/unionai/cloud/pull/18719)).
+- Factories: pick source versions when materializing, and flag partition schema
+  mismatches ([cloud#18707](https://github.com/unionai/cloud/pull/18707)).
+- Console: an IDE-shaped Agents view ([cloud#18712](https://github.com/unionai/cloud/pull/18712)), LLM gateway detail and virtual-key
+  pages ([cloud#18689](https://github.com/unionai/cloud/pull/18689), [cloud#18703](https://github.com/unionai/cloud/pull/18703)), and cluster connection setup steps ([cloud#18736](https://github.com/unionai/cloud/pull/18736)).
+- Signup: trial copy, alerts, and a Flyte-sourced reskin ([cloud#18694](https://github.com/unionai/cloud/pull/18694), [cloud#18717](https://github.com/unionai/cloud/pull/18717), [cloud#18769](https://github.com/unionai/cloud/pull/18769)).
+
+Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
+
 ## 2026.9.6
 
 `version` and `appVersion` move `2026.9.4` → `2026.9.6`. Controlplane templates
