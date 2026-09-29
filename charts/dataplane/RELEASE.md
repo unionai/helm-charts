@@ -11,6 +11,15 @@ Role). It is served at `union-k8s-ro.<appsDomain>` behind the app-serving edge a
 authorized at the org level. The Knative `kubernetes.podspec-serviceaccount` feature
 flag is now enabled so the revision can use that ServiceAccount.
 
+### Azure GPU accelerator node label
+
+Azure dataplanes (`values.azure.yaml`) now match GPU workloads on
+`platform.union.ai/accelerator` (and `platform.union.ai/gpu-partition-size` for
+partitions) instead of Flyte's AWS default `k8s.amazonaws.com/accelerator`, which
+AKS nodes never carry. Before this, a task requesting any GPU type stayed Pending on
+Azure. GPU node pools must carry `platform.union.ai/accelerator=<device>`, where the
+device is Flyte's name for the GPU (for example `nvidia-a10`, `nvidia-tesla-h100`).
+
 ### uvol mount broker on by default
 
 `uvolMountBroker.enabled` now defaults to `true`. Agent Sessions workspaces, and
@@ -28,6 +37,17 @@ with `uvolMountBroker.enabled: false`.
 `values.openshift.yaml` keeps it off: the chart ships no
 SecurityContextConstraints for the broker, so OpenShift would refuse its pods.
 OpenShift installs are unchanged.
+
+### uvol mount broker: block-mode Volumes
+
+`uvolMountBroker.block.allow` and `uvolMountBroker.block.freezeMax` configure
+block-mode Volumes: the broker attaches a Volume's ext4 image as a loop device
+for pods its rules allow
+([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
+`block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
+`low_privilege` is false, and disables block mode when it is true. Set an
+explicit list to restrict it, or `[]` to disable it. A broker image without
+block support ignores the setting.
 
 ## 2026.9.6
 
