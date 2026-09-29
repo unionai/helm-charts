@@ -11,21 +11,6 @@ globalDefault: false
 description: "Priority for the Union leaseworker (a Recreate singleton) so it schedules ahead of task pods and leases keep flowing during node scale-up. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
 
 ---
-# Source: dataplane/templates/propeller/priorityclass.yaml
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
-  name: union-flytepropeller
-  labels:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-value: 1000000
-globalDefault: false
-description: "Priority for flytepropeller so it schedules ahead of task pods. Uses a custom class rather than a reserved system class (e.g. system-cluster-critical), which GKE restricts to kube-system."
-
----
 # Source: dataplane/templates/uvol-broker/priorityclass.yaml
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -81,7 +66,7 @@ metadata:
   name: union-system
   namespace: union
   annotations:
-    iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
+    
 
 ---
 # Source: dataplane/templates/common/union-serviceaccount.yaml
@@ -91,7 +76,7 @@ metadata:
   name: union
   namespace: union
   annotations:
-    iam.gke.io/gcp-service-account: union-worker@test-gcp-project-123.iam.gserviceaccount.com
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/flyte_project_role
 automountServiceAccountToken: true
 ---
 # Source: dataplane/templates/flyteconnector/serviceaccount.yaml
@@ -176,28 +161,6 @@ metadata:
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: activator
 ---
-# Source: dataplane/templates/propeller/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flytepropeller-system
-  namespace: union
-  annotations:
-    iam.gke.io/gcp-service-account: union-backend@test-gcp-project-123.iam.gserviceaccount.com
----
-# Source: dataplane/templates/common/auth-secret.yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: union-secret-auth
-  namespace: union
-type: Opaque
-data:
-  # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
-  client_secret: dGVzdC1ub3QtcmVhbC1zZWNyZXQ=
-
----
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
 kind: Secret
@@ -205,7 +168,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: dGVzdC1lMmUtcHJvcGVsbGVy
+  cluster_name: 
 
 ---
 # Source: dataplane/templates/gateway/webhook.yaml
@@ -298,8 +261,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-central1
-        bucket test-gcp-bucket
+        region us-east-1
+        bucket 
 
 ---
 # Source: dataplane/templates/gateway/bootstrap-configmap.yaml
@@ -448,7 +411,7 @@ data:
                             envoy.filters.http.cors:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
                               allow_origin_string_match:
-                                - exact: "https://byok.us-west-2.union.ai"
+                                - exact: "https://test-controlplane-host"
                               allow_methods: "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"
                               allow_headers: "DNT, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Range, Authorization, Connect-Protocol-Version, Connect-Timeout-Ms, Grpc-Timeout, X-Grpc-Web, X-User-Agent"
                               expose_headers: "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, x-request-id"
@@ -456,7 +419,7 @@ data:
                               forward_not_matching_preflights: false
                               max_age: "86400"
                           domains:
-                            - "test-e2e-propeller.dp.byok.us-west-2.union.ai"
+                            - ".dp.test-controlplane-host"
                           routes:
                             - match:
                                 prefix: "/"
@@ -1006,7 +969,7 @@ data:
   queue-sidecar-ephemeral-storage-request: "512Mi"
   queue-sidecar-memory-limit: "800Mi"
   queue-sidecar-memory-request: "400Mi"
-  registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,us-central1-docker.pkg.dev"
+  registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,union-dataplane"
   _example: |-
     ################################
     #                              #
@@ -2188,14 +2151,17 @@ metadata:
 data:
   storage.yaml: | 
     storage:
-      container: "test-gcp-bucket"
+      container: ""
       type: stow
       stow:
-          kind: google
-          config:
-            json: ""
-            project_id: test-gcp-project-123
-            scopes: https://www.googleapis.com/auth/cloud-platform
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -2203,7 +2169,7 @@ data:
         max_size_mbs: 0
         target_gc_percent: 70
   buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
+  default-repository: "union-dataplane"
   authentication-type: "noop"
 
 ---
@@ -2265,7 +2231,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/test-e2e-propeller/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2311,7 +2277,7 @@ data:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
       embeddedSecretManagerConfig:
-        clusterName: 'test-e2e-propeller'
+        clusterName: ''
         imagePullSecrets:
           enabled: true
         k8sConfig:
@@ -2353,11 +2319,11 @@ data:
   config.yaml: |
     leaseworker:
       capacity: 100000
-      cluster: 'test-e2e-propeller'
+      cluster: ''
       dispatcherCount: 512
       limit-namespace: union
       namespace-template: union
-      organization: 'byok'
+      organization: 'union'
       refreshInterval: 10s
       task_resources:
         defaults:
@@ -2370,10 +2336,10 @@ data:
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
-      workerName: 'byok-test-e2e-propeller-worker1'
+      workerName: 'union--worker1'
     union:
       connection:
-        host: 'dns:///byok.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         http2KeepAlive:
           pingTimeout: 10s
           readIdleTimeout: 30s
@@ -2381,28 +2347,28 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'byok-test-e2e-propeller-operator'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'byok-test-e2e-propeller-operator'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///byok.us-west-2.union.ai'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///byok.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///byok.us-west-2.union.ai'
-      endpoint: 'dns:///byok.us-west-2.union.ai'
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -2446,14 +2412,17 @@ data:
         disable-inject-owner-references: true
         inject-finalizer: true
     storage:
-      container: "test-gcp-bucket"
+      container: ""
       type: stow
       stow:
-          kind: google
-          config:
-            json: ""
-            project_id: test-gcp-project-123
-            scopes: https://www.googleapis.com/auth/cloud-platform
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -5307,7 +5276,7 @@ data:
   config.yaml: |
     union:
       connection:
-        host: 'dns:///byok.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         http2KeepAlive:
           pingTimeout: 10s
           readIdleTimeout: 30s
@@ -5315,7 +5284,7 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'byok-test-e2e-propeller-operator'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
@@ -5328,7 +5297,7 @@ data:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///byok.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
@@ -5345,18 +5314,18 @@ data:
       syncClusterConfig:
         enabled: false
       clusterId:
-        name: 'test-e2e-propeller'
-        organization: 'byok'
+        name: ''
+        organization: 'union'
       clusterData:
-        appId: 'byok-test-e2e-propeller-operator'
-        bucketName: 'test-gcp-bucket'
-        bucketRegion: 'us-central1'
-        cloudHostName: 'byok.us-west-2.union.ai'
-        cloudProvider: 'gcp'
-        gcpProjectId: 'test-gcp-project-123'
-        metadataBucketPrefix: 'gs://test-gcp-bucket'
-        userRole: 'union-worker@test-gcp-project-123.iam.gserviceaccount.com'
-        userRoleKey: 'iam.gke.io/gcp-service-account'
+        appId: ''
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test-controlplane-host'
+        cloudProvider: ''
+        gcpProjectId: ''
+        metadataBucketPrefix: 's3://'
+        userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
+        userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
         enabled: true
       billing:
@@ -5364,8 +5333,6 @@ data:
       dependenciesHeartbeat:
         prometheus:
           endpoint: 'http://union-operator-prometheus:80/-/healthy'
-        propeller:
-          endpoint: 'http://flytepropeller:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
@@ -5407,17 +5374,20 @@ data:
       identity:
         enabled: false
     connection:
-      rootTenantURLPattern: 'dns:///byok.us-west-2.union.ai'
+      rootTenantURLPattern: 'dns:///test-controlplane-host'
   storage.yaml: | 
     storage:
-      container: "test-gcp-bucket"
+      container: ""
       type: stow
       stow:
-          kind: google
-          config:
-            json: ""
-            project_id: test-gcp-project-123
-            scopes: https://www.googleapis.com/auth/cloud-platform
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -5426,16 +5396,19 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "test-gcp-bucket"
+      container: ""
       type: stow
       stow:
-          kind: google
-          config:
-            json: ""
-            project_id: test-gcp-project-123
-            scopes: https://www.googleapis.com/auth/cloud-platform
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: "us-central1-docker.pkg.dev/test-gcp-project-123/union-dataplane"
+  image-builder.default-repository: "union-dataplane"
   image-builder.authentication-type: "noop"
 
 ---
@@ -6659,168 +6632,6 @@ data:
   rules: |
     {}
 ---
-# Source: dataplane/templates/propeller/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: flyte-propeller-config
-  namespace: union
-data:
-  admin.yaml: | 
-    admin:
-      clientId: 'byok-test-e2e-propeller-operator'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///byok.us-west-2.union.ai'
-      insecure: false
-      insecureSkipVerify: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  catalog.yaml: | 
-    catalog-cache:
-      cache-endpoint: 'dns:///byok.us-west-2.union.ai'
-      endpoint: 'dns:///byok.us-west-2.union.ai'
-      insecure: false
-      insecure-skip-verify: false
-      type: cacheservicev2
-      use-admin-auth: true
-  copilot.yaml: | 
-    plugins:
-      k8s:
-        co-pilot:
-          image: 'cr.flyte.org/flyteorg/flyte-binary-v2:v2.0.45'
-          name: flyte-copilot-
-          start-timeout: 30s
-  core.yaml: | 
-    propeller:
-      downstream-eval-duration: 30s
-      enable-admin-launcher: true
-      leader-election:
-        enabled: true
-        lease-duration: 15s
-        lock-config-map:
-          name: propeller-leader
-          namespace: 'union'
-        renew-deadline: 10s
-        retry-period: 2s
-      limit-namespace: union
-      literal-offloading-config:
-        enabled: true
-      max-workflow-retries: 30
-      metadata-prefix: metadata/propeller
-      metrics-prefix: flyte
-      prof-port: 10254
-      queue:
-        batch-size: -1
-        batching-interval: 2s
-        queue:
-          base-delay: 5s
-          capacity: 1000
-          max-delay: 120s
-          rate: 100
-          type: maxof
-        sub-queue:
-          capacity: 100
-          rate: 10
-          type: bucket
-        type: batch
-      rawoutput-prefix: 'gs://test-gcp-bucket'
-      workers: 4
-      workflow-reeval-duration: 30s
-    webhook:
-      certDir: /etc/webhook/certs
-      disableCreateMutatingWebhookConfig: true
-      embeddedSecretManagerConfig:
-        clusterName: 'test-e2e-propeller'
-        imagePullSecrets:
-          enabled: true
-        k8sConfig:
-          namespace: 'union'
-        type: 'K8s'
-      listenPort: '9443'
-      secretManagerTypes:
-      - Embedded
-      - K8s
-      selinuxTaskPods:
-        enabled: false
-        nodeOSImageSubstrings: []
-        type: spc_t
-      serviceName: union-pod-webhook
-      servicePort: '443'
-  enabled_plugins.yaml: | 
-    plugins:
-      connector-service:
-        defaultConnector:
-          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
-          endpoint: k8s:///flyteconnector.union:8000
-    tasks:
-      task-plugins:
-        default-for-task-types:
-          actor: fast-task
-          container: container
-          container_array: k8s-array
-          sidecar: sidecar
-        enabled-plugins:
-        - container
-        - sidecar
-        - k8s-array
-        - echo
-        - fast-task
-        - connector-service
-        - artifact-trigger
-  k8s.yaml: | 
-    plugins:
-      k8s:
-        default-cpus: 100m
-        default-env-vars: []
-        default-memory: 100Mi
-        default-pod-template-name: task-template
-  logger.yaml: |
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-  namespace_config.yaml: |
-    namespace_mapping:
-      template: union
-  resource_manager.yaml: | 
-    propeller:
-      resourcemanager:
-        type: noop
-  task_logs.yaml: | 
-    plugins:
-      logs:
-        cloudwatch-enabled: false
-        dynamic-log-links:
-        - vscode:
-            displayName: VS Code Debugger
-            templateUris:
-            - /dataplane/pod/v1/generated_name/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/
-        kubernetes-enabled: false
-        templates:
-        - displayName: Task Logs
-          scheme: TaskExecution
-          templateUris:
-          - /console/projects/{{.executionProject}}/domains/{{.executionDomain}}/executions/{{.executionName}}/nodeId/{{.nodeID}}/taskId/{{.taskID}}/attempt/{{.taskRetryAttempt}}/view/logs?duration=all&fromExecutionNav=true
-  storage.yaml: | 
-    storage:
-      container: "test-gcp-bucket"
-      type: stow
-      stow:
-          kind: google
-          config:
-            json: ""
-            project_id: test-gcp-project-123
-            scopes: https://www.googleapis.com/auth/cloud-platform
-      enable-multicontainer: true
-      limits:
-        maxDownloadMBs: 1024
-      cache:
-        max_size_mbs: 0
-        target_gc_percent: 70
----
 # Source: dataplane/templates/uvol-broker/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -7326,73 +7137,6 @@ rules:
       - patch
       - delete
 ---
-# Source: dataplane/templates/propeller/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: flytepropeller-role
-rules:
-  # Allow RO access to PODS
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - get
-      - list
-      - watch
-  # Allow Event recording access
-  - apiGroups:
-      - ""
-    resources:
-      - events
-    verbs:
-      - create
-      - update
-      - delete
-      - patch
-  # Allow Access All plugin objects
-  - apiGroups:
-      - '*'
-    resources:
-      - '*'
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-      - patch
-  # Allow Access to CRD
-  - apiGroups:
-      - apiextensions.k8s.io
-    resources:
-      - customresourcedefinitions
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - delete
-      - update
-  # Allow Access to all resources under flyte.lyft.com
-  - apiGroups:
-      - flyte.lyft.com
-    resources:
-      - flyteworkflows
-      - flyteworkflows/finalizers
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - delete
-      - patch
-      - post
-      - deletecollection
----
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: ClusterRole
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7576,21 +7320,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
----
-# Source: dataplane/templates/propeller/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: flytepropeller-binding
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: flytepropeller-role
-subjects:
-  - kind: ServiceAccount
-    name: flytepropeller-system
-    namespace: union
-
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 # Create a binding from Role -> ServiceAccount
@@ -8207,33 +7936,6 @@ spec:
       name: debug
   selector:
     app.kubernetes.io/name: union-operator
-    app.kubernetes.io/instance: release-name
-
----
-# Source: dataplane/templates/propeller/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  namespace: union
-  name: flytepropeller
-  labels:
-    platform.union.ai/prometheus-group: "union-services"
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  type: ClusterIP
-  ports:
-    - name: debug
-      protocol: TCP
-      port: 10254
-    - name: fasttask
-      port: 15605
-      protocol: TCP
-      targetPort: 15605
-  selector:
-    app.kubernetes.io/name: flytepropeller
     app.kubernetes.io/instance: release-name
 
 ---
@@ -9301,7 +9003,7 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 74a881721ba13b81ca4ed2624b920651c0f3d4124e32bd93e30b6a35d12e11ab
+        checksum/bootstrap-config: c1a473482ba43ec502e4ffc1cb75901e401fcd485c360630c79514fe6c14405a
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
@@ -9320,13 +9022,13 @@ spec:
             - name: DRAIN_TIME_SECONDS
               value: "15"
             - name: UNION_AUTH_TENANTAUTHURL
-              value: "https://byok.us-west-2.union.ai/me"
+              value: "https://test-controlplane-host/me"
             - name: UNION_AUTH_TENANTAUTHSIGNINURL
-              value: "https://byok.us-west-2.union.ai/login"
+              value: "https://test-controlplane-host/login"
             - name: UNION_AUTH_TENANTCONTROLPLANEURL
-              value: "https://byok.us-west-2.union.ai"
+              value: "https://test-controlplane-host"
             - name: UNION_AUTH_OVERRIDENORG
-              value: "byok"
+              value: "union"
           ports:
             - name: http-apps
               containerPort: 8081
@@ -9778,7 +9480,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "0a0eb1fdf26411a72aa4755f823da446b44e7d8624bc3c79a8a7ff33ca83425"
+        configChecksum: "45b75bc1ff9faad816656d85859d8da531b331751ea0a0da0737c787c5c8cda"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9885,7 +9587,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f94cdcbc08fb636461a7c1585ab7de95eaf59f26e084212463de05eb50f9346"
+        configChecksum: "5495cd907d570bc30c3a84ea302f5abb0e11f831f0fb2a03b3270205cae14eb"
         
       labels:
         
@@ -10023,7 +9725,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "f94cdcbc08fb636461a7c1585ab7de95eaf59f26e084212463de05eb50f9346"
+        configChecksum: "5495cd907d570bc30c3a84ea302f5abb0e11f831f0fb2a03b3270205cae14eb"
         
       labels:
         
@@ -10120,105 +9822,6 @@ spec:
       
 
 ---
-# Source: dataplane/templates/propeller/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  namespace: union
-  name: flytepropeller
-  labels:
-    app.kubernetes.io/name: flytepropeller
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: flytepropeller
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "534ba1a9b258896ca6a52f9770e1fe105e551dd1a90090e65194406c71478c8"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        
-        app.kubernetes.io/name: flytepropeller
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      priorityClassName: union-flytepropeller
-      containers:
-        - command:
-            - flytepropeller
-            - --config
-            - /etc/flyte/config/*.yaml
-            - --propeller.cluster-id
-            - test-e2e-propeller
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.6"
-          imagePullPolicy: "IfNotPresent"
-          name: flytepropeller
-          ports:
-            - containerPort: 10254
-          resources:
-            limits:
-              cpu: "3"
-              memory: 3Gi
-            requests:
-              cpu: "1"
-              memory: 1Gi
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/flyte/config
-            - name: auth
-              mountPath: /etc/union/secret
-      serviceAccountName: flytepropeller-system
-      volumes:
-        - name: config-volume
-          configMap:
-            name: flyte-propeller-config
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      
-      
----
 # Source: dataplane/templates/webhook/deployment.yaml
 # Webhook deployment
 # Create the actual deployment
@@ -10248,7 +9851,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "534ba1a9b258896ca6a52f9770e1fe105e551dd1a90090e65194406c71478c8"
+        configChecksum: "45b75bc1ff9faad816656d85859d8da531b331751ea0a0da0737c787c5c8cda"
         
     spec:
       securityContext:
@@ -10321,7 +9924,7 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: flyte-propeller-config
+            name: leaseworker
         - name: webhook-certs
           secret:
             secretName: union-pod-webhook
@@ -10655,7 +10258,7 @@ webhooks:
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: union-pod-webhook-byok
+  name: union-pod-webhook-union
   labels:
     app.kubernetes.io/name: union-pod-webhook
     app.kubernetes.io/instance: release-name
@@ -10678,7 +10281,7 @@ webhooks:
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
-        organization: 'byok'
+        organization: 'union'
     reinvocationPolicy: Never
     rules:
       - apiGroups:
@@ -10901,6 +10504,10 @@ webhooks:
           - domainmappings
           - domainmappings/status
         scope: "*"
+
+---
+# Source: dataplane/templates/propeller/serviceaccount.yaml
+---
 
 ---
 # Source: dataplane/templates/uvol-broker/csidriver.yaml
