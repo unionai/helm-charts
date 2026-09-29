@@ -17,8 +17,8 @@ finalizes when the pod stops; Kubernetes stops it only after buildkitd, and
 
 Off by default. Needs the privileged buildkit shape (the chart refuses
 `rootless: true`), Kubernetes >= 1.29 for native sidecars, a sidecar image
-(`image.repository`/`image.tag`, built from flyteplugins-union's
-`docker/volume-cache/Dockerfile`), a `bucket`, and a service account that can
+(`image.repository`/`image.tag`, built by unionai/cloud
+`operator/deploy/volume-cache`), a `bucket`, and a service account that can
 read and write it. Every existing render is byte-identical.
 
 ### Azure GPU accelerator node label
