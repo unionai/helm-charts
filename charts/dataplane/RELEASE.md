@@ -1,6 +1,39 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.9.7
+
+`version` and `appVersion` move `2026.9.6` → `2026.9.7`.
+
+### Dataplane images
+
+- uvol mount broker: **block-mode Volumes**. The broker formats, loop-attaches,
+  freezes, trims, grows and detaches a Volume's ext4 image for the pod
+  ([cloud#18743](https://github.com/unionai/cloud/pull/18743)). This is the image half of `uvolMountBroker.block.*` (below); a
+  2026.9.6 broker refuses the block verbs, so block volumes need this image.
+- uvol mount broker: probes a channel's daemon (`statfs`, bounded by
+  `autoAbortProbeTimeout`, default 10 s) before auto-aborting it, and spares
+  one that answers ([cloud#18749](https://github.com/unionai/cloud/pull/18749)). A sequential reader holds the waiting count
+  constant while it makes progress, and a read-only mount holds no client
+  session, so the old rule aborted healthy mounts mid-read after 5 minutes.
+- Apps operator: patches KService annotations in place for metadata-only
+  changes, no longer records phantom app revisions on operator rollout, and
+  marks timed-out rollouts `FAILED` ([cloud#18700](https://github.com/unionai/cloud/pull/18700)). The `patch` verb it needs is in this
+  chart (#605, below). It also retries app status conflicts and repairs
+  namespaces ([cloud#18680](https://github.com/unionai/cloud/pull/18680)), and skips pods without a Deployment owner in the secrets
+  watcher ([cloud#18768](https://github.com/unionai/cloud/pull/18768)).
+- Leaseworker: debug pages ([cloud#18709](https://github.com/unionai/cloud/pull/18709)); lease stream errors are preserved and
+  deleted workers quiesce ([cloud#18602](https://github.com/unionai/cloud/pull/18602)).
+
+Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
+
+### Azure GPU accelerator node label
+
+Azure dataplanes (`values.azure.yaml`) now match GPU workloads on
+`platform.union.ai/accelerator` (and `platform.union.ai/gpu-partition-size` for
+partitions) instead of Flyte's AWS default `k8s.amazonaws.com/accelerator`, which
+AKS nodes never carry. Before this, a task requesting any GPU type stayed Pending on
+Azure. GPU node pools must carry `platform.union.ai/accelerator=<device>`, where the
+device is Flyte's name for the GPU (for example `nvidia-a10`, `nvidia-tesla-h100`).
 
 ### uvol mount broker on by default
 
@@ -19,6 +52,25 @@ with `uvolMountBroker.enabled: false`.
 `values.openshift.yaml` keeps it off: the chart ships no
 SecurityContextConstraints for the broker, so OpenShift would refuse its pods.
 OpenShift installs are unchanged.
+
+### uvol mount broker: block-mode Volumes
+
+`uvolMountBroker.block.allow` and `uvolMountBroker.block.freezeMax` configure
+block-mode Volumes: the broker attaches a Volume's ext4 image as a loop device
+for pods its rules allow
+([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
+`block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
+`low_privilege` is false, and disables block mode when it is true. Set an
+explicit list to restrict it, or `[]` to disable it. A broker image without
+block support ignores the setting.
+
+### Operator RBAC: `patch` on Knative services
+
+The operator's ClusterRole and low-privilege Role gain `patch` on
+`services.serving.knative.dev` (#605), which the apps operator in this image
+uses for metadata-only KService changes ([cloud#18700](https://github.com/unionai/cloud/pull/18700)). Without it an operator on
+this image logs a forbidden error on every resync and stops reconciling app
+annotations.
 
 ## 2026.9.6
 

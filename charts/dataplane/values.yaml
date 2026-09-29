@@ -1622,6 +1622,29 @@ uvolMountBroker:
     hostPath: /var/lib/uvol/node-cache
   # -- Extra keys merged into the broker config block (for example
   # autoAbortAfter). May include template values.
+  # -- Block mode: Volumes whose content is one ext4 image that the broker
+  # loop-attaches and mounts for the pod (small-file workloads get in-kernel
+  # metadata instead of a FUSE round trip per file operation). Attaching makes
+  # the node kernel parse filesystem bytes the tenant controls, so it is an
+  # explicit, permanent opt-in for TRUSTED workloads.
+  block:
+    # -- Pods allowed to use block-mode Volumes. A pod is allowed when ANY rule
+    # matches; a rule matches when EVERY field it sets matches the pod:
+    # `namespace`, `serviceAccount`, or both (kubelet supplies them, so a task
+    # cannot forge them). A serviceAccount-only rule matches that name in every
+    # namespace. Fields are glob patterns: `*` matches anything and `team-*` a
+    # prefix, so `[{namespace: "*"}]` is the blanket opt-in for every pod on the
+    # cluster. A rule that sets neither field is rejected at broker start.
+    # Unset (the default): `[{namespace: "*"}]` when `low_privilege` is false,
+    # and disabled when it is true. Any list you set is used as given, and `[]`
+    # disables block mode. Attaching makes the node kernel parse filesystem bytes
+    # the task controls, so on a cluster running untrusted workloads set an
+    # explicit list. Example:
+    # `[{namespace: builders}, {namespace: ci, serviceAccount: buildkit}]`
+    allow: null
+    # -- Thaw a block mount the client froze (around a Volume commit) after this
+    # long, so a client that dies mid-commit cannot wedge the image's writers.
+    freezeMax: 60s
   config: {}
   # -- PriorityClass for the broker DaemonSet: schedules ahead of task pods so a
   # node's broker isn't evicted out from under pods that need it to mount Volumes.
