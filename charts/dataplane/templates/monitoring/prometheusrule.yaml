@@ -102,6 +102,20 @@ spec:
           annotations:
             summary: "{{ "{{" }} $labels.namespace {{ "}}" }} has pods that cannot be scheduled (insufficient capacity or taints) for 15m"
 
+        - alert: UnionDPResourceQuotaNearSaturation
+          expr: |
+            max by (namespace, resource) (
+              kube_resourcequota{type="used", resourcequota="project-quota"}
+              / ignoring(type)
+              kube_resourcequota{type="hard", resourcequota="project-quota"}
+            ) >= 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $labels.namespace {{ "}}" }}/{{ "{{" }} $labels.resource {{ "}}" }} ResourceQuota >=90% used"
+            description: "A project ResourceQuota is at or above 90% utilization for 10m. At 100% Kubernetes rejects pod creation with 'exceeded quota', which stalls that namespace's runs and can back-pressure shared dispatch. Raise the quota or reduce per-task resource requests."
+
     {{- end }}
 
     {{- if .Values.monitoring.slos.enabled }}
