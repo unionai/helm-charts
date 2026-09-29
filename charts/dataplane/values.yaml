@@ -2596,6 +2596,49 @@ imageBuilder:
     # -- Appends additional environment variables to the buildkit container's spec.
     podEnv: []
 
+    # -- Keep buildkitd's state (layers, cache mounts) in a Union Volume across
+    # pod restarts and rescheduling, instead of starting cold on every new pod.
+    # A `union-volume-cache` sidecar (flyteplugins-union) forks the latest
+    # published cache version -- or creates it -- attaches it as an ext4 block
+    # volume and mounts it where buildkitd keeps its state; it commits every
+    # `commitEvery` seconds, grows the image online as it fills, and finalizes
+    # when the pod stops. Needs the privileged buildkit shape (not rootless),
+    # Kubernetes >= 1.29 (native sidecars), and a service account that can
+    # read and write `bucket`.
+    persistentCache:
+      # -- Enable the persistent cache sidecar.
+      enabled: false
+      image:
+        # -- Sidecar image: flyteplugins-union >= 0.14.2 with fuse3, e2fsprogs
+        # and util-linux (flyteplugins-union `docker/volume-cache/Dockerfile`).
+        repository: ""
+        tag: ""
+        pullPolicy: IfNotPresent
+      # -- Object-store location for the cache volume's data (required),
+      # e.g. `s3://my-bucket/buildkit-cache`.
+      bucket: ""
+      # -- Object path of the latest-version pointer. Default:
+      # `<bucket>/<buildkit fullname>/LATEST`.
+      pointer: ""
+      # -- Size of a new cache volume's image (sparse: only written blocks are
+      # stored).
+      size: 64G
+      # -- Never grow the image past this. Empty: no limit.
+      maxSize: ""
+      # -- Grow (double) the image once its filesystem is this full.
+      growAt: 0.85
+      # -- Seconds between commits. Each commit publishes a version the next
+      # pod can start from.
+      commitEvery: 3600
+      # -- Time for the final commit when a pod stops; it uploads what the
+      # last `commitEvery` wrote.
+      terminationGracePeriodSeconds: 900
+      # -- Sidecar resources. The JuiceFS client holds ~1.5 GiB resident.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 2Gi
+
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false
