@@ -72,6 +72,11 @@ spec:
             - {{ $pc.commitEvery | quote }}
             - --ready-file
             - /run/volume-cache/ready
+            # FUSE passthrough staging must not sit on a stacked filesystem
+            # (the container's overlay root): the kernel refuses its backing
+            # files there and every write falls back to the slow daemon path.
+            - --staging-dir
+            - /var/lib/volume-cache-staging
           startupProbe:
             exec:
               command: ["test", "-f", "/run/volume-cache/ready"]
@@ -85,6 +90,8 @@ spec:
               mountPropagation: Bidirectional
             - name: volume-cache-run
               mountPath: /run/volume-cache
+            - name: volume-cache-staging
+              mountPath: /var/lib/volume-cache-staging
           resources:
             {{- toYaml $pc.resources | nindent 12 }}
       {{- end }}
@@ -177,6 +184,8 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 1Mi
+      - name: volume-cache-staging
+        emptyDir: {}
       {{- end }}
       {{- with .Values.imageBuilder.buildkit.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 6 }}
