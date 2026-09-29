@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Azure GPU accelerator node label
+
+Azure dataplanes (`values.azure.yaml`) now match GPU workloads on
+`platform.union.ai/accelerator` (and `platform.union.ai/gpu-partition-size` for
+partitions) instead of Flyte's AWS default `k8s.amazonaws.com/accelerator`, which
+AKS nodes never carry. Before this, a task requesting any GPU type stayed Pending on
+Azure. GPU node pools must carry `platform.union.ai/accelerator=<device>`, where the
+device is Flyte's name for the GPU (for example `nvidia-a10`, `nvidia-tesla-h100`).
+
 ### Read-only in-cluster kubectl proxy (`systemApps.k8sProxy`)
 
 Off by default. When enabled (requires `apps.enabled`), deploys `union-k8s-ro`, a
