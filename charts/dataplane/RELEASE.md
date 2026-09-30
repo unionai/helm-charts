@@ -51,6 +51,33 @@ read and write it. Every existing render is byte-identical.
 
 Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
 
+### flyteconnector uses the common service account, so it has a cloud identity
+
+The connector was the only component that always created and used its own service account,
+bypassing `commonServiceAccount`. That account gets no annotations by default, so the pod
+authenticates as the node's default cloud identity — fine while a connector only talks to
+its remote system, but not once one writes to object storage. A connector-side upload fails
+with `403 ... storage.objects.create denied` (GCP) or `AccessDenied` (S3), and on GKE
+nothing in the chart could fix it without adding a workload-identity binding for a new
+service account.
+
+`flyteconnector` now follows the same pattern as leaseworker and webhook:
+
+- With `commonServiceAccount.enabled` (the default), the deployment uses
+  `commonServiceAccount.name` (`union-system`) and **no `flyteconnector` service account is
+  created**. That account already carries `additionalServiceAccountAnnotations`, so the
+  connector inherits the platform identity with no IAM change.
+- With the common service account disabled, the standalone `flyteconnector` account now
+  renders `global.serviceAccountAnnotations` first, then any
+  `flyteconnector.serviceAccount.annotations` on top.
+
+Upgrade note: anything attached to the `flyteconnector` service account *name* — an IRSA
+trust-policy condition, a GKE workload-identity binding, RBAC — now applies to
+`union-system` unless `commonServiceAccount.enabled` is false.
+`flyteconnector.serviceAccount.annotations` and `.imagePullSecrets` likewise only take
+effect in that standalone case, which is how every other component already behaves. Helm
+prunes the now-unused account on upgrade.
+
 ### Azure GPU accelerator node label
 
 Azure dataplanes (`values.azure.yaml`) now match GPU workloads on
