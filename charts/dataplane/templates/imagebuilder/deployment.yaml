@@ -54,11 +54,14 @@ spec:
           restartPolicy: Always
           args:
             - --name
-            - {{ include "imagebuilder.buildkit.fullname" . | quote }}
+            - {{ include "imagebuilder.buildkit.workloadName" . | quote }}
             - --bucket
             - {{ required "imageBuilder.buildkit.persistentCache.bucket is required" $pc.bucket | quote }}
             - --pointer
-            - {{ $pc.pointer | default (printf "%s/%s/LATEST" (trimSuffix "/" $pc.bucket) (include "imagebuilder.buildkit.fullname" .)) | quote }}
+            {{- /* Per workload: the ARM builder (imageBuilder.buildkit.arm) keeps its own
+            cache and pointer, or each architecture would fork the other's state. */}}
+            {{- $defaultPointer := printf "%s/%s/LATEST" (trimSuffix "/" $pc.bucket) (include "imagebuilder.buildkit.workloadName" .) }}
+            - {{ (ternary $pc.armPointer $pc.pointer (not (not .buildkitArm))) | default $defaultPointer | quote }}
             - --mount-at
             - /var/lib/buildkit-cache/state
             - --size

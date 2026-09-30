@@ -14,6 +14,10 @@ it. The sidecar commits every `commitEvery` seconds (each commit is a version
 the next pod can start from), grows the image online as it fills, and
 finalizes when the pod stops; Kubernetes stops it only after buildkitd, and
 `terminationGracePeriodSeconds` (default 900) covers that final commit.
+With the ARM builder (`imageBuilder.buildkit.arm`) enabled, it gets its own
+sidecar, cache volume and pointer (`armPointer`, default
+`<bucket>/<buildkit fullname>-arm/LATEST`), so neither architecture starts
+from the other's state.
 
 Off by default. Needs the privileged buildkit shape (the chart refuses
 `rootless: true`), Kubernetes >= 1.29 for native sidecars, a sidecar image
