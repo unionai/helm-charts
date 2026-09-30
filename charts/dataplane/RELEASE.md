@@ -1,5 +1,26 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### BuildKit: persistent cache on a Union Volume (opt-in)
+
+`imageBuilder.buildkit.persistentCache` keeps buildkitd's state (layers and
+`RUN --mount=type=cache` contents) in a Union Volume across pod restarts and
+rescheduling, so a new builder pod starts warm instead of cold. A
+`union-volume-cache` native sidecar (built on flyteplugins-union's Volume API) forks the latest
+published cache version -- or creates it -- attaches it as an ext4 block
+volume under `/var/lib/buildkit-cache`, and buildkitd runs with `--root` on
+it. The sidecar commits every `commitEvery` seconds (each commit is a version
+the next pod can start from), grows the image online as it fills, and
+finalizes when the pod stops; Kubernetes stops it only after buildkitd, and
+`terminationGracePeriodSeconds` (default 900) covers that final commit.
+
+Off by default. Needs the privileged buildkit shape (the chart refuses
+`rootless: true`), Kubernetes >= 1.29 for native sidecars, a sidecar image
+(`image.repository`/`image.tag`, built by unionai/cloud
+`operator/deploy/volume-cache`), a `bucket`, and a service account that can
+read and write it. Every existing render is byte-identical.
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`.
@@ -25,25 +46,6 @@
   deleted workers quiesce ([cloud#18602](https://github.com/unionai/cloud/pull/18602)).
 
 Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
-
-### BuildKit: persistent cache on a Union Volume (opt-in)
-
-`imageBuilder.buildkit.persistentCache` keeps buildkitd's state (layers and
-`RUN --mount=type=cache` contents) in a Union Volume across pod restarts and
-rescheduling, so a new builder pod starts warm instead of cold. A
-`union-volume-cache` native sidecar (flyteplugins-union) forks the latest
-published cache version -- or creates it -- attaches it as an ext4 block
-volume under `/var/lib/buildkit-cache`, and buildkitd runs with `--root` on
-it. The sidecar commits every `commitEvery` seconds (each commit is a version
-the next pod can start from), grows the image online as it fills, and
-finalizes when the pod stops; Kubernetes stops it only after buildkitd, and
-`terminationGracePeriodSeconds` (default 900) covers that final commit.
-
-Off by default. Needs the privileged buildkit shape (the chart refuses
-`rootless: true`), Kubernetes >= 1.29 for native sidecars, a sidecar image
-(`image.repository`/`image.tag`, built by unionai/cloud
-`operator/deploy/volume-cache`), a `bucket`, and a service account that can
-read and write it. Every existing render is byte-identical.
 
 ### Azure GPU accelerator node label
 
