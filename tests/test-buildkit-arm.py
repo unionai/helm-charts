@@ -266,7 +266,11 @@ class BuildkitArmTest(unittest.TestCase):
         for pointers, want_amd, want_arm in (
             ({}, None, None),
             ({"pointer": "s3://b/p/amd"}, "s3://b/p/amd", None),
-            ({"pointer": "s3://b/p/amd", "armPointer": "s3://b/p/arm"}, "s3://b/p/amd", "s3://b/p/arm"),
+            (
+                {"pointer": "s3://b/p/amd", "armPointer": "s3://b/p/arm"},
+                "s3://b/p/amd",
+                "s3://b/p/arm",
+            ),
         ):
             with self.subTest(**pointers):
                 docs = render(
