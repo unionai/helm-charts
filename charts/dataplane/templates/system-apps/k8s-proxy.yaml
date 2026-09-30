@@ -17,7 +17,13 @@ state without a kubeconfig.
        service name on selfhosted. */ -}}
 {{- $appsDomain := tpl ($k8s.appsDomain | default "") . -}}
 {{- if not $appsDomain -}}
-{{- $appsDomain = trimPrefix "*." (include "ingress.serving.host" . | trim | trimAll "\"") -}}
+  {{- $cluster := include "getClusterName" . -}}
+  {{- $gwHost := include "gateway.host" . -}}
+  {{- if and $cluster $gwHost -}}
+    {{- $appsDomain = printf "apps.%s.dp.%s" $cluster $gwHost -}}
+  {{- else -}}
+    {{- $appsDomain = trimPrefix "*." (include "ingress.serving.host" . | trim | trimAll "\"") -}}
+  {{- end -}}
 {{- end -}}
 {{- $host := printf "%s.%s" $name $appsDomain -}}
 apiVersion: v1
@@ -162,6 +168,8 @@ data:
         listen 8080;
         location / {
           proxy_set_header Authorization "";
+          proxy_connect_timeout 5s;
+          proxy_read_timeout 60s;
           proxy_pass http://127.0.0.1:8081;
           proxy_http_version 1.1;
         }
@@ -248,6 +256,12 @@ spec:
             - "--port=8081"
             - "--address=127.0.0.1"
             - "--accept-hosts=.*"
+          readinessProbe:
+            tcpSocket:
+              port: 8081
+            initialDelaySeconds: 1
+            periodSeconds: 1
+            failureThreshold: 10
           {{- with $k8s.env }}
           env:
 {{ toYaml . | indent 12 }}
