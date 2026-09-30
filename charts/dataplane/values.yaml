@@ -1582,8 +1582,12 @@ uvolMountBroker:
   # -- Enable the uvol mount broker DaemonSet: a CSI node driver that premounts
   # FUSE channels and hands the fds to unprivileged in-pod clients, so task pods
   # mount versioned Volumes with no CAP_SYS_ADMIN, no /dev/fuse and no hostPath.
-  # Opt-in: disabled by default; enable per cluster where Volumes are wanted.
-  enabled: false
+  # On by default: Agent Sessions workspaces and any task using Volumes mount
+  # through it, and a dataplane without it leaves those pods in FailedMount
+  # ("driver name volumes.union.ai not found"). The DaemonSet itself is
+  # privileged (host root, CAP_SYS_ADMIN, /dev/fuse) — set false to leave it
+  # off a cluster that will not use Volumes.
+  enabled: true
   # -- CSI driver name. Task pods reference this exact string, so changing it
   # requires the same change on the client side — leave it alone unless you know
   # you need to.
@@ -1618,6 +1622,29 @@ uvolMountBroker:
     hostPath: /var/lib/uvol/node-cache
   # -- Extra keys merged into the broker config block (for example
   # autoAbortAfter). May include template values.
+  # -- Block mode: Volumes whose content is one ext4 image that the broker
+  # loop-attaches and mounts for the pod (small-file workloads get in-kernel
+  # metadata instead of a FUSE round trip per file operation). Attaching makes
+  # the node kernel parse filesystem bytes the tenant controls, so it is an
+  # explicit, permanent opt-in for TRUSTED workloads.
+  block:
+    # -- Pods allowed to use block-mode Volumes. A pod is allowed when ANY rule
+    # matches; a rule matches when EVERY field it sets matches the pod:
+    # `namespace`, `serviceAccount`, or both (kubelet supplies them, so a task
+    # cannot forge them). A serviceAccount-only rule matches that name in every
+    # namespace. Fields are glob patterns: `*` matches anything and `team-*` a
+    # prefix, so `[{namespace: "*"}]` is the blanket opt-in for every pod on the
+    # cluster. A rule that sets neither field is rejected at broker start.
+    # Unset (the default): `[{namespace: "*"}]` when `low_privilege` is false,
+    # and disabled when it is true. Any list you set is used as given, and `[]`
+    # disables block mode. Attaching makes the node kernel parse filesystem bytes
+    # the task controls, so on a cluster running untrusted workloads set an
+    # explicit list. Example:
+    # `[{namespace: builders}, {namespace: ci, serviceAccount: buildkit}]`
+    allow: null
+    # -- Thaw a block mount the client froze (around a Volume commit) after this
+    # long, so a client that dies mid-commit cannot wedge the image's writers.
+    freezeMax: 60s
   config: {}
   # -- PriorityClass for the broker DaemonSet: schedules ahead of task pods so a
   # node's broker isn't evicted out from under pods that need it to mount Volumes.
@@ -2408,6 +2435,11 @@ imageBuilder:
   # -- E.g. "tcp://buildkitd.buildkit.svc.cluster.local:1234"
   buildkitUri: ""
 
+  # -- External ARM BuildKit URI for multi-arch user image builds. Requires a primary
+  # -- BuildKit endpoint and multi-arch-capable Union images. Leave empty for single-arch.
+  # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
+  buildkitUriArm: ""
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2443,6 +2475,16 @@ imageBuilder:
 
     # -- Enable buildkit service within this release.
     enabled: true
+
+    arm:
+      # -- Deploy a separate ARM BuildKit alongside the primary amd64 builder.
+      # -- Requires ARM nodes and multi-arch-capable Union images. Disabled by default.
+      # -- Replicas, autoscaling, resources, security, and storage settings are shared.
+      enabled: false
+      # -- Additional ARM node selectors, overriding shared selectors. Architecture is pinned to arm64.
+      nodeSelector: {}
+      # -- Additional ARM tolerations, appended to shared tolerations and the ARM architecture toleration.
+      tolerations: []
 
     # -- Service account configuration for buildkit
     serviceAccount:

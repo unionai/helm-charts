@@ -1223,7 +1223,7 @@ The URI to connect to buildkit
 */}}
 {{- define "imagebuilder.buildkit.uri" -}}
 {{- if .Values.imageBuilder.buildkitUri -}}
-{{- .Values.imageBuilder.buildkitUri | quote -}}
+{{- .Values.imageBuilder.buildkitUri -}}
 {{- else -}}
 tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
 {{- end -}}
@@ -1607,4 +1607,45 @@ propeller:
 {{- end }}
 webhook:
 {{- tpl (toYaml $webhook) . | nindent 2 }}
+{{- end -}}
+
+{{/* Per-architecture workload names/selectors; shared config and identity keep their existing names. */}}
+{{- define "imagebuilder.buildkit.workloadName" -}}
+{{- if .buildkitArm -}}
+{{- printf "%s-arm" (include "imagebuilder.buildkit.fullname" . | trunc 59 | trimSuffix "-") -}}
+{{- else -}}
+{{- include "imagebuilder.buildkit.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.workloadSelectorLabels" -}}
+{{- if .buildkitArm }}
+app.kubernetes.io/name: imagebuilder-buildkit-arm
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- else -}}
+{{- include "imagebuilder.buildkit.selectorLabels" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.workloadLabels" -}}
+{{- include "imagebuilder.buildkit.workloadSelectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.armUri" -}}
+{{- if (.Values.imageBuilder.buildkit.arm | default dict).enabled -}}
+{{- if not .Values.imageBuilder.buildkit.enabled -}}
+{{- fail "imageBuilder.buildkit.arm.enabled requires imageBuilder.buildkit.enabled" -}}
+{{- end -}}
+{{- if .Values.imageBuilder.buildkitUriArm -}}
+{{- fail "Set either imageBuilder.buildkit.arm.enabled or imageBuilder.buildkitUriArm, not both" -}}
+{{- end -}}
+tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm" true) .) }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
+{{- else if .Values.imageBuilder.buildkitUriArm -}}
+{{- if not (or .Values.imageBuilder.buildkit.enabled .Values.imageBuilder.buildkitUri) -}}
+{{- fail "imageBuilder.buildkitUriArm requires a primary BuildKit endpoint (buildkitUri or buildkit.enabled)" -}}
+{{- end -}}
+{{- .Values.imageBuilder.buildkitUriArm -}}
+{{- end -}}
 {{- end -}}
