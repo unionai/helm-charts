@@ -325,6 +325,28 @@ tolerations:
 flyteconnector
 {{- end -}}
 
+{{/*
+Returns the flyteconnector service account name, using the common SA when enabled.
+*/}}
+{{- define "flyteconnector.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- include "flyteconnector.name" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Annotations for a standalone flyteconnector service account: the platform cloud identity
+first, then any component-specific overrides.
+*/}}
+{{- define "flyteconnector.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.flyteconnector.serviceAccount.annotations }}
+{{ tpl (toYaml .) $ }}
+{{- end }}
+{{- end }}
+
 {{- define "flyteconnector.selectorLabels" -}}
 app.kubernetes.io/name: {{ template "flyteconnector.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
