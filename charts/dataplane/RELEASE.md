@@ -20,10 +20,10 @@ sidecar, cache volume and pointer (`armPointer`, default
 from the other's state.
 
 Off by default. Needs the privileged buildkit shape (the chart refuses
-`rootless: true`), Kubernetes >= 1.29 for native sidecars, a sidecar image
-(`image.repository`/`image.tag`, built by unionai/cloud
-`operator/deploy/volume-cache`), a `bucket`, and a service account that can
-read and write it. Every existing render is byte-identical.
+`rootless: true`), Kubernetes >= 1.29 for native sidecars, a `bucket`, and a
+service account that can read and write it. The sidecar image defaults to
+`public.ecr.aws/unionai/union-volume-cache` at the chart's appVersion, published
+with each release by unionai/cloud (`operator/deploy/volume-cache`). Every existing render is byte-identical.
 
 ## 2026.9.7
 
