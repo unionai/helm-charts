@@ -63,12 +63,19 @@ spec:
         {{- $envVars = concat $envVars (.Values.console.env | default (list)) }}
         {{- /* Self-hosted feature flags the console reads at runtime
                (window.__ENV.SELF_HOSTED_FEATURE_FLAGS, a gate->bool JSON), so a surface is a
-               values toggle rather than a console image rebuild. `artifacts-enabled` is
-               DERIVED from the same expression that gates the artifacts pod
-               (services.artifacts.enabled) — one source of truth, so the nav can't drift
-               from the backend. Explicit console.featureFlags entries override any gate. */}}
+               values toggle rather than a console image rebuild. `artifacts-enabled` and
+               `factories-enabled` are DERIVED from the same expression that gates the
+               artifacts pod (services.artifacts.enabled) — one source of truth, so the nav
+               can't drift from the backend. Explicit console.featureFlags entries override
+               any gate. */}}
         {{- $ff := deepCopy (.Values.console.featureFlags | default dict) }}
-        {{- $ff = merge $ff (dict "artifacts-enabled" (dig "enabled" true (index .Values.services "artifacts" | default dict))) }}
+        {{- $artifactsEnabled := dig "enabled" true (index .Values.services "artifacts" | default dict) }}
+        {{- if not (hasKey $ff "artifacts-enabled") }}
+        {{- $_ := set $ff "artifacts-enabled" $artifactsEnabled }}
+        {{- end }}
+        {{- if not (hasKey $ff "factories-enabled") }}
+        {{- $_ := set $ff "factories-enabled" $artifactsEnabled }}
+        {{- end }}
         {{- with $ff }}
         {{- $envVars = concat $envVars (list (dict "name" "SELF_HOSTED_FEATURE_FLAGS" "value" (toJson .))) }}
         {{- end }}
