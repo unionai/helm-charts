@@ -321,6 +321,36 @@ dcgm-exporter:
 # ----------------------------------------------------------------------------
 
 config:
+  # --------------------------------------------------------------------------
+  # Union Volumes on Auto Mode (REQUIRED if you use Volumes)
+  # --------------------------------------------------------------------------
+  # Auto Mode nodes run Bottlerocket, which enforces SELinux. The mount broker
+  # hands a task pod its FUSE channel as a descriptor passed from a privileged
+  # domain, and the kernel refuses a confined container that descriptor —
+  # silently: the message arrives without it and no error is returned. The
+  # volume client then dies and nothing in the pod can recover it. So on Auto
+  # Mode this is not tuning; Volumes cannot be mounted without it.
+  #
+  # Off in the base chart because it relaxes task-pod confinement, and the
+  # chart cannot detect this for you: a mutating webhook runs before the pod is
+  # scheduled, so it cannot know which node the pod will land on, and a cluster
+  # may mix Auto Mode node pools with managed node groups. Whoever provisions
+  # the cluster is the only one who knows — hence setting it here.
+  #
+  # Know what the type grants before enabling. Bottlerocket aliases `spc_t` to
+  # its own `control_t`, which its policy permits to write the node's API
+  # socket, something the unprivileged container type is explicitly denied. A
+  # task pod gets no hostPath and so cannot reach that socket, but the
+  # permission is real. Pod Security Admission's *baseline* profile also
+  # rejects a pod carrying this type, and a mutating webhook cannot exempt
+  # itself, so a namespace enforcing baseline needs an exemption first.
+  #
+  # Pairs with flytepropellerwebhook...selinuxTaskPods.enabled below, which
+  # registers the webhook path. Both are needed.
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
   # Identify the AWS Secrets Manager backend so the operator can report a canonical
   # secret store identity to the control plane (used for cluster-pool drift detection).
   # These fields are read only when proxy.secretManager.type is AWS.
@@ -495,3 +525,11 @@ monitoring:
       kubeSchedulerRecording: false
       kubeProxy: false
       etcd: false
+
+# Registers the SELinux mutator's webhook path. Pairs with
+# config.core.webhook.selinuxTaskPods above; both are needed.
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true

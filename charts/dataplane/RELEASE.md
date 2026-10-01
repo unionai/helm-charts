@@ -19,7 +19,195 @@ the pod goes on reporting Ready.
 
 The root copy can be dropped once no dataplane runs a pre-consolidation image.
 
-### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`)
+## 2026.9.7
+
+`version` and `appVersion` move `2026.9.6` → `2026.9.7`.
+
+### Dataplane images
+
+- uvol mount broker: **block-mode Volumes**. The broker formats, loop-attaches,
+  freezes, trims, grows and detaches a Volume's ext4 image for the pod
+  ([cloud#18743](https://github.com/unionai/cloud/pull/18743)). This is the image half of `uvolMountBroker.block.*` (below); a
+  2026.9.6 broker refuses the block verbs, so block volumes need this image.
+- uvol mount broker: probes a channel's daemon (`statfs`, bounded by
+  `autoAbortProbeTimeout`, default 10 s) before auto-aborting it, and spares
+  one that answers ([cloud#18749](https://github.com/unionai/cloud/pull/18749)). A sequential reader holds the waiting count
+  constant while it makes progress, and a read-only mount holds no client
+  session, so the old rule aborted healthy mounts mid-read after 5 minutes.
+- Apps operator: patches KService annotations in place for metadata-only
+  changes, no longer records phantom app revisions on operator rollout, and
+  marks timed-out rollouts `FAILED` ([cloud#18700](https://github.com/unionai/cloud/pull/18700)). The `patch` verb it needs is in this
+  chart (#605, below). It also retries app status conflicts and repairs
+  namespaces ([cloud#18680](https://github.com/unionai/cloud/pull/18680)), and skips pods without a Deployment owner in the secrets
+  watcher ([cloud#18768](https://github.com/unionai/cloud/pull/18768)).
+- Leaseworker: debug pages ([cloud#18709](https://github.com/unionai/cloud/pull/18709)); lease stream errors are preserved and
+  deleted workers quiesce ([cloud#18602](https://github.com/unionai/cloud/pull/18602)).
+
+Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
+
+### The operator reads the namespace's DaemonSets and StatefulSets
+
+The operator's Role gains read-only (`get`, `list`, `watch`) access to `daemonsets` and
+`statefulsets` in the release namespace, next to the `deployments` it already had. The
+cluster health snapshot it pushes to the control plane
+([cloud#18817](https://github.com/unionai/cloud/pull/18817)) reports every Union workload in
+the namespace with its pods; without the grant an operator on that release omits the whole
+`components` section and counts a `components_failures` metric on every push. No behaviour
+change for anything else.
+
+
+The connector was the only component that always created and used its own service account,
+bypassing `commonServiceAccount`. That account gets no annotations by default, so the pod
+authenticates as the node's default cloud identity — fine while a connector only talks to
+its remote system, but not once one writes to object storage. A connector-side upload fails
+with `403 ... storage.objects.create denied` (GCP) or `AccessDenied` (S3), and on GKE
+nothing in the chart could fix it without adding a workload-identity binding for a new
+service account.
+
+`flyteconnector` now follows the same pattern as leaseworker and webhook:
+
+- With `commonServiceAccount.enabled` (the default), the deployment uses
+  `commonServiceAccount.name` (`union-system`) and **no `flyteconnector` service account is
+  created**. That account already carries `additionalServiceAccountAnnotations`, so the
+  connector inherits the platform identity with no IAM change.
+- With the common service account disabled, the standalone `flyteconnector` account now
+  renders `global.serviceAccountAnnotations` first, then any
+  `flyteconnector.serviceAccount.annotations` on top.
+
+Upgrade note: anything attached to the `flyteconnector` service account *name* — an IRSA
+trust-policy condition, a GKE workload-identity binding, RBAC — now applies to
+`union-system` unless `commonServiceAccount.enabled` is false.
+`flyteconnector.serviceAccount.annotations` and `.imagePullSecrets` likewise only take
+effect in that standalone case, which is how every other component already behaves. Helm
+prunes the now-unused account on upgrade.
+
+### Azure GPU accelerator node label
+
+Azure dataplanes (`values.azure.yaml`) now match GPU workloads on
+`platform.union.ai/accelerator` (and `platform.union.ai/gpu-partition-size` for
+partitions) instead of Flyte's AWS default `k8s.amazonaws.com/accelerator`, which
+AKS nodes never carry. Before this, a task requesting any GPU type stayed Pending on
+Azure. GPU node pools must carry `platform.union.ai/accelerator=<device>`, where the
+device is Flyte's name for the GPU (for example `nvidia-a10`, `nvidia-tesla-h100`).
+
+### uvol mount broker on by default
+
+`uvolMountBroker.enabled` now defaults to `true`. Agent Sessions workspaces, and
+any task that mounts a Union Volume, reach it through the broker's
+`volumes.union.ai` CSI driver; on a dataplane installed from the chart defaults
+those pods sat in `FailedMount` ("driver name volumes.union.ai not found in the
+list of registered CSI drivers"). The managed clusters that use Volumes already
+set it per cluster, so this changes nothing there.
+
+The broker is a privileged DaemonSet (host root, `CAP_SYS_ADMIN`, `/dev/fuse`),
+pinned by its default `nodeSelector` to `flyte.org/node-role: worker` — the
+nodes task pods can land on. A cluster that will not use Volumes can keep it off
+with `uvolMountBroker.enabled: false`.
+
+`values.openshift.yaml` keeps it off: the chart ships no
+SecurityContextConstraints for the broker, so OpenShift would refuse its pods.
+OpenShift installs are unchanged.
+
+### uvol mount broker: block-mode Volumes
+
+`uvolMountBroker.block.allow` and `uvolMountBroker.block.freezeMax` configure
+block-mode Volumes: the broker attaches a Volume's ext4 image as a loop device
+for pods its rules allow
+([cloud#18743](https://github.com/unionai/cloud/pull/18743)). Leaving
+`block.allow` unset allows **every pod** (`[{namespace: "*"}]`) when
+`low_privilege` is false, and disables block mode when it is true. Set an
+explicit list to restrict it, or `[]` to disable it. A broker image without
+block support ignores the setting.
+
+### Operator RBAC: `patch` on Knative services
+
+The operator's ClusterRole and low-privilege Role gain `patch` on
+`services.serving.knative.dev` (#605), which the apps operator in this image
+uses for metadata-only KService changes ([cloud#18700](https://github.com/unionai/cloud/pull/18700)). Without it an operator on
+this image logs a forbidden error on every resync and stops reconciling app
+annotations.
+
+## 2026.9.6
+
+`version` and `appVersion` move `2026.9.4` → `2026.9.6`.
+
+### Dataplane images
+
+- uvol mount broker: serves a node-shared chunk cache to task pods as
+  `volumes.union.ai/kind=node-cache` ([cloud#18524](https://github.com/unionai/cloud/pull/18524)).
+  This is the image half of the chart's `uvolMountBroker.nodeCache` (below): a
+  2026.9.4 broker ignores the attribute, so the feature only works from this
+  image on.
+- Operator: App status conditions are capped so oversized messages no longer
+  break the inline status notification ([cloud#18546](https://github.com/unionai/cloud/pull/18546)).
+- Operator: fleet pool registries are rendered and the configured image
+  endpoints reported in the cluster snapshot ([cloud#18529](https://github.com/unionai/cloud/pull/18529)).
+
+- uvol mount broker: mounts its published channel on first use rather than at
+  NodePublish, and gives that mount the pod's own SELinux label
+  ([cloud#18583](https://github.com/unionai/cloud/pull/18583)). Without this a
+  task pod on an SELinux-enforcing node cannot start: the container runtime
+  relabels the CSI target, walks into a premount nothing is serving yet, and
+  fails. Union Volumes have been unusable on those nodes since the broker
+  shipped in 2026.9.2.
+- Propeller webhook: can give a volume-mounting container an SELinux type it is
+  allowed to receive the broker's channel descriptor with
+  ([flyte#1017](https://github.com/unionai/flyte/pull/1017)). Off unless
+  enabled; see the `selinuxTaskPods` section below for what the type grants and
+  why it is not on by default.
+
+Image source: [cloud changes since release/2026.9.4](https://github.com/unionai/cloud/compare/release/2026.9.4...release/2026.9.6).
+Included submodule changes:
+[Flyte v1](https://github.com/unionai/flyte/compare/8b7a3dd29511...273cb0d62544)
+— this is where the webhook above comes from;
+[Flyte v2](https://github.com/flyteorg/flyte/compare/96825115189e6b51e9be48988adab79bdaef5974...d5ca503f9c0ba375a640c28c31046bee246d506c).
+
+### Knative autoscaler resources
+
+The vendored Knative autoscaler now defaults to `limits: 4000m` CPU / `2000Mi`
+memory and `requests: 250m` / `128Mi` (was `1000m` / `1000Mi` and `100m` / `100Mi`),
+via `gateway.components.autoscaler.containers.autoscaler.resources`. It runs one
+decider per revision, including scaled-to-zero ones; on a dataplane with many
+revisions the 1-CPU cap throttled it until the liveness probe killed it in a
+loop, and no new Knative revision could become ready. Mirrors cloud#18669.
+
+### SELinux type for volume-mounting task pods (`selinuxTaskPods`)
+
+Off by default. On a node that enforces SELinux — Bottlerocket, so EKS Auto
+Mode, and RHCOS/OpenShift — the mount broker passes the task pod a `/dev/fuse`
+descriptor from a privileged domain, the kernel refuses a confined container
+that descriptor, and the volume client dies on the empty message. Nothing in
+the pod can recover it, so Union Volumes cannot be mounted there at all.
+
+Enabling this registers a propeller webhook that gives an SELinux type only to
+the containers that mount a broker channel volume, and only in pods carrying
+`volumes.union.ai/channel` (set by `flyteplugins-union`'s `allow_volumes()`).
+It never overrides a type the pod asked for itself.
+
+Turn it on only where the nodes need it:
+
+```yaml
+flytepropellerwebhook:
+  webhook:
+    webhooks:
+      selinuxTaskPods:
+        enabled: true
+config:
+  core:
+    webhook:
+      selinuxTaskPods:
+        enabled: true
+```
+
+Read before enabling: the type moves the task container into a subject set
+that Bottlerocket's policy allows to write the node's API socket, which the
+unprivileged set is explicitly denied. A task pod gets no hostPath and so
+cannot reach that socket, but the permission is real and this is a
+security-team conversation, not a values change. Pod Security Admission's
+*baseline* profile also rejects the resulting pod, and a mutating webhook
+cannot exempt itself.
+
+### uvol mount broker: node-shared chunk cache (`uvolMountBroker.nodeCache`) (#597)
 
 On by default (`nodeCache.enabled: true`; set it to `false` to refuse). The
 broker mounts `nodeCache.hostPath` from the node and serves a per-namespace subtree of it to task pods that ask for

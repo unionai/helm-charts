@@ -29,14 +29,18 @@ _CACHE_BUST = os.environ.get("FUNCTIONAL_IMAGE_CACHE_BUST", "")
 _N_SMALL = 64
 _LARGE_MIB = 32
 
+
 _volume_env = flyte.TaskEnvironment(
     name=f"ci-volume-{_env_suffix}",
     image=flyte.Image.from_debian_base()
     .with_apt_packages("fuse3")
-    # >=0.11.0b2: Volumes behind S3-compatible endpoints (k3d's RustFS) —
-    # flyteplugins-union#132. Pre-releases allowed for the same reason the
-    # runner's SDK venv allows them.
-    .with_pip_packages("flyteplugins-union>=0.11.0b2", pre=True)
+    # >=0.12.1: allow_volumes() sets the volumes.union.ai/channel label that
+    # the SELinux webhook's objectSelector matches (flyteplugins-union#142), so
+    # a task pod on an SELinux-enforcing node can be given a type that may
+    # receive the broker's channel descriptor. It also carries >=0.11.0b2's
+    # Volumes-behind-an-S3-compatible-endpoint support (k3d's RustFS, #132).
+    # No pre=True: 0.12.1 is a final release.
+    .with_pip_packages("flyteplugins-union>=0.12.1")
     .with_env_vars({"CI_CACHE_BUST": _CACHE_BUST}),
     # The client keeps a read/write buffer in memory; 2Gi is the floor at which
     # it is comfortable, and still fits next to buildkit on the 4-vCPU k3d node.
@@ -85,6 +89,21 @@ def _bucket() -> tuple[str, str | None]:
     )
 
 
+def _selinux_context() -> str:
+    """The container's own SELinux context, or why it could not be read.
+
+    This is the one piece of evidence that cannot be lost to a log rotation or
+    a restarted webhook pod: it is what the kernel thinks this container is, at
+    the moment it mounted. On a Bottlerocket node an unmutated container reads
+    back ``container_t`` and cannot receive the broker's descriptor at all.
+    """
+    try:
+        with open("/proc/self/attr/current") as f:
+            return f.read().strip("\x00\n") or "(empty)"
+    except OSError as e:
+        return f"{type(e).__name__}: {e}"
+
+
 def _broker_mode(mount_path: str) -> dict:
     """Prove the mount went through the broker, not a privileged in-pod mount.
 
@@ -96,7 +115,13 @@ def _broker_mode(mount_path: str) -> dict:
     chan = os.environ.get("UVOL_CHANNEL_DIR", "")
     real = os.path.realpath(mount_path)
     ok = bool(chan) and real.startswith(os.path.realpath(chan) + os.sep)
-    return {"broker_mode": ok, "channel_dir": chan, "mount_path": mount_path, "resolved": real}
+    return {
+        "broker_mode": ok,
+        "channel_dir": chan,
+        "mount_path": mount_path,
+        "resolved": real,
+        "selinux": _selinux_context(),
+    }
 
 
 def _channel_preflight() -> dict:
