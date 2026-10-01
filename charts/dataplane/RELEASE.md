@@ -26,6 +26,17 @@
 
 Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
 
+### Read-only in-cluster kubectl proxy (`systemApps.k8sProxy`)
+
+Off by default. When enabled (requires `apps.enabled`), deploys `union-k8s-ro`, a
+scale-to-zero Knative Service running `kubectl proxy` under its own ServiceAccount
+with read-only RBAC that excludes secrets (`lowPrivilege: true` uses a namespaced
+Role). It is served at `union-k8s-ro.<appsDomain>` behind the app-serving edge and
+authorized at the org level. The Knative `kubernetes.podspec-serviceaccount` feature
+flag is now enabled so the revision can use that ServiceAccount.
+
+### flyteconnector uses the common service account, so it has a cloud identity
+
 ### The operator reads the namespace's DaemonSets and StatefulSets
 
 The operator's Role gains read-only (`get`, `list`, `watch`) access to `daemonsets` and
