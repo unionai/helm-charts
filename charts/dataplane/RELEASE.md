@@ -26,7 +26,16 @@
 
 Image source: [cloud changes since release/2026.9.6](https://github.com/unionai/cloud/compare/release/2026.9.6...release/2026.9.7).
 
-### flyteconnector uses the common service account, so it has a cloud identity
+### The operator reads the namespace's DaemonSets and StatefulSets
+
+The operator's Role gains read-only (`get`, `list`, `watch`) access to `daemonsets` and
+`statefulsets` in the release namespace, next to the `deployments` it already had. The
+cluster health snapshot it pushes to the control plane
+([cloud#18817](https://github.com/unionai/cloud/pull/18817)) reports every Union workload in
+the namespace with its pods; without the grant an operator on that release omits the whole
+`components` section and counts a `components_failures` metric on every push. No behaviour
+change for anything else.
+
 
 The connector was the only component that always created and used its own service account,
 bypassing `commonServiceAccount`. That account gets no annotations by default, so the pod
