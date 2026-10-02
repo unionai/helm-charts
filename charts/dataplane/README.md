@@ -428,6 +428,126 @@ For full monitoring documentation, see [Monitoring](https://docs.union.ai/deploy
 
 ---
 
+## GPU fault handling
+
+Two opt-in features detect NVIDIA GPU faults and keep new work off a GPU that has
+failed. Both are off by default.
+
+- The GPU fault watcher (`gpuFaultWatcher.enabled`) is a DaemonSet on GPU nodes. It
+  reads Xid and SXid faults from each node's kernel log and records a `[gpu-health]`
+  Warning event on the pods that held the faulting GPU. For a fault the GPU will not
+  recover from, such as Xid 79 (GPU has fallen off the bus), it sets the node condition
+  `GPUXidCritical` to `True`. It never cordons or taints.
+- GPU quarantine (`config.gpuQuarantine.enabled`) runs in the operator. When
+  `GPUXidCritical` turns true on a GPU node, it taints the node
+  `union.ai/gpu-quarantine:NoSchedule` and cordons it, so retries and new work go to
+  healthy GPUs. It evicts nothing: pods on the node's other GPUs finish or fail on their
+  own.
+  The node stays out of scheduling until you release or replace it.
+
+A GPU fault on a run also shows on that run in Union: the watcher's event on the task
+pod appears in the run's logs with its other Kubernetes events.
+
+### Enabling
+
+```yaml
+gpuFaultWatcher:
+  enabled: true
+# Quarantine acts on nodes through the operator's cluster permissions.
+low_privilege: false
+config:
+  gpuQuarantine:
+    enabled: true
+    dryRun: true
+monitoring:
+  alerting:
+    enabled: true
+```
+
+Start quarantine in dry run, the default. It then reports what it would do as
+`GPUQuarantineDryRun` node events and in
+`union_gpuquarantine_actions_total{result="dry_run"}`, without tainting or cordoning
+anything. Set `dryRun: false` once that looks right. Nodes that latched
+`GPUXidCritical` before then are quarantined as soon as it enforces.
+`maxQuarantinedNodes` (default 5) caps how many nodes are held at once, so a fleet-wide
+cause such as a driver rollout cannot take every GPU node out of scheduling.
+
+On Kubernetes 1.30 and later the chart also installs a ValidatingAdmissionPolicy that
+lets the watcher write the status of its own node only.
+
+Image requirements: the watcher ships in the union operator image from 2026.9.7, the
+chart's current `appVersion`. Two parts need a newer image:
+
+- Quarantine needs an operator image that includes the controller. The operator
+  rejects config keys it does not know, so a 2026.9.7 operator fails to start with
+  `config.gpuQuarantine.enabled`.
+- The `UUID` and `gpu` labels on `union_gpufaultwatcher_faults_total`, and the per-pod
+  `union_gpufaultwatcher_pod_faults_total`, come with a newer watcher. Until then the
+  dashboard lists faults by node with the GPU columns empty.
+
+### Alerts
+
+With `monitoring.alerting.enabled`, the chart's PrometheusRule gets these alerts for
+whichever of the two features are on:
+
+| Alert | Fires when | What to do |
+| --- | --- | --- |
+| `UnionDPGPUFaultDetected` | The watcher counted a critical GPU fault on a node in the last 10 minutes. | Check the GPU. With quarantine enforcing, the node is already out of scheduling. |
+| `UnionDPGPUFaultUnresolved` | A node's `GPUXidCritical` condition has been true for an hour, so the node was neither released nor replaced. | Check the GPU, then release the node or replace it. Without quarantine, replace it: nothing keeps work off the node. |
+| `UnionDPGPUQuarantineHeld` | A node has stayed quarantined for an hour after its condition was cleared without the release annotation. | Check the GPU, then release the node or replace it. |
+| `UnionDPGPUFaultWatcherUnavailable` | For 30 minutes, some GPU node had no ready watcher, so faults there go unreported. | The watcher reserves no resources and never preempts, so look for an eviction under memory pressure, a node at its pod limit, or a crash loop: `kubectl get pods -n <namespace> -o wide -l app.kubernetes.io/name=gpufaultwatcher`. |
+
+The alerts read `kube_node_status_condition` and
+`kube_daemonset_status_number_unavailable` from kube-state-metrics,
+`union_gpufaultwatcher_faults_total` from the watcher and
+`union_gpuquarantine_held_nodes` from the operator. With
+`monitoring.serviceMonitors.enabled`, the `union-gpufaultwatcher` ServiceMonitor
+scrapes the watcher and adds the node it runs on as `node`, and `union-service-monitor`
+already scrapes the operator. The "Union Dataplane: GPU Fault Handling" Grafana
+dashboard ships with either feature and shows quarantined and held nodes, critical
+faults by node and GPU, and watcher availability.
+
+### Releasing a node
+
+Once the GPU has been reset or replaced:
+
+```bash
+kubectl annotate node <node> union.ai/gpu-quarantine-release="<your name or ticket>"
+```
+
+The operator sets `GPUXidCritical` to False, removes the taint, uncordons the node if it
+was the one that cordoned it, and removes the annotation. If the GPU faults again, the
+watcher raises the condition again and the node is quarantined again.
+
+The annotation is the only way to release a node. Clearing the condition any other way
+leaves the node quarantined, and `UnionDPGPUQuarantineHeld` fires after an hour. The
+annotation counts only on a node that carries the quarantine taint, so one added during
+dry run cannot release a later fault.
+
+To replace the node instead, drain it and remove it the way your cluster replaces
+nodes, for example `kubectl delete node <node>` with Karpenter, or by terminating the
+instance in its node group. Without quarantine this is the only way to clear the
+condition, since the watcher never clears it.
+
+### Signals for your own automation
+
+| Signal | Where | Meaning |
+| --- | --- | --- |
+| `GPUXidCritical` condition | Node status | True after a critical fault. The reason is the fault, such as `Xid79`, and the message names the GPU. Only a release or replacing the node clears it. kube-state-metrics exports it as `kube_node_status_condition{condition="GPUXidCritical", status="true"}`. |
+| `union.ai/gpu-quarantine` taint, NoSchedule | Node spec | The node is quarantined. The value is the fault, such as `Xid79`. |
+| `union.ai/gpu-quarantine-release` annotation | Node metadata | Set it to release a quarantined node. |
+| `union.ai/gpu-fault-history` annotation | Node metadata | The node's last 10 faults, newest first, as JSON, while `config.gpuQuarantine.faultHistory.enabled` is on. |
+| `[gpu-health]` Warning events | Pods that held the GPU | Name the GPU and the fault code. Repeats of the same fault fold into one event with a count. |
+| `GPUQuarantine*` events | Nodes | What quarantine did or would do, such as `GPUQuarantined`, `GPUQuarantineDryRun`, `GPUQuarantineCapReached`, `GPUQuarantineReleased` and `GPUQuarantineReleaseRequired`. |
+| Watcher metrics | `union-gpufaultwatcher` | `union_gpufaultwatcher_faults_total{kind, code, severity, source, node}`, one count per fault however many pods shared the GPU. |
+| Quarantine metrics | Operator | `union_gpuquarantine_quarantined_nodes`, `union_gpuquarantine_held_nodes`, `union_gpuquarantine_node_quarantined{node, reason}`, `union_gpuquarantine_releases_total{node}` and `union_gpuquarantine_actions_total{action, result}`. Only the operator replica leading quarantine sets them, and the others report the node counts as 0, so aggregate those with `max`. |
+
+A `union_gpufaultwatcher_faults_total` series appears with its first fault already
+counted, so `increase()` alone misses that fault. Count a series that is new in your
+window as well, as `UnionDPGPUFaultDetected` does.
+
+---
+
 ## Requirements
 
 Kubernetes: `>= 1.28.0-0`
