@@ -594,6 +594,36 @@ config:
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
+  # -- GPU node quarantine, run by the operator. When a GPU node's GPUXidCritical
+  # condition (set by gpuFaultWatcher) turns true, the operator taints the node
+  # union.ai/gpu-quarantine:NoSchedule and cordons it, so retries and new work land on
+  # healthy GPUs. Running pods are left alone. The node stays quarantined until it is
+  # annotated union.ai/gpu-quarantine-release or replaced. Rendered into the operator's
+  # gpuQuarantine config section only when enabled. See "GPU fault handling" in the
+  # chart README.
+  gpuQuarantine:
+    # -- Run the controller. The operator acts on nodes only with its cluster
+    # permissions, so this needs low_privilege false. It also needs an operator image
+    # that includes the controller: the operator rejects config keys it does not know,
+    # so an older image fails to start. The render fails when image.union.tag, or the
+    # chart appVersion, is a release older than the controller.
+    enabled: false
+    # -- Report what would be quarantined, as node events and metrics, without
+    # tainting or cordoning. On by default because nodes that latched GPUXidCritical
+    # earlier are quarantined as soon as the controller enforces.
+    dryRun: true
+    # -- Cordon a quarantined node as well as tainting it.
+    cordon: true
+    # -- Most nodes kept quarantined at once. Past it, a faulted node is reported and
+    # left schedulable, so a fleet-wide cause such as a driver rollout cannot take
+    # every GPU node out of scheduling. 0 means no cap.
+    maxQuarantinedNodes: 5
+    # -- Node informer resync, which mainly brings back nodes the cap held back.
+    resyncPeriod: 10m
+    faultHistory:
+      # -- Keep the node's last 10 GPU faults as JSON in the union.ai/gpu-fault-history
+      # annotation, since the condition holds only the latest. Written in dry run too.
+      enabled: true
   # -- Configuration for the Union operator service
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
@@ -1750,6 +1780,89 @@ nodeobserver:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+# -- GPU fault watcher: a DaemonSet on NVIDIA GPU nodes that reads Xid and SXid faults
+# from the node kernel log, records each as a Warning event on the pods that held the
+# faulting GPU, and sets the node condition GPUXidCritical for a fault the GPU will not
+# recover from. It never cordons or taints; config.gpuQuarantine acts on the condition.
+# See "GPU fault handling" in the chart README.
+gpuFaultWatcher:
+  # -- Deploy the DaemonSet. Only useful on clusters with NVIDIA GPU nodes.
+  enabled: false
+  # -- Port serving /metrics and /healthz.
+  metricsPort: 9096
+  # -- Startup probe failure threshold at a 10s period: how long the watcher may take
+  # to sync its pod informer and start reading the kernel log before it is restarted.
+  startupFailureThreshold: 30
+  # -- Rolling update budget: how many GPU nodes an upgrade may leave without a ready
+  # watcher at once.
+  maxUnavailable: 25%
+  # -- Existing PriorityClass to run the watcher at. Empty runs it at a class the chart
+  # creates with preemptionPolicy Never, so on a full node it waits rather than
+  # evicting a task.
+  priorityClassName: ""
+  priorityClass:
+    # -- Value of the chart's class. It schedules the watcher ahead of ordinary pods
+    # once room frees up. A PriorityClass value cannot change, so changing this after
+    # install fails the upgrade until the class is deleted.
+    value: 1000000
+  # -- On Kubernetes 1.30 and later, install a ValidatingAdmissionPolicy that lets each
+  # watcher write the status of its own node only. RBAC alone lets a watcher token
+  # rewrite any node's conditions.
+  restrictNodeWrites: true
+  # -- Additional pod annotations.
+  podAnnotations: {}
+  # -- Requests are explicit zeros because an unset request defaults to the limit, and
+  # node autoscalers count DaemonSet requests as node overhead: any request would
+  # leave a task sized to a GPU node's full allocatable nowhere to run. The cost is that
+  # the kubelet evicts the watcher first under memory pressure, which the
+  # UnionDPGPUFaultWatcherUnavailable alert reports.
+  resources:
+    requests:
+      cpu: "0"
+      memory: "0"
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  # -- Nodes the watcher runs on. The terms are ORed and match the labels each cloud,
+  # and GPU Feature Discovery, put on NVIDIA GPU nodes. Replace it to target GPU nodes
+  # some other way.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: karpenter.k8s.aws/instance-gpu-manufacturer
+                operator: In
+                values: ["nvidia"]
+          - matchExpressions:
+              - key: cloud.google.com/gke-accelerator
+                operator: Exists
+          - matchExpressions:
+              - key: kubernetes.azure.com/accelerator
+                operator: In
+                values: ["nvidia"]
+          - matchExpressions:
+              - key: platform.union.ai/accelerator
+                operator: Exists
+          - matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: In
+                values: ["true"]
+  # -- GPU nodes are commonly tainted, and a quarantined node still needs its watcher,
+  # so it tolerates every NoSchedule taint.
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+  # -- The watcher's config file. Every key has a default in the binary; set only what
+  # differs on your nodes. metricsBindAddress comes from metricsPort and cannot be set here.
+  config:
+    # -- Kernel log device the watcher reads, mounted from the host.
+    kmsgPath: /dev/kmsg
+    # -- kubelet pod-resources socket, which says which pod holds which GPU. Must be an
+    # absolute path on the node, with or without unix://. Its directory is mounted
+    # from the host.
+    podResourcesSocket: unix:///var/lib/kubelet/pod-resources/kubelet.sock
 
 # -- Union Object Store configuration
 objectStore:

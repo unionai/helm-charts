@@ -1,4 +1,20 @@
 ---
+# Source: dataplane/templates/gpufaultwatcher/priorityclass.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: release-name-gpufaultwatcher
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+value: 1000000
+preemptionPolicy: Never
+globalDefault: false
+description: "Union GPU fault watcher. Schedules ahead of ordinary pods but never preempts, so on a full node the watcher waits rather than evicting a task."
+
+---
 # Source: dataplane/templates/leaseworker/priorityclass.yaml
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -25,42 +41,6 @@ value: 1000000
 globalDefault: false
 description: "Priority for the Union uvol mount broker (a node-critical CSI DaemonSet on the task Volume-mount path) so it schedules ahead of task pods and a node's broker is not evicted out from under pods that depend on it to mount Volumes. Uses a custom class rather than a reserved system class (e.g. system-node-critical), which GKE restricts to kube-system."
 
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-development
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-staging
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: flytesnacks-production
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-development
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-staging
----
-# Source: dataplane/templates/common/namespaces.yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: union-health-monitoring-production
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
@@ -95,13 +75,6 @@ metadata:
     {}
 
 ---
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: union-clustersync-system
-  namespace: union
----
 # Source: dataplane/templates/common/system-serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -111,6 +84,16 @@ metadata:
   annotations:
     
 
+---
+# Source: dataplane/templates/common/union-serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: union
+  namespace: union
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/flyte_project_role
+automountServiceAccountToken: true
 ---
 # Source: dataplane/templates/gateway/kourier-controller.yaml
 # Copyright 2020 The Knative Authors
@@ -183,18 +166,17 @@ metadata:
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: activator
 ---
-# Source: dataplane/templates/common/auth-secret.yaml
+# Source: dataplane/templates/gpufaultwatcher/serviceaccount.yaml
 apiVersion: v1
-kind: Secret
+kind: ServiceAccount
 metadata:
-  name: union-secret-auth
+  name: union-gpufaultwatcher
   namespace: union
-type: Opaque
-data:
-  # TODO(rob): update or configure operator to use client_secret like all the other components.
-  app_secret: bXktc2VjcmV0
-  client_secret: bXktc2VjcmV0
-
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
 ---
 # Source: dataplane/templates/common/cluster-secret.yaml
 apiVersion: v1
@@ -203,7 +185,7 @@ metadata:
   name: operator-cluster-name
 type: Opaque
 data:
-  cluster_name: bXktY2x1c3Rlcg==
+  cluster_name: 
 
 ---
 # Source: dataplane/templates/gateway/webhook.yaml
@@ -253,153 +235,6 @@ data:
   tls.crt: LS0tLS1CRUdJTiBDRVJUSUZJQ0FURS0tLS0tCk1JSUQxakNDQXI2Z0F3SUJBZ0lVREtRN3A4MFpIdkQyUE5Ya3p3VGRLem9iUjg4d0RRWUpLb1pJaHZjTkFRRUwKQlFBd0t6RXBNQ2NHQTFVRUF3d2dabXg1ZEdWd2NtOXdaV3hzWlhJdGQyVmlhRzl2YXk1MWJtbHZiaTV6ZG1NdwpIaGNOTWpZd01USXpNREl6TmpVMVdoY05NamN3TVRJek1ESXpOalUxV2pBck1Ta3dKd1lEVlFRRERDQm1iSGwwClpYQnliM0JsYkd4bGNpMTNaV0pvYjI5ckxuVnVhVzl1TG5OMll6Q0NBU0l3RFFZSktvWklodmNOQVFFQkJRQUQKZ2dFUEFEQ0NBUW9DZ2dFQkFMNnMxUTRaZ3ZxVVdNdFp5VC9EKytEQWl6WmR0Q1lkVzArSGk4S3phQ1Vjbi9zZwo3a21NTEhDM2ZlZWtZK2ZUNENHUTd6K1l2WjRWWSt6WGljKzdrNndLbUZqdm1acEM1Rm96OWo1Q21NRk5HZmlWCnRobzVvSU9MUkIzNXRYMU1ROHUwNFVzT29QcjdMK016eEdxWXVmTFdtN1NVdjh0eEp3ZFMxZVlzMllNV1pMeU4KekI4akdWY01Qc2ZNVkdxdFhTTVljQ3hNYURKaTM1N0VEZSs3clM2U2ZtbnFtYjJxekdQM1BRRStCUm91Yk5nLwo4NCt4c253VXBLZUFpem95dFM2c2ZlOTdMUEtRTW9oVzd2TjZORFJrLy9xSmpHem9iZmZwUHU3endhWHVXMWtMCmllc2g2cVRrdlZLSTF3WFJ2WHArVU5GbjZzdDIwdEVlRks0ZzMwOENBd0VBQWFPQjhUQ0I3akFKQmdOVkhSTUUKQWpBQU1Bc0dBMVVkRHdRRUF3SUY0RENCa3dZRFZSMFJCSUdMTUlHSWdoWm1iSGwwWlhCeWIzQmxiR3hsY2kxMwpaV0pvYjI5cmdoeG1iSGwwWlhCeWIzQmxiR3hsY2kxM1pXSm9iMjlyTG5WdWFXOXVnaUJtYkhsMFpYQnliM0JsCmJHeGxjaTEzWldKb2IyOXJMblZ1YVc5dUxuTjJZNEl1Wm14NWRHVndjbTl3Wld4c1pYSXRkMlZpYUc5dmF5NTEKYm1sdmJpNXpkbU11WTJ4MWMzUmxjaTVzYjJOaGJEQWRCZ05WSFE0RUZnUVV1d25wcDZ1MTNKL0NsNnI3eDZ1Sgo5YmZ1RDhzd0h3WURWUjBqQkJnd0ZvQVVvY3Zqa1NFK0pmMmZKRHVma0FqaG9WVGhnSDh3RFFZSktvWklodmNOCkFRRUxCUUFEZ2dFQkFFMmlOa1MzczhGT3Z0cDhrVmJNZUN2amxIQytvYTVlZTFGNmowNlZ3bFJPOWdxOXJla1UKMGptWUhNWGNjWjcrZXJkNFRQRXgwK3ZqMzNhRTV3cDFmdVJJL2xIZHhuOUpJRHg2bTFQTHdVa3p1WG9EekYxLwozVXVIWU1xOGkrT2xsY0tqbmdVMUFUNmRWRCtIbFVWeHpMdjlNazdPb05SQUY5dTJHa1hiUHdCN0I1ZGRxdWxlCmtNcXBxbDhES2s4SVNVelVsTjNBb2Q5NmJUelIyV3RCVkxpTi9zRHZtTDZwZThFYm55RnBUb1BZTDlGeWZOcmIKT1ZPZEJwUkZFTG1KOHZaZWY5d1lxRmVXMTE3SGV5VDArZkxGZVNSemZUNVVWUlVraVFBcUVJdUhHUVRrOVFabgo1WnYvNUF0eEg3WE1rcXR0VE1zMFlSUG0xYjQzY3FBeFdhND0KLS0tLS1FTkQgQ0VSVElGSUNBVEUtLS0tLQo=
   tls.key: LS0tLS1CRUdJTiBQUklWQVRFIEtFWS0tLS0tCk1JSUV2UUlCQURBTkJna3Foa2lHOXcwQkFRRUZBQVNDQktjd2dnU2pBZ0VBQW9JQkFRQytyTlVPR1lMNmxGakwKV2NrL3cvdmd3SXMyWGJRbUhWdFBoNHZDczJnbEhKLzdJTzVKakN4d3QzM25wR1BuMCtBaGtPOC9tTDJlRldQcwoxNG5QdTVPc0NwaFk3NW1hUXVSYU0vWStRcGpCVFJuNGxiWWFPYUNEaTBRZCtiVjlURVBMdE9GTERxRDYreS9qCk04UnFtTG55MXB1MGxML0xjU2NIVXRYbUxObURGbVM4amN3Zkl4bFhERDdIekZScXJWMGpHSEFzVEdneVl0K2UKeEEzdnU2MHVrbjVwNnBtOXFzeGo5ejBCUGdVYUxtellQL09Qc2JKOEZLU25nSXM2TXJVdXJIM3ZleXp5a0RLSQpWdTd6ZWpRMFpQLzZpWXhzNkczMzZUN3U4OEdsN2x0WkM0bnJJZXFrNUwxU2lOY0YwYjE2ZmxEUlorckxkdExSCkhoU3VJTjlQQWdNQkFBRUNnZ0VBRjV2SnMzbTRMSE9DdlFic2NwOC9DQmgvQkNlOC92MGlpYW5VUmJLMkFlWlYKN3Arb3NXV1FPUktYSGIvT2VPMVVjb09DQkFOUzh3aGQrM3pDZlB5U0w3cU9HM0RyT1Z6djdqVkIxM3FpZEVpcQpId3ZXWk0vZXpuckhYOWpEdm5SYmJwVUNVaXRKQmxwa2x3S1pYc056UHB5UTRkNkxFdEw3VEo1V2lxM2g3cWQzCjhncmJoeWlWNDhZRFAyYkhpZGt0S2QvMHBNL3piSzZPTS9iMFpLUmRBWVpHQXlOcklMaFJ3eDNsQXE2SDVqL20KUHBuNlZEdVQ3Y1h6UFhmNTgxR0IyNjQxWFJVTXRNWGVEREtaU3JudnIrbG5tV2lsYXZmNkg3ZHp4NlRBMmk0RApybCtIRVdUN1RSQUZGMnZ5SVUrYSt5RzNPVFBKRCtmVTdCWWh4Zld4aFFLQmdRRGVvcXVCbzQxK1dKU255blZnCmNWMHZoUEkwZ0dyRGQzNFdIbCtGNTZuSmxuMVVlbUQ2SUQ0TUhnNVpHWmNmd3NkRlB0aHl1VnB0OVl1SW11SGQKRHE5ZDhpWnpHUzJVbStkSWlsWjhnZXJ5Q3dON3hIbFM3SzJrc0RmRGJwYmZZSXZ1LzRnSExZRHh3YzQ0OG54ZwpWNGpCUFY2QTdYTHRqQzZzdFE2OW9uTlIwd0tCZ1FEYlFBUTRGdWpnUjJUOXh2Y01MdXhMbm1YaHE4U2NoZlM5CkRoWndDUzZIeHB1YlBxblBjQ04vQUZjbDZ1cDRXVEVZdVY4bEpwcGwwRmpYQ2lMdkhuUU15cm5vRjlUOThpanQKZGVHYjF6ZWlwRUpndFpNVHkvOGdERWorZU1wSFBuYTZwQVpMOVpRVUdLR2dDNGQ0SzljdVNHMmRlb1dSU0ViSQpMVGgzeGpXVEZRS0JnQStJRWFidG5nVmVjS0IwQTFSREZGa29VUzFRZUNKQ3g4MExPV2JDRHBvOW9XaXZVT3lpCkt6SDFOdE1JY2Y2SlBCV2NtTVVJSVVMaWltVnhTS2gvU2NTb0MvNmpsd1p6Q2VPSm94YjBpVXR4Y1VERktDR2MKMlZCUDZ0UDdkeE1HVFR6VEhzNUJZbWw3TjhQSlJ0d0J2MHliMTJmdktNRmhzaS9pUWJFQkVFSjVBb0dBUm9NSApHRmJkM0V0NXdsZzcyYkk1a25SRnhkY3RLejIxb1J1bndhNWlSWTV0T3Zkak8zQ1FLZWNkSC9lMklyQmtwdFB2Ck1vNkF0MS9UUW8xakFNNGxlbnUwWUYxUnhiNGN4WW5VM2Y3UVNNRlZDNjg1dHZNemdNWVNyNngvT1h4d1NNUTUKdGpJcnhtN0poQ1JSRkNmZFUyZzl3SmpIM2hxRmtSbGlBTHRCUGFVQ2dZRUF2QkRHejQvYS9kRzRJT0VpREk4SgpBbkxaRWZaTFJrdnI0ejRyT0p0TGZtWlFjTW5DSUZmKzBaelhTME9XOWhvMjk5RUNtS1l4U2VUWk1WSDgzOFZCCnRvSkNGM3lzb01rSC9meEVXTUpicDlMblJwSFUzUElicHlhRG1nWW1YdmsvK3laL3Y1c0dDTWNtVGkzWVFLRGsKcStlK1o0SHZyaGUxVytUaHpwOCtoNGs9Ci0tLS0tRU5EIFBSSVZBVEUgS0VZLS0tLS0K
 ---
-# Source: dataplane/templates/clusterresourcesync/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-clusterresourcesync-config
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  cluster_resources.yaml: | 
-    cluster_resources:
-      clusterName: 'my-cluster'
-      customData:
-      - production:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      - staging:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      - development:
-        - projectQuotaCpu:
-            value: "4096"
-        - projectQuotaMemory:
-            value: 2Ti
-        - projectQuotaNvidiaGpu:
-            value: "256"
-        - defaultUserRoleKey:
-            value: 'eks.amazonaws.com/role-arn'
-        - defaultUserRoleValue:
-            value: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
-      refreshInterval: 5m
-      standaloneDeployment: true
-      templatePath: /etc/flyte/clusterresource/templates
-    clusterResourcesPrivate:
-      app:
-        isServerless: false
-    union:
-      auth:
-        authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
-        clientSecretLocation: /etc/union/secret/client_secret
-        enable: true
-        scopes:
-        - 'all'
-        tokenRefreshWindow: 5m
-        type: ClientSecret
-      connection:
-        host: 'dns:///union.us-west-2.union.ai'
-        insecureSkipVerify: false
-  admin.yaml: | 
-    admin:
-      clientId: 'my-client-id'
-      clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.us-west-2.union.ai'
-      insecure: false
-      insecureSkipVerify: false
-    event:
-      capacity: 1000
-      rate: 500
-      type: admin
-  domain.yaml: | 
-    domains:
-    - id: development
-      name: development
-    - id: staging
-      name: staging
-    - id: production
-      name: production
-  clusters.yaml: |
-    clusters:
-      clusterConfigs: []
-      labelClusterMap: {}
-  logger.yaml: |
-    logger:
-      formatter:
-        type: json
-      level: 4
-      show-source: true
-  namespace_mapping.yaml: |
-    namespace_mapping:
-      template: test-{{ project }}-{{ domain }}
----
-# Source: dataplane/templates/clusterresourcesync/configmap.yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: union-clusterresource-template
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-data:
-  a_namespace.yaml: | 
-    apiVersion: v1
-    kind: Namespace
-    metadata:
-      name: {{ namespace }}
-      labels:
-        union.ai/namespace-type: flyte
-    spec:
-      finalizers:
-      - kubernetes
-    
-  b_default_service_account.yaml: | 
-    apiVersion: v1
-    kind: ServiceAccount
-    metadata:
-      name: default
-      namespace: {{ namespace }}
-      annotations:
-        {{ defaultUserRoleKey }}: {{ defaultUserRoleValue }}
-    
-  c_project_resource_quota.yaml: | 
-    apiVersion: v1
-    kind: ResourceQuota
-    metadata:
-      name: project-quota
-      namespace: {{ namespace }}
-    spec:
-      hard:
-        limits.cpu: {{ projectQuotaCpu }}
-        limits.memory: {{ projectQuotaMemory }}
-        requests.nvidia.com/gpu: {{ projectQuotaNvidiaGpu }}
-    
-
----
 # Source: dataplane/templates/fluent-bit/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -443,9 +278,8 @@ data:
         s3_key_format /persisted-logs/$TAG
         static_file_path true
         json_date_key false
-        region us-west-2
-        bucket bucket
-        endpoint http://localstack.aws.svc.cluster.local:4566
+        region us-east-1
+        bucket 
 
 ---
 # Source: dataplane/templates/gateway/bootstrap-configmap.yaml
@@ -594,7 +428,7 @@ data:
                             envoy.filters.http.cors:
                               "@type": type.googleapis.com/envoy.extensions.filters.http.cors.v3.CorsPolicy
                               allow_origin_string_match:
-                                - exact: "https://union.us-west-2.union.ai"
+                                - exact: "https://test-controlplane-host"
                               allow_methods: "GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS"
                               allow_headers: "DNT, Keep-Alive, User-Agent, X-Requested-With, If-Modified-Since, Cache-Control, Content-Type, Range, Authorization, Connect-Protocol-Version, Connect-Timeout-Ms, Grpc-Timeout, X-Grpc-Web, X-User-Agent"
                               expose_headers: "Grpc-Status, Grpc-Message, Grpc-Status-Details-Bin, x-request-id"
@@ -602,7 +436,7 @@ data:
                               forward_not_matching_preflights: false
                               max_age: "86400"
                           domains:
-                            - "my-cluster.dp.union.us-west-2.union.ai"
+                            - ".dp.test-controlplane-host"
                           routes:
                             - match:
                                 prefix: "/"
@@ -1152,7 +986,7 @@ data:
   queue-sidecar-ephemeral-storage-request: "512Mi"
   queue-sidecar-memory-limit: "800Mi"
   queue-sidecar-memory-request: "400Mi"
-  registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,localhost:5000"
+  registries-skipping-tag-resolving: "managed.cr.union.ai,ghcr.io,docker.io,union-dataplane"
   _example: |-
     ################################
     #                              #
@@ -2321,6 +2155,60 @@ data:
     sample-rate: "0.1"
 
 ---
+# Source: dataplane/templates/gpufaultwatcher/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  # The node name comes from KUBE_NODE_NAME, so one file serves every node.
+  config.yaml: |
+    kmsgPath: /dev/kmsg
+    podResourcesSocket: unix:///var/lib/kubelet/pod-resources/kubelet.sock
+    metricsBindAddress: ":9096"
+
+---
+# Source: dataplane/templates/imagebuilder/build-image-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: build-image-config
+  labels:
+    app.kubernetes.io/name: union-operator
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  storage.yaml: | 
+    storage:
+      container: ""
+      type: stow
+      stow:
+        kind: s3
+        config:
+          auth_type: accesskey
+          access_key_id: 
+          secret_key: 
+          disable_ssl: false
+          endpoint: 
+          region: us-east-1
+      enable-multicontainer: true
+      limits:
+        maxDownloadMBs: 1024
+      cache:
+        max_size_mbs: 0
+        target_gc_percent: 70
+  buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
+  default-repository: "union-dataplane"
+  authentication-type: "noop"
+
+---
 # Source: dataplane/templates/imagebuilder/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -2379,7 +2267,7 @@ data:
             displayName: VS Code Debugger
             linkType: ide
             templateUris:
-            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/my-cluster/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
         - wandb-execution-id:
             displayName: Weights & Biases
             linkType: dashboard
@@ -2419,11 +2307,13 @@ data:
   webhook.yaml: |
 
     
+    propeller:
+      limit-namespace: union
     webhook:
       certDir: /etc/webhook/certs
       disableCreateMutatingWebhookConfig: true
       embeddedSecretManagerConfig:
-        clusterName: 'my-cluster'
+        clusterName: ''
         imagePullSecrets:
           enabled: true
         k8sConfig:
@@ -2465,9 +2355,10 @@ data:
   config.yaml: |
     leaseworker:
       capacity: 100000
-      cluster: 'my-cluster'
+      cluster: ''
       dispatcherCount: 512
-      namespace-template: test-{{ project }}-{{ domain }}
+      limit-namespace: union
+      namespace-template: union
       organization: 'union'
       refreshInterval: 10s
       task_resources:
@@ -2481,10 +2372,10 @@ data:
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
-      workerName: 'union-my-cluster-worker1'
+      workerName: 'union--worker1'
     union:
       connection:
-        host: 'dns:///union.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         http2KeepAlive:
           pingTimeout: 10s
           readIdleTimeout: 30s
@@ -2492,28 +2383,28 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
         type: ClientSecret
     admin:
-      clientId: 'my-client-id'
+      clientId: ''
       clientSecretLocation: /etc/union/secret/client_secret
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecureSkipVerify: false
     authorizer:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
     catalog-cache:
-      cache-endpoint: 'dns:///union.us-west-2.union.ai'
-      endpoint: 'dns:///union.us-west-2.union.ai'
+      cache-endpoint: 'dns:///test-controlplane-host'
+      endpoint: 'dns:///test-controlplane-host'
       insecure: false
       insecure-skip-verify: false
       type: cacheservicev2
@@ -2551,26 +2442,23 @@ data:
           name: flyte-copilot-
           start-timeout: 30s
         default-cpus: 100m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: http://localstack.aws.svc.cluster.local:4566
-        - FLYTE_AWS_ACCESS_KEY_ID: test123
-        - FLYTE_AWS_SECRET_ACCESS_KEY: test
+        default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
         disable-inject-owner-references: true
         inject-finalizer: true
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -5403,6 +5291,512 @@ data:
     
 
 ---
+# Source: dataplane/templates/monitoring/dashboard-gpu-faults-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-dataplane-gpu-faults
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  union-dataplane-gpu-faults.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "GPU fault handling for the Union dataplane: nodes the operator holds in GPU quarantine, critical GPU faults by node and GPU, and whether every GPU node runs a ready fault watcher. Shipped only when gpuFaultWatcher or config.gpuQuarantine is enabled.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [
+        {
+          "asDropdown": true,
+          "includeVars": true,
+          "keepTime": true,
+          "tags": [
+            "union",
+            "dataplane"
+          ],
+          "targetBlank": false,
+          "title": "Dataplane Overview",
+          "type": "dashboards"
+        }
+      ],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "panels": [],
+          "title": "GPU fault handling",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Nodes carrying the union.ai/gpu-quarantine taint. Only the operator replica holding the quarantine lease reports them, so the panel takes the maximum.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_quarantined_nodes{namespace=~\"$namespace\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Quarantined GPU nodes",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Quarantined nodes whose GPUXidCritical condition was cleared without the union.ai/gpu-quarantine-release annotation. They stay out of scheduling until released or replaced.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_held_nodes{namespace=~\"$namespace\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Held for release",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "GPU nodes the fault watcher DaemonSet should run on that have no ready watcher pod, from kube-state-metrics. Faults on those nodes go unreported.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "id": 4,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_number_unavailable{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "GPU nodes without a ready watcher",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Quarantined nodes and those of them held for the release annotation.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "decimals": 0,
+              "min": 0
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "id": 5,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_quarantined_nodes{namespace=~\"$namespace\"})",
+              "refId": "A",
+              "legendFormat": "quarantined"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_held_nodes{namespace=~\"$namespace\"})",
+              "refId": "B",
+              "legendFormat": "held for release"
+            }
+          ],
+          "title": "Quarantined and held nodes",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "GPU nodes the watcher DaemonSet should run on, and how many of them have a ready watcher.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "decimals": 0,
+              "min": 0
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 5
+          },
+          "id": 6,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_desired_number_scheduled{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "A",
+              "legendFormat": "GPU nodes"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_number_ready{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "B",
+              "legendFormat": "ready watchers"
+            }
+          ],
+          "title": "Fault watcher availability",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Each node carrying the quarantine taint, with the fault that put it there.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 13
+          },
+          "id": 7,
+          "options": {
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max by (node, reason) (union_gpuquarantine_node_quarantined{namespace=~\"$namespace\"})",
+              "refId": "A",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            }
+          ],
+          "title": "Quarantined nodes",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "node": "Node",
+                  "reason": "Fault",
+                  "Value": "Quarantined"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Critical faults the watcher counted in the selected time range, by node, GPU, kind and code. Each fault counts once however many pods shared the GPU. A series appears with its first fault already counted, which increase() misses, so a series that is new in the range counts in full, including one whose node was replaced before the range ended. The GPU columns stay empty on watcher images that do not label faults by GPU.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "id": 8,
+          "options": {
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "sum by (node, gpu, UUID, kind, code) (\n  (last_over_time(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range]) unless union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} offset $__range)\n  or\n  (increase(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range]) > 0)\n) > 0",
+              "refId": "A",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            }
+          ],
+          "title": "Critical GPU faults in the time range",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "node": "Node",
+                  "gpu": "GPU",
+                  "UUID": "GPU UUID",
+                  "kind": "Kind",
+                  "code": "Code",
+                  "Value": "Faults"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 39,
+      "tags": [
+        "union",
+        "dataplane",
+        "union-gpu"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "allValue": ".*",
+            "current": {
+              "selected": true,
+              "text": "union",
+              "value": "union"
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "hide": 0,
+            "includeAll": true,
+            "label": "Namespace",
+            "multi": true,
+            "name": "namespace",
+            "query": {
+              "query": "label_values(kube_pod_info, namespace)",
+              "refId": "namespace"
+            },
+            "refresh": 2,
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union Dataplane: GPU Fault Handling",
+      "uid": "union-dp-gpu-faults",
+      "version": 1
+    }
+    
+
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -5418,16 +5812,13 @@ data:
     plugins:
       k8s:
         default-cpus: 100m
-        default-env-vars:
-        - FLYTE_AWS_ENDPOINT: http://localstack.aws.svc.cluster.local:4566
-        - FLYTE_AWS_ACCESS_KEY_ID: test123
-        - FLYTE_AWS_SECRET_ACCESS_KEY: test
+        default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
   config.yaml: |
     union:
       connection:
-        host: 'dns:///union.us-west-2.union.ai'
+        host: 'dns:///test-controlplane-host'
         http2KeepAlive:
           pingTimeout: 10s
           readIdleTimeout: 30s
@@ -5435,7 +5826,7 @@ data:
         unaryRPCTimeout: 30s
       auth:
         authorizationMetadataKey: flyte-authorization
-        clientId: 'my-client-id'
+        clientId: ''
         clientSecretLocation: /etc/union/secret/client_secret
         enable: true
         tokenRefreshWindow: 5m
@@ -5448,10 +5839,18 @@ data:
       authorizerClient:
         credentials: ServiceCredentials
         grpcConfig:
-          host: 'dns:///union.us-west-2.union.ai'
+          host: 'dns:///test-controlplane-host'
           insecure: false
           insecureSkipVerify: false
       type: Authorizer
+    gpuQuarantine:
+      cordon: true
+      dryRun: true
+      enabled: true
+      faultHistory:
+        enabled: true
+      maxQuarantinedNodes: 5
+      resyncPeriod: 10m
     operator:
       enableTunnelService: true
       #  enableDepot: false
@@ -5459,21 +5858,22 @@ data:
         enableDirectToAppIngress: true
         deploymentToRestart: union-operator-proxy
         appIngressOriginURL: "http://union-operator-gateway:80"
+      limitNamespace: union
       apps:
         enabled: 'true'
       syncClusterConfig:
         enabled: false
       clusterId:
-        name: 'my-cluster'
+        name: ''
         organization: 'union'
       clusterData:
-        appId: 'my-client-id'
-        bucketName: 'bucket'
-        bucketRegion: 'us-west-2'
-        cloudHostName: 'union.us-west-2.union.ai'
-        cloudProvider: 'metal'
+        appId: ''
+        bucketName: ''
+        bucketRegion: 'us-east-1'
+        cloudHostName: 'test-controlplane-host'
+        cloudProvider: ''
         gcpProjectId: ''
-        metadataBucketPrefix: 's3://bucket'
+        metadataBucketPrefix: 's3://'
         userRole: 'arn:aws:iam::ACCOUNT_ID:role/flyte_project_role'
         userRoleKey: 'eks.amazonaws.com/role-arn'
       collectUsages:
@@ -5486,7 +5886,7 @@ data:
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
-        namespaceTemplate: "test-{{ project }}-{{ domain }}"
+        namespaceTemplate: "union"
       secretsWatcher:
         dryRun: true
         enabled: false
@@ -5501,7 +5901,7 @@ data:
     proxy:
       imageBuilderConfig:
         authenticationType: 'noop'
-        defaultRepository: 'localhost:5000/union-dataplane'
+        defaultRepository: ''
       persistedLogs:
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
@@ -5524,20 +5924,20 @@ data:
       identity:
         enabled: false
     connection:
-      rootTenantURLPattern: 'dns:///union.us-west-2.union.ai'
+      rootTenantURLPattern: 'dns:///test-controlplane-host'
   storage.yaml: | 
     storage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
       enable-multicontainer: true
       limits:
         maxDownloadMBs: 1024
@@ -5546,19 +5946,19 @@ data:
         target_gc_percent: 70
   fast_registration_storage.yaml: | 
     fastRegistrationStorage:
-      container: "bucket"
+      container: ""
       type: stow
       stow:
         kind: s3
         config:
           auth_type: accesskey
-          access_key_id: test123
-          secret_key: test
+          access_key_id: 
+          secret_key: 
           disable_ssl: false
-          endpoint: http://localstack.aws.svc.cluster.local:4566
-          region: us-west-2
+          endpoint: 
+          region: us-east-1
   image-builder.buildkit-uri: "tcp://union-operator-buildkit.union.svc.cluster.local:1234"
-  image-builder.default-repository: "localhost:5000/union-dataplane"
+  image-builder.default-repository: "union-dataplane"
   image-builder.authentication-type: "noop"
 
 ---
@@ -6830,33 +7230,6 @@ rules:
       - list
       - watch
 ---
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-clustersync-resource
-rules:
-  - apiGroups:
-    - ""
-    - rbac.authorization.k8s.io
-    resources:
-    - clusterrolebindings
-    - configmaps
-    - limitranges
-    - namespaces
-    - persistentvolumeclaims
-    - persistentvolumes
-    - podtemplates
-    - pods
-    - resourcequotas
-    - rolebindings
-    - roles
-    - secrets
-    - serviceaccounts
-    - services
-    verbs:
-    - '*'
----
 # Source: dataplane/templates/gateway/kourier-controller.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -7173,6 +7546,35 @@ aggregationRule:
     - matchLabels:
         serving.knative.dev/controller: "true"
 ---
+# Source: dataplane/templates/gpufaultwatcher/serviceaccount.yaml
+# A ClusterRole even under low_privilege: the watcher reads pods in every namespace on
+# its node and writes its node's status, which a Role cannot grant.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-gpufaultwatcher
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+rules:
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# The node-scoped pod informer resolves a GPU holder to its pod.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get"]
+# Setting the GPUXidCritical condition. admissionpolicy.yaml holds this to the
+# watcher's own node where the cluster supports it, unless restrictNodeWrites is off.
+- apiGroups: [""]
+  resources: ["nodes/status"]
+  verbs: ["patch"]
+---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -7322,6 +7724,23 @@ rules:
       - update
       - patch
       - delete
+  # GPU quarantine taints, cordons and annotates a faulted node, and clears its
+  # GPUXidCritical condition on release. Each write is a patch.
+  - apiGroups:
+      - ""
+    resources:
+      - nodes
+      - nodes/status
+    verbs:
+      - patch
+  # Its events on those nodes.
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
 ---
 # Source: dataplane/templates/webhook/serviceaccount.yaml
 kind: ClusterRole
@@ -7364,35 +7783,6 @@ subjects:
   - kind: ServiceAccount
     name: union-system
     namespace: union
----
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-clustersync-resource
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-clustersync-resource
-subjects:
-  - kind: ServiceAccount
-    name: union-clustersync-system
-    namespace: union
----
-# Source: dataplane/templates/clusterresourcesync/serviceaccount.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-clustersync-auth-delegator
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: system:auth-delegator
-subjects:
-  - kind: ServiceAccount
-    name: union-clustersync-system
-    namespace: union
-
 ---
 # Source: dataplane/templates/gateway/kourier-controller.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -7478,6 +7868,26 @@ roleRef:
   kind: ClusterRole
   name: knative-serving-activator-cluster
   apiGroup: rbac.authorization.k8s.io
+
+---
+# Source: dataplane/templates/gpufaultwatcher/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-gpufaultwatcher
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+subjects:
+- kind: ServiceAccount
+  name: union-gpufaultwatcher
+  namespace: union
+roleRef:
+  kind: ClusterRole
+  apiGroup: rbac.authorization.k8s.io
+  name: union-gpufaultwatcher
 
 ---
 # Source: dataplane/templates/leaseworker/serviceaccount.yaml
@@ -7645,6 +8055,16 @@ rules:
       - get
       - list
       - watch
+  # Operator replicas elect one GPU quarantine leader through a Lease, so the
+  # quarantine cap is decided in one place.
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - create
+      - update
 ---
 # Source: dataplane/templates/gateway/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -8070,6 +8490,31 @@ spec:
     app: webhook
     role: webhook
 ---
+# Source: dataplane/templates/gpufaultwatcher/service.yaml
+# For the ServiceMonitor, which scrapes each watcher pod through the Service's
+# endpoints. Headless, since nothing connects to the Service itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9096
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+
+---
 # Source: dataplane/templates/imagebuilder/service.yaml
 apiVersion: v1
 kind: Service
@@ -8295,6 +8740,144 @@ spec:
         - operator: Exists
 
 ---
+# Source: dataplane/templates/gpufaultwatcher/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpufaultwatcher
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      annotations:
+        # The watcher reads its config once at start.
+        configChecksum: "4e0bff4e2a318d79bdc673600e0beb4e8238228067f108a4de3e2dc29d5a747"
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        app.kubernetes.io/name: gpufaultwatcher
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: union-gpufaultwatcher
+      priorityClassName: release-name-gpufaultwatcher
+      # The driver reports the host pid of the faulting process, and the watcher reads
+      # that pid's cgroup to find its pod.
+      hostPID: true
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: karpenter.k8s.aws/instance-gpu-manufacturer
+                operator: In
+                values:
+                - nvidia
+            - matchExpressions:
+              - key: cloud.google.com/gke-accelerator
+                operator: Exists
+            - matchExpressions:
+              - key: kubernetes.azure.com/accelerator
+                operator: In
+                values:
+                - nvidia
+            - matchExpressions:
+              - key: platform.union.ai/accelerator
+                operator: Exists
+            - matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: In
+                values:
+                - "true"
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: union-gpufaultwatcher
+        - name: kmsg
+          hostPath:
+            path: /dev/kmsg
+            type: CharDevice
+        - name: pod-resources
+          hostPath:
+            path: /var/lib/kubelet/pod-resources
+            type: Directory
+      containers:
+        - name: gpufaultwatcher
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - gpufaultwatcher
+            - --config
+            - /etc/union/config.yaml
+          # Not global.podEnvVars: the watcher talks only to the kubelet and the
+          # Kubernetes API, and that block references a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          ports:
+            - name: metrics
+              containerPort: 9096
+              protocol: TCP
+          # /healthz is true only while the kernel log reader runs. The startup probe
+          # bounds how long the pod informer may take to sync, so a watcher that never
+          # reaches its reader is restarted rather than reported healthy.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            limits:
+              cpu: 100m
+              memory: 128Mi
+            requests:
+              cpu: "0"
+              memory: "0"
+          securityContext:
+            # Opening /dev/kmsg needs CAP_SYSLOG and the device itself, which the
+            # runtime's device allowlist denies short of privileged mode. The image runs
+            # as a non-root user, and a non-root uid cannot open the root-owned device.
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kmsg
+              mountPath: /dev/kmsg
+              readOnly: true
+            - name: pod-resources
+              mountPath: /var/lib/kubelet/pod-resources
+              readOnly: true
+
+---
 # Source: dataplane/templates/uvol-broker/daemonset.yaml
 apiVersion: apps/v1
 kind: DaemonSet
@@ -8369,7 +8952,7 @@ spec:
         # In-place upgrade safe: kernel mounts and pod-held fds survive
         # restarts; the state journal + client fd re-registration resume the rest.
         - name: uvol-mount-broker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           args:
@@ -8662,111 +9245,6 @@ spec:
         - name: storage-volume
           emptyDir:
             sizeLimit: 10Gi
----
-# Source: dataplane/templates/clusterresourcesync/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: union-syncresources
-  namespace: union
-  labels:
-    app.kubernetes.io/name: clusterresourcesync
-    app.kubernetes.io/instance: release-name
-    platform.union.ai/service-group: release-name
-    app.kubernetes.io/managed-by: Helm
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: clusterresourcesync
-      app.kubernetes.io/instance: release-name
-  template:
-    metadata:
-      annotations:
-        configChecksum: "3c05b3b39a6121ae46880dca41b82be5b677a3aec37eb98a97a6ea6cc24016e"
-        
-      labels:
-        platform.union.ai/zone: "dataplane"
-        
-        app.kubernetes.io/name: clusterresourcesync
-        app.kubernetes.io/instance: release-name
-        platform.union.ai/service-group: release-name
-        app.kubernetes.io/managed-by: Helm
-    spec:
-      containers:
-        - command:
-            - clusterresource
-            - --config
-            - /etc/flyte/config/*.yaml
-            - clusterresource
-            - run
-          env:
-          - name: POD_NAME
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.name
-          - name: POD_NAMESPACE
-            valueFrom:
-              fieldRef:
-                fieldPath: metadata.namespace
-          - name: GOMEMLIMIT
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.memory
-          - name: GOMAXPROCS
-            valueFrom:
-              resourceFieldRef:
-                divisor: 1
-                resource: limits.cpu
-          - name: CLUSTER_NAME
-            valueFrom:
-              secretKeyRef:
-                name: operator-cluster-name
-                key: cluster_name
-          - name: DEPLOYMENT_NAME
-            value: operator
-          - name: PROXY_SERVICE_URL
-            value: http://union-operator-proxy:8080
-          - name: PROMETHEUS_SERVICE_URL
-            value: http://union-operator-prometheus:80
-          - name: KNATIVE_PROXY_SERVICE_URL
-            value: http://kourier-internal
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
-          imagePullPolicy: "IfNotPresent"
-          name: sync-cluster-resources
-          resources:
-            limits:
-              cpu: "1"
-              memory: 500Mi
-            requests:
-              cpu: 100m
-              memory: 100Mi
-          volumeMounts:
-            - name: auth
-              mountPath: /etc/union/secret
-            - name: resource-templates
-              mountPath: /etc/flyte/clusterresource/templates
-            - name: config-volume
-              mountPath: /etc/flyte/config
-          ports:
-            - name: debug
-              containerPort: 10254
-              protocol: TCP
-      serviceAccountName: union-clustersync-system
-      volumes:
-        - configMap:
-            name: union-clusterresource-template
-          name: resource-templates
-        - configMap:
-            name: union-clusterresourcesync-config
-          name: config-volume
-        - name: auth
-          secret:
-            secretName: union-secret-auth
-      
-      
-
 ---
 # Source: dataplane/templates/flyteconnector/deployment.yaml
 apiVersion: apps/v1
@@ -9334,7 +9812,7 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 26d68b826b16cf0b498cfb90e7d8b0e6458d623b5b9fb9a10fba6ad5b690aa69
+        checksum/bootstrap-config: 0a9fcc5b23cb5b73504f4fc8ccaa53bea8eb379df13e35007c21f53a788fb9b5
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
@@ -9353,11 +9831,11 @@ spec:
             - name: DRAIN_TIME_SECONDS
               value: "15"
             - name: UNION_AUTH_TENANTAUTHURL
-              value: "https://union.us-west-2.union.ai/me"
+              value: "https://test-controlplane-host/me"
             - name: UNION_AUTH_TENANTAUTHSIGNINURL
-              value: "https://union.us-west-2.union.ai/login"
+              value: "https://test-controlplane-host/login"
             - name: UNION_AUTH_TENANTCONTROLPLANEURL
-              value: "https://union.us-west-2.union.ai"
+              value: "https://test-controlplane-host"
             - name: UNION_AUTH_OVERRIDENORG
               value: "union"
           ports:
@@ -9484,7 +9962,7 @@ spec:
     spec:
       containers:
         - name: controller
-          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7
+          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0
           command:
             - /bin/kourier
           env:
@@ -9811,7 +10289,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "7d8966e4d46ee08efecb81a7e900797ea8e664738832985a33bc7aafced6197"
+        configChecksum: "45b75bc1ff9faad816656d85859d8da531b331751ea0a0da0737c787c5c8cda"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9837,7 +10315,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -9918,7 +10396,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1cbe3dc617b56cf8f59125d0c2514f1db5d0be13ccaa615689a642e5272d91f"
+        configChecksum: "74ba3d68a60ac05ad5488c7115d6c8de162e5b4c74e349e1aeddf979d358a07"
         
       labels:
         
@@ -9933,8 +10411,6 @@ spec:
             sources:
             - configMap:
                 name: union-operator
-            - configMap:
-                name: union-clusterresourcesync-config
         - name: secret-volume
           secret:
             secretName: union-secret-auth
@@ -9945,7 +10421,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -10013,7 +10489,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -10058,7 +10534,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "1cbe3dc617b56cf8f59125d0c2514f1db5d0be13ccaa615689a642e5272d91f"
+        configChecksum: "74ba3d68a60ac05ad5488c7115d6c8de162e5b4c74e349e1aeddf979d358a07"
         
       labels:
         
@@ -10081,7 +10557,7 @@ spec:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -10184,7 +10660,7 @@ spec:
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
       annotations:
-        configChecksum: "7d8966e4d46ee08efecb81a7e900797ea8e664738832985a33bc7aafced6197"
+        configChecksum: "45b75bc1ff9faad816656d85859d8da531b331751ea0a0da0737c787c5c8cda"
         
     spec:
       securityContext:
@@ -10195,7 +10671,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -10918,6 +11394,1035 @@ spec:
   # This is the Go import path for the binary that is containerized
   # and substituted here.
   image: gcr.io/knative-releases/knative.dev/serving/cmd/queue@sha256:a3cc71ce80dbc6df8781f15eac2cf3531a4c9815271799afd8776bef9e6aeaf2
+
+---
+# Source: dataplane/templates/common/task-podtemplate.yaml
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: task-template
+  namespace: union
+template:
+  spec:
+    serviceAccountName: union
+    containers:
+      - name: default
+        image: docker.io/rwgrim/docker-noop
+
+---
+# Source: dataplane/templates/monitoring/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-name-dataplane-dataplane-rules
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  groups:
+    - name: cost_calculations_15s
+      interval: 15s
+      rules:
+        - record: pod_gpu_allocation
+          expr: |
+            sum by (namespace, pod) (DCGM_FI_DEV_GPU_UTIL >= bool 0) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+        - record: execution_info # A join metric to look up execution-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_entity_name, label_execution_id, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        flyte:propeller:all:round:execution_info{domain!="", project!="", workflow_name!="", execution_id!=""}, # filter for workflow/task executions
+                        "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                      ), "label_entity_name", "$1", "workflow_name", "(.*)" # set label_entity_name to the workflow/task name from the workflow_execution_id
+                    ),
+                    "label_execution_id", "$1", "execution_id", "(.*)"
+                  ),
+                  "label_project", "$1", "project", "(.*)" # project
+                ),
+                "label_domain", "$1", "domain", "(.*)" # domain
+              )
+            )
+        - record: app_info # A join metric to look up app-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_app_name, label_app_version, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    kube_pod_labels{
+                      label_domain!="",
+                      label_project!="",
+                      label_serving_unionai_dev_app_name!="",
+                      label_serving_knative_dev_revision!=""
+                    }, # this filters for apps
+                    "label_app_name", "$1", "label_serving_unionai_dev_app_name", "(.*)" # rename to cleanup
+                  ),
+                  "label_app_version", "$1", "label_serving_knative_dev_revision", "(.*)" # the app_version is equivalent to an execution_id for workflows (lowest level of granularity)
+                ),
+                "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # join key
+              )
+            )
+        - record: workspace_info # A join metric to look up workspace info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_workspace_name, label_entity_id)(
+              label_replace(
+                label_replace(
+                  kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # filter for workspaces
+                  "label_entity_id", "$1", "label_node_id", "(.*)" # join key
+                ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
+              )
+            )
+        - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
+              # First, calculate the allocated memory for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the memory working set) exceeds requested memory
+                (
+                  sum by (namespace, pod) (
+                    container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where memory requests are <= consumed memory
+                  kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"} # needed to add node!="" to dedupe
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:cpu_usage_per_node:sum # Allocated cpu (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, calculate the allocated cpu for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the cpu usage seconds total) exceeds requested cpu
+                (
+                  sum by (namespace, pod) (
+                    irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where cpu requests are <= consumed cpu
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:gpu_usage_per_node:sum # Allocated gpu aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:used_mem_bytes:sum # the sum of used memory across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity
+              # First, calculate the used memory for each pod
+              sum by (namespace, pod) (
+                container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_mem_bytes:sum # the sum of allocated memory across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:mem_usage_bytes_total_per_node:sum
+            )
+        - record: entity_id:used_cpu:sum # the sum of used cpu across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) (
+              sum by (namespace, pod) (
+                irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_cpu:sum # the sum of allocated cpu across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:cpu_usage_per_node:sum
+            )
+        - record: entity_id:sm_occupancy:avg # the simple average of SM occupancy (a good generic measure of GPU utilization) per entity
+          expr: |
+            avg by (label_entity_type, label_domain, label_project, label_entity_id) (
+              # First, grab the SM occupancy for each pod
+              max by (namespace, pod) (
+                DCGM_FI_PROF_SM_OCCUPANCY # SM occupancy is a good proxy for actual GPU usage
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:gpu_count:sum # the count of running gpu pods per entity (need this to weight the gpu utilization when aggregating upwards - i.e. project-level)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:weighted_sm_occupancy:sum # product of SM occupancy and allocated GPU count (something like "used memory", numerator of weighted calcs)
+          expr: |
+            entity_id:sm_occupancy:avg
+            * on (label_domain, label_project, label_entity_type, label_entity_id) entity_id:gpu_count:sum
+        - record: entity_id:allocated_mem_cost:sum # Allocated cost of memory for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type) (
+              entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+              * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cpu_cost:sum # Allocated cost of cpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:cpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_gpu_cost:sum # Allocated cost of gpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:gpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cost:sum # Allocated cost of memory, cpu, and gpu for each workflow/task execution and app.
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                entity_id:allocated_mem_cost:sum
+                or
+                entity_id:allocated_cpu_cost:sum
+                or
+                entity_id:allocated_gpu_cost:sum
+              ),
+              "type", "allocated", "", "" # add type info
+            )
+        - record: entity_id:overhead_cost:sum # The amount of overhead costs (node costs that we can't allocate with container resources) to allocate to each entity (workflow/task execution or app)
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_entity_id, label_domain, label_project)( # Aggregate the per-node metrics up to workflow/task execution or app (label_entity_id)
+                # Start with each execution's and app's allocated cost per node
+                sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                  entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                  * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:cpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:gpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                )
+                # Then divide out the total allocated cost per node to get the proportion of allocated cost associated with each entity
+                / on (node) group_left()(
+                  sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                    entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                    * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:cpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:gpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  )
+                  > 0 # need to avoid dividing by zero, or gaps in the data can cause NaNs to proliferate, borking all charts
+                )
+                # Then multiply by the overhead cost per node
+                * on (node) group_left() (
+                  # To calculate overhead, start with the true cost of running each node
+                  avg by (node)(kube_node_labels{label_flyte_org_node_role="worker"}) # only look at worker nodes
+                  * on (node) max by (node) (
+                    node_total_hourly_cost{instance_type!=""} # sometimes, the instance_type can be null, causing an unlabeled label to show up in the Compute Costs dashboard charts
+                  ) * (15 / 3600) # convert hourly cost to 15-secondly cost
+                  # Then subtract out the total allocated cost on each node
+                  - on (node) group_left()(
+                    sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                      entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                      * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:cpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:gpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    )
+                  )
+                )
+              ),
+              "type", "overhead", "", "" # add type info
+            )
+        - record: entity_id:total_cost:sum # Total cost of each entity (workflow/task execution or app), including allocated (from container resources) and overhead (proportion of unallocated node costs)
+          expr: |
+            label_replace(
+              sum by (label_domain, label_project, label_entity_id, label_entity_type) (
+                entity_id:allocated_cost:sum
+                or
+                entity_id:overhead_cost:sum
+              ),
+              "type", "total", "", "" # add type info
+            )
+        - record: node:total_cost:sum # Total cost of all nodes
+          expr: |
+            sum (
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left() node_total_hourly_cost{instance_type!=""} * (15 / 3600) # convert hourly cost to 15-secondly cost
+            )
+        - record: node_type:total_cost:sum # Total cost of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left(node_type) label_replace(node_total_hourly_cost{instance_type!=""}, "node_type", "$1", "instance_type", "(.*)") * (15 / 3600) # convert hourly cost to 15-secondly cost and rename label
+            )
+        - record: node_type:uptime_hours:sum # Total uptime of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node, node_type)( # dedupe
+                label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)") # relabel
+              )
+            ) * (15 / 3600) # convert to number of hours per 15-second observation      # Aggregate the above into visible metrics
+    - name: cost_rollup_15m
+      interval: 15m
+      rules:
+        - record: execution_info15m
+          expr: |
+            max_over_time(execution_info[15m:15s])
+        - record: app_info15m
+          expr: |
+            max_over_time(app_info[15m:15s])
+        - record: workspace_info15m
+          expr: |
+            max_over_time(workspace_info[15m:15s])
+        - record: entity_id:allocated_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+        - record: entity_id:used_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+        - record: entity_id:allocated_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+        - record: entity_id:used_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:used_cpu:sum[15m:15s])
+        - record: entity_id:weighted_sm_occupancy:sum15m
+          expr: |
+            sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+        - record: entity_id:gpu_count:sum15m
+          expr: |
+            sum_over_time(entity_id:gpu_count:sum[15m:15s])
+        - record: entity_id:allocated_mem_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+        - record: entity_id:allocated_cpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_gpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+        - record: entity_id:overhead_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+        - record: entity_id:total_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:total_cost:sum[15m:15s])
+        - record: node:total_cost:sum15m
+          expr: |
+            sum_over_time(node:total_cost:sum[15m:15s])
+        - record: node_type:total_cost:sum15m
+          expr: |
+            sum_over_time(node_type:total_cost:sum[15m:15s])
+        - record: node_type:uptime_hours:sum15m
+          expr: |
+            sum_over_time(node_type:uptime_hours:sum[15m:15s])
+---
+# Source: dataplane/templates/monitoring/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-name-dataplane-monitoring-rules
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  groups:
+    # --- Recording rules (always active) ---
+    - name: union_dataplane_recording
+      interval: 30s
+      rules:
+        - record: union:dp:service_availability
+          expr: |
+            min by (namespace, deployment) (
+              kube_deployment_status_replicas_available{namespace="union"}
+              / kube_deployment_spec_replicas{namespace="union"}
+            )
+
+        - record: union:dp:propeller:round_latency_p99
+          expr: |
+            flyte:propeller:all:round:round_time_unlabeled_ms{
+              namespace="union",
+              quantile="0.99"
+            }
+
+        - record: union:dp:propeller:active_workflows
+          expr: |
+            sum(flyte:propeller:all:execstats:active_workflow_executions{
+              namespace="union"
+            })
+
+        - record: union:dp:propeller:queue_depth
+          expr: |
+            sum(flyte:propeller:all:main_depth{namespace="union"})
+
+        - record: union:dp:operator:work_queue_failed_rate
+          expr: |
+            rate(union_operator:work_queue:operations_failed{
+              namespace="union"
+            }[5m])
+
+        - record: union:dp:leaseworker:active_actions
+          expr: |
+            leaseworker:active_run_leases{namespace="union"}
+
+        - record: union:dp:pods_unschedulable:sum
+          expr: |
+            sum by (namespace) (
+              kube_pod_status_unschedulable
+            )
+    # --- Operational alerts (opt-in) ---
+    # Basic health checks only. For SLO-based alerts, see monitoring.slos.
+    - name: union_dataplane_alerts
+      rules:
+        - alert: UnionDPServiceDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="union"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.deployment }} has 0 available replicas"
+
+        - alert: UnionDPHighRestartRate
+          expr: |
+            increase(
+              kube_pod_container_status_restarts_total{namespace="union"}[1h]
+            ) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} restarting frequently"
+
+        - alert: UnionDPPodsUnschedulable
+          expr: |
+            sum by (namespace) (kube_pod_status_unschedulable) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }} has pods that cannot be scheduled (insufficient capacity or taints) for 15m"
+    # --- GPU fault handling alerts (with gpuFaultWatcher and config.gpuQuarantine) ---
+    - name: union_dataplane_gpu_alerts
+      rules:
+        # Freshness comes from the fault's own time, so old faults stay quiet after Prometheus
+        # restarts with empty storage, and a repeat fault alerts after the watcher restarts.
+        # The newest fault per group counts, so an old fault on another GPU cannot hide it.
+        - alert: UnionDPGPUFaultDetected
+          expr: |
+            time() - max by (node, kind, code) (
+              union_gpufaultwatcher_last_fault_timestamp_seconds{severity="critical"}
+            ) < 600
+          labels:
+            severity: warning
+            # The expression keeps no namespace, and an AlertmanagerConfig routes on it.
+            namespace: union
+          annotations:
+            summary: "Critical GPU fault {{ $labels.kind }} {{ $labels.code }} on node {{ $labels.node }}"
+            description: >-
+              The GPU fault watcher saw a critical GPU fault ({{ $labels.kind }} {{ $labels.code }})
+              on node {{ $labels.node }} in the last 10 minutes and set the node's
+              GPUXidCritical condition. Runs on the faulting GPU show the fault in Union.
+              GPU quarantine takes the node out of scheduling unless it is in dry run or at
+              its cap. Check the GPU, then release the node with the
+              union.ai/gpu-quarantine-release annotation, or replace it.
+
+        - alert: UnionDPGPUFaultUnresolved
+          expr: |
+            max by (node) (
+              kube_node_status_condition{condition="GPUXidCritical", status="true"}
+            ) == 1
+          for: 1h
+          labels:
+            severity: warning
+            namespace: union
+          annotations:
+            summary: "GPU fault on node {{ $labels.node }} unresolved for 1h"
+            description: >-
+              A GPU on node {{ $labels.node }} took a critical fault an hour ago
+              (see the node's GPUXidCritical condition and events), and the node has been
+              neither released nor replaced.
+              A quarantined node's GPUs sit idle; one that is not quarantined (dry run, or
+              the cap reached) still takes work. Check the GPU, then release the node with
+              kubectl annotate node {{ $labels.node }} union.ai/gpu-quarantine-release=<your name or ticket>,
+              or replace it.
+
+        # A new GPU node counts as unavailable until its watcher is ready, so this fires
+        # only when every sample for 30m had a GPU node without a ready watcher.
+        - alert: UnionDPGPUFaultWatcherUnavailable
+          expr: |
+            max by (namespace, daemonset) (
+              min_over_time(kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}[25m])
+            ) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} GPU node(s) without a ready GPU fault watcher for 30m"
+            description: >-
+              GPU faults on these nodes are not reported and do not set GPUXidCritical.
+              The watcher requests no resources and never preempts, so the usual causes are
+              eviction under memory pressure, a node at its pod limit leaving the pod
+              Pending, or a crash loop. Find the node with kubectl get pods -n
+              union -o wide -l app.kubernetes.io/name=gpufaultwatcher.
+
+        - alert: UnionDPGPUQuarantineHeld
+          expr: |
+            max by (namespace) (union_gpuquarantine_held_nodes) > 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} GPU node(s) held in quarantine for 1h"
+            description: >-
+              These nodes carry the union.ai/gpu-quarantine taint, but their GPUXidCritical
+              condition was cleared without the union.ai/gpu-quarantine-release annotation,
+              so the operator keeps them out of scheduling. They are idle capacity and count
+              against config.gpuQuarantine.maxQuarantinedNodes. Find them through their
+              GPUQuarantineReleaseRequired events, check each GPU, then release the node
+              with the union.ai/gpu-quarantine-release annotation, or replace it.
+
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cost
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: http
+      interval: 1m
+      path: /metrics
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [ "__name__" ]
+          separator: ";"
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-service-monitor
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      platform.union.ai/prometheus-group: "union-services"
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: debug
+      interval: 1m
+      path: /metrics
+      honorLabels: true
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpufaultwatcher
+      app.kubernetes.io/instance: release-name
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: metrics
+      interval: 1m
+      path: /metrics
+      # Faults are counted per node, so the node becomes a label and the watcher's own
+      # pod name is dropped. honorLabels keeps the faulting pod's namespace and pod on
+      # union_gpufaultwatcher_pod_faults_total.
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - action: labeldrop
+          regex: pod
+
+---
+# Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    # A patch reaches admission as an UPDATE.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["UPDATE"]
+      resources: ["nodes/status"]
+  matchConditions:
+  - name: gpufaultwatcher-service-account
+    expression: 'request.userInfo.username == "system:serviceaccount:union:union-gpufaultwatcher"'
+  validations:
+  # has() first, because a user with no extras has no extra field.
+  - expression: >-
+      !has(request.userInfo.extra) ||
+      !('authentication.kubernetes.io/node-name' in request.userInfo.extra) ||
+      (size(request.userInfo.extra['authentication.kubernetes.io/node-name']) > 0 &&
+      request.userInfo.extra['authentication.kubernetes.io/node-name'][0] == object.metadata.name)
+    message: the GPU fault watcher may only write the status of the node it runs on
+    messageExpression: >-
+      "the GPU fault watcher may only write the status of the node it runs on, " +
+      request.userInfo.extra['authentication.kubernetes.io/node-name'].join(",") +
+      ", not " + object.metadata.name
+    reason: Forbidden
+---
+# Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  policyName: union-gpufaultwatcher-own-node-status
+  validationActions: [Deny]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml
 apiVersion: v1
