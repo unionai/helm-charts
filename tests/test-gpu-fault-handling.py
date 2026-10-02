@@ -20,7 +20,13 @@ BASE_VALUES = {
     "secrets": {"admin": {"create": False}},
 }
 WATCHER = {"gpuFaultWatcher": {"enabled": True}}
-QUARANTINE = {"low_privilege": False, "config": {"gpuQuarantine": {"enabled": True}}}
+# gpuQuarantine.minOperatorVersion, the first operator release with the controller.
+QUARANTINE_RELEASE = "2026.10.0"
+QUARANTINE = {
+    "low_privilege": False,
+    "image": {"union": {"tag": QUARANTINE_RELEASE}},
+    "config": {"gpuQuarantine": {"enabled": True}},
+}
 ALERTING = {"monitoring": {"alerting": {"enabled": True}}}
 PROMTOOL = os.environ.get("PROMTOOL_BIN", "promtool")
 
@@ -210,10 +216,7 @@ class GpuQuarantineTest(unittest.TestCase):
                 "faultHistory": {"enabled": True},
             },
         )
-        enforcing = {
-            "low_privilege": False,
-            "config": {"gpuQuarantine": {"enabled": True, "dryRun": False}},
-        }
+        enforcing = {**QUARANTINE, "config": {"gpuQuarantine": {"enabled": True, "dryRun": False}}}
         self.assertFalse(operator_config(render(enforcing))["gpuQuarantine"]["dryRun"])
 
     def test_enabled_grants_node_patches_events_and_the_lease(self):
@@ -239,8 +242,27 @@ class GpuQuarantineTest(unittest.TestCase):
             {"low_privilege": False, "config": {"operator": {"disableClusterPermissions": True}}},
         ):
             with self.subTest(values=values):
-                values = {**values, "config": {**values.get("config", {}), **QUARANTINE["config"]}}
+                values = {
+                    **QUARANTINE,
+                    **values,
+                    "config": {**values.get("config", {}), **QUARANTINE["config"]},
+                }
                 self.assertIn("cluster permissions", render(values, success=False))
+
+    def test_operator_release_without_the_controller_fails(self):
+        for tag in ("2026.9.7", "v2026.9.7", "2026.9.7-beta.1"):
+            with self.subTest(tag=tag):
+                values = {**QUARANTINE, "image": {"union": {"tag": tag}}}
+                self.assertIn(
+                    f"needs union operator {QUARANTINE_RELEASE} or later: operator {tag}",
+                    render(values, success=False),
+                )
+
+    def test_operator_release_with_the_controller_or_a_build_tag_renders(self):
+        for tag in (QUARANTINE_RELEASE, f"{QUARANTINE_RELEASE}-beta.0", "v2026.11.2", "6caf8646"):
+            with self.subTest(tag=tag):
+                values = {**QUARANTINE, "image": {"union": {"tag": tag}}}
+                self.assertIn("gpuQuarantine", operator_config(render(values)))
 
 
 class GpuMonitoringTest(unittest.TestCase):

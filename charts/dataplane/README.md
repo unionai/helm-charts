@@ -479,8 +479,10 @@ Image requirements: the watcher ships in the union operator image from 2026.9.7,
 chart's current `appVersion`. Two parts need a newer image:
 
 - Quarantine needs an operator image that includes the controller. The operator
-  rejects config keys it does not know, so a 2026.9.7 operator fails to start with
-  `config.gpuQuarantine.enabled`.
+  rejects config keys it does not know, so an older operator would fail to start with
+  `config.gpuQuarantine.enabled`. The chart refuses to render when the operator tag
+  (`image.union.tag`, or the chart's `appVersion` when unset) is a release older than
+  the controller. Other tags, such as a commit SHA, are not checked.
 - The `UUID` and `gpu` labels on `union_gpufaultwatcher_faults_total`, the per-pod
   `union_gpufaultwatcher_pod_faults_total`, and
   `union_gpufaultwatcher_last_fault_timestamp_seconds` come with a newer watcher. Until
