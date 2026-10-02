@@ -361,6 +361,18 @@ class GpuMonitoringTest(unittest.TestCase):
         )
 
 
+class GpuNodesApiTest(unittest.TestCase):
+    def test_proxy_lists_and_watches_nodes_and_pods(self):
+        role = find(render({"low_privilege": False}), "ClusterRole", "proxy-system")
+        self.assertTrue({"list", "watch"} <= rules_for(role, "nodes"))
+        self.assertTrue({"list", "watch"} <= rules_for(role, "pods"))
+
+    def test_low_privilege_proxy_gets_no_node_rule(self):
+        docs = render({"low_privilege": True})
+        self.assertIsNone(find(docs, "ClusterRole", "proxy-system"))
+        self.assertEqual(rules_for(find(docs, "Role", "proxy-system"), "nodes"), set())
+
+
 def watcher_series(metric, node, values, gpu="0", kind="xid", instance="watcher-a"):
     labels = (
         f'severity="critical", node="{node}", kind="{kind}", code="79", gpu="{gpu}", '
