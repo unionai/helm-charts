@@ -426,6 +426,20 @@ names no existing class.
 {{- .Values.gpuFaultWatcher.priorityClassName | default (printf "%s-gpufaultwatcher" .Release.Name | lower | trunc 63 | trimSuffix "-") -}}
 {{- end -}}
 
+{{/*
+"true" when the operator runs the GPU quarantine controller. The operator starts it
+only with its cluster permissions and otherwise just logs a warning, so the render
+fails when they are missing.
+*/}}
+{{- define "gpuQuarantine.enabled" -}}
+{{- if .Values.config.gpuQuarantine.enabled -}}
+{{- if or .Values.low_privilege .Values.config.operator.disableClusterPermissions -}}
+{{- fail "config.gpuQuarantine.enabled needs the operator's cluster permissions: set low_privilege to false and leave config.operator.disableClusterPermissions false" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}

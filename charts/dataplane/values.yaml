@@ -594,6 +594,34 @@ config:
         default-env-vars: [ ]
         default-cpus: 100m
         default-memory: 100Mi
+  # -- GPU node quarantine, run by the operator. When a GPU node's GPUXidCritical
+  # condition (set by gpuFaultWatcher) turns true, the operator taints the node
+  # union.ai/gpu-quarantine:NoSchedule and cordons it, so retries and new work land on
+  # healthy GPUs. Running pods are left alone. The node stays quarantined until it is
+  # annotated union.ai/gpu-quarantine-release or replaced. Rendered into the operator's
+  # gpuQuarantine config section only when enabled.
+  gpuQuarantine:
+    # -- Run the controller. The operator acts on nodes only with its cluster
+    # permissions, so this needs low_privilege false. It also needs an operator image
+    # that includes the controller: the operator rejects config keys it does not know,
+    # so an older image fails to start.
+    enabled: false
+    # -- Report what would be quarantined, as node events and metrics, without
+    # tainting or cordoning. On by default because nodes that latched GPUXidCritical
+    # earlier are quarantined as soon as the controller enforces.
+    dryRun: true
+    # -- Cordon a quarantined node as well as tainting it.
+    cordon: true
+    # -- Most nodes kept quarantined at once. Past it, a faulted node is reported and
+    # left schedulable, so a fleet-wide cause such as a driver rollout cannot take
+    # every GPU node out of scheduling. 0 means no cap.
+    maxQuarantinedNodes: 5
+    # -- Node informer resync, which mainly brings back nodes the cap held back.
+    resyncPeriod: 10m
+    faultHistory:
+      # -- Keep the node's last 10 GPU faults as JSON in the union.ai/gpu-fault-history
+      # annotation, since the condition holds only the latest. Written in dry run too.
+      enabled: true
   # -- Configuration for the Union operator service
   operator:
     # -- Restrict operator to a single namespace. Auto-set in singleNamespace mode.
@@ -1754,7 +1782,7 @@ nodeobserver:
 # -- GPU fault watcher: a DaemonSet on NVIDIA GPU nodes that reads Xid and SXid faults
 # from the node kernel log, records each as a Warning event on the pods that held the
 # faulting GPU, and sets the node condition GPUXidCritical for a fault the GPU will not
-# recover from. It never cordons or taints.
+# recover from. It never cordons or taints; config.gpuQuarantine acts on the condition.
 gpuFaultWatcher:
   # -- Deploy the DaemonSet. Only useful on clusters with NVIDIA GPU nodes.
   enabled: false

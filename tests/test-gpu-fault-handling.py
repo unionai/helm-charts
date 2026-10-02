@@ -18,6 +18,7 @@ BASE_VALUES = {
     "secrets": {"admin": {"create": False}},
 }
 WATCHER = {"gpuFaultWatcher": {"enabled": True}}
+QUARANTINE = {"low_privilege": False, "config": {"gpuQuarantine": {"enabled": True}}}
 
 
 def render(values=None, kube_version="1.32.0", success=True):
@@ -64,6 +65,10 @@ def watcher_docs(docs):
         for d in docs
         if d["metadata"].get("labels", {}).get("app.kubernetes.io/name") == "gpufaultwatcher"
     ]
+
+
+def operator_config(docs):
+    return yaml.safe_load(find(docs, "ConfigMap", "union-operator")["data"]["config.yaml"])
 
 
 def rules_for(role, resource):
@@ -154,6 +159,59 @@ class GpuFaultWatcherTest(unittest.TestCase):
         )
         binding = find(docs, "ValidatingAdmissionPolicyBinding", name)
         self.assertEqual(binding["spec"]["validationActions"], ["Deny"])
+
+
+class GpuQuarantineTest(unittest.TestCase):
+    def test_off_by_default(self):
+        docs = render({"low_privilege": False})
+        self.assertNotIn("gpuQuarantine", operator_config(docs))
+        self.assertNotIn("patch", rules_for(find(docs, "ClusterRole", "operator-system"), "nodes"))
+        self.assertEqual(rules_for(find(docs, "Role", "operator-system"), "leases"), set())
+
+    def test_enabled_renders_the_section_in_dry_run(self):
+        docs = render(QUARANTINE)
+        self.assertEqual(
+            operator_config(docs)["gpuQuarantine"],
+            {
+                "enabled": True,
+                "dryRun": True,
+                "cordon": True,
+                "maxQuarantinedNodes": 5,
+                "resyncPeriod": "10m",
+                "faultHistory": {"enabled": True},
+            },
+        )
+        enforcing = {
+            "low_privilege": False,
+            "config": {"gpuQuarantine": {"enabled": True, "dryRun": False}},
+        }
+        self.assertFalse(operator_config(render(enforcing))["gpuQuarantine"]["dryRun"])
+
+    def test_enabled_grants_node_patches_events_and_the_lease(self):
+        docs = render(QUARANTINE)
+        cluster_role = find(docs, "ClusterRole", "operator-system")
+        self.assertIn("patch", rules_for(cluster_role, "nodes"))
+        self.assertEqual(rules_for(cluster_role, "nodes/status"), {"patch"})
+        self.assertEqual(rules_for(cluster_role, "events"), {"create", "patch"})
+        role = find(docs, "Role", "operator-system")
+        self.assertEqual(rules_for(role, "leases"), {"get", "create", "update"})
+
+    def test_operator_knows_its_pod_for_the_lease(self):
+        operator = find(render(QUARANTINE), "Deployment", "union-operator")
+        env = {e["name"]: e for e in operator["spec"]["template"]["spec"]["containers"][0]["env"]}
+        self.assertEqual(env["POD_NAME"]["valueFrom"]["fieldRef"]["fieldPath"], "metadata.name")
+        self.assertEqual(
+            env["POD_NAMESPACE"]["valueFrom"]["fieldRef"]["fieldPath"], "metadata.namespace"
+        )
+
+    def test_without_cluster_permissions_fails(self):
+        for values in (
+            {"low_privilege": True},
+            {"low_privilege": False, "config": {"operator": {"disableClusterPermissions": True}}},
+        ):
+            with self.subTest(values=values):
+                values = {**values, "config": {**values.get("config", {}), **QUARANTINE["config"]}}
+                self.assertIn("cluster permissions", render(values, success=False))
 
 
 if __name__ == "__main__":
