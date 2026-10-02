@@ -248,6 +248,54 @@ class BuildkitArmTest(unittest.TestCase):
         self.assertEqual(arm["spec"]["type"], "ClusterIP")
         self.assertNotIn("loadBalancerIP", arm["spec"])
 
+    def test_persistent_cache_is_per_architecture(self):
+        """Each builder keeps its own cache volume and pointer: sharing them would
+        make every restart fork the other architecture's state."""
+
+        def sidecar_args(dep):
+            spec = dep["spec"]["template"]["spec"]
+            sidecar = next(c for c in spec["initContainers"] if c["name"] == "volume-cache")
+            args = sidecar["args"]
+            return {k: args[args.index(k) + 1] for k in ("--name", "--pointer")}
+
+        base = {
+            "enabled": True,
+            "image": {"repository": "example/union-volume-cache", "tag": "x"},
+            "bucket": "s3://b/cache/",
+        }
+        for pointers, want_amd, want_arm in (
+            ({}, None, None),
+            ({"pointer": "s3://b/p/amd"}, "s3://b/p/amd", None),
+            (
+                {"pointer": "s3://b/p/amd", "armPointer": "s3://b/p/arm"},
+                "s3://b/p/amd",
+                "s3://b/p/arm",
+            ),
+        ):
+            with self.subTest(**pointers):
+                docs = render(
+                    {
+                        "imageBuilder": {
+                            "buildkit": {
+                                "arm": {"enabled": True},
+                                "persistentCache": {**base, **pointers},
+                            }
+                        }
+                    }
+                )
+                deps = builders(docs, "Deployment")
+                amd = sidecar_args(deps["imagebuilder-buildkit"])
+                arm = sidecar_args(deps["imagebuilder-buildkit-arm"])
+                amd_name = deps["imagebuilder-buildkit"]["metadata"]["name"]
+                arm_name = deps["imagebuilder-buildkit-arm"]["metadata"]["name"]
+                # The amd64 builder is unchanged by the ARM option.
+                self.assertEqual(amd["--name"], amd_name)
+                self.assertEqual(arm["--name"], arm_name)
+                self.assertEqual(amd["--pointer"], want_amd or f"s3://b/cache/{amd_name}/LATEST")
+                self.assertEqual(arm["--pointer"], want_arm or f"s3://b/cache/{arm_name}/LATEST")
+                self.assertNotEqual(amd["--name"], arm["--name"])
+                self.assertNotEqual(amd["--pointer"], arm["--pointer"])
+
 
 if __name__ == "__main__":
     unittest.main()
