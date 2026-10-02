@@ -1,0 +1,52 @@
+{{- /*
+RBAC cannot scope nodes/status to one node, so a watcher token taken from any GPU node
+could rewrite every node's conditions. This policy holds the watcher to the node its
+token is bound to. ValidatingAdmissionPolicy is GA from Kubernetes 1.30, above the
+chart's 1.28 floor, so older clusters go without it. Tokens that carry no node name are
+let through.
+*/}}
+{{- if and .Values.gpuFaultWatcher.enabled (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
+{{- $serviceAccount := printf "system:serviceaccount:%s:union-gpufaultwatcher" .Release.Namespace }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    # A patch reaches admission as an UPDATE.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["UPDATE"]
+      resources: ["nodes/status"]
+  matchConditions:
+  - name: gpufaultwatcher-service-account
+    expression: 'request.userInfo.username == "{{ $serviceAccount }}"'
+  validations:
+  # has() first, because a user with no extras has no extra field.
+  - expression: >-
+      !has(request.userInfo.extra) ||
+      !('authentication.kubernetes.io/node-name' in request.userInfo.extra) ||
+      (size(request.userInfo.extra['authentication.kubernetes.io/node-name']) > 0 &&
+      request.userInfo.extra['authentication.kubernetes.io/node-name'][0] == object.metadata.name)
+    message: the GPU fault watcher may only write the status of the node it runs on
+    messageExpression: >-
+      "the GPU fault watcher may only write the status of the node it runs on, " +
+      request.userInfo.extra['authentication.kubernetes.io/node-name'].join(",") +
+      ", not " + object.metadata.name
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  policyName: union-gpufaultwatcher-own-node-status
+  validationActions: [Deny]
+{{- end }}

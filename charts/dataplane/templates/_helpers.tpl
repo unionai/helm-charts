@@ -407,6 +407,25 @@ infra and must have a deliberate class, so bring your own or let the chart make 
 {{- end -}}
 {{- end -}}
 
+{{- define "gpuFaultWatcher.selectorLabels" -}}
+app.kubernetes.io/name: gpufaultwatcher
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "gpuFaultWatcher.labels" -}}
+{{- include "gpuFaultWatcher.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The chart's own non-preempting class, used when gpuFaultWatcher.priorityClassName
+names no existing class.
+*/}}
+{{- define "gpuFaultWatcher.priorityClassName" -}}
+{{- .Values.gpuFaultWatcher.priorityClassName | default (printf "%s-gpufaultwatcher" .Release.Name | lower | trunc 63 | trimSuffix "-") -}}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}

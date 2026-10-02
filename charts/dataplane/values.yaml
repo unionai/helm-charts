@@ -1751,6 +1751,80 @@ nodeobserver:
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
 
+# -- GPU fault watcher: a DaemonSet on NVIDIA GPU nodes that reads Xid and SXid faults
+# from the node kernel log, records each as a Warning event on the pods that held the
+# faulting GPU, and sets the node condition GPUXidCritical for a fault the GPU will not
+# recover from. It never cordons or taints.
+gpuFaultWatcher:
+  # -- Deploy the DaemonSet. Only useful on clusters with NVIDIA GPU nodes.
+  enabled: false
+  # -- Port serving /metrics and /healthz.
+  metricsPort: 9096
+  # -- Startup probe failure threshold at a 10s period: how long the watcher may take
+  # to sync its pod informer and start reading the kernel log before it is restarted.
+  startupFailureThreshold: 30
+  # -- Existing PriorityClass to run the watcher at. Empty runs it at a class the chart
+  # creates with preemptionPolicy Never, so on a full node it waits rather than
+  # evicting a task.
+  priorityClassName: ""
+  priorityClass:
+    # -- Value of the chart's class. It schedules the watcher ahead of ordinary pods
+    # once room frees up. A PriorityClass value cannot change, so changing this after
+    # install fails the upgrade until the class is deleted.
+    value: 1000000
+  # -- Additional pod annotations.
+  podAnnotations: {}
+  # -- Requests are explicit zeros because an unset request defaults to the limit, and
+  # node autoscalers count DaemonSet requests as node overhead: any request would
+  # leave a task sized to a GPU node's full allocatable nowhere to run. The cost is that
+  # the kubelet evicts the watcher first under memory pressure.
+  resources:
+    requests:
+      cpu: "0"
+      memory: "0"
+    limits:
+      cpu: 100m
+      memory: 128Mi
+  # -- Nodes the watcher runs on. The terms are ORed and match the labels each cloud,
+  # and GPU Feature Discovery, put on NVIDIA GPU nodes. Replace it to target GPU nodes
+  # some other way.
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              - key: karpenter.k8s.aws/instance-gpu-manufacturer
+                operator: In
+                values: ["nvidia"]
+          - matchExpressions:
+              - key: cloud.google.com/gke-accelerator
+                operator: Exists
+          - matchExpressions:
+              - key: kubernetes.azure.com/accelerator
+                operator: In
+                values: ["nvidia"]
+          - matchExpressions:
+              - key: platform.union.ai/accelerator
+                operator: Exists
+          - matchExpressions:
+              - key: nvidia.com/gpu.present
+                operator: In
+                values: ["true"]
+  # -- GPU nodes are commonly tainted, and a quarantined node still needs its watcher,
+  # so it tolerates every NoSchedule taint.
+  tolerations:
+    - operator: Exists
+      effect: NoSchedule
+  # -- The watcher's config file. Every key has a default in the binary; set only what
+  # differs on your nodes. metricsBindAddress comes from metricsPort and cannot be set here.
+  config:
+    # -- Kernel log device the watcher reads, mounted from the host.
+    kmsgPath: /dev/kmsg
+    # -- kubelet pod-resources socket, which says which pod holds which GPU. Must be an
+    # absolute path on the node, with or without unix://. Its directory is mounted
+    # from the host.
+    podResourcesSocket: unix:///var/lib/kubelet/pod-resources/kubelet.sock
+
 # -- Union Object Store configuration
 objectStore:
   service:

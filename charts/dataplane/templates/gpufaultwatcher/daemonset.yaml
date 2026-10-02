@@ -1,0 +1,116 @@
+{{- if .Values.gpuFaultWatcher.enabled }}
+{{- /*
+The kubelet recreates its socket, so the socket is mounted through the directory that
+holds it. That directory follows the configured socket, and is refused when it would be
+the node's root.
+*/}}
+{{- $podResourcesDir := .Values.gpuFaultWatcher.config.podResourcesSocket | trimPrefix "unix://" | dir }}
+{{- if or (not (hasPrefix "/" $podResourcesDir)) (eq $podResourcesDir "/") }}
+{{- fail (printf "gpuFaultWatcher.config.podResourcesSocket must be an absolute path to a socket inside a directory on the node, since that directory is mounted into a privileged pod; got %q" .Values.gpuFaultWatcher.config.podResourcesSocket) }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-gpufaultwatcher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "gpuFaultWatcher.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # The watcher reads its config once at start.
+        configChecksum: {{ include (print .Template.BasePath "/gpufaultwatcher/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.gpuFaultWatcher.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        platform.union.ai/zone: "dataplane"
+        {{- include "gpuFaultWatcher.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: union-gpufaultwatcher
+      priorityClassName: {{ include "gpuFaultWatcher.priorityClassName" . }}
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # The driver reports the host pid of the faulting process, and the watcher reads
+      # that pid's cgroup to find its pod.
+      hostPID: true
+      affinity:
+        {{- toYaml .Values.gpuFaultWatcher.affinity | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.gpuFaultWatcher.tolerations | nindent 8 }}
+      volumes:
+        - name: config
+          configMap:
+            name: union-gpufaultwatcher
+        - name: kmsg
+          hostPath:
+            path: {{ .Values.gpuFaultWatcher.config.kmsgPath }}
+            type: CharDevice
+        - name: pod-resources
+          hostPath:
+            path: {{ $podResourcesDir }}
+            type: Directory
+      containers:
+        - name: gpufaultwatcher
+          image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.union.pullPolicy }}
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - gpufaultwatcher
+            - --config
+            - /etc/union/config.yaml
+          # Not global.podEnvVars: the watcher talks only to the kubelet and the
+          # Kubernetes API, and that block references a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: {{ .Values.logging.level | quote }}
+          ports:
+            - name: metrics
+              containerPort: {{ .Values.gpuFaultWatcher.metricsPort }}
+              protocol: TCP
+          # /healthz is true only while the kernel log reader runs. The startup probe
+          # bounds how long the pod informer may take to sync, so a watcher that never
+          # reaches its reader is restarted rather than reported healthy.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 10
+            failureThreshold: {{ .Values.gpuFaultWatcher.startupFailureThreshold }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 30
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.gpuFaultWatcher.resources | nindent 12 }}
+          securityContext:
+            # Opening /dev/kmsg needs CAP_SYSLOG and the device itself, which the
+            # runtime's device allowlist denies short of privileged mode. The image runs
+            # as a non-root user, and a non-root uid cannot open the root-owned device.
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kmsg
+              mountPath: {{ .Values.gpuFaultWatcher.config.kmsgPath }}
+              readOnly: true
+            - name: pod-resources
+              mountPath: {{ $podResourcesDir }}
+              readOnly: true
+{{- end }}
