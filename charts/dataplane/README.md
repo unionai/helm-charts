@@ -472,8 +472,31 @@ anything. Set `dryRun: false` once that looks right. Nodes that latched
 `maxQuarantinedNodes` (default 5) caps how many nodes are held at once, so a fleet-wide
 cause such as a driver rollout cannot take every GPU node out of scheduling.
 
+With `operator.serviceAccount.create: false` the chart creates none of the operator's
+RBAC, and the install notes warn when quarantine is on. Grant the operator's service
+account these rules on top of its other permissions, or quarantine cannot take its
+lease or act on nodes:
+
+```yaml
+# ClusterRole
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch", "patch"]
+- apiGroups: [""]
+  resources: ["nodes/status"]
+  verbs: ["patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# Role in the release namespace
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "create", "update"]
+```
+
 On Kubernetes 1.30 and later the chart also installs a ValidatingAdmissionPolicy that
-lets the watcher write the status of its own node only.
+lets the watcher write the status of its own node only. Set
+`gpuFaultWatcher.restrictNodeWrites: false` to leave it out.
 
 Image requirements: the watcher ships in the union operator image from 2026.9.7, the
 chart's current `appVersion`. Two parts need a newer image:

@@ -31,34 +31,48 @@ ALERTING = {"monitoring": {"alerting": {"enabled": True}}}
 PROMTOOL = os.environ.get("PROMTOOL_BIN", "promtool")
 
 
-def render(values=None, kube_version="1.32.0", success=True):
+def helm(command, values, *flags):
     with tempfile.TemporaryDirectory() as directory:
         base = Path(directory) / "base.yaml"
         base.write_text(yaml.safe_dump(BASE_VALUES))
         path = Path(directory) / "values.yaml"
         path.write_text(yaml.safe_dump(values or {}))
-        result = subprocess.run(
+        return subprocess.run(
             [
                 HELM,
-                "template",
+                command,
                 "gpu-test",
                 str(CHART),
                 "--namespace",
                 "union",
-                "--kube-version",
-                kube_version,
-                "--api-versions",
-                "monitoring.coreos.com/v1",
                 "-f",
                 str(CHART / "examples/values-test-certs.yaml"),
                 "-f",
                 str(base),
                 "-f",
                 str(path),
+                *flags,
             ],
             text=True,
             capture_output=True,
         )
+
+
+def install_notes(values):
+    result = helm("install", values, "--dry-run=client")
+    assert result.returncode == 0, result.stderr
+    return result.stdout.partition("NOTES:")[2]
+
+
+def render(values=None, kube_version="1.32.0", success=True):
+    result = helm(
+        "template",
+        values,
+        "--kube-version",
+        kube_version,
+        "--api-versions",
+        "monitoring.coreos.com/v1",
+    )
     if not success:
         assert result.returncode != 0, "Invalid configuration unexpectedly rendered"
         return result.stderr
@@ -183,9 +197,20 @@ class GpuFaultWatcherTest(unittest.TestCase):
         docs = render({"low_privilege": True, **WATCHER})
         self.assertIsNotNone(find(docs, "ClusterRoleBinding", "union-gpufaultwatcher"))
 
+    def test_global_pod_labels_reach_the_watcher_pods(self):
+        docs = render({**WATCHER, "additionalPodLabels": {"team": "gpu", "cost-center": "ml"}})
+        daemonset = find(docs, "DaemonSet", "union-gpufaultwatcher")
+        labels = daemonset["spec"]["template"]["metadata"]["labels"]
+        self.assertEqual(labels["team"], "gpu")
+        self.assertEqual(labels["cost-center"], "ml")
+        self.assertTrue(daemonset["spec"]["selector"]["matchLabels"].items() <= labels.items())
+
     def test_admission_policy_holds_writes_to_the_own_node_from_kubernetes_1_30(self):
         name = "union-gpufaultwatcher-own-node-status"
         self.assertIsNone(find(render(WATCHER, "1.29.0"), "ValidatingAdmissionPolicy", name))
+        opted_out = {"gpuFaultWatcher": {"enabled": True, "restrictNodeWrites": False}}
+        for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
+            self.assertIsNone(find(render(opted_out, "1.30.0"), kind, name))
         docs = render(WATCHER, "1.30.0")
         policy = find(docs, "ValidatingAdmissionPolicy", name)
         self.assertIn(
@@ -248,6 +273,13 @@ class GpuQuarantineTest(unittest.TestCase):
                     "config": {**values.get("config", {}), **QUARANTINE["config"]},
                 }
                 self.assertIn("cluster permissions", render(values, success=False))
+
+    def test_notes_warn_when_the_chart_grants_the_operator_no_rbac(self):
+        byo = {**QUARANTINE, "operator": {"serviceAccount": {"create": False}}}
+        self.assertIn("grants the operator no RBAC", install_notes(byo))
+        self.assertNotIn("RBAC", install_notes(QUARANTINE))
+        without_quarantine = {"low_privilege": False, "operator": byo["operator"]}
+        self.assertNotIn("RBAC", install_notes(without_quarantine))
 
     def test_operator_release_without_the_controller_fails(self):
         for tag in ("2026.9.7", "v2026.9.7", "2026.9.7-beta.1"):
