@@ -387,7 +387,7 @@
         "type": "prometheus",
         "uid": "${datasource}"
       },
-      "description": "Critical faults the watcher counted in the selected time range, by node, GPU and code. Each fault counts once however many pods shared the GPU. A series appears with its first fault already counted, which increase() misses, so a series that is new in the range counts in full. The GPU columns stay empty on watcher images that do not label faults by GPU.",
+      "description": "Critical faults the watcher counted in the selected time range, by node, GPU, kind and code. Each fault counts once however many pods shared the GPU. A series appears with its first fault already counted, which increase() misses, so a series that is new in the range counts in full, including one whose node was replaced before the range ended. The GPU columns stay empty on watcher images that do not label faults by GPU.",
       "gridPos": {
         "h": 8,
         "w": 12,
@@ -404,7 +404,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (node, gpu, UUID, code) (\n  (union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} unless union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} offset $__range)\n  or\n  increase(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range])\n)",
+          "expr": "sum by (node, gpu, UUID, kind, code) (\n  (last_over_time(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range]) unless union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} offset $__range)\n  or\n  (increase(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range]) > 0)\n) > 0",
           "refId": "A",
           "instant": true,
           "range": false,
@@ -423,6 +423,7 @@
               "node": "Node",
               "gpu": "GPU",
               "UUID": "GPU UUID",
+              "kind": "Kind",
               "code": "Code",
               "Value": "Faults"
             }

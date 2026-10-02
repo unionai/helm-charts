@@ -329,8 +329,11 @@ class GpuMonitoringTest(unittest.TestCase):
         )
 
 
-def watcher_series(metric, node, values, gpu="0", instance="watcher-a"):
-    labels = f'severity="critical", node="{node}", kind="xid", code="79", gpu="{gpu}", instance="{instance}"'
+def watcher_series(metric, node, values, gpu="0", kind="xid", instance="watcher-a"):
+    labels = (
+        f'severity="critical", node="{node}", kind="{kind}", code="79", gpu="{gpu}", '
+        f'namespace="union", instance="{instance}"'
+    )
     return {"series": f"{metric}{{{labels}}}", "values": values}
 
 
@@ -345,7 +348,7 @@ def last_fault(node, values, **labels):
 
 
 def fired(**labels):
-    return {"exp_labels": {"severity": "warning", **labels}}
+    return {"exp_labels": {"severity": "warning", "namespace": "union", **labels}}
 
 
 DAY = 86400
@@ -427,7 +430,7 @@ PROMTOOL_CASES = [
             (
                 "45m",
                 "UnionDPGPUFaultWatcherUnavailable",
-                [fired(namespace="union", daemonset="union-gpufaultwatcher")],
+                [fired(daemonset="union-gpufaultwatcher")],
             ),
         ],
     ),
@@ -453,14 +456,53 @@ PROMTOOL_CASES = [
         ],
         [
             ("65m", "UnionDPGPUQuarantineHeld", []),
-            ("75m", "UnionDPGPUQuarantineHeld", [fired(namespace="union")]),
+            ("75m", "UnionDPGPUQuarantineHeld", [fired()]),
         ],
     ),
 ]
 
 
-@unittest.skipUnless(shutil.which(PROMTOOL), "promtool is not installed")
-class GpuAlertRulesTest(unittest.TestCase):
+# At 150m over a 1h range: a fault from long before, one on a node replaced within
+# the range, a new one, one more on an old series, Xid and SXid faults with the same
+# code, and a new series that never counted a fault.
+FAULT_TABLE_SERIES = [
+    faults("old", "1x180"),
+    faults("replaced", "_x100 1x10 stale"),
+    faults("new", "_x120 1x60"),
+    faults("bumped", "1x100 2x80"),
+    faults("both-kinds", "_x120 1x60"),
+    faults("both-kinds", "_x120 1x60", kind="sxid"),
+    faults("zero", "_x120 0x60"),
+]
+FAULT_TABLE_ROWS = [
+    ("replaced", "xid", 1),
+    ("new", "xid", 1),
+    # increase() extrapolates 59 minutes of samples to the 60 minute range.
+    ("bumped", "xid", 60 / 59),
+    ("both-kinds", "xid", 1),
+    ("both-kinds", "sxid", 1),
+]
+
+
+class GpuPromtoolTest(unittest.TestCase):
+    def setUp(self):
+        if shutil.which(PROMTOOL):
+            return
+        if os.environ.get("CI"):
+            self.fail("promtool is not installed, and CI must run these checks")
+        self.skipTest("promtool is not installed")
+
+    def promtool_test(self, rules, tests):
+        with tempfile.TemporaryDirectory() as directory:
+            rule_file = Path(directory) / "rules.yaml"
+            rule_file.write_text(yaml.safe_dump({"groups": [{"name": "gpu", "rules": rules}]}))
+            test_file = Path(directory) / "tests.yaml"
+            test_file.write_text(yaml.safe_dump({"rule_files": [str(rule_file)], "tests": tests}))
+            result = subprocess.run(
+                [PROMTOOL, "test", "rules", str(test_file)], text=True, capture_output=True
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_alerts_fire_as_documented(self):
         rules = list(gpu_alerts(render({**WATCHER, **QUARANTINE, **ALERTING})).values())
         # promtool compares annotations too; these cases check the expressions.
@@ -477,15 +519,26 @@ class GpuAlertRulesTest(unittest.TestCase):
             }
             for series, checks in PROMTOOL_CASES
         ]
-        with tempfile.TemporaryDirectory() as directory:
-            rule_file = Path(directory) / "rules.yaml"
-            rule_file.write_text(yaml.safe_dump({"groups": [{"name": "gpu", "rules": rules}]}))
-            test_file = Path(directory) / "tests.yaml"
-            test_file.write_text(yaml.safe_dump({"rule_files": [str(rule_file)], "tests": tests}))
-            result = subprocess.run(
-                [PROMTOOL, "test", "rules", str(test_file)], text=True, capture_output=True
-            )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.promtool_test(rules, tests)
+
+    def test_dashboard_fault_table_counts_faults_in_the_range(self):
+        panels = dashboard(render(WATCHER))["panels"]
+        table = next(p for p in panels if p["title"] == "Critical GPU faults in the time range")
+        expr = table["targets"][0]["expr"]
+        expr = expr.replace("$namespace", "union").replace("$__range", "1h")
+        rows = [
+            {
+                "labels": f'{{node="{node}", gpu="0", kind="{kind}", code="79"}}',
+                "value": value,
+            }
+            for node, kind, value in FAULT_TABLE_ROWS
+        ]
+        test = {
+            "interval": "1m",
+            "input_series": FAULT_TABLE_SERIES,
+            "promql_expr_test": [{"expr": expr, "eval_time": "150m", "exp_samples": rows}],
+        }
+        self.promtool_test([], [test])
 
 
 if __name__ == "__main__":
