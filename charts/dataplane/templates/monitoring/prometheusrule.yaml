@@ -104,6 +104,102 @@ spec:
 
     {{- end }}
 
+    {{- $quarantine := include "gpuQuarantine.enabled" . }}
+    {{- if and .Values.monitoring.alerting.enabled (or .Values.gpuFaultWatcher.enabled $quarantine) }}
+    # --- GPU fault handling alerts (with gpuFaultWatcher and config.gpuQuarantine) ---
+    - name: union_dataplane_gpu_alerts
+      rules:
+        {{- if .Values.gpuFaultWatcher.enabled }}
+        # A series appears with its first fault already counted, which increase() misses, so a series absent from the hour before the window counts too.
+        - alert: UnionDPGPUFaultDetected
+          expr: |
+            count by (node, kind, code) (
+              (
+                union_gpufaultwatcher_faults_total{severity="critical"}
+                unless last_over_time(union_gpufaultwatcher_faults_total{severity="critical"}[1h] offset 10m)
+              )
+              or
+              increase(union_gpufaultwatcher_faults_total{severity="critical"}[10m]) > 0
+            )
+          labels:
+            severity: warning
+          annotations:
+            summary: "Critical GPU fault {{ "{{" }} $labels.kind {{ "}}" }} {{ "{{" }} $labels.code {{ "}}" }} on node {{ "{{" }} $labels.node {{ "}}" }}"
+            description: >-
+              The GPU fault watcher saw a critical GPU fault ({{ "{{" }} $labels.kind {{ "}}" }} {{ "{{" }} $labels.code {{ "}}" }})
+              on node {{ "{{" }} $labels.node {{ "}}" }} in the last 10 minutes and set the node's
+              GPUXidCritical condition. Runs on the faulting GPU show the fault in Union.
+              {{- if $quarantine }}
+              GPU quarantine takes the node out of scheduling unless it is in dry run or at
+              its cap. Check the GPU, then release the node with the
+              union.ai/gpu-quarantine-release annotation, or replace it.
+              {{- else }}
+              New work can still land on the node. Check the GPU, then replace the node.
+              {{- end }}
+
+        - alert: UnionDPGPUFaultUnresolved
+          expr: |
+            max by (node) (
+              kube_node_status_condition{condition="GPUXidCritical", status="true"}
+            ) == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU fault on node {{ "{{" }} $labels.node {{ "}}" }} unresolved for 1h"
+            description: >-
+              A GPU on node {{ "{{" }} $labels.node {{ "}}" }} took a critical fault an hour ago
+              (see the node's GPUXidCritical condition and events), and the node has been
+              neither released nor replaced.
+              {{- if $quarantine }}
+              A quarantined node's GPUs sit idle; one that is not quarantined (dry run, or
+              the cap reached) still takes work. Check the GPU, then release the node with
+              kubectl annotate node {{ "{{" }} $labels.node {{ "}}" }} union.ai/gpu-quarantine-release=<your name or ticket>,
+              or replace it.
+              {{- else }}
+              The watcher latches the condition and nothing keeps new work off the node.
+              Check the GPU, then replace the node.
+              {{- end }}
+
+        # A new GPU node counts as unavailable until its watcher is ready, so this fires
+        # only when every sample for 30m had a GPU node without a ready watcher.
+        - alert: UnionDPGPUFaultWatcherUnavailable
+          expr: |
+            max by (namespace, daemonset) (
+              min_over_time(kube_daemonset_status_number_unavailable{namespace="{{ .Release.Namespace }}", daemonset="union-gpufaultwatcher"}[25m])
+            ) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $value {{ "}}" }} GPU node(s) without a ready GPU fault watcher for 30m"
+            description: >-
+              GPU faults on these nodes are not reported and do not set GPUXidCritical.
+              The watcher requests no resources and never preempts, so the usual causes are
+              eviction under memory pressure, a node at its pod limit leaving the pod
+              Pending, or a crash loop. Find the node with kubectl get pods -n
+              {{ .Release.Namespace }} -o wide -l app.kubernetes.io/name=gpufaultwatcher.
+        {{- end }}
+        {{- if $quarantine }}
+
+        - alert: UnionDPGPUQuarantineHeld
+          expr: |
+            max by (namespace) (union_gpuquarantine_held_nodes) > 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ "{{" }} $value {{ "}}" }} GPU node(s) held in quarantine for 1h"
+            description: >-
+              These nodes carry the union.ai/gpu-quarantine taint, but their GPUXidCritical
+              condition was cleared without the union.ai/gpu-quarantine-release annotation,
+              so the operator keeps them out of scheduling. They are idle capacity and count
+              against config.gpuQuarantine.maxQuarantinedNodes. Find them through their
+              GPUQuarantineReleaseRequired events, check each GPU, then release the node
+              with the union.ai/gpu-quarantine-release annotation, or replace it.
+        {{- end }}
+    {{- end }}
+
     {{- if .Values.monitoring.slos.enabled }}
     # --- SLO recording rules (opt-in) ---
     - name: union_dataplane_slo_recording

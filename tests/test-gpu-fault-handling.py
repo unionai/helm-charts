@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Render the dataplane chart to check the opt-in GPU fault watcher and quarantine."""
 
+import json
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +21,8 @@ BASE_VALUES = {
 }
 WATCHER = {"gpuFaultWatcher": {"enabled": True}}
 QUARANTINE = {"low_privilege": False, "config": {"gpuQuarantine": {"enabled": True}}}
+ALERTING = {"monitoring": {"alerting": {"enabled": True}}}
+PROMTOOL = os.environ.get("PROMTOOL_BIN", "promtool")
 
 
 def render(values=None, kube_version="1.32.0", success=True):
@@ -37,6 +41,8 @@ def render(values=None, kube_version="1.32.0", success=True):
                 "union",
                 "--kube-version",
                 kube_version,
+                "--api-versions",
+                "monitoring.coreos.com/v1",
                 "-f",
                 str(CHART / "examples/values-test-certs.yaml"),
                 "-f",
@@ -69,6 +75,25 @@ def watcher_docs(docs):
 
 def operator_config(docs):
     return yaml.safe_load(find(docs, "ConfigMap", "union-operator")["data"]["config.yaml"])
+
+
+def gpu_alerts(docs):
+    rules = next(
+        d
+        for d in docs
+        if d["kind"] == "PrometheusRule" and d["metadata"]["name"].endswith("-monitoring-rules")
+    )
+    for group in rules["spec"]["groups"]:
+        if group["name"] == "union_dataplane_gpu_alerts":
+            return {rule["alert"]: rule for rule in group["rules"]}
+    return {}
+
+
+def dashboard(docs):
+    for doc in docs:
+        if doc["kind"] == "ConfigMap" and "union-dataplane-gpu-faults.json" in doc.get("data", {}):
+            return json.loads(doc["data"]["union-dataplane-gpu-faults.json"])
+    return None
 
 
 def rules_for(role, resource):
@@ -212,6 +237,200 @@ class GpuQuarantineTest(unittest.TestCase):
             with self.subTest(values=values):
                 values = {**values, "config": {**values.get("config", {}), **QUARANTINE["config"]}}
                 self.assertIn("cluster permissions", render(values, success=False))
+
+
+class GpuMonitoringTest(unittest.TestCase):
+    def test_nothing_without_the_features(self):
+        docs = render(ALERTING)
+        self.assertEqual(gpu_alerts(docs), {})
+        self.assertIsNone(find(docs, "ServiceMonitor", "union-gpufaultwatcher"))
+        self.assertIsNone(dashboard(docs))
+
+    def test_watcher_alerts_need_alerting(self):
+        self.assertEqual(gpu_alerts(render(WATCHER)), {})
+        self.assertEqual(
+            set(gpu_alerts(render({**WATCHER, **ALERTING}))),
+            {
+                "UnionDPGPUFaultDetected",
+                "UnionDPGPUFaultUnresolved",
+                "UnionDPGPUFaultWatcherUnavailable",
+            },
+        )
+
+    def test_quarantine_adds_the_held_alert_and_the_release_instruction(self):
+        alerts = gpu_alerts(render({**WATCHER, **QUARANTINE, **ALERTING}))
+        self.assertIn("UnionDPGPUQuarantineHeld", alerts)
+        release = "union.ai/gpu-quarantine-release"
+        self.assertIn(release, alerts["UnionDPGPUFaultUnresolved"]["annotations"]["description"])
+        unresolved = gpu_alerts(render({**WATCHER, **ALERTING}))["UnionDPGPUFaultUnresolved"]
+        self.assertNotIn(release, unresolved["annotations"]["description"])
+
+    def test_watcher_scrape_labels_the_node_and_drops_the_watcher_pod(self):
+        docs = render(WATCHER)
+        monitor = find(docs, "ServiceMonitor", "union-gpufaultwatcher")
+        endpoint = monitor["spec"]["endpoints"][0]
+        self.assertTrue(endpoint["honorLabels"])
+        self.assertIn(
+            {"sourceLabels": ["__meta_kubernetes_pod_node_name"], "targetLabel": "node"},
+            endpoint["relabelings"],
+        )
+        self.assertIn({"action": "labeldrop", "regex": "pod"}, endpoint["relabelings"])
+        service = find(docs, "Service", "union-gpufaultwatcher")
+        self.assertEqual(service["spec"]["selector"], monitor["spec"]["selector"]["matchLabels"])
+        self.assertEqual(service["spec"]["ports"][0]["name"], endpoint["port"])
+
+        off = render({**WATCHER, "monitoring": {"serviceMonitors": {"enabled": False}}})
+        self.assertIsNone(find(off, "ServiceMonitor", "union-gpufaultwatcher"))
+
+    def test_operator_metrics_port_is_scraped_for_quarantine(self):
+        docs = render(QUARANTINE)
+        monitor = find(docs, "ServiceMonitor", "union-service-monitor")
+        service = find(docs, "Service", "union-operator")
+        selector = monitor["spec"]["selector"]["matchLabels"]
+        self.assertTrue(selector.items() <= service["metadata"]["labels"].items())
+        ports = {port["name"]: port["port"] for port in service["spec"]["ports"]}
+        self.assertEqual(ports[monitor["spec"]["endpoints"][0]["port"]], 10254)
+
+    def test_dashboard_ships_with_either_feature(self):
+        for values in (WATCHER, QUARANTINE):
+            with self.subTest(values=values):
+                board = dashboard(render(values))
+                self.assertEqual(board["uid"], "union-dp-gpu-faults")
+                namespace = board["templating"]["list"][1]["current"]["value"]
+                self.assertEqual(namespace, "union")
+        self.assertIsNone(
+            dashboard(render({**WATCHER, "monitoring": {"dashboards": {"enabled": False}}}))
+        )
+
+
+def faults(node, values, instance="watcher-a"):
+    labels = f'severity="critical", node="{node}", kind="xid", code="79", instance="{instance}"'
+    return {"series": f"union_gpufaultwatcher_faults_total{{{labels}}}", "values": values}
+
+
+def fired(**labels):
+    return {"exp_labels": {"severity": "warning", **labels}}
+
+
+# Each case is (input series, [(eval time, alert, expected alerts)]), on a one-minute grid.
+PROMTOOL_CASES = [
+    (
+        [
+            faults("new", "_x20 1x20"),
+            faults("steady", "1x60"),
+            faults("bumped", "1x30 2x30"),
+            faults("restarted", "1x20 stale"),
+            faults("restarted", "_x30 1x20", instance="watcher-b"),
+            faults("scrape-gap", "1x20 _x15 1x25"),
+        ],
+        [
+            (
+                "25m",
+                "UnionDPGPUFaultDetected",
+                [fired(node="new", kind="xid", code="79")],
+            ),
+            (
+                "35m",
+                "UnionDPGPUFaultDetected",
+                [
+                    fired(node="bumped", kind="xid", code="79"),
+                    fired(node="restarted", kind="xid", code="79"),
+                ],
+            ),
+            ("45m", "UnionDPGPUFaultDetected", []),
+        ],
+    ),
+    (
+        [
+            {
+                "series": 'kube_node_status_condition{condition="GPUXidCritical", status="true", node="faulted", instance="ksm-a"}',
+                "values": "1x40 stale",
+            },
+            {
+                "series": 'kube_node_status_condition{condition="GPUXidCritical", status="true", node="faulted", instance="ksm-b"}',
+                "values": "_x40 1x40",
+            },
+            {
+                "series": 'kube_node_status_condition{condition="GPUXidCritical", status="true", node="released"}',
+                "values": "1x30 0x50",
+            },
+        ],
+        [
+            ("55m", "UnionDPGPUFaultUnresolved", []),
+            ("65m", "UnionDPGPUFaultUnresolved", [fired(node="faulted")]),
+        ],
+    ),
+    (
+        [
+            {
+                "series": 'kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}',
+                "values": "0x10 1x50",
+            },
+        ],
+        [
+            ("38m", "UnionDPGPUFaultWatcherUnavailable", []),
+            (
+                "45m",
+                "UnionDPGPUFaultWatcherUnavailable",
+                [fired(namespace="union", daemonset="union-gpufaultwatcher")],
+            ),
+        ],
+    ),
+    (
+        [
+            {
+                "series": 'kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}',
+                "values": "0x10 1x5 0x5 1x5 0x40",
+            },
+        ],
+        [("40m", "UnionDPGPUFaultWatcherUnavailable", [])],
+    ),
+    (
+        [
+            {
+                "series": 'union_gpuquarantine_held_nodes{namespace="union", pod="leader"}',
+                "values": "0x10 1x80",
+            },
+            {
+                "series": 'union_gpuquarantine_held_nodes{namespace="union", pod="follower"}',
+                "values": "0x90",
+            },
+        ],
+        [
+            ("65m", "UnionDPGPUQuarantineHeld", []),
+            ("75m", "UnionDPGPUQuarantineHeld", [fired(namespace="union")]),
+        ],
+    ),
+]
+
+
+@unittest.skipUnless(shutil.which(PROMTOOL), "promtool is not installed")
+class GpuAlertRulesTest(unittest.TestCase):
+    def test_alerts_fire_as_documented(self):
+        rules = list(gpu_alerts(render({**WATCHER, **QUARANTINE, **ALERTING})).values())
+        # promtool compares annotations too; these cases check the expressions.
+        for rule in rules:
+            rule.pop("annotations")
+        tests = [
+            {
+                "interval": "1m",
+                "input_series": series,
+                "alert_rule_test": [
+                    {"eval_time": at, "alertname": alert, "exp_alerts": expected}
+                    for at, alert, expected in checks
+                ],
+            }
+            for series, checks in PROMTOOL_CASES
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            rule_file = Path(directory) / "rules.yaml"
+            rule_file.write_text(yaml.safe_dump({"groups": [{"name": "gpu", "rules": rules}]}))
+            test_file = Path(directory) / "tests.yaml"
+            test_file.write_text(yaml.safe_dump({"rule_files": [str(rule_file)], "tests": tests}))
+            result = subprocess.run(
+                [PROMTOOL, "test", "rules", str(test_file)], text=True, capture_output=True
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

@@ -5291,6 +5291,511 @@ data:
     
 
 ---
+# Source: dataplane/templates/monitoring/dashboard-gpu-faults-configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-dashboard-union-dataplane-gpu-faults
+  namespace: union
+  labels:
+    grafana_dashboard: "1"
+    app.kubernetes.io/managed-by: Helm
+data:
+  union-dataplane-gpu-faults.json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "description": "GPU fault handling for the Union dataplane: nodes the operator holds in GPU quarantine, critical GPU faults by node and GPU, and whether every GPU node runs a ready fault watcher. Shipped only when gpuFaultWatcher or config.gpuQuarantine is enabled.",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [
+        {
+          "asDropdown": true,
+          "includeVars": true,
+          "keepTime": true,
+          "tags": [
+            "union",
+            "dataplane"
+          ],
+          "targetBlank": false,
+          "title": "Dataplane Overview",
+          "type": "dashboards"
+        }
+      ],
+      "panels": [
+        {
+          "collapsed": false,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 0
+          },
+          "id": 1,
+          "panels": [],
+          "title": "GPU fault handling",
+          "type": "row"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Nodes carrying the union.ai/gpu-quarantine taint. Only the operator replica holding the quarantine lease reports them, so the panel takes the maximum.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 0,
+            "y": 1
+          },
+          "id": 2,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_quarantined_nodes{namespace=~\"$namespace\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Quarantined GPU nodes",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Quarantined nodes whose GPUXidCritical condition was cleared without the union.ai/gpu-quarantine-release annotation. They stay out of scheduling until released or replaced.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 8,
+            "y": 1
+          },
+          "id": 3,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_held_nodes{namespace=~\"$namespace\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "Held for release",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "GPU nodes the fault watcher DaemonSet should run on that have no ready watcher pod, from kube-state-metrics. Faults on those nodes go unreported.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              },
+              "noValue": "0"
+            }
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 8,
+            "x": 16,
+            "y": 1
+          },
+          "id": 4,
+          "options": {
+            "colorMode": "background",
+            "graphMode": "none",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ]
+            },
+            "textMode": "value"
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_number_unavailable{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "A"
+            }
+          ],
+          "title": "GPU nodes without a ready watcher",
+          "type": "stat"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Quarantined nodes and those of them held for the release annotation.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "decimals": 0,
+              "min": 0
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 5
+          },
+          "id": 5,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_quarantined_nodes{namespace=~\"$namespace\"})",
+              "refId": "A",
+              "legendFormat": "quarantined"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(union_gpuquarantine_held_nodes{namespace=~\"$namespace\"})",
+              "refId": "B",
+              "legendFormat": "held for release"
+            }
+          ],
+          "title": "Quarantined and held nodes",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "GPU nodes the watcher DaemonSet should run on, and how many of them have a ready watcher.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 1,
+                "showPoints": "never"
+              },
+              "decimals": 0,
+              "min": 0
+            }
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 5
+          },
+          "id": 6,
+          "options": {
+            "legend": {
+              "calcs": [
+                "lastNotNull",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom"
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_desired_number_scheduled{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "A",
+              "legendFormat": "GPU nodes"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max(kube_daemonset_status_number_ready{namespace=~\"$namespace\", daemonset=\"union-gpufaultwatcher\"})",
+              "refId": "B",
+              "legendFormat": "ready watchers"
+            }
+          ],
+          "title": "Fault watcher availability",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Each node carrying the quarantine taint, with the fault that put it there.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 13
+          },
+          "id": 7,
+          "options": {
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "max by (node, reason) (union_gpuquarantine_node_quarantined{namespace=~\"$namespace\"})",
+              "refId": "A",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            }
+          ],
+          "title": "Quarantined nodes",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "node": "Node",
+                  "reason": "Fault",
+                  "Value": "Quarantined"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "description": "Critical faults the watcher counted in the selected time range, by node, GPU and code. Each fault counts once however many pods shared the GPU. A series appears with its first fault already counted, which increase() misses, so a series that is new in the range counts in full. The GPU columns stay empty on watcher images that do not label faults by GPU.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 13
+          },
+          "id": 8,
+          "options": {
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "sum by (node, gpu, UUID, code) (\n  (union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} unless union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"} offset $__range)\n  or\n  increase(union_gpufaultwatcher_faults_total{severity=\"critical\", namespace=~\"$namespace\"}[$__range])\n)",
+              "refId": "A",
+              "instant": true,
+              "range": false,
+              "format": "table"
+            }
+          ],
+          "title": "Critical GPU faults in the time range",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "node": "Node",
+                  "gpu": "GPU",
+                  "UUID": "GPU UUID",
+                  "code": "Code",
+                  "Value": "Faults"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "refresh": "1m",
+      "schemaVersion": 39,
+      "tags": [
+        "union",
+        "dataplane",
+        "union-gpu"
+      ],
+      "templating": {
+        "list": [
+          {
+            "current": {},
+            "hide": 0,
+            "includeAll": false,
+            "label": "Data Source",
+            "multi": false,
+            "name": "datasource",
+            "options": [],
+            "query": "prometheus",
+            "refresh": 1,
+            "type": "datasource"
+          },
+          {
+            "allValue": ".*",
+            "current": {
+              "selected": true,
+              "text": "union",
+              "value": "union"
+            },
+            "datasource": {
+              "type": "prometheus",
+              "uid": "${datasource}"
+            },
+            "hide": 0,
+            "includeAll": true,
+            "label": "Namespace",
+            "multi": true,
+            "name": "namespace",
+            "query": {
+              "query": "label_values(kube_pod_info, namespace)",
+              "refId": "namespace"
+            },
+            "refresh": 2,
+            "sort": 1,
+            "type": "query"
+          }
+        ]
+      },
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Union Dataplane: GPU Fault Handling",
+      "uid": "union-dp-gpu-faults",
+      "version": 1
+    }
+    
+
+---
 # Source: dataplane/templates/operator/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -7974,6 +8479,31 @@ spec:
   selector:
     app: webhook
     role: webhook
+---
+# Source: dataplane/templates/gpufaultwatcher/service.yaml
+# For the ServiceMonitor, which scrapes each watcher pod through the Service's
+# endpoints. Headless, since nothing connects to the Service itself.
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  clusterIP: None
+  ports:
+    - name: metrics
+      port: 9096
+      targetPort: metrics
+      protocol: TCP
+  selector:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+
 ---
 # Source: dataplane/templates/imagebuilder/service.yaml
 apiVersion: v1
@@ -10864,6 +11394,970 @@ template:
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
+
+---
+# Source: dataplane/templates/monitoring/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-name-dataplane-dataplane-rules
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  groups:
+    - name: cost_calculations_15s
+      interval: 15s
+      rules:
+        - record: pod_gpu_allocation
+          expr: |
+            sum by (namespace, pod) (DCGM_FI_DEV_GPU_UTIL >= bool 0) * on (namespace, pod) group_left() (max by (namespace, pod) (kube_pod_status_phase{phase=~"Running|Pending"} == 1))
+        - record: execution_info # A join metric to look up execution-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_entity_name, label_execution_id, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        flyte:propeller:all:round:execution_info{domain!="", project!="", workflow_name!="", execution_id!=""}, # filter for workflow/task executions
+                        "label_entity_id", "$1", "execution_id", "(.*)" # join key
+                      ), "label_entity_name", "$1", "workflow_name", "(.*)" # set label_entity_name to the workflow/task name from the workflow_execution_id
+                    ),
+                    "label_execution_id", "$1", "execution_id", "(.*)"
+                  ),
+                  "label_project", "$1", "project", "(.*)" # project
+                ),
+                "label_domain", "$1", "domain", "(.*)" # domain
+              )
+            )
+        - record: app_info # A join metric to look up app-level info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_app_name, label_app_version, label_entity_id)(
+              label_replace(
+                label_replace(
+                  label_replace(
+                    kube_pod_labels{
+                      label_domain!="",
+                      label_project!="",
+                      label_serving_unionai_dev_app_name!="",
+                      label_serving_knative_dev_revision!=""
+                    }, # this filters for apps
+                    "label_app_name", "$1", "label_serving_unionai_dev_app_name", "(.*)" # rename to cleanup
+                  ),
+                  "label_app_version", "$1", "label_serving_knative_dev_revision", "(.*)" # the app_version is equivalent to an execution_id for workflows (lowest level of granularity)
+                ),
+                "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # join key
+              )
+            )
+        - record: workspace_info # A join metric to look up workspace info. Used to disambiguate workflow/task executions, apps, and workspaces.
+          expr: |
+            max by (label_domain, label_project, label_workspace_name, label_entity_id)(
+              label_replace(
+                label_replace(
+                  kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # filter for workspaces
+                  "label_entity_id", "$1", "label_node_id", "(.*)" # join key
+                ), "label_workspace_name", "$1", "label_node_id", "(.*)" # set label_workspace_name to the workspace name from the kube_pod_labels
+              )
+            )
+        - record: entity_id:mem_usage_bytes_total_per_node:sum # Allocated memory (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # aggregate up to entity
+              # First, calculate the allocated memory for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the memory working set) exceeds requested memory
+                (
+                  sum by (namespace, pod) (
+                    container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where memory requests are <= consumed memory
+                  kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="memory"} # needed to add node!="" to dedupe
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:cpu_usage_per_node:sum # Allocated cpu (max(requested, consumed)) aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, calculate the allocated cpu for each pod
+              max by (namespace, pod) ( # this is the case where consumed (the cpu usage seconds total) exceeds requested cpu
+                (
+                  sum by (namespace, pod) (
+                    irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+                  )
+                  > sum by (namespace, pod) (
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                  )
+                )
+                or sum by (namespace, pod) ( # this is the case where cpu requests are <= consumed cpu
+                    kube_pod_container_resource_requests{namespace!="", pod!="", node!="", resource="cpu"}
+                )
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:gpu_usage_per_node:sum # Allocated gpu aggregated per node and entity, where entity is either a task/workflow execution or an app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+              # Now join in node identifiers which are used for subsequent overhead calculations
+              * on (namespace, pod) group_left(node) (
+                max by (namespace, pod, node) (kube_pod_info{node!=""}) # needed to add node!="" to dedupe
+              )
+            )
+        - record: entity_id:used_mem_bytes:sum # the sum of used memory across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity
+              # First, calculate the used memory for each pod
+              sum by (namespace, pod) (
+                container_memory_working_set_bytes{namespace!="",pod!="",image!=""}
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but we do not want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_mem_bytes:sum # the sum of allocated memory across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:mem_usage_bytes_total_per_node:sum
+            )
+        - record: entity_id:used_cpu:sum # the sum of used cpu across all containers in an entity (numerator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) (
+              sum by (namespace, pod) (
+                irate(container_cpu_usage_seconds_total{namespace!="",pod!="",image!=""}[5m])
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:allocated_cpu:sum # the sum of allocated cpu across all containers in an entity (denominator for aggregate utilization calculations)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # aggregate up to entity (remove node)
+              entity_id:cpu_usage_per_node:sum
+            )
+        - record: entity_id:sm_occupancy:avg # the simple average of SM occupancy (a good generic measure of GPU utilization) per entity
+          expr: |
+            avg by (label_entity_type, label_domain, label_project, label_entity_id) (
+              # First, grab the SM occupancy for each pod
+              max by (namespace, pod) (
+                DCGM_FI_PROF_SM_OCCUPANCY # SM occupancy is a good proxy for actual GPU usage
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:gpu_count:sum # the count of running gpu pods per entity (need this to weight the gpu utilization when aggregating upwards - i.e. project-level)
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, node) (
+              # First, grab the allocated gpu for each pod (which is always either 1 or zero, since k8s can't split gpus the way it can with cpu/memory)
+              max by (namespace, pod) (
+                pod_gpu_allocation
+              )
+              # Next, add labels to each pod that contain the relevant entity information (i.e. workflow/task or app). Note that this is repetitive but I didn't want to double the number of pod-level metrics we save
+              * on (namespace, pod) group_left(label_entity_type, label_domain, label_project, label_entity_id) (
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workflow/task labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_workflow_name!="", label_execution_id!="", label_workspace=""}, # this filters for workflow and task executions only (no apps)
+                          "label_entity_type", "workflow", "", "" # set label_entity_type to "workflow" (note that both workflow and single task executions will say "workflow")
+                        ),
+                        "label_entity_id", "$1", "label_execution_id", "(.*)" # set label_entity_id to the execution id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds app labels
+                  label_replace(
+                    label_replace(
+                      kube_pod_labels{
+                        label_domain!="",
+                        label_project!="",
+                        label_serving_unionai_dev_app_name!="",
+                        label_serving_knative_dev_revision!=""
+                        }, # this filters for apps only
+                      "label_entity_type", "app", "", "" # set label_entity_type to "app"
+                    ),
+                    "label_entity_id", "$1", "label_serving_knative_dev_revision", "(.*)" # set label_entity_id to the app version (so we have label_entity_id with both execution ids and app versions)
+                  )
+                )
+                or
+                max by (label_entity_type, label_domain, label_project, label_entity_id, namespace, pod)( # adds workspace labels
+                  label_replace(
+                    label_replace(
+                      label_replace(
+                        label_replace(
+                          kube_pod_labels{label_domain!="", label_project!="", label_node_id!="", label_workspace="true"}, # this filters for workspace executions only (no tasks, workflows, or apps)
+                          "label_entity_type", "workspace", "", "" # set label_entity_type to "workspace"
+                        ),
+                        "label_entity_id", "$1", "label_node_id", "(.*)" # set label_entity_id to the label_node_id (join key)
+                      ),
+                      "label_domain", "$1", "label_domain", "(.*)"
+                    ),
+                    "label_project", "$1", "label_project", "(.*)"
+                  )
+                )
+              )
+              # Then filter for pods only in the "Running" or "Pending" phase
+              * on (namespace, pod) group_left() (
+                max by (namespace, pod) (
+                  kube_pod_status_phase{phase=~"Running|Pending"} == 1
+                )
+              )
+            )
+        - record: entity_id:weighted_sm_occupancy:sum # product of SM occupancy and allocated GPU count (something like "used memory", numerator of weighted calcs)
+          expr: |
+            entity_id:sm_occupancy:avg
+            * on (label_domain, label_project, label_entity_type, label_entity_id) entity_id:gpu_count:sum
+        - record: entity_id:allocated_mem_cost:sum # Allocated cost of memory for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type) (
+              entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+              * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cpu_cost:sum # Allocated cost of cpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:cpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_gpu_cost:sum # Allocated cost of gpu for each workflow/task execution and app.
+          expr: |
+            sum by (label_entity_type, label_domain, label_project, label_entity_id, type)(
+              entity_id:gpu_usage_per_node:sum
+              * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+            )
+        - record: entity_id:allocated_cost:sum # Allocated cost of memory, cpu, and gpu for each workflow/task execution and app.
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_domain, label_project, label_entity_id) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                entity_id:allocated_mem_cost:sum
+                or
+                entity_id:allocated_cpu_cost:sum
+                or
+                entity_id:allocated_gpu_cost:sum
+              ),
+              "type", "allocated", "", "" # add type info
+            )
+        - record: entity_id:overhead_cost:sum # The amount of overhead costs (node costs that we can't allocate with container resources) to allocate to each entity (workflow/task execution or app)
+          expr: |
+            label_replace(
+              sum by (label_entity_type, label_entity_id, label_domain, label_project)( # Aggregate the per-node metrics up to workflow/task execution or app (label_entity_id)
+                # Start with each execution's and app's allocated cost per node
+                sum by (label_entity_type, label_domain, label_project, label_entity_id, node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                  entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                  * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:cpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  or
+                  entity_id:gpu_usage_per_node:sum
+                  * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                )
+                # Then divide out the total allocated cost per node to get the proportion of allocated cost associated with each entity
+                / on (node) group_left()(
+                  sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                    entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                    * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:cpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    or
+                    entity_id:gpu_usage_per_node:sum
+                    * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                  )
+                  > 0 # need to avoid dividing by zero, or gaps in the data can cause NaNs to proliferate, borking all charts
+                )
+                # Then multiply by the overhead cost per node
+                * on (node) group_left() (
+                  # To calculate overhead, start with the true cost of running each node
+                  avg by (node)(kube_node_labels{label_flyte_org_node_role="worker"}) # only look at worker nodes
+                  * on (node) max by (node) (
+                    node_total_hourly_cost{instance_type!=""} # sometimes, the instance_type can be null, causing an unlabeled label to show up in the Compute Costs dashboard charts
+                  ) * (15 / 3600) # convert hourly cost to 15-secondly cost
+                  # Then subtract out the total allocated cost on each node
+                  - on (node) group_left()(
+                    sum by (node) ( # for the sum to work, the labels need to be different on each "or" element (type label)
+                      entity_id:mem_usage_bytes_total_per_node:sum / (1024 * 1024 * 1024) # convert bytes to GB
+                      * on (node) group_left(type) label_replace(avg by (node) (node_ram_hourly_cost * (15 / 3600)), "type", "mem", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:cpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_cpu_hourly_cost * (15 / 3600)), "type", "cpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                      or
+                      entity_id:gpu_usage_per_node:sum
+                      * on (node) group_left(type) label_replace(avg by (node) (node_gpu_hourly_cost * (15 / 3600)), "type", "gpu", "", "") # convert hourly cost to 15-secondly cost and add type
+                    )
+                  )
+                )
+              ),
+              "type", "overhead", "", "" # add type info
+            )
+        - record: entity_id:total_cost:sum # Total cost of each entity (workflow/task execution or app), including allocated (from container resources) and overhead (proportion of unallocated node costs)
+          expr: |
+            label_replace(
+              sum by (label_domain, label_project, label_entity_id, label_entity_type) (
+                entity_id:allocated_cost:sum
+                or
+                entity_id:overhead_cost:sum
+              ),
+              "type", "total", "", "" # add type info
+            )
+        - record: node:total_cost:sum # Total cost of all nodes
+          expr: |
+            sum (
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left() node_total_hourly_cost{instance_type!=""} * (15 / 3600) # convert hourly cost to 15-secondly cost
+            )
+        - record: node_type:total_cost:sum # Total cost of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node)(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}) # only look at worker nodes
+              * on (node) group_left(node_type) label_replace(node_total_hourly_cost{instance_type!=""}, "node_type", "$1", "instance_type", "(.*)") * (15 / 3600) # convert hourly cost to 15-secondly cost and rename label
+            )
+        - record: node_type:uptime_hours:sum # Total uptime of nodes grouped by node type
+          expr: |
+            sum by (node_type)(
+              avg by (node, node_type)( # dedupe
+                label_replace(kube_node_labels{label_flyte_org_node_role="worker", label_node_kubernetes_io_instance_type!=""}, "node_type", "$1", "label_node_kubernetes_io_instance_type", "(.*)") # relabel
+              )
+            ) * (15 / 3600) # convert to number of hours per 15-second observation      # Aggregate the above into visible metrics
+    - name: cost_rollup_15m
+      interval: 15m
+      rules:
+        - record: execution_info15m
+          expr: |
+            max_over_time(execution_info[15m:15s])
+        - record: app_info15m
+          expr: |
+            max_over_time(app_info[15m:15s])
+        - record: workspace_info15m
+          expr: |
+            max_over_time(workspace_info[15m:15s])
+        - record: entity_id:allocated_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_bytes:sum[15m:15s])
+        - record: entity_id:used_mem_bytes:sum15m
+          expr: |
+            sum_over_time(entity_id:used_mem_bytes:sum[15m:15s])
+        - record: entity_id:allocated_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu:sum[15m:15s])
+        - record: entity_id:used_cpu:sum15m
+          expr: |
+            sum_over_time(entity_id:used_cpu:sum[15m:15s])
+        - record: entity_id:weighted_sm_occupancy:sum15m
+          expr: |
+            sum_over_time(entity_id:weighted_sm_occupancy:sum[15m:15s])
+        - record: entity_id:gpu_count:sum15m
+          expr: |
+            sum_over_time(entity_id:gpu_count:sum[15m:15s])
+        - record: entity_id:allocated_mem_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_mem_cost:sum[15m:15s])
+        - record: entity_id:allocated_cpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_gpu_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_gpu_cost:sum[15m:15s])
+        - record: entity_id:allocated_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:allocated_cost:sum[15m:15s])
+        - record: entity_id:overhead_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:overhead_cost:sum[15m:15s])
+        - record: entity_id:total_cost:sum15m
+          expr: |
+            sum_over_time(entity_id:total_cost:sum[15m:15s])
+        - record: node:total_cost:sum15m
+          expr: |
+            sum_over_time(node:total_cost:sum[15m:15s])
+        - record: node_type:total_cost:sum15m
+          expr: |
+            sum_over_time(node_type:total_cost:sum[15m:15s])
+        - record: node_type:uptime_hours:sum15m
+          expr: |
+            sum_over_time(node_type:uptime_hours:sum[15m:15s])
+---
+# Source: dataplane/templates/monitoring/prometheusrule.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: release-name-dataplane-monitoring-rules
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  groups:
+    # --- Recording rules (always active) ---
+    - name: union_dataplane_recording
+      interval: 30s
+      rules:
+        - record: union:dp:service_availability
+          expr: |
+            min by (namespace, deployment) (
+              kube_deployment_status_replicas_available{namespace="union"}
+              / kube_deployment_spec_replicas{namespace="union"}
+            )
+
+        - record: union:dp:propeller:round_latency_p99
+          expr: |
+            flyte:propeller:all:round:round_time_unlabeled_ms{
+              namespace="union",
+              quantile="0.99"
+            }
+
+        - record: union:dp:propeller:active_workflows
+          expr: |
+            sum(flyte:propeller:all:execstats:active_workflow_executions{
+              namespace="union"
+            })
+
+        - record: union:dp:propeller:queue_depth
+          expr: |
+            sum(flyte:propeller:all:main_depth{namespace="union"})
+
+        - record: union:dp:operator:work_queue_failed_rate
+          expr: |
+            rate(union_operator:work_queue:operations_failed{
+              namespace="union"
+            }[5m])
+
+        - record: union:dp:leaseworker:active_actions
+          expr: |
+            leaseworker:active_run_leases{namespace="union"}
+
+        - record: union:dp:pods_unschedulable:sum
+          expr: |
+            sum by (namespace) (
+              kube_pod_status_unschedulable
+            )
+    # --- Operational alerts (opt-in) ---
+    # Basic health checks only. For SLO-based alerts, see monitoring.slos.
+    - name: union_dataplane_alerts
+      rules:
+        - alert: UnionDPServiceDown
+          expr: |
+            kube_deployment_status_replicas_available{namespace="union"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.deployment }} has 0 available replicas"
+
+        - alert: UnionDPHighRestartRate
+          expr: |
+            increase(
+              kube_pod_container_status_restarts_total{namespace="union"}[1h]
+            ) > 5
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} restarting frequently"
+
+        - alert: UnionDPPodsUnschedulable
+          expr: |
+            sum by (namespace) (kube_pod_status_unschedulable) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.namespace }} has pods that cannot be scheduled (insufficient capacity or taints) for 15m"
+    # --- GPU fault handling alerts (with gpuFaultWatcher and config.gpuQuarantine) ---
+    - name: union_dataplane_gpu_alerts
+      rules:
+        # A series appears with its first fault already counted, which increase() misses, so a series absent from the hour before the window counts too.
+        - alert: UnionDPGPUFaultDetected
+          expr: |
+            count by (node, kind, code) (
+              (
+                union_gpufaultwatcher_faults_total{severity="critical"}
+                unless last_over_time(union_gpufaultwatcher_faults_total{severity="critical"}[1h] offset 10m)
+              )
+              or
+              increase(union_gpufaultwatcher_faults_total{severity="critical"}[10m]) > 0
+            )
+          labels:
+            severity: warning
+          annotations:
+            summary: "Critical GPU fault {{ $labels.kind }} {{ $labels.code }} on node {{ $labels.node }}"
+            description: >-
+              The GPU fault watcher saw a critical GPU fault ({{ $labels.kind }} {{ $labels.code }})
+              on node {{ $labels.node }} in the last 10 minutes and set the node's
+              GPUXidCritical condition. Runs on the faulting GPU show the fault in Union.
+              GPU quarantine takes the node out of scheduling unless it is in dry run or at
+              its cap. Check the GPU, then release the node with the
+              union.ai/gpu-quarantine-release annotation, or replace it.
+
+        - alert: UnionDPGPUFaultUnresolved
+          expr: |
+            max by (node) (
+              kube_node_status_condition{condition="GPUXidCritical", status="true"}
+            ) == 1
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "GPU fault on node {{ $labels.node }} unresolved for 1h"
+            description: >-
+              A GPU on node {{ $labels.node }} took a critical fault an hour ago
+              (see the node's GPUXidCritical condition and events), and the node has been
+              neither released nor replaced.
+              A quarantined node's GPUs sit idle; one that is not quarantined (dry run, or
+              the cap reached) still takes work. Check the GPU, then release the node with
+              kubectl annotate node {{ $labels.node }} union.ai/gpu-quarantine-release=<your name or ticket>,
+              or replace it.
+
+        # A new GPU node counts as unavailable until its watcher is ready, so this fires
+        # only when every sample for 30m had a GPU node without a ready watcher.
+        - alert: UnionDPGPUFaultWatcherUnavailable
+          expr: |
+            max by (namespace, daemonset) (
+              min_over_time(kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}[25m])
+            ) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} GPU node(s) without a ready GPU fault watcher for 30m"
+            description: >-
+              GPU faults on these nodes are not reported and do not set GPUXidCritical.
+              The watcher requests no resources and never preempts, so the usual causes are
+              eviction under memory pressure, a node at its pod limit leaving the pod
+              Pending, or a crash loop. Find the node with kubectl get pods -n
+              union -o wide -l app.kubernetes.io/name=gpufaultwatcher.
+
+        - alert: UnionDPGPUQuarantineHeld
+          expr: |
+            max by (namespace) (union_gpuquarantine_held_nodes) > 0
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} GPU node(s) held in quarantine for 1h"
+            description: >-
+              These nodes carry the union.ai/gpu-quarantine taint, but their GPUXidCritical
+              condition was cleared without the union.ai/gpu-quarantine-release annotation,
+              so the operator keeps them out of scheduling. They are idle capacity and count
+              against config.gpuQuarantine.maxQuarantinedNodes. Find them through their
+              GPUQuarantineReleaseRequired events, check each GPU, then release the node
+              with the union.ai/gpu-quarantine-release annotation, or replace it.
+
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cost
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: opencost
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: http
+      interval: 1m
+      path: /metrics
+      honorLabels: true
+      metricRelabelings:
+        - sourceLabels: [ "__name__" ]
+          separator: ";"
+          regex: "kube_node_labels|kube_pod_labels|node_total_hourly_cost|node_ram_hourly_cost|node_cpu_hourly_cost|node_gpu_hourly_cost"
+          action: keep
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-service-monitor
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      platform.union.ai/prometheus-group: "union-services"
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: debug
+      interval: 1m
+      path: /metrics
+      honorLabels: true
+---
+# Source: dataplane/templates/monitoring/servicemonitor.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: union-gpufaultwatcher
+  namespace: union
+  labels:
+    release: release-name
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gpufaultwatcher
+      app.kubernetes.io/instance: release-name
+  namespaceSelector:
+    matchNames:
+      - "union"
+  endpoints:
+    - port: metrics
+      interval: 1m
+      path: /metrics
+      # Faults are counted per node, so the node becomes a label and the watcher's own
+      # pod name is dropped. honorLabels keeps the faulting pod's namespace and pod on
+      # union_gpufaultwatcher_pod_faults_total.
+      honorLabels: true
+      relabelings:
+        - sourceLabels: [__meta_kubernetes_pod_node_name]
+          targetLabel: node
+        - action: labeldrop
+          regex: pod
 
 ---
 # Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
