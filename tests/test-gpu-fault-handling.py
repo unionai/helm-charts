@@ -122,6 +122,10 @@ class GpuFaultWatcherTest(unittest.TestCase):
         )
         self.assertEqual(container["args"][0], "gpufaultwatcher")
         self.assertEqual(container["resources"]["requests"], {"cpu": "0", "memory": "0"})
+        self.assertEqual(
+            daemonset["spec"]["updateStrategy"],
+            {"type": "RollingUpdate", "rollingUpdate": {"maxUnavailable": "25%"}},
+        )
         self.assertTrue(pod["hostPID"])
         terms = pod["affinity"]["nodeAffinity"]["requiredDuringSchedulingIgnoredDuringExecution"]
         keys = {term["matchExpressions"][0]["key"] for term in terms["nodeSelectorTerms"]}
@@ -303,25 +307,39 @@ class GpuMonitoringTest(unittest.TestCase):
         )
 
 
-def faults(node, values, instance="watcher-a"):
-    labels = f'severity="critical", node="{node}", kind="xid", code="79", instance="{instance}"'
-    return {"series": f"union_gpufaultwatcher_faults_total{{{labels}}}", "values": values}
+def watcher_series(metric, node, values, gpu="0", instance="watcher-a"):
+    labels = f'severity="critical", node="{node}", kind="xid", code="79", gpu="{gpu}", instance="{instance}"'
+    return {"series": f"{metric}{{{labels}}}", "values": values}
+
+
+def faults(node, values, **labels):
+    return watcher_series("union_gpufaultwatcher_faults_total", node, values, **labels)
+
+
+def last_fault(node, values, **labels):
+    return watcher_series(
+        "union_gpufaultwatcher_last_fault_timestamp_seconds", node, values, **labels
+    )
 
 
 def fired(**labels):
     return {"exp_labels": {"severity": "warning", **labels}}
 
 
+DAY = 86400
+
 # Each case is (input series, [(eval time, alert, expected alerts)]), on a one-minute grid.
 PROMTOOL_CASES = [
+    # The last fault gauge holds the fault's Unix time; the test clock starts at 0.
     (
         [
-            faults("new", "_x20 1x20"),
-            faults("steady", "1x60"),
-            faults("bumped", "1x30 2x30"),
-            faults("restarted", "1x20 stale"),
-            faults("restarted", "_x30 1x20", instance="watcher-b"),
-            faults("scrape-gap", "1x20 _x15 1x25"),
+            last_fault("new", "_x20 1200x20"),
+            last_fault("repeat", f"{-DAY}x30 1800x30"),
+            # A new fault on GPU 1 while GPU 0 still reports one from yesterday.
+            last_fault("second-gpu", f"{-DAY}x60"),
+            last_fault("second-gpu", "_x30 1800x30", gpu="1"),
+            # Yesterday's fault reappears after a scrape gap without moving.
+            last_fault("scrape-gap", f"{-DAY}x20 _x15 {-DAY}x25"),
         ],
         [
             (
@@ -333,11 +351,26 @@ PROMTOOL_CASES = [
                 "35m",
                 "UnionDPGPUFaultDetected",
                 [
-                    fired(node="bumped", kind="xid", code="79"),
-                    fired(node="restarted", kind="xid", code="79"),
+                    fired(node="repeat", kind="xid", code="79"),
+                    fired(node="second-gpu", kind="xid", code="79"),
                 ],
             ),
             ("45m", "UnionDPGPUFaultDetected", []),
+        ],
+    ),
+    # Prometheus restarted with empty storage while the watcher kept a fault from
+    # yesterday: the counter looks new, the gauge has not moved, and nothing fires.
+    (
+        [faults("old", "1x30"), last_fault("old", f"{-DAY}x30")],
+        [("2m", "UnionDPGPUFaultDetected", []), ("20m", "UnionDPGPUFaultDetected", [])],
+    ),
+    # The watcher restarts in place at 20m, so its counter and gauge go stale, and the
+    # same GPU faults again at 26m with the same labels.
+    (
+        [faults("node", "1x20 stale _x5 1x20"), last_fault("node", f"{-DAY}x20 stale _x5 1560x20")],
+        [
+            ("24m", "UnionDPGPUFaultDetected", []),
+            ("28m", "UnionDPGPUFaultDetected", [fired(node="node", kind="xid", code="79")]),
         ],
     ),
     (

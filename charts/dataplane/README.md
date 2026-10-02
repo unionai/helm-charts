@@ -481,9 +481,11 @@ chart's current `appVersion`. Two parts need a newer image:
 - Quarantine needs an operator image that includes the controller. The operator
   rejects config keys it does not know, so a 2026.9.7 operator fails to start with
   `config.gpuQuarantine.enabled`.
-- The `UUID` and `gpu` labels on `union_gpufaultwatcher_faults_total`, and the per-pod
-  `union_gpufaultwatcher_pod_faults_total`, come with a newer watcher. Until then the
-  dashboard lists faults by node with the GPU columns empty.
+- The `UUID` and `gpu` labels on `union_gpufaultwatcher_faults_total`, the per-pod
+  `union_gpufaultwatcher_pod_faults_total`, and
+  `union_gpufaultwatcher_last_fault_timestamp_seconds` come with a newer watcher. Until
+  then the dashboard lists faults by node with the GPU columns empty, and
+  `UnionDPGPUFaultDetected` does not fire.
 
 ### Alerts
 
@@ -492,14 +494,14 @@ whichever of the two features are on:
 
 | Alert | Fires when | What to do |
 | --- | --- | --- |
-| `UnionDPGPUFaultDetected` | The watcher counted a critical GPU fault on a node in the last 10 minutes. | Check the GPU. With quarantine enforcing, the node is already out of scheduling. |
+| `UnionDPGPUFaultDetected` | The watcher recorded a critical GPU fault on a node in the last 10 minutes. | Check the GPU. With quarantine enforcing, the node is already out of scheduling. |
 | `UnionDPGPUFaultUnresolved` | A node's `GPUXidCritical` condition has been true for an hour, so the node was neither released nor replaced. | Check the GPU, then release the node or replace it. Without quarantine, replace it: nothing keeps work off the node. |
 | `UnionDPGPUQuarantineHeld` | A node has stayed quarantined for an hour after its condition was cleared without the release annotation. | Check the GPU, then release the node or replace it. |
 | `UnionDPGPUFaultWatcherUnavailable` | For 30 minutes, some GPU node had no ready watcher, so faults there go unreported. | The watcher reserves no resources and never preempts, so look for an eviction under memory pressure, a node at its pod limit, or a crash loop: `kubectl get pods -n <namespace> -o wide -l app.kubernetes.io/name=gpufaultwatcher`. |
 
 The alerts read `kube_node_status_condition` and
 `kube_daemonset_status_number_unavailable` from kube-state-metrics,
-`union_gpufaultwatcher_faults_total` from the watcher and
+`union_gpufaultwatcher_last_fault_timestamp_seconds` from the watcher and
 `union_gpuquarantine_held_nodes` from the operator. With
 `monitoring.serviceMonitors.enabled`, the `union-gpufaultwatcher` ServiceMonitor
 scrapes the watcher and adds the node it runs on as `node`, and `union-service-monitor`
@@ -539,12 +541,13 @@ condition, since the watcher never clears it.
 | `union.ai/gpu-fault-history` annotation | Node metadata | The node's last 10 faults, newest first, as JSON, while `config.gpuQuarantine.faultHistory.enabled` is on. |
 | `[gpu-health]` Warning events | Pods that held the GPU | Name the GPU and the fault code. Repeats of the same fault fold into one event with a count. |
 | `GPUQuarantine*` events | Nodes | What quarantine did or would do, such as `GPUQuarantined`, `GPUQuarantineDryRun`, `GPUQuarantineCapReached`, `GPUQuarantineReleased` and `GPUQuarantineReleaseRequired`. |
-| Watcher metrics | `union-gpufaultwatcher` | `union_gpufaultwatcher_faults_total{kind, code, severity, source, node}`, one count per fault however many pods shared the GPU. |
+| Watcher metrics | `union-gpufaultwatcher` | `union_gpufaultwatcher_faults_total{kind, code, severity, source, node}`, one count per fault however many pods shared the GPU, and `union_gpufaultwatcher_last_fault_timestamp_seconds` with the same labels, the Unix time of the latest such fault. |
 | Quarantine metrics | Operator | `union_gpuquarantine_quarantined_nodes`, `union_gpuquarantine_held_nodes`, `union_gpuquarantine_node_quarantined{node, reason}`, `union_gpuquarantine_releases_total{node}` and `union_gpuquarantine_actions_total{action, result}`. Only the operator replica leading quarantine sets them, and the others report the node counts as 0, so aggregate those with `max`. |
 
-A `union_gpufaultwatcher_faults_total` series appears with its first fault already
-counted, so `increase()` alone misses that fault. Count a series that is new in your
-window as well, as `UnionDPGPUFaultDetected` does.
+To alert on new faults yourself, compare `union_gpufaultwatcher_last_fault_timestamp_seconds`
+with `time()` as `UnionDPGPUFaultDetected` does. The counter is a poor signal for this: a
+series appears with its first fault already counted, which `increase()` misses, and every
+series looks new after Prometheus restarts with empty storage.
 
 ---
 

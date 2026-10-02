@@ -8746,6 +8746,10 @@ spec:
     matchLabels:
       app.kubernetes.io/name: gpufaultwatcher
       app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
   template:
     metadata:
       annotations:
@@ -12204,17 +12208,14 @@ spec:
     # --- GPU fault handling alerts (with gpuFaultWatcher and config.gpuQuarantine) ---
     - name: union_dataplane_gpu_alerts
       rules:
-        # A series appears with its first fault already counted, which increase() misses, so a series absent from the hour before the window counts too.
+        # Freshness comes from the fault's own time, so old faults stay quiet after Prometheus
+        # restarts with empty storage, and a repeat fault alerts after the watcher restarts.
+        # The newest fault per group counts, so an old fault on another GPU cannot hide it.
         - alert: UnionDPGPUFaultDetected
           expr: |
-            count by (node, kind, code) (
-              (
-                union_gpufaultwatcher_faults_total{severity="critical"}
-                unless last_over_time(union_gpufaultwatcher_faults_total{severity="critical"}[1h] offset 10m)
-              )
-              or
-              increase(union_gpufaultwatcher_faults_total{severity="critical"}[10m]) > 0
-            )
+            time() - max by (node, kind, code) (
+              union_gpufaultwatcher_last_fault_timestamp_seconds{severity="critical"}
+            ) < 600
           labels:
             severity: warning
           annotations:
