@@ -1,5 +1,24 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### nodeobserver: config is emitted under `nodeReadiness:` as well as at the root
+
+No values change and nothing to do. `union-nodeobserver`'s ConfigMap now carries
+`nodeobserver.config` twice — once under a `nodeReadiness:` section and once at
+the document root, as before.
+
+The reason is that the nodeobserver binary is being folded into a single
+`nodeagent` binary (cloud#18249), which loads config through flytestdlib and so
+reads named sections rather than root keys. Each binary ignores the other's
+copy, so a node is configured correctly under either image, and this chart's
+version and the dataplane image can roll in any order. Without the section, a
+routine image bump would have left the new binary reading an empty
+`criticalDaemonSets` — which removes the node's startup taint immediately while
+the pod goes on reporting Ready.
+
+The root copy can be dropped once no dataplane runs a pre-consolidation image.
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`.
