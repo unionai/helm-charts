@@ -196,6 +196,8 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "2026.9.7"
     app.kubernetes.io/managed-by: Helm
+  annotations:
+    customer.example.com/role-arn: arn:aws:iam::<account-id>:role/adminflyterole
 ---
 # Source: controlplane/templates/serviceaccount.yaml
 apiVersion: v1
@@ -2413,6 +2415,16 @@ data:
             EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
               sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
               on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+      trackedRuns:
+        enabled: true
+        storage:
+          container: ''
+          stow:
+            config:
+              auth_type: iam
+              region: ''
+            kind: s3
+          type: s3
     logger:
       formatter:
         type: json
@@ -2528,6 +2540,8 @@ data:
         rejectLegacySDKVersions: true
         useActionsServiceForOrgs:
         - ""
+      trackedRuns:
+        enabled: true
     logger:
       formatter:
         type: json
@@ -13414,7 +13428,7 @@ spec:
           protocol: TCP
         env:
           - name: SELF_HOSTED_FEATURE_FLAGS
-            value: '{"artifacts-enabled":true,"factories-enabled":true}'
+            value: '{"artifacts-enabled":true,"factories-enabled":true,"localruns":true}'
         resources:
           limits:
             cpu: 500m
@@ -16304,6 +16318,20 @@ spec:
                 name: executions
                 port:
                   name: grpc
+          - path: /flyteidl2.workflow.TrackedRunService
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  name: grpc
+          - path: /flyteidl2.workflow.TrackedRunService/*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  name: grpc
           - path: /flyteidl2.workflow.TranslatorService
             pathType: ImplementationSpecific
             backend:
@@ -16772,6 +16800,13 @@ spec:
                 port:
                   name: grpc
           - path: /flyteidl2.workflow.RunService/Watch*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: executions
+                port:
+                  name: grpc
+          - path: /flyteidl2.workflow.TrackedRunService/Watch*
             pathType: ImplementationSpecific
             backend:
               service:
