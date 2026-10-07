@@ -38,8 +38,9 @@ database:
   port: 5432
   name: union
   user: union
-  # -- disable, require, verify-ca or verify-full.
-  sslMode: disable
+  # -- disable, require, verify-ca or verify-full. Use disable only for a
+  # database without TLS on a network you trust.
+  sslMode: require
   # -- Password, stored in a Secret this chart creates. Prefer existingSecret.
   password: ""
   # -- Existing Secret holding the password.
@@ -78,6 +79,15 @@ identity:
   # Cf-Access-Jwt-Assertion); its sub/email/name/groups claims fill in.
   claimsJWTHeaders: []
   anonymousSubject: anonymous
+  # -- A secret the proxy adds to every request it forwards (e.g. oauth2-proxy
+  # --set-xauthrequest plus a static header, or an ingress
+  # configuration-snippet). When set, identity headers on a request without it
+  # are ignored, so nothing that reaches the Service around the proxy can claim
+  # to be a user. Recommended, especially with authz on.
+  proxySecret:
+    existingSecret: ""
+    key: secret
+    header: X-Onebox-Proxy-Secret
   # -- Where /logout sends the browser, e.g. the proxy's sign-out URL.
   logoutRedirect: /v2
 
@@ -115,6 +125,17 @@ internalSecret:
 
 # -- Projects created on first start.
 seedProjects: [default]
+
+# -- Restrict who can reach onebox. proxyFrom lists the NetworkPolicy peers
+# of the authenticating proxy (podSelector / namespaceSelector).
+networkPolicy:
+  enabled: false
+  proxyFrom: []
+
+rbac:
+  # -- Extra Role rules, for plugin task types (Spark, Ray, ...) enabled in
+  # extraConfig, e.g. {apiGroups: [ray.io], resources: [rayjobs], verbs: [...]}.
+  extraRules: []
 
 service:
   type: ClusterIP

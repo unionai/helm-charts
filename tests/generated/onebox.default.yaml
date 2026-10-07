@@ -148,8 +148,8 @@ subjects:
 
 ---
 # Source: onebox/templates/rbac.yaml
-# onebox runs task pods, and keeps their secrets and plugin objects, in its
-# own namespace; it needs nothing outside it.
+# onebox runs task pods and keeps their secrets in its own namespace; it needs
+# nothing outside it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -162,9 +162,21 @@ metadata:
     app.kubernetes.io/version: "2026.9.7"
     app.kubernetes.io/managed-by: Helm
 rules:
-  - apiGroups: ["*"]
-    resources: ["*"]
+  # Task pods, their logs, and the pod templates tasks may name.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, serviceaccounts]
+    verbs: [get, list, watch]
+  # Secrets: the secret store, image pull secrets, the webhook's certificate.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Task events: read for the console, recorded by the worker.
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
 ---
 # Source: onebox/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1

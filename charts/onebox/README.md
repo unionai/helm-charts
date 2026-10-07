@@ -71,6 +71,21 @@ request without them is `anonymous`. onebox drops any identity header a client
 sets itself, but it trusts these. **Only expose the Service through the
 proxy.**
 
+Make the trust explicit:
+
+- **Shared secret** (recommended): have the proxy add a static header, set
+  `identity.proxySecret.existingSecret` (key `secret`, header
+  `X-Onebox-Proxy-Secret` by default). Identity headers on requests without
+  it are ignored.
+- **NetworkPolicy**: `networkPolicy.enabled=true` with
+  `networkPolicy.proxyFrom` naming the proxy's pods/namespace. The API port
+  then only accepts the proxy; task pods keep the tasks and fast task ports.
+- `identity.claimsJWTHeaders` are decoded, not verified. Use them only
+  together with one of the above.
+
+The in-cluster tasks port (443) never trusts proxy headers: only tokens
+issued to onebox's built-in apps identify a caller there.
+
 With oauth2-proxy, run it with `--set-xauthrequest` and
 `--pass-user-headers`, upstream `http://onebox.<namespace>.svc`, and set
 `identity.logoutRedirect=/oauth2/sign_out`.
@@ -98,7 +113,11 @@ On:
 - users get `defaultRole` the first time they are seen; `adminUsers` are admins;
 - task pods authenticate as a built-in app (role `authz.tasksRole`) with a key
   injected by the pod webhook, so tasks can launch and track child actions.
-  They reach onebox over an in-cluster TLS port (443, self-signed).
+  They reach onebox over an in-cluster TLS port (443, self-signed, not
+  verified by the pods). The SDK fetches its token from the plaintext
+  in-cluster address: it verifies the token endpoint's certificate even when
+  told not to. Both stay inside the cluster; `networkPolicy` limits who can
+  reach them.
 
 ## GitOps (ArgoCD)
 

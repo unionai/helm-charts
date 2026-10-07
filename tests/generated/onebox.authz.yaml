@@ -1,4 +1,45 @@
 ---
+# Source: onebox/templates/networkpolicy.yaml
+# Only the authenticating proxy may reach the port that trusts its identity
+# headers. Task pods (this namespace) reach the tasks and fast task ports,
+# where only built-in app tokens identify a caller. The webhook port stays
+# open: the API server's address is not something a policy can name portably.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: onebox
+      app.kubernetes.io/instance: release-name
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auth
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: oauth2-proxy
+    - ports:
+        - port: 8443
+        - port: 15606
+      from:
+        - podSelector: {}
+    - ports:
+        - port: 9443
+
+---
 # Source: onebox/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -64,6 +105,8 @@ data:
         groupsHeaders: ["X-Auth-Request-Groups","X-Forwarded-Groups"]
         claimsJWTHeaders: ["Cf-Access-Jwt-Assertion"]
         anonymousSubject: "anonymous"
+        proxySecretHeader: "X-Onebox-Proxy-Secret"
+        proxySecretPath: /etc/onebox/proxy/secret
       profiles:
         enabled: true
       authz:
@@ -171,8 +214,8 @@ subjects:
 
 ---
 # Source: onebox/templates/rbac.yaml
-# onebox runs task pods, and keeps their secrets and plugin objects, in its
-# own namespace; it needs nothing outside it.
+# onebox runs task pods and keeps their secrets in its own namespace; it needs
+# nothing outside it.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -185,9 +228,35 @@ metadata:
     app.kubernetes.io/version: "2026.9.7"
     app.kubernetes.io/managed-by: Helm
 rules:
-  - apiGroups: ["*"]
-    resources: ["*"]
+  # Task pods, their logs, and the pod templates tasks may name.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, serviceaccounts]
+    verbs: [get, list, watch]
+  # Secrets: the secret store, image pull secrets, the webhook's certificate.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
     verbs: [get, list, watch, create, update, patch, delete]
+  # Task events: read for the console, recorded by the worker.
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+  # Plugin objects (Spark, Ray, ...) for task types enabled in extraConfig.
+  - apiGroups:
+    - ray.io
+    resources:
+    - rayjobs
+    - rayclusters
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
 ---
 # Source: onebox/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -277,7 +346,7 @@ spec:
         app.kubernetes.io/name: onebox
         app.kubernetes.io/instance: release-name
       annotations:
-        checksum/config: 110cd990809cd4e704a7a594468d9e04f3771bcbb03984a2ef0febb662bee961
+        checksum/config: 769e7ef35b58ba18e11f7bfe747460342ced453d38fecdcb448dbf5e50be0913
     spec:
       serviceAccountName: release-name-onebox
       securityContext:
@@ -361,6 +430,8 @@ spec:
               mountPath: /etc/onebox/db
             - name: internal
               mountPath: /etc/onebox/internal
+            - name: proxy-secret
+              mountPath: /etc/onebox/proxy
             - name: work
               mountPath: /var/run/onebox
             - name: tmp
@@ -403,6 +474,12 @@ spec:
         - name: internal
           secret:
             secretName: onebox-internal
+        - name: proxy-secret
+          secret:
+            secretName: onebox-proxy
+            items:
+              - key: secret
+                path: secret
         - name: work
           emptyDir: {}
         - name: tmp
