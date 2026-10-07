@@ -1436,6 +1436,64 @@ services:
         cpu: 500m
         memory: 250Mi
 
+  # Emergent lineage (cloud: lineage/). A standalone, eventually consistent
+  # meta-layer: it only reads the tasks, triggers and apps tables (its change
+  # feed falls back to periodic catch-ups when the database has no logical
+  # replication) and writes only its own tables. No core service calls it; the
+  # console hides lineage when it is not deployed. Off by default.
+  lineage:
+    enabled: false
+    fullnameOverride: "lineage"
+    sharedService:
+      connectPort: 8081
+      grpcNativePort: 8080
+    initContainers:
+      - name: migrate
+        args:
+          - lineage
+          - migrate
+          - --config
+          - "/etc/config/*.yaml"
+    args:
+      - lineage
+      - serve
+      - --config
+      - /etc/config/*.yaml
+    configMap:
+      sharedService:
+        connectPort: 8081
+        metrics:
+          scope: "lineage:"
+      db:
+        debug: '{{ .Values.global.DB_DEBUG }}'
+        dbname: '{{ .Values.global.DB_NAME }}'
+        host:  '{{ .Values.global.DB_HOST }}'
+        username:  '{{ .Values.global.DB_USER }}'
+        passwordPath: /etc/db/pass.txt
+        port: 5432
+        connectionPool:
+          maxIdleConnections: 2
+          maxOpenConnections: 4
+          maxConnectionLifetime: 1m
+      lineage:
+        enabled: true
+        readsEnabled: true
+        # Lineage's own Postgres pool, per replica.
+        maxConns: 4
+        # Follows core writes through logical replication when the database
+        # allows it; otherwise converges through periodic catch-ups.
+        changeFeed: true
+        # No read replica in self-hosted: let reconciles scan the primary.
+        fullScanOnPrimary: true
+        reconcileInterval: 5m
+    resources:
+      limits:
+        cpu: 1
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
   run-scheduler:
     fullnameOverride: "run-scheduler"
     args:
