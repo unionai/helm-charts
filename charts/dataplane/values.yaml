@@ -1863,6 +1863,10 @@ gpuFaultWatcher:
     # absolute path on the node, with or without unix://. Its directory is mounted
     # from the host.
     podResourcesSocket: unix:///var/lib/kubelet/pod-resources/kubelet.sock
+    # -- Host directory, mounted read-write, where the watcher keeps its place in the
+    # kernel log so a restart picks up after the last record it handled. Must be an
+    # absolute path other than the node's root. Watchers that predate it ignore the key.
+    stateDir: /var/lib/union/gpufaultwatcher
 
 # -- Union Object Store configuration
 objectStore:
@@ -2218,6 +2222,32 @@ prometheus:
         - source_labels: [__name__]
           regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
           action: keep
+    {{- if (.Values.gpuFaultWatcher | default dict).enabled }}
+    # GPU fault watcher, only with gpuFaultWatcher.enabled. It mirrors the
+    # union-gpufaultwatcher ServiceMonitor: the node the watcher runs on becomes the node
+    # label, and honor_labels keeps the faulting pod's namespace and pod on
+    # union_gpufaultwatcher_pod_faults_total. This Prometheus loads no PrometheusRules,
+    # so the GPU alerts need Prometheus Operator or rules loaded some other way.
+    - job_name: 'gpufaultwatcher'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: gpufaultwatcher
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
+    {{- end }}
 
   alertmanager:
     enabled: false
@@ -2306,6 +2336,12 @@ proxy:
     create: true
     name: proxy-system
     annotations: {}
+  gpuNodes:
+    # -- Let the proxy list and watch nodes across the cluster for the console's GPU
+    # view. Applies only when low_privilege is false, since a Role cannot grant
+    # cluster-scoped nodes. Set to false to keep the proxy off nodes, at the cost of the
+    # console's GPU view.
+    enabled: true
   autoscaling:
     enabled: false
     minReplicas: 1

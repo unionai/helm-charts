@@ -29,6 +29,7 @@ QUARANTINE = {
 }
 ALERTING = {"monitoring": {"alerting": {"enabled": True}}}
 PROMTOOL = os.environ.get("PROMTOOL_BIN", "promtool")
+ADMISSION_POLICY_API = "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy"
 
 
 def helm(command, values, *flags):
@@ -64,15 +65,11 @@ def install_notes(values):
     return result.stdout.partition("NOTES:")[2]
 
 
-def render(values=None, kube_version="1.32.0", success=True):
-    result = helm(
-        "template",
-        values,
-        "--kube-version",
-        kube_version,
-        "--api-versions",
-        "monitoring.coreos.com/v1",
-    )
+def render(values=None, kube_version="1.32.0", success=True, admission_policy_api=True):
+    flags = ["--kube-version", kube_version, "--api-versions", "monitoring.coreos.com/v1"]
+    if admission_policy_api:
+        flags += ["--api-versions", ADMISSION_POLICY_API]
+    result = helm("template", values, *flags)
     if not success:
         assert result.returncode != 0, "Invalid configuration unexpectedly rendered"
         return result.stderr
@@ -177,11 +174,37 @@ class GpuFaultWatcherTest(unittest.TestCase):
         volume = next(v for v in pod["volumes"] if v["name"] == "pod-resources")
         self.assertEqual(volume["hostPath"]["path"], "/run/k3s/pod-resources")
 
+    def test_state_dir_is_the_only_writable_host_mount(self):
+        docs = render(WATCHER)
+        pod = find(docs, "DaemonSet", "union-gpufaultwatcher")["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        self.assertTrue(container["securityContext"]["readOnlyRootFilesystem"])
+        host_volumes = {v["name"]: v["hostPath"] for v in pod["volumes"] if "hostPath" in v}
+        self.assertEqual(
+            host_volumes["state"],
+            {"path": "/var/lib/union/gpufaultwatcher", "type": "DirectoryOrCreate"},
+        )
+        writable = [
+            m["name"]
+            for m in container["volumeMounts"]
+            if m["name"] in host_volumes and not m.get("readOnly")
+        ]
+        self.assertEqual(writable, ["state"])
+        mount = next(m for m in container["volumeMounts"] if m["name"] == "state")
+        self.assertEqual(mount["mountPath"], "/var/lib/union/gpufaultwatcher")
+        config = yaml.safe_load(
+            find(docs, "ConfigMap", "union-gpufaultwatcher")["data"]["config.yaml"]
+        )
+        self.assertEqual(config["stateDir"], "/var/lib/union/gpufaultwatcher")
+
     def test_invalid_config_fails(self):
         for config, expected in [
             ({"metricsBindAddress": ":1234"}, "gpuFaultWatcher.metricsPort"),
             ({"podResourcesSocket": "kubelet.sock"}, "absolute path"),
             ({"podResourcesSocket": "unix:///kubelet.sock"}, "absolute path"),
+            ({"stateDir": "var/lib/union"}, "gpuFaultWatcher.config.stateDir"),
+            ({"stateDir": "/"}, "gpuFaultWatcher.config.stateDir"),
+            ({"stateDir": "//"}, "gpuFaultWatcher.config.stateDir"),
         ]:
             with self.subTest(config=config):
                 values = {"gpuFaultWatcher": {"enabled": True, "config": config}}
@@ -205,20 +228,36 @@ class GpuFaultWatcherTest(unittest.TestCase):
         self.assertEqual(labels["cost-center"], "ml")
         self.assertTrue(daemonset["spec"]["selector"]["matchLabels"].items() <= labels.items())
 
-    def test_admission_policy_holds_writes_to_the_own_node_from_kubernetes_1_30(self):
-        name = "union-gpufaultwatcher-own-node-status"
-        self.assertIsNone(find(render(WATCHER, "1.29.0"), "ValidatingAdmissionPolicy", name))
+    def test_admission_policies_hold_the_watcher_to_its_own_node_from_kubernetes_1_30(self):
+        names = ("union-gpufaultwatcher-own-node-status", "union-gpufaultwatcher-own-node-events")
         opted_out = {"gpuFaultWatcher": {"enabled": True, "restrictNodeWrites": False}}
-        for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
-            self.assertIsNone(find(render(opted_out, "1.30.0"), kind, name))
+        for docs in (
+            render(WATCHER, "1.29.0"),
+            render(WATCHER, "1.30.0", admission_policy_api=False),
+            render(opted_out, "1.30.0"),
+        ):
+            for name in names:
+                for kind in ("ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding"):
+                    self.assertIsNone(find(docs, kind, name))
         docs = render(WATCHER, "1.30.0")
-        policy = find(docs, "ValidatingAdmissionPolicy", name)
-        self.assertIn(
-            "system:serviceaccount:union:union-gpufaultwatcher",
-            policy["spec"]["matchConditions"][0]["expression"],
-        )
-        binding = find(docs, "ValidatingAdmissionPolicyBinding", name)
-        self.assertEqual(binding["spec"]["validationActions"], ["Deny"])
+        for name in names:
+            with self.subTest(name=name):
+                policy = find(docs, "ValidatingAdmissionPolicy", name)
+                self.assertIn(
+                    "system:serviceaccount:union:union-gpufaultwatcher",
+                    policy["spec"]["matchConditions"][0]["expression"],
+                )
+                binding = find(docs, "ValidatingAdmissionPolicyBinding", name)
+                self.assertEqual(binding["spec"]["policyName"], name)
+                self.assertEqual(binding["spec"]["validationActions"], ["Deny"])
+        events = find(docs, "ValidatingAdmissionPolicy", names[1])["spec"]
+        self.assertEqual(events["matchConstraints"]["matchPolicy"], "Equivalent")
+        self.assertEqual(events["matchConstraints"]["resourceRules"][0]["resources"], ["events"])
+        validation = events["validations"][0]["expression"]
+        for field in ("variables.instance", "variables.host"):
+            self.assertIn(field, validation)
+        role = find(docs, "ClusterRole", "union-gpufaultwatcher")
+        self.assertEqual(rules_for(role, "events"), {"create", "patch"})
 
 
 class GpuQuarantineTest(unittest.TestCase):
@@ -340,6 +379,25 @@ class GpuMonitoringTest(unittest.TestCase):
         off = render({**WATCHER, "monitoring": {"serviceMonitors": {"enabled": False}}})
         self.assertIsNone(find(off, "ServiceMonitor", "union-gpufaultwatcher"))
 
+    def test_embedded_prometheus_scrapes_the_watcher_only_when_enabled(self):
+        def scrape_jobs(values):
+            config = find(render(values), "ConfigMap", "gpu-test-prometheus")
+            if config is None:
+                return None
+            prometheus = yaml.safe_load(config["data"]["prometheus.yml"])
+            return {job["job_name"]: job for job in prometheus["scrape_configs"]}
+
+        self.assertNotIn("gpufaultwatcher", scrape_jobs({}))
+        job = scrape_jobs(WATCHER)["gpufaultwatcher"]
+        self.assertTrue(job["honor_labels"])
+        self.assertIn(
+            {"source_labels": ["__meta_kubernetes_pod_node_name"], "target_label": "node"},
+            job["relabel_configs"],
+        )
+        keep = job["relabel_configs"][0]
+        self.assertEqual(keep["regex"], "gpufaultwatcher")
+        self.assertIsNone(scrape_jobs({**WATCHER, "prometheus": {"enabled": False}}))
+
     def test_operator_metrics_port_is_scraped_for_quarantine(self):
         docs = render(QUARANTINE)
         monitor = find(docs, "ServiceMonitor", "union-service-monitor")
@@ -365,6 +423,12 @@ class GpuNodesApiTest(unittest.TestCase):
     def test_proxy_lists_and_watches_nodes_and_pods(self):
         role = find(render({"low_privilege": False}), "ClusterRole", "proxy-system")
         self.assertTrue({"list", "watch"} <= rules_for(role, "nodes"))
+        self.assertTrue({"list", "watch"} <= rules_for(role, "pods"))
+
+    def test_proxy_node_rule_can_be_turned_off(self):
+        values = {"low_privilege": False, "proxy": {"gpuNodes": {"enabled": False}}}
+        role = find(render(values), "ClusterRole", "proxy-system")
+        self.assertEqual(rules_for(role, "nodes"), set())
         self.assertTrue({"list", "watch"} <= rules_for(role, "pods"))
 
     def test_low_privilege_proxy_gets_no_node_rule(self):
@@ -495,6 +559,48 @@ PROMTOOL_CASES = [
             },
         ],
         [("40m", "UnionDPGPUFaultWatcherUnavailable", [])],
+    ),
+    # A fleet that keeps adding GPU nodes: a watcher is always coming up somewhere, but
+    # never on a node older than 10 minutes, so nothing fires.
+    (
+        [
+            {
+                "series": 'kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}',
+                "values": "0x10 1x80",
+            },
+            {"series": 'kube_node_created{node="old"}', "values": f"{-DAY}x90"},
+            *(
+                {
+                    "series": f'kube_node_created{{node="new-{m}"}}',
+                    "values": f"_x{m} {m * 60}x{90 - m}",
+                }
+                for m in range(11, 90, 8)
+            ),
+        ],
+        [
+            ("45m", "UnionDPGPUFaultWatcherUnavailable", []),
+            ("85m", "UnionDPGPUFaultWatcherUnavailable", []),
+        ],
+    ),
+    # Two watchers unavailable but only one node new in the last 40 minutes, so one is
+    # missing on an older node.
+    (
+        [
+            {
+                "series": 'kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}',
+                "values": "0x10 2x50",
+            },
+            {"series": 'kube_node_created{node="old"}', "values": f"{-DAY}x60"},
+            {"series": 'kube_node_created{node="new"}', "values": "_x30 1800x30"},
+        ],
+        [
+            ("38m", "UnionDPGPUFaultWatcherUnavailable", []),
+            (
+                "45m",
+                "UnionDPGPUFaultWatcherUnavailable",
+                [fired(daemonset="union-gpufaultwatcher")],
+            ),
+        ],
     ),
     (
         [

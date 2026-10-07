@@ -2171,6 +2171,7 @@ data:
   config.yaml: |
     kmsgPath: /dev/kmsg
     podResourcesSocket: unix:///var/lib/kubelet/pod-resources/kubelet.sock
+    stateDir: /var/lib/union/gpufaultwatcher
     metricsBindAddress: ":9096"
 
 ---
@@ -6466,6 +6467,30 @@ data:
         - source_labels: [__name__]
           regex: "DCGM_FI_DEV_GPU_UTIL|DCGM_FI_DEV_MEM_COPY_UTIL|DCGM_FI_DEV_FB_USED|DCGM_FI_DEV_FB_FREE|DCGM_FI_PROF_GR_ENGINE_ACTIVE|DCGM_FI_PROF_SM_ACTIVE|DCGM_FI_PROF_SM_OCCUPANCY|DCGM_FI_PROF_PIPE_TENSOR_ACTIVE|DCGM_FI_PROF_DRAM_ACTIVE|DCGM_FI_DEV_POWER_USAGE|DCGM_FI_DEV_GPU_TEMP"
           action: keep
+    # GPU fault watcher, only with gpuFaultWatcher.enabled. It mirrors the
+    # union-gpufaultwatcher ServiceMonitor: the node the watcher runs on becomes the node
+    # label, and honor_labels keeps the faulting pod's namespace and pod on
+    # union_gpufaultwatcher_pod_faults_total. This Prometheus loads no PrometheusRules,
+    # so the GPU alerts need Prometheus Operator or rules loaded some other way.
+    - job_name: 'gpufaultwatcher'
+      metrics_path: /metrics
+      scrape_interval: 1m
+      honor_labels: true
+      kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            own_namespace: true
+      relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name]
+          regex: gpufaultwatcher
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: metrics
+          action: keep
+        - source_labels: [__meta_kubernetes_namespace]
+          target_label: namespace
+        - source_labels: [__meta_kubernetes_pod_node_name]
+          target_label: node
     
   recording_rules.yml: |
     groups:
@@ -7559,7 +7584,12 @@ metadata:
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
 rules:
+# Events go through the core/v1 recorder. The API server serves the same objects as
+# events.k8s.io/v1, so both groups are granted in case the recorder moves to it.
 - apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+- apiGroups: ["events.k8s.io"]
   resources: ["events"]
   verbs: ["create", "patch"]
 # The node-scoped pod informer resolves a GPU holder to its pod.
@@ -7569,8 +7599,8 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get"]
-# Setting the GPUXidCritical condition. admissionpolicy.yaml holds this to the
-# watcher's own node where the cluster supports it, unless restrictNodeWrites is off.
+# Setting the GPUXidCritical condition. admissionpolicy.yaml holds this and the events
+# to the watcher's own node where the cluster supports it, unless restrictNodeWrites is off.
 - apiGroups: [""]
   resources: ["nodes/status"]
   verbs: ["patch"]
@@ -8764,7 +8794,7 @@ spec:
     metadata:
       annotations:
         # The watcher reads its config once at start.
-        configChecksum: "4e0bff4e2a318d79bdc673600e0beb4e8238228067f108a4de3e2dc29d5a747"
+        configChecksum: "e08c9684c10ba8990162c0f934f0d1f5491a6086105a6efd6fa749ebe537731"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -8816,6 +8846,10 @@ spec:
           hostPath:
             path: /var/lib/kubelet/pod-resources
             type: Directory
+        - name: state
+          hostPath:
+            path: /var/lib/union/gpufaultwatcher
+            type: DirectoryOrCreate
       containers:
         - name: gpufaultwatcher
           image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
@@ -8864,6 +8898,8 @@ spec:
             # Opening /dev/kmsg needs CAP_SYSLOG and the device itself, which the
             # runtime's device allowlist denies short of privileged mode. The image runs
             # as a non-root user, and a non-root uid cannot open the root-owned device.
+            # The root filesystem stays read-only, and every host mount but the state
+            # directory is read-only too.
             privileged: true
             runAsUser: 0
             readOnlyRootFilesystem: true
@@ -8876,6 +8912,10 @@ spec:
             - name: pod-resources
               mountPath: /var/lib/kubelet/pod-resources
               readOnly: true
+            # The one writable host path: the watcher's place in the kernel log, kept so
+            # a restart picks up after the last record it handled.
+            - name: state
+              mountPath: /var/lib/union/gpufaultwatcher
 
 ---
 # Source: dataplane/templates/uvol-broker/daemonset.yaml
@@ -12239,8 +12279,10 @@ spec:
               on node {{ $labels.node }} in the last 10 minutes and set the node's
               GPUXidCritical condition. Runs on the faulting GPU show the fault in Union.
               GPU quarantine takes the node out of scheduling unless it is in dry run or at
-              its cap. Check the GPU, then release the node with the
-              union.ai/gpu-quarantine-release annotation, or replace it.
+              its cap. Check the GPU. If the node carries the union.ai/gpu-quarantine taint,
+              release it with the union.ai/gpu-quarantine-release annotation, or replace it.
+              Without the taint (dry run, or the cap reached) the annotation is ignored, so
+              replace the node.
 
         - alert: UnionDPGPUFaultUnresolved
           expr: |
@@ -12258,17 +12300,23 @@ spec:
               (see the node's GPUXidCritical condition and events), and the node has been
               neither released nor replaced.
               A quarantined node's GPUs sit idle; one that is not quarantined (dry run, or
-              the cap reached) still takes work. Check the GPU, then release the node with
+              the cap reached) still takes work. Check the GPU. If the node carries the
+              union.ai/gpu-quarantine taint, release it with
               kubectl annotate node {{ $labels.node }} union.ai/gpu-quarantine-release=<your name or ticket>,
-              or replace it.
+              or replace it. Without the taint the annotation is ignored, so replace the node.
 
         # A new GPU node counts as unavailable until its watcher is ready, so this fires
-        # only when every sample for 30m had a GPU node without a ready watcher.
+        # only when every sample for 30m had more unavailable watchers than there are
+        # nodes created in the last 40m. A fleet that keeps adding GPU nodes then does
+        # not page, and at least one watcher was missing for 30m on a node at least 10m
+        # old. Every node counts toward that, not only GPU nodes, which errs quiet.
         - alert: UnionDPGPUFaultWatcherUnavailable
           expr: |
             max by (namespace, daemonset) (
               min_over_time(kube_daemonset_status_number_unavailable{namespace="union", daemonset="union-gpufaultwatcher"}[25m])
-            ) > 0
+            )
+            > on() group_left()
+            (count(max by (node) (kube_node_created) > time() - 2400) or vector(0))
           for: 5m
           labels:
             severity: warning
@@ -12413,6 +12461,57 @@ spec:
     reason: Forbidden
 ---
 # Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
+# An event's reporter is read from reportingInstance, falling back to source.host. The
+# core/v1 recorder sets both and the events.k8s.io recorder only the first, so each one
+# that is set must name the token's node, and at least one must be set.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: union-gpufaultwatcher-own-node-events
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    # Equivalent also sends events.k8s.io/v1 writes here, converted to core/v1, since
+    # both APIs serve the same objects.
+    matchPolicy: Equivalent
+    resourceRules:
+    # The recorder patches an event to count repeats, and a patch reaches admission as
+    # an UPDATE.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["events"]
+  matchConditions:
+  - name: gpufaultwatcher-service-account
+    expression: 'request.userInfo.username == "system:serviceaccount:union:union-gpufaultwatcher"'
+  variables:
+  - name: instance
+    expression: 'has(object.reportingInstance) ? object.reportingInstance : ""'
+  - name: host
+    expression: 'has(object.source) && has(object.source.host) ? object.source.host : ""'
+  validations:
+  - expression: >-
+      !has(request.userInfo.extra) ||
+      !('authentication.kubernetes.io/node-name' in request.userInfo.extra) ||
+      (size(request.userInfo.extra['authentication.kubernetes.io/node-name']) > 0 &&
+      (variables.instance != "" || variables.host != "") &&
+      variables.instance in ["", request.userInfo.extra['authentication.kubernetes.io/node-name'][0]] &&
+      variables.host in ["", request.userInfo.extra['authentication.kubernetes.io/node-name'][0]])
+    message: the GPU fault watcher may only record events reported from the node it runs on
+    messageExpression: >-
+      "the GPU fault watcher on " +
+      request.userInfo.extra['authentication.kubernetes.io/node-name'].join(",") +
+      " may only record events reported from that node, not from reporting instance " +
+      (variables.instance != "" ? variables.instance : "(none)") + " and source host " +
+      (variables.host != "" ? variables.host : "(none)")
+    reason: Forbidden
+---
+# Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
 metadata:
@@ -12424,6 +12523,20 @@ metadata:
     app.kubernetes.io/managed-by: Helm
 spec:
   policyName: union-gpufaultwatcher-own-node-status
+  validationActions: [Deny]
+---
+# Source: dataplane/templates/gpufaultwatcher/admissionpolicy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: union-gpufaultwatcher-own-node-events
+  labels:
+    app.kubernetes.io/name: gpufaultwatcher
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  policyName: union-gpufaultwatcher-own-node-events
   validationActions: [Deny]
 ---
 # Source: dataplane/templates/webhook/pre-upgrade-cleanup.yaml

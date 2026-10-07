@@ -8,6 +8,10 @@ the node's root.
 {{- if or (not (hasPrefix "/" $podResourcesDir)) (eq $podResourcesDir "/") }}
 {{- fail (printf "gpuFaultWatcher.config.podResourcesSocket must be an absolute path to a socket inside a directory on the node, since that directory is mounted into a privileged pod; got %q" .Values.gpuFaultWatcher.config.podResourcesSocket) }}
 {{- end }}
+{{- $stateDir := .Values.gpuFaultWatcher.config.stateDir }}
+{{- if or (not (hasPrefix "/" $stateDir)) (eq (clean $stateDir) "/") }}
+{{- fail (printf "gpuFaultWatcher.config.stateDir must be an absolute directory on the node other than its root, since it is mounted read-write into a privileged pod; got %q" $stateDir) }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -65,6 +69,10 @@ spec:
           hostPath:
             path: {{ $podResourcesDir }}
             type: Directory
+        - name: state
+          hostPath:
+            path: {{ $stateDir }}
+            type: DirectoryOrCreate
       containers:
         - name: gpufaultwatcher
           image: "{{ .Values.image.union.repository }}:{{ .Values.image.union.tag | default .Chart.AppVersion }}"
@@ -108,6 +116,8 @@ spec:
             # Opening /dev/kmsg needs CAP_SYSLOG and the device itself, which the
             # runtime's device allowlist denies short of privileged mode. The image runs
             # as a non-root user, and a non-root uid cannot open the root-owned device.
+            # The root filesystem stays read-only, and every host mount but the state
+            # directory is read-only too.
             privileged: true
             runAsUser: 0
             readOnlyRootFilesystem: true
@@ -120,4 +130,8 @@ spec:
             - name: pod-resources
               mountPath: {{ $podResourcesDir }}
               readOnly: true
+            # The one writable host path: the watcher's place in the kernel log, kept so
+            # a restart picks up after the last record it handled.
+            - name: state
+              mountPath: {{ $stateDir }}
 {{- end }}

@@ -494,9 +494,18 @@ lease or act on nodes:
   verbs: ["get", "create", "update"]
 ```
 
-On Kubernetes 1.30 and later the chart also installs a ValidatingAdmissionPolicy that
-lets the watcher write the status of its own node only. Set
-`gpuFaultWatcher.restrictNodeWrites: false` to leave it out.
+On Kubernetes 1.30 and later the chart also installs ValidatingAdmissionPolicies that
+let the watcher write the status of its own node only, and record only events reported
+from that node. Set `gpuFaultWatcher.restrictNodeWrites: false` to leave them out. They
+render only when the cluster serves `admissionregistration.k8s.io/v1`
+ValidatingAdmissionPolicy, so an offline `helm template` needs
+`--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy` along with
+`--kube-version` to include them.
+
+The watcher keeps its place in the kernel log in `gpuFaultWatcher.config.stateDir`
+(default `/var/lib/union/gpufaultwatcher`), a host directory mounted read-write so a
+restart picks up where it stopped. It must be an absolute path other than `/`. The
+container's root filesystem and its other host mounts stay read-only.
 
 Image requirements: the watcher ships in the union operator image from 2026.9.7, the
 chart's current `appVersion`. Two parts need a newer image:
@@ -519,24 +528,36 @@ whichever of the two features are on:
 
 | Alert | Fires when | What to do |
 | --- | --- | --- |
-| `UnionDPGPUFaultDetected` | The watcher recorded a critical GPU fault on a node in the last 10 minutes. | Check the GPU. With quarantine enforcing, the node is already out of scheduling. |
-| `UnionDPGPUFaultUnresolved` | A node's `GPUXidCritical` condition has been true for an hour, so the node was neither released nor replaced. | Check the GPU, then release the node or replace it. Without quarantine, replace it: nothing keeps work off the node. |
+| `UnionDPGPUFaultDetected` | The watcher recorded a critical GPU fault on a node in the last 10 minutes. | Check the GPU. With quarantine enforcing, the node is already out of scheduling unless the cap was reached. |
+| `UnionDPGPUFaultUnresolved` | A node's `GPUXidCritical` condition has been true for an hour, so the node was neither released nor replaced. | Check the GPU. If the node carries the `union.ai/gpu-quarantine` taint, release it or replace it. Otherwise (no quarantine, dry run, or the cap reached) replace it: the release annotation is ignored and nothing keeps work off the node. |
 | `UnionDPGPUQuarantineHeld` | A node has stayed quarantined for an hour after its condition was cleared without the release annotation. | Check the GPU, then release the node or replace it. |
-| `UnionDPGPUFaultWatcherUnavailable` | For 30 minutes, some GPU node had no ready watcher, so faults there go unreported. | The watcher reserves no resources and never preempts, so look for an eviction under memory pressure, a node at its pod limit, or a crash loop: `kubectl get pods -n <namespace> -o wide -l app.kubernetes.io/name=gpufaultwatcher`. |
+| `UnionDPGPUFaultWatcherUnavailable` | For 30 minutes, more watchers were unavailable than there are nodes created in the last 40 minutes, so some GPU node at least 10 minutes old had no ready watcher and faults there go unreported. Nodes still coming up do not page. | The watcher reserves no resources and never preempts, so look for an eviction under memory pressure, a node at its pod limit, or a crash loop: `kubectl get pods -n <namespace> -o wide -l app.kubernetes.io/name=gpufaultwatcher`. |
 
-The alerts read `kube_node_status_condition` and
+The alerts read `kube_node_status_condition`, `kube_node_created` and
 `kube_daemonset_status_number_unavailable` from kube-state-metrics,
 `union_gpufaultwatcher_last_fault_timestamp_seconds` from the watcher and
 `union_gpuquarantine_held_nodes` from the operator. With
 `monitoring.serviceMonitors.enabled`, the `union-gpufaultwatcher` ServiceMonitor
 scrapes the watcher and adds the node it runs on as `node`, and `union-service-monitor`
-already scrapes the operator. The "Union Dataplane: GPU Fault Handling" Grafana
+already scrapes the operator. The embedded Prometheus (`prometheus.enabled`) gets a
+`gpufaultwatcher` scrape job with `gpuFaultWatcher.enabled`, but it does not load
+PrometheusRules, so the alerts need Prometheus Operator or the rules loaded into your
+Prometheus some other way. The "Union Dataplane: GPU Fault Handling" Grafana
 dashboard ships with either feature and shows quarantined and held nodes, critical
 faults by node and GPU, and watcher availability.
 
 ### Releasing a node
 
-Once the GPU has been reset or replaced:
+The release annotation only acts on a node that carries the `union.ai/gpu-quarantine`
+taint. In dry run, the default, or once `maxQuarantinedNodes` is reached, a faulted node
+gets no taint, so the annotation is ignored and the way out is to replace the node (see
+below). Check for the taint first:
+
+```bash
+kubectl get node <node> -o jsonpath='{.spec.taints[?(@.key=="union.ai/gpu-quarantine")]}'
+```
+
+If it is there, once the GPU has been reset or replaced:
 
 ```bash
 kubectl annotate node <node> union.ai/gpu-quarantine-release="<your name or ticket>"
@@ -553,8 +574,8 @@ dry run cannot release a later fault.
 
 To replace the node instead, drain it and remove it the way your cluster replaces
 nodes, for example `kubectl delete node <node>` with Karpenter, or by terminating the
-instance in its node group. Without quarantine this is the only way to clear the
-condition, since the watcher never clears it.
+instance in its node group. Without the taint (no quarantine, dry run, or the cap
+reached) this is the only way to clear the condition, since the watcher never clears it.
 
 ### Signals for your own automation
 
