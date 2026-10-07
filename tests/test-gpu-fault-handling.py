@@ -433,6 +433,15 @@ PROMTOOL_CASES = [
         [faults("old", "1x30"), last_fault("old", f"{-DAY}x30")],
         [("2m", "UnionDPGPUFaultDetected", []), ("20m", "UnionDPGPUFaultDetected", [])],
     ),
+    # A fault at 10m, then the watcher restarts at 12m and comes back without the gauge.
+    # The lookback still holds the fault until it is 10 minutes old.
+    (
+        [last_fault("restarted", f"{-DAY}x9 600x1 stale")],
+        [
+            ("15m", "UnionDPGPUFaultDetected", [fired(node="restarted", kind="xid", code="79")]),
+            ("21m", "UnionDPGPUFaultDetected", []),
+        ],
+    ),
     # The watcher restarts in place at 20m, so its counter and gauge go stale, and the
     # same GPU faults again at 26m with the same labels.
     (

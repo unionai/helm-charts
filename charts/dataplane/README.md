@@ -570,7 +570,8 @@ condition, since the watcher never clears it.
 | Quarantine metrics | Operator | `union_gpuquarantine_quarantined_nodes`, `union_gpuquarantine_held_nodes`, `union_gpuquarantine_node_quarantined{node, reason}`, `union_gpuquarantine_releases_total{node}` and `union_gpuquarantine_actions_total{action, result}`. Only the operator replica leading quarantine sets them, and the others report the node counts as 0, so aggregate those with `max`. |
 
 To alert on new faults yourself, compare `union_gpufaultwatcher_last_fault_timestamp_seconds`
-with `time()` as `UnionDPGPUFaultDetected` does. The counter is a poor signal for this: a
+with `time()` as `UnionDPGPUFaultDetected` does. Take its `max_over_time` over a window
+longer than the alert's, since the watcher keeps the gauge in memory and a restart drops it. The counter is a poor signal for this: a
 series appears with its first fault already counted, which `increase()` misses, and every
 series looks new after Prometheus restarts with empty storage.
 

@@ -113,10 +113,12 @@ spec:
         # Freshness comes from the fault's own time, so old faults stay quiet after Prometheus
         # restarts with empty storage, and a repeat fault alerts after the watcher restarts.
         # The newest fault per group counts, so an old fault on another GPU cannot hide it.
+        # The watcher keeps the gauge in memory, so the 15m lookback holds a recent fault
+        # after the watcher restarts and drops the series.
         - alert: UnionDPGPUFaultDetected
           expr: |
             time() - max by (node, kind, code) (
-              union_gpufaultwatcher_last_fault_timestamp_seconds{severity="critical"}
+              max_over_time(union_gpufaultwatcher_last_fault_timestamp_seconds{severity="critical"}[15m])
             ) < 600
           labels:
             severity: warning
