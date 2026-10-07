@@ -1,8 +1,11 @@
-{{- if .Values.networkPolicy.enabled }}
-# Only the authenticating proxy may reach the port that trusts its identity
-# headers. Task pods (this namespace) reach the tasks and fast task ports,
-# where only built-in app tokens identify a caller. The webhook port stays
-# open: the API server's address is not something a policy can name portably.
+{{- $enabled := .Values.networkPolicy.enabled }}
+{{- if kindIs "invalid" $enabled }}{{ $enabled = .Values.authz.enabled }}{{ end }}
+{{- if $enabled }}
+# The tasks port trusts whoever reaches it as the built-in tasks app: only task
+# pods (this namespace, plus tasksFrom) may. Only the authenticating proxy may
+# reach the port that trusts its identity headers, when proxyFrom names it.
+# The webhook port stays open: the API server's address is not something a
+# policy can name portably.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -18,13 +21,20 @@ spec:
   ingress:
     - ports:
         - port: 8080
+      {{- with .Values.networkPolicy.proxyFrom }}
       from:
-        {{- required "networkPolicy.proxyFrom must list the authenticating proxy's peers" .Values.networkPolicy.proxyFrom | toYaml | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     - ports:
-        - port: 8443
+        - port: 8082
         - port: 15606
       from:
         - podSelector: {}
+        {{- with .Values.networkPolicy.tasksFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     - ports:
         - port: 9443
+    - ports:
+        - port: 10254
 {{- end }}

@@ -32,14 +32,12 @@ data:
       seedProjects: ["default"]
       listen:
         address: ":8080"
-        tlsAddress: ":8443"
+        tasksAddress: ":8082"
       consoleUpstream: "http://127.0.0.1:3000"
       logoutRedirect: "/v2"
-      # Task pods call back over the in-cluster TLS port: the SDK only sends
-      # credentials over TLS (needed when authz is on).
-      taskEndpoint: "release-name-onebox.union.svc:443"
-      taskEndpointTLS: true
-      taskTokenEndpoint: "http://release-name-onebox.union.svc:80/oauth2/token"
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: "release-name-onebox.union.svc:8082"
       identity:
         subjectHeaders: ["X-Auth-Request-User","X-Forwarded-User"]
         emailHeaders: ["X-Auth-Request-Email","X-Forwarded-Email"]
@@ -54,7 +52,6 @@ data:
         adminUsers: []
         defaultRole: "viewer"
         tasks:
-          secretPath: /etc/onebox/internal/tasks-app-secret
           role: "contributor"
       userclouds:
         clientSecretPath: /etc/onebox/internal/userclouds-client-secret
@@ -223,11 +220,12 @@ spec:
       port: 80
       targetPort: http
       appProtocol: kubernetes.io/h2c
-    # Task pods call the API here: TLS with a self-signed certificate, which
-    # they do not verify. In-cluster only.
+    # Task pods call the API here; every request acts as the built-in tasks
+    # app. In-cluster only (see networkPolicy).
     - name: tasks
-      port: 443
+      port: 8082
       targetPort: tasks
+      appProtocol: kubernetes.io/h2c
     # Reusable-container (fast task) workers report back here. In-cluster only.
     - name: fasttask
       port: 15606
@@ -266,7 +264,7 @@ spec:
         app.kubernetes.io/name: onebox
         app.kubernetes.io/instance: release-name
       annotations:
-        checksum/config: 696178283397c8b25034bdebbe584ec9c57cb6aa5ff8271831f505e14811b8bc
+        checksum/config: ad2c224b60149206c1869986c1e3e9a39137729302cdb8895d27fb9b25767802
     spec:
       serviceAccountName: release-name-onebox
       securityContext:
@@ -289,7 +287,7 @@ spec:
             - name: http
               containerPort: 8080
             - name: tasks
-              containerPort: 8443
+              containerPort: 8082
             - name: fasttask
               containerPort: 15606
             - name: metrics

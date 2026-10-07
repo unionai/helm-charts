@@ -1,9 +1,10 @@
 ---
 # Source: onebox/templates/networkpolicy.yaml
-# Only the authenticating proxy may reach the port that trusts its identity
-# headers. Task pods (this namespace) reach the tasks and fast task ports,
-# where only built-in app tokens identify a caller. The webhook port stays
-# open: the API server's address is not something a policy can name portably.
+# The tasks port trusts whoever reaches it as the built-in tasks app: only task
+# pods (this namespace, plus tasksFrom) may. Only the authenticating proxy may
+# reach the port that trusts its identity headers, when proxyFrom names it.
+# The webhook port stays open: the API server's address is not something a
+# policy can name portably.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -32,12 +33,17 @@ spec:
             matchLabels:
               app.kubernetes.io/name: oauth2-proxy
     - ports:
-        - port: 8443
+        - port: 8082
         - port: 15606
       from:
         - podSelector: {}
+        - namespaceSelector:
+            matchLabels:
+              union.ai/onebox-tasks: "true"
     - ports:
         - port: 9443
+    - ports:
+        - port: 10254
 
 ---
 # Source: onebox/templates/serviceaccount.yaml
@@ -90,14 +96,12 @@ data:
       seedProjects: ["default"]
       listen:
         address: ":8080"
-        tlsAddress: ":8443"
+        tasksAddress: ":8082"
       consoleUpstream: "http://127.0.0.1:3000"
       logoutRedirect: "/oauth2/sign_out"
-      # Task pods call back over the in-cluster TLS port: the SDK only sends
-      # credentials over TLS (needed when authz is on).
-      taskEndpoint: "release-name-onebox.union.svc:443"
-      taskEndpointTLS: true
-      taskTokenEndpoint: "http://release-name-onebox.union.svc:80/oauth2/token"
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: "release-name-onebox.union.svc:8082"
       identity:
         subjectHeaders: ["X-Forwarded-User"]
         emailHeaders: ["X-Forwarded-Email"]
@@ -114,7 +118,6 @@ data:
         adminUsers: ["admin@example.com"]
         defaultRole: "contributor"
         tasks:
-          secretPath: /etc/onebox/internal/tasks-app-secret
           role: "contributor"
       userclouds:
         clientSecretPath: /etc/onebox/internal/userclouds-client-secret
@@ -303,11 +306,12 @@ spec:
       port: 80
       targetPort: http
       appProtocol: kubernetes.io/h2c
-    # Task pods call the API here: TLS with a self-signed certificate, which
-    # they do not verify. In-cluster only.
+    # Task pods call the API here; every request acts as the built-in tasks
+    # app. In-cluster only (see networkPolicy).
     - name: tasks
-      port: 443
+      port: 8082
       targetPort: tasks
+      appProtocol: kubernetes.io/h2c
     # Reusable-container (fast task) workers report back here. In-cluster only.
     - name: fasttask
       port: 15606
@@ -346,7 +350,7 @@ spec:
         app.kubernetes.io/name: onebox
         app.kubernetes.io/instance: release-name
       annotations:
-        checksum/config: 769e7ef35b58ba18e11f7bfe747460342ced453d38fecdcb448dbf5e50be0913
+        checksum/config: f56de70e0a9ff6b86be304c1b7f73c8f68abaee4fa21fc22064956f6fa7a7db6
     spec:
       serviceAccountName: release-name-onebox
       securityContext:
@@ -369,7 +373,7 @@ spec:
             - name: http
               containerPort: 8080
             - name: tasks
-              containerPort: 8443
+              containerPort: 8082
             - name: fasttask
               containerPort: 15606
             - name: metrics

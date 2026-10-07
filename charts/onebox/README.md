@@ -77,14 +77,14 @@ Make the trust explicit:
   `identity.proxySecret.existingSecret` (key `secret`, header
   `X-Onebox-Proxy-Secret` by default). Identity headers on requests without
   it are ignored.
-- **NetworkPolicy**: `networkPolicy.enabled=true` with
-  `networkPolicy.proxyFrom` naming the proxy's pods/namespace. The API port
-  then only accepts the proxy; task pods keep the tasks and fast task ports.
+- **NetworkPolicy** (on by default with authz; needs an enforcing CNI): set
+  `networkPolicy.proxyFrom` to the proxy's pods/namespace and the API port
+  only accepts the proxy; task pods keep the tasks and fast task ports.
 - `identity.claimsJWTHeaders` are decoded, not verified. Use them only
   together with one of the above.
 
-The in-cluster tasks port (443) never trusts proxy headers: only tokens
-issued to onebox's built-in apps identify a caller there.
+The in-cluster tasks port (8082) never trusts proxy headers: every request
+there acts as onebox's built-in tasks app (see Authorization).
 
 With oauth2-proxy, run it with `--set-xauthrequest` and
 `--pass-user-headers`, upstream `http://onebox.<namespace>.svc`, and set
@@ -111,23 +111,24 @@ On:
 
 - requests without identity headers are refused;
 - users get `defaultRole` the first time they are seen; `adminUsers` are admins;
-- task pods authenticate as a built-in app (role `authz.tasksRole`) with a key
-  injected by the pod webhook, so tasks can launch and track child actions.
-  They reach onebox over an in-cluster TLS port (443, self-signed, not
-  verified by the pods). The SDK fetches its token from the plaintext
-  in-cluster address: it verifies the token endpoint's certificate even when
-  told not to. Both stay inside the cluster; `networkPolicy` limits who can
-  reach them.
+- task pods call onebox on the in-cluster tasks port (8082), where every
+  request acts as a built-in app with role `authz.tasksRole` (contributor), so
+  tasks can launch and track child actions without credentials in the pod.
+  Anything that can reach that port gets that role. The chart turns on a
+  NetworkPolicy that limits it to pods in the release namespace; with a CNI
+  that does not enforce NetworkPolicy, any pod in the cluster can reach it.
+  If tasks run in other namespaces too, add them with
+  `networkPolicy.tasksFrom` (e.g. a `namespaceSelector` on a label you put on
+  those namespaces).
 
 ## GitOps (ArgoCD)
 
 The chart generates internal credentials once and keeps them with `lookup`.
 Tools that render without cluster access regenerate them on every sync, which
-breaks running tasks. Create the Secret yourself:
+rolls the pod each time. Create the Secret yourself:
 
 ```shell
 kubectl -n union create secret generic onebox-internal \
-  --from-literal=tasks-app-secret="$(openssl rand -hex 32)" \
   --from-literal=userclouds-client-secret="$(openssl rand -hex 32)"
 ```
 
@@ -143,6 +144,6 @@ and set `internalSecret.existingSecret=onebox-internal`.
 | Port | Who calls it |
 |---|---|
 | 80 → 8080 | Everyone: console, API, REST. Behind the proxy. |
-| 443 → 8443 | Task pods (TLS, self-signed). In-cluster only. |
+| 8082 | Task pods; requests act as the built-in tasks app. In-cluster only. |
 | 9443 | The Kubernetes API server (pod webhook). |
 | 15606 | Reusable-container workers. In-cluster only. |

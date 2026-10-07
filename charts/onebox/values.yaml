@@ -105,8 +105,9 @@ authz:
   adminUsers: []
   # -- admin, contributor or viewer.
   defaultRole: viewer
-  # -- Role of the built-in app task pods authenticate as (to launch child
-  # actions and read data). Its credentials are injected into every task pod.
+  # -- Role of the built-in app task pods act as (to launch child actions and
+  # read data). Every request on the in-cluster tasks port gets it, so keep
+  # that port private: networkPolicy is on by default when authz is.
   tasksRole: contributor
 
 # -- The pod mutating webhook, in-process: injects secrets into task pods
@@ -115,8 +116,8 @@ authz:
 webhook:
   enabled: true
 
-# -- Credentials onebox's parts use between themselves (keys tasks-app-secret
-# and userclouds-client-secret). By default the chart generates them once and
+# -- Credentials onebox's parts use between themselves (key
+# userclouds-client-secret). By default the chart generates them once and
 # keeps them (via lookup). GitOps tools that render without cluster access
 # (ArgoCD) would regenerate them on every sync: create the Secret yourself and
 # name it here.
@@ -126,11 +127,18 @@ internalSecret:
 # -- Projects created on first start.
 seedProjects: [default]
 
-# -- Restrict who can reach onebox. proxyFrom lists the NetworkPolicy peers
-# of the authenticating proxy (podSelector / namespaceSelector).
+# -- Restrict who can reach onebox (needs a CNI that enforces NetworkPolicy).
+# The tasks and fast task ports only accept pods in the release namespace
+# (plus tasksFrom); the API port only accepts proxyFrom when set.
 networkPolicy:
-  enabled: false
+  # -- true, false, or unset: on when authz.enabled.
+  enabled: null
+  # -- NetworkPolicy peers of the authenticating proxy (podSelector /
+  # namespaceSelector). Empty: the API port stays open.
   proxyFrom: []
+  # -- Extra peers allowed on the tasks ports, e.g. a namespaceSelector for
+  # other namespaces running onebox tasks.
+  tasksFrom: []
 
 rbac:
   # -- Extra Role rules, for plugin task types (Spark, Ray, ...) enabled in

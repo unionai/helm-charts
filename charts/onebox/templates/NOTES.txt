@@ -13,6 +13,17 @@ or the address of the authenticating proxy you put in front of the Service.
 
 Authorization is ON. Requests need identity headers ({{ first .Values.identity.subjectHeaders }}):
 expose the Service only through your authenticating proxy.
+{{- if and (not .Values.identity.proxySecret.existingSecret) (not .Values.networkPolicy.proxyFrom) }}
+
+WARNING: neither identity.proxySecret nor networkPolicy.proxyFrom is set, so
+any pod that can reach port {{ .Values.service.port }} can claim to be any user. Set one of them.
+{{- end }}
+{{- if eq (toString .Values.networkPolicy.enabled) "false" }}
+
+WARNING: networkPolicy.enabled=false. Every request on the in-cluster tasks
+port (8082) acts as the tasks app (role {{ .Values.authz.tasksRole }}); without the
+NetworkPolicy any pod in the cluster can reach it.
+{{- end }}
 {{- else }}
 
 Authorization is OFF: anyone who can reach the Service can do anything.

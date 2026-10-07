@@ -23,14 +23,12 @@ data:
       seedProjects: {{ toJson .Values.seedProjects }}
       listen:
         address: ":8080"
-        tlsAddress: ":8443"
+        tasksAddress: ":8082"
       consoleUpstream: {{ if .Values.console.enabled }}"http://127.0.0.1:3000"{{ else }}""{{ end }}
       logoutRedirect: {{ .Values.identity.logoutRedirect | quote }}
-      # Task pods call back over the in-cluster TLS port: the SDK only sends
-      # credentials over TLS (needed when authz is on).
-      taskEndpoint: {{ printf "%s:443" $host | quote }}
-      taskEndpointTLS: true
-      taskTokenEndpoint: {{ printf "http://%s:%d/oauth2/token" $host (int .Values.service.port) | quote }}
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: {{ printf "%s:8082" $host | quote }}
       identity:
         subjectHeaders: {{ toJson .Values.identity.subjectHeaders }}
         emailHeaders: {{ toJson .Values.identity.emailHeaders }}
@@ -49,7 +47,6 @@ data:
         adminUsers: {{ toJson .Values.authz.adminUsers }}
         defaultRole: {{ .Values.authz.defaultRole | quote }}
         tasks:
-          secretPath: /etc/onebox/internal/tasks-app-secret
           role: {{ .Values.authz.tasksRole | quote }}
       userclouds:
         clientSecretPath: /etc/onebox/internal/userclouds-client-secret
