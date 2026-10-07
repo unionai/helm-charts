@@ -1,0 +1,20 @@
+onebox is starting in namespace {{ .Release.Namespace }}.
+
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "onebox.fullname" . }}
+
+Console and API (one port):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "onebox.fullname" . }} 8080:{{ .Values.service.port }}
+  open http://localhost:8080/v2
+
+SDK / CLI endpoint: dns:///localhost:8080 (insecure) through the port-forward,
+or the address of the authenticating proxy you put in front of the Service.
+
+{{- if .Values.authz.enabled }}
+
+Authorization is ON. Requests need identity headers ({{ first .Values.identity.subjectHeaders }}):
+expose the Service only through your authenticating proxy.
+{{- else }}
+
+Authorization is OFF: anyone who can reach the Service can do anything.
+Requests are attributed to the user in {{ first .Values.identity.subjectHeaders }} when present.
+{{- end }}

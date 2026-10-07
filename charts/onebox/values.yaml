@@ -1,0 +1,166 @@
+# onebox: Union in one pod.
+#
+# Required: database.host and a database password, and storage.bucket.
+# Everything else has a working default.
+
+# -- The organization every request is served as.
+organization: onebox
+
+image:
+  repository: registry.unionai.cloud/controlplane/onebox
+  # -- Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- The console (Next.js) runs as a second container in the pod and is served
+# by onebox under /v2, on the same port as the API.
+console:
+  enabled: true
+  image:
+    repository: registry.unionai.cloud/controlplane/unionconsole
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  env: []
+
+# -- One Postgres database for everything. Every service keeps its own tables
+# (and userclouds-lite its own schema) in it.
+database:
+  host: ""
+  port: 5432
+  name: union
+  user: union
+  # -- disable, require, verify-ca or verify-full.
+  sslMode: disable
+  # -- Password, stored in a Secret this chart creates. Prefer existingSecret.
+  password: ""
+  # -- Existing Secret holding the password.
+  existingSecret: ""
+  existingSecretKey: password
+  maxOpenConnections: 40
+
+# -- Where task inputs, outputs and code bundles live.
+storage:
+  # -- s3, gcs or azure. S3-compatible stores (MinIO, R2, Ceph) use s3 with an endpoint.
+  type: s3
+  bucket: ""
+  # -- s3 / s3-compatible.
+  region: us-east-1
+  endpoint: ""
+  # -- iam (pod identity / IRSA) or accesskey (from existingSecret below).
+  authType: iam
+  # -- Secret with access-key-id and secret-access-key (authType: accesskey).
+  existingSecret: ""
+  # -- gcs.
+  gcpProjectId: ""
+  # -- azure.
+  azureAccount: ""
+
+# -- How onebox learns who is calling. There is nothing to switch on: a request
+# that carries these headers is that user; one that does not is anonymous.
+# Put an authenticating proxy (oauth2-proxy, an OIDC-aware ingress, an ALB,
+# Cloudflare Access, ...) in front of the Service and have it set them. onebox
+# drops any identity header a client sets itself.
+identity:
+  subjectHeaders: [X-Auth-Request-User, X-Forwarded-User]
+  emailHeaders: [X-Auth-Request-Email, X-Forwarded-Email]
+  nameHeaders: [X-Auth-Request-Preferred-Username, X-Forwarded-Preferred-Username]
+  groupsHeaders: [X-Auth-Request-Groups, X-Forwarded-Groups]
+  # -- Headers carrying a proxy-verified JWT (e.g. X-Amzn-Oidc-Data,
+  # Cf-Access-Jwt-Assertion); its sub/email/name/groups claims fill in.
+  claimsJWTHeaders: []
+  anonymousSubject: anonymous
+  # -- Where /logout sends the browser, e.g. the proxy's sign-out URL.
+  logoutRedirect: /v2
+
+# -- Remember the name and email the proxy reports for each user, and show
+# them wherever users are listed or runs are attributed.
+profiles:
+  enabled: true
+
+# -- Role based access control. Off, every request is allowed. On, users get
+# defaultRole the first time they are seen, adminUsers are admins, and
+# requests without identity headers are refused.
+authz:
+  enabled: false
+  # -- Subjects (as the proxy reports them) granted the admin role.
+  adminUsers: []
+  # -- admin, contributor or viewer.
+  defaultRole: viewer
+  # -- Role of the built-in app task pods authenticate as (to launch child
+  # actions and read data). Its credentials are injected into every task pod.
+  tasksRole: contributor
+
+# -- The pod mutating webhook, in-process: injects secrets into task pods
+# (and runs the Union mutators that are enabled in extraConfig). Its
+# MutatingWebhookConfiguration only selects pods in the release namespace.
+webhook:
+  enabled: true
+
+# -- Credentials onebox's parts use between themselves (keys tasks-app-secret
+# and userclouds-client-secret). By default the chart generates them once and
+# keeps them (via lookup). GitOps tools that render without cluster access
+# (ArgoCD) would regenerate them on every sync: create the Secret yourself and
+# name it here.
+internalSecret:
+  existingSecret: ""
+
+# -- Projects created on first start.
+seedProjects: [default]
+
+service:
+  type: ClusterIP
+  # -- The console, the Connect/gRPC API and the REST routes.
+  port: 80
+  annotations: {}
+
+# -- Extra onebox configuration, merged over what the chart renders. Any
+# service section can be set here (see onebox's base.yaml).
+extraConfig: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  # -- e.g. IRSA (eks.amazonaws.com/role-arn) or GKE workload identity, for bucket access.
+  annotations: {}
+
+# -- Task pods run in the release namespace. Install onebox in a namespace of
+# its own: it manages pods, secrets and plugin objects there.
+tasks:
+  # -- Service account task pods run as; it needs the same bucket access.
+  serviceAccountName: default
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraEnv: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]

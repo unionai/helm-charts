@@ -1,0 +1,93 @@
+{{- if not .Values.database.host }}
+{{- fail "database.host is required" }}
+{{- end }}
+{{- if not .Values.storage.bucket }}
+{{- fail "storage.bucket is required" }}
+{{- end }}
+{{- if and (not .Values.database.existingSecret) (not .Values.database.password) }}
+{{- fail "set database.existingSecret (preferred) or database.password" }}
+{{- end }}
+{{- $ns := .Release.Namespace }}
+{{- $host := include "onebox.serviceHost" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "onebox.fullname" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    onebox:
+      organization: {{ .Values.organization | quote }}
+      seedProjects: {{ toJson .Values.seedProjects }}
+      listen:
+        address: ":8080"
+        tlsAddress: ":8443"
+      consoleUpstream: {{ if .Values.console.enabled }}"http://127.0.0.1:3000"{{ else }}""{{ end }}
+      logoutRedirect: {{ .Values.identity.logoutRedirect | quote }}
+      # Task pods call back over the in-cluster TLS port: the SDK only sends
+      # credentials over TLS (needed when authz is on).
+      taskEndpoint: {{ printf "%s:443" $host | quote }}
+      taskEndpointTLS: true
+      taskTokenEndpoint: {{ printf "http://%s:%d/oauth2/token" $host (int .Values.service.port) | quote }}
+      identity:
+        subjectHeaders: {{ toJson .Values.identity.subjectHeaders }}
+        emailHeaders: {{ toJson .Values.identity.emailHeaders }}
+        nameHeaders: {{ toJson .Values.identity.nameHeaders }}
+        groupsHeaders: {{ toJson .Values.identity.groupsHeaders }}
+        claimsJWTHeaders: {{ toJson .Values.identity.claimsJWTHeaders }}
+        anonymousSubject: {{ .Values.identity.anonymousSubject | quote }}
+      profiles:
+        enabled: {{ .Values.profiles.enabled }}
+      authz:
+        enabled: {{ .Values.authz.enabled }}
+        adminUsers: {{ toJson .Values.authz.adminUsers }}
+        defaultRole: {{ .Values.authz.defaultRole | quote }}
+        tasks:
+          secretPath: /etc/onebox/internal/tasks-app-secret
+          role: {{ .Values.authz.tasksRole | quote }}
+      userclouds:
+        clientSecretPath: /etc/onebox/internal/userclouds-client-secret
+      webhook:
+        enabled: {{ .Values.webhook.enabled }}
+        serviceName: {{ include "onebox.fullname" . | quote }}
+      clusterData:
+        metadataBucketPrefix: {{ include "onebox.bucketURI" . | quote }}
+        storageType: {{ .Values.storage.type | quote }}
+        bucketRegion: {{ .Values.storage.region | quote }}
+        gcpProjectId: {{ .Values.storage.gcpProjectId | quote }}
+    db:
+      host: {{ .Values.database.host | quote }}
+      port: {{ .Values.database.port }}
+      dbname: {{ .Values.database.name | quote }}
+      username: {{ .Values.database.user | quote }}
+      passwordPath: /etc/onebox/db/password
+      options: {{ printf "sslmode=%s" .Values.database.sslMode | quote }}
+      connectionPool:
+        maxIdleConnections: 2
+        maxOpenConnections: {{ .Values.database.maxOpenConnections }}
+    storage:
+      {{- include "onebox.storage" . | nindent 6 }}
+    # Task pods, their secrets and their logs all live in this namespace.
+    leaseworker:
+      namespace-template: {{ $ns | quote }}
+      limit-namespace: {{ $ns | quote }}
+    namespace_mapping:
+      template: {{ $ns | quote }}
+    fasttask:
+      callback-uri: {{ printf "http://%s:15606" $host | quote }}
+    plugins:
+      k8s:
+        default-env-vars:
+          {{- if .Values.storage.endpoint }}
+          - FLYTE_AWS_ENDPOINT: {{ .Values.storage.endpoint | quote }}
+          - AWS_ENDPOINT_URL: {{ .Values.storage.endpoint | quote }}
+          {{- end }}
+          - AWS_REGION: {{ .Values.storage.region | quote }}
+        {{- if and (eq .Values.storage.type "s3") (eq .Values.storage.authType "accesskey") }}
+        default-env-from-secrets:
+          - {{ .Values.storage.existingSecret | quote }}
+        {{- end }}
+  extra.yaml: |
+    {{- toYaml .Values.extraConfig | nindent 4 }}
