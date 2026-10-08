@@ -136,11 +136,40 @@ spec:
               value: "true"
             - name: DISABLE_EXTERNAL_TELEMETRY
               value: "true"
+            {{- if .Values.dashboards.enabled }}
+            # Project and org dashboards, queried from onebox's database. Access
+            # is checked by replaying the caller's request to onebox's public
+            # port (never the internal one, which trusts its callers).
+            - name: DASHBOARD_BACKEND
+              value: postgres
+            - name: DASHBOARD_ORG
+              value: {{ .Values.organization | quote }}
+            - name: DASHBOARD_AUTH_URL
+              value: http://127.0.0.1:8080
+            - name: PG_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: PG_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: PG_DATABASE
+              value: {{ .Values.database.name | quote }}
+            - name: PG_USER
+              value: {{ .Values.database.user | quote }}
+            - name: PG_PASSWORD_FILE
+              value: /etc/onebox/db/password
+            - name: PG_SSLMODE
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
             {{- with .Values.console.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.console.resources | nindent 12 }}
+          {{- if .Values.dashboards.enabled }}
+          volumeMounts:
+            - name: db-password
+              mountPath: /etc/onebox/db
+              readOnly: true
+          {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
