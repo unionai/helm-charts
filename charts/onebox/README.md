@@ -86,9 +86,22 @@ Make the trust explicit:
 The in-cluster tasks port (8082) never trusts proxy headers: every request
 there acts as onebox's built-in tasks app (see Authorization).
 
-With oauth2-proxy, run it with `--set-xauthrequest` and
-`--pass-user-headers`, upstream `http://onebox.<namespace>.svc`, and set
+With oauth2-proxy, run it with `--pass-user-headers`, upstream
+`http://onebox.<namespace>.svc`, and set
 `identity.logoutRedirect=/oauth2/sign_out`.
+
+### SDK and CLI login
+
+When the proxy requires a login, the SDK and CLI need a token from your IdP.
+Set `authMetadata.externalAuthServerBaseUrl` (and `authMetadata.flyteClient`,
+a public PKCE client registered at the IdP): onebox then serves the IdP's
+OAuth2 metadata at `/.well-known/oauth-authorization-server` and
+`flyteidl2.auth.AuthMetadataService`. Let the proxy pass those two paths
+without a login, and have it accept the IdP's bearer tokens (oauth2-proxy:
+`--skip-jwt-bearer-tokens` and `--extra-jwt-issuers=<issuer>=<client id>`;
+ALB: a JWT-validation rule). The SDK only sends tokens over TLS. If the proxy
+terminates TLS itself and sends no `X-Forwarded-Proto`, set
+`publicScheme=https`.
 
 ### User profiles
 
