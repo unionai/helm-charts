@@ -816,6 +816,10 @@ http://flytepropeller:10254
 http://{{ include "union-operator.fullname" . }}-proxy:10254
 {{- end -}}
 
+{{- define "leaseworker.health.url" -}}
+http://{{ include "union-operator.fullname" . }}-leaseworker:10254
+{{- end -}}
+
 {{- define "proxy.service.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:8080
 {{- end -}}
@@ -1594,6 +1598,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "leaseworker") (not $.Values.leaseworker.enabled) }}
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
