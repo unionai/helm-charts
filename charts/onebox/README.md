@@ -62,16 +62,21 @@ Cloudflare Access, ...) and have it forward who the user is in headers:
 
 | Value | Headers (first non-empty wins) |
 |---|---|
-| `identity.subjectHeaders` | `X-Auth-Request-User`, `X-Forwarded-User` |
-| `identity.emailHeaders` | `X-Auth-Request-Email`, `X-Forwarded-Email` |
-| `identity.nameHeaders` | `X-Auth-Request-Preferred-Username`, `X-Forwarded-Preferred-Username` |
-| `identity.groupsHeaders` | `X-Auth-Request-Groups`, `X-Forwarded-Groups` |
+| `identity.subjectHeaders` | `X-Forwarded-User` |
+| `identity.emailHeaders` | `X-Forwarded-Email` |
+| `identity.nameHeaders` | `X-Forwarded-Preferred-Username` |
+| `identity.groupsHeaders` | `X-Forwarded-Groups` |
 | `identity.claimsJWTHeaders` | none by default; e.g. `X-Amzn-Oidc-Data`, `Cf-Access-Jwt-Assertion` |
 
 There is nothing to switch on: a request with these headers is that user; a
 request without them is `anonymous`. onebox drops any identity header a client
 sets itself, but it trusts these. **Only expose the Service through the
 proxy.**
+
+List exactly the headers your proxy sets on every request. A proxy overwrites
+only those; any other listed header passes through from the client, who can
+then claim to be anyone. The defaults match oauth2-proxy in reverse-proxy mode
+(`--pass-user-headers`).
 
 Make the trust explicit:
 
