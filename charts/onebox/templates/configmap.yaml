@@ -97,16 +97,19 @@ data:
         maxOpenConnections: {{ .Values.database.maxOpenConnections }}
     storage:
       {{- include "onebox.storage" . | nindent 6 }}
-    {{- with .Values.metrics.prometheusURL }}
-    dataproxy:
-      localPrometheusURL: {{ . | quote }}
-    {{- end }}
-    {{- if .Values.imageBuilder.enabled }}
+    {{- if or .Values.metrics.prometheusURL .Values.imageBuilder.enabled }}
+    # The in-process operator proxy: the Metrics tab's queries go to this
+    # Prometheus, and image lookups to this registry.
     proxy:
+      {{- with .Values.metrics.prometheusURL }}
+      prometheusUrl: {{ . | quote }}
+      {{- end }}
+      {{- if .Values.imageBuilder.enabled }}
       imageBuilderConfig:
         authenticationType: noop
         defaultRepository: {{ required "imageBuilder.repository is required" .Values.imageBuilder.repository | quote }}
         repositoryOverride: {{ .Values.imageBuilder.lookupURL | quote }}
+      {{- end }}
     {{- end }}
     # Task pods, their secrets and their logs all live in this namespace.
     leaseworker:
