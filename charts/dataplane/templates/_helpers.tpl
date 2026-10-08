@@ -407,6 +407,54 @@ infra and must have a deliberate class, so bring your own or let the chart make 
 {{- end -}}
 {{- end -}}
 
+{{- define "gpuFaultWatcher.selectorLabels" -}}
+app.kubernetes.io/name: gpufaultwatcher
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "gpuFaultWatcher.labels" -}}
+{{- include "gpuFaultWatcher.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The chart's own non-preempting class, used when gpuFaultWatcher.priorityClassName
+names no existing class.
+*/}}
+{{- define "gpuFaultWatcher.priorityClassName" -}}
+{{- .Values.gpuFaultWatcher.priorityClassName | default (printf "%s-gpufaultwatcher" .Release.Name | lower | trunc 63 | trimSuffix "-") -}}
+{{- end -}}
+
+{{/*
+Lowest union operator release accepted with config.gpuQuarantine. Set it to the first
+release that ships the quarantine controller.
+*/}}
+{{- define "gpuQuarantine.minOperatorVersion" -}}
+2026.10.0
+{{- end -}}
+
+{{/*
+"true" when the operator runs the GPU quarantine controller. The operator starts it
+only with its cluster permissions and otherwise just logs a warning, so the render
+fails when they are missing. An older operator crashloops on the gpuQuarantine
+section, so the render also fails for a release tag below the minimum (pre-releases
+of the minimum pass). Other tags, such as a commit SHA, are not checked.
+*/}}
+{{- define "gpuQuarantine.enabled" -}}
+{{- if .Values.config.gpuQuarantine.enabled -}}
+{{- if or .Values.low_privilege .Values.config.operator.disableClusterPermissions -}}
+{{- fail "config.gpuQuarantine.enabled needs the operator's cluster permissions: set low_privilege to false and leave config.operator.disableClusterPermissions false" -}}
+{{- end -}}
+{{- $tag := .Values.image.union.tag | default .Chart.AppVersion | toString -}}
+{{- $minimum := include "gpuQuarantine.minOperatorVersion" . -}}
+{{- if and (regexMatch `^v?[0-9]+\.[0-9]+\.[0-9]+(-.*)?$` $tag) (semverCompare (printf "<%s-0" $minimum) $tag) -}}
+{{- fail (printf "config.gpuQuarantine.enabled needs union operator %s or later: operator %s rejects the gpuQuarantine config section and would not start. Set image.union.tag to a newer release." $minimum $tag) -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{- define "nodeobserver.podLabels" -}}
 {{- include "global.podLabels" . }}
 {{- include "nodeobserver.labels" . }}

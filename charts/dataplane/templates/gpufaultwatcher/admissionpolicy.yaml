@@ -1,0 +1,112 @@
+{{- /*
+RBAC cannot scope nodes/status or events to one node, so a watcher token taken from any
+GPU node could rewrite every node's conditions or forge GPU fault events on pods
+elsewhere. These policies hold the watcher to the node its token is bound to.
+ValidatingAdmissionPolicy is GA from Kubernetes 1.30, above the chart's 1.28 floor, so
+older clusters go without them, as do clusters that do not serve the API. helm template
+reports no cluster APIs beyond its built-in defaults, so an offline render needs
+--api-versions admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy. Tokens that
+carry no node name are let through.
+*/}}
+{{- if and .Values.gpuFaultWatcher.enabled .Values.gpuFaultWatcher.restrictNodeWrites (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) (.Capabilities.APIVersions.Has "admissionregistration.k8s.io/v1/ValidatingAdmissionPolicy") }}
+{{- $serviceAccount := printf "system:serviceaccount:%s:union-gpufaultwatcher" .Release.Namespace }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    # A patch reaches admission as an UPDATE.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["UPDATE"]
+      resources: ["nodes/status"]
+  matchConditions:
+  - name: gpufaultwatcher-service-account
+    expression: 'request.userInfo.username == "{{ $serviceAccount }}"'
+  validations:
+  # has() first, because a user with no extras has no extra field.
+  - expression: >-
+      !has(request.userInfo.extra) ||
+      !('authentication.kubernetes.io/node-name' in request.userInfo.extra) ||
+      (size(request.userInfo.extra['authentication.kubernetes.io/node-name']) > 0 &&
+      request.userInfo.extra['authentication.kubernetes.io/node-name'][0] == object.metadata.name)
+    message: the GPU fault watcher may only write the status of the node it runs on
+    messageExpression: >-
+      "the GPU fault watcher may only write the status of the node it runs on, " +
+      request.userInfo.extra['authentication.kubernetes.io/node-name'].join(",") +
+      ", not " + object.metadata.name
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: union-gpufaultwatcher-own-node-status
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  policyName: union-gpufaultwatcher-own-node-status
+  validationActions: [Deny]
+---
+# An event's reporter is read from reportingInstance, falling back to source.host. The
+# core/v1 recorder sets both and the events.k8s.io recorder only the first, so each one
+# that is set must name the token's node, and at least one must be set.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: union-gpufaultwatcher-own-node-events
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    # Equivalent also sends events.k8s.io/v1 writes here, converted to core/v1, since
+    # both APIs serve the same objects.
+    matchPolicy: Equivalent
+    resourceRules:
+    # The recorder patches an event to count repeats, and a patch reaches admission as
+    # an UPDATE.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["events"]
+  matchConditions:
+  - name: gpufaultwatcher-service-account
+    expression: 'request.userInfo.username == "{{ $serviceAccount }}"'
+  variables:
+  - name: instance
+    expression: 'has(object.reportingInstance) ? object.reportingInstance : ""'
+  - name: host
+    expression: 'has(object.source) && has(object.source.host) ? object.source.host : ""'
+  validations:
+  - expression: >-
+      !has(request.userInfo.extra) ||
+      !('authentication.kubernetes.io/node-name' in request.userInfo.extra) ||
+      (size(request.userInfo.extra['authentication.kubernetes.io/node-name']) > 0 &&
+      (variables.instance != "" || variables.host != "") &&
+      variables.instance in ["", request.userInfo.extra['authentication.kubernetes.io/node-name'][0]] &&
+      variables.host in ["", request.userInfo.extra['authentication.kubernetes.io/node-name'][0]])
+    message: the GPU fault watcher may only record events reported from the node it runs on
+    messageExpression: >-
+      "the GPU fault watcher on " +
+      request.userInfo.extra['authentication.kubernetes.io/node-name'].join(",") +
+      " may only record events reported from that node, not from reporting instance " +
+      (variables.instance != "" ? variables.instance : "(none)") + " and source host " +
+      (variables.host != "" ? variables.host : "(none)")
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: union-gpufaultwatcher-own-node-events
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+spec:
+  policyName: union-gpufaultwatcher-own-node-events
+  validationActions: [Deny]
+{{- end }}
