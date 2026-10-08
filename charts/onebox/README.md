@@ -49,8 +49,10 @@ which only selects pods in that namespace.
 | `gcs` | Workload identity (`serviceAccount.annotations`); `gcpProjectId`. |
 | `azure` | Workload identity; `azureAccount`. |
 
-Task pods run as `tasks.serviceAccountName` (default `default`); give it the
-same bucket access.
+Task pods run in the release namespace as its `default` service account
+(unless a task asks for another one). Give that service account the same
+bucket access, e.g. annotate it with the same IRSA role or GCP service
+account.
 
 ## Who is calling: identity headers
 
