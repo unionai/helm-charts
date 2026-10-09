@@ -57,7 +57,8 @@ and moving such an install to an external database and bucket keeps none of
 its data. The claims survive `helm uninstall`. The bucket's address is the
 in-cluster Service unless you set `bundled.s3.endpoint`, so downloading
 outputs and viewing reports in the console needs that set to an address
-browsers can reach too.
+browsers can reach too. `bundled.s3.nodePort` also exposes the store on
+every node, for an endpoint at a node's address.
 
 ### Storage
 
