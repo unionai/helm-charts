@@ -48,6 +48,26 @@ stringData:
   password: "union"
 
 ---
+# Source: onebox/templates/webhook.yaml
+# The pod webhook's serving cert. onebox serves with it and keeps it while it
+# is valid.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-onebox-webhook-certs
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+data:
+  ca.crt: dGVzdC1jYQ==
+  tls.crt: dGVzdC1jcnQ=
+  tls.key: dGVzdC1rZXk=
+---
 # Source: onebox/templates/configmap.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -95,6 +115,8 @@ data:
       webhook:
         enabled: true
         serviceName: "release-name-onebox"
+        # templates/webhook.yaml installs the configuration and cert Secret.
+        externalConfiguration: true
       clusterData:
         metadataBucketPrefix: "s3://onebox"
         storageType: "s3"
@@ -189,49 +211,6 @@ spec:
       storage: 50Gi
 ---
 # Source: onebox/templates/rbac.yaml
-# The pod webhook registers itself. Its MutatingWebhookConfiguration only
-# selects pods in this namespace.
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: union-release-name-onebox-webhook
-  labels:
-    helm.sh/chart: onebox-2026.9.7
-    app.kubernetes.io/name: onebox
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.7"
-    app.kubernetes.io/managed-by: Helm
-rules:
-  - apiGroups: [admissionregistration.k8s.io]
-    resources: [mutatingwebhookconfigurations]
-    verbs: [create]
-  - apiGroups: [admissionregistration.k8s.io]
-    resources: [mutatingwebhookconfigurations]
-    resourceNames: ["release-name-onebox"]
-    verbs: [get, update, patch]
----
-# Source: onebox/templates/rbac.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
-metadata:
-  name: union-release-name-onebox-webhook
-  labels:
-    helm.sh/chart: onebox-2026.9.7
-    app.kubernetes.io/name: onebox
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.7"
-    app.kubernetes.io/managed-by: Helm
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: union-release-name-onebox-webhook
-subjects:
-  - kind: ServiceAccount
-    name: release-name-onebox
-    namespace: union
-
----
-# Source: onebox/templates/rbac.yaml
 # onebox runs task pods and keeps their secrets in its own namespace; it needs
 # nothing outside it.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -286,6 +265,7 @@ subjects:
   - kind: ServiceAccount
     name: release-name-onebox
     namespace: union
+
 ---
 # Source: onebox/templates/bundled.yaml
 apiVersion: v1
@@ -520,7 +500,7 @@ spec:
         app.kubernetes.io/name: onebox
         app.kubernetes.io/instance: release-name
       annotations:
-        checksum/config: be5b0ee19690d8fb81694a22aa6701437ac3a869b50202d6bde4866eee7be4c6
+        checksum/config: 8d65829f0197d3abfc8499a2e791a66ad2399ce9b686a52b15528d53013ecdb9
     spec:
       serviceAccountName: release-name-onebox
       securityContext:
@@ -677,3 +657,45 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+
+---
+# Source: onebox/templates/webhook.yaml
+# Secret injection into task pods in this namespace only. Named after the
+# namespace too: the object is cluster-scoped.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: union-release-name-onebox
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+webhooks:
+  - name: flyte-pod-webhook.flyte.org
+    admissionReviewVersions: [v1, v1beta1]
+    clientConfig:
+      caBundle: dGVzdC1jYQ==
+      service:
+        name: release-name-onebox
+        namespace: union
+        path: /mutate--v1-pod
+        port: 9443
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: union
+    objectSelector:
+      matchLabels:
+        inject-flyte-secrets: "true"
+    reinvocationPolicy: Never
+    rules:
+      - apiGroups: ["*"]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: "*"
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 30

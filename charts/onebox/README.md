@@ -37,9 +37,13 @@ Point the SDK at the same address (`dns:///localhost:8080`, insecure) or at
 whatever you expose the Service through.
 
 Install onebox in a namespace of its own: task pods, their secrets and the
-plugin objects they create all live in the release namespace. It needs
-nothing outside it, apart from creating its own MutatingWebhookConfiguration,
-which only selects pods in that namespace.
+plugin objects they create all live in the release namespace. onebox itself
+needs no permissions outside it: the chart installs the pod webhook's
+MutatingWebhookConfiguration (which only selects pods in that namespace) and
+its serving cert, so `helm uninstall` removes them too. What onebox creates
+while running (task pods, apps, secrets) stays until you delete the namespace.
+GitOps tools that render without cluster access should set
+`webhook.certificate.provider=external`, or the cert changes on every sync.
 
 ### Trying it out: bundled database and bucket
 

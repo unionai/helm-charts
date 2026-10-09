@@ -256,11 +256,23 @@ authz:
   # that port private: networkPolicy is on by default when authz is.
   tasksRole: contributor
 
-# -- The pod mutating webhook, in-process: injects secrets into task pods
-# (and runs the Union mutators that are enabled in extraConfig). Its
-# MutatingWebhookConfiguration only selects pods in the release namespace.
+# -- The pod mutating webhook, in-process: injects secrets into task pods. The
+# chart installs its MutatingWebhookConfiguration (which only selects pods in
+# the release namespace) and serving cert, so helm uninstall removes both and
+# onebox needs no cluster-wide permissions.
 webhook:
   enabled: true
+  certificate:
+    # -- helm: generate a CA and serving cert once, kept across upgrades via
+    # lookup. external: bring your own (GitOps tools that render without
+    # cluster access, e.g. ArgoCD, would otherwise regenerate it every sync).
+    provider: helm
+    # -- provider external: PEM-encoded CA cert, and the serving cert and key
+    # for <fullname>.<namespace>.svc.
+    external:
+      caCert: ""
+      tlsCrt: ""
+      tlsKey: ""
 
 # -- Credentials onebox's parts use between themselves (key
 # userclouds-client-secret). By default the chart generates them once and
