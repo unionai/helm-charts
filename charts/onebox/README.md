@@ -41,6 +41,24 @@ plugin objects they create all live in the release namespace. It needs
 nothing outside it, apart from creating its own MutatingWebhookConfiguration,
 which only selects pods in that namespace.
 
+### Trying it out: bundled database and bucket
+
+`bundled.enabled=true` runs Postgres and an S3-compatible store
+(floci) in the release namespace, each on
+a PersistentVolumeClaim from the default StorageClass, and points `database`
+and `storage` at them:
+
+```shell
+helm install onebox unionai/onebox -n union --create-namespace --set bundled.enabled=true
+```
+
+It's meant for a proof of value: nothing is backed up or highly available,
+and moving such an install to an external database and bucket keeps none of
+its data. The claims survive `helm uninstall`. The bucket's address is the
+in-cluster Service unless you set `bundled.s3.endpoint`, so downloading
+outputs and viewing reports in the console needs that set to an address
+browsers can reach too.
+
 ### Storage
 
 | `storage.type` | Credentials |

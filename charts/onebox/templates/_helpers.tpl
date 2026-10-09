@@ -86,3 +86,25 @@ stow:
 {{- define "onebox.internalSecretName" -}}
 {{- default (printf "%s-internal" (include "onebox.fullname" .)) .Values.internalSecret.existingSecret }}
 {{- end }}
+
+{{/* bundled.enabled: point database and storage at the bundled Postgres and
+S3 store. Included at the top of every template that reads them; setting the
+same values again is harmless. */}}
+{{- define "onebox.bundled" -}}
+{{- if .Values.bundled.enabled }}
+{{- $name := include "onebox.fullname" . }}
+{{- $_ := set .Values.database "host" (printf "%s-postgres" $name) }}
+{{- $_ = set .Values.database "port" 5432 }}
+{{- $_ = set .Values.database "name" "union" }}
+{{- $_ = set .Values.database "user" "union" }}
+{{- $_ = set .Values.database "sslMode" "disable" }}
+{{- $_ = set .Values.database "password" .Values.bundled.postgres.password }}
+{{- $_ = set .Values.database "existingSecret" "" }}
+{{- $_ = set .Values.storage "type" "s3" }}
+{{- $_ = set .Values.storage "bucket" .Values.bundled.s3.bucket }}
+{{- $_ = set .Values.storage "region" "us-east-1" }}
+{{- $_ = set .Values.storage "endpoint" (default (printf "http://%s-s3.%s.svc:4566" $name .Release.Namespace) .Values.bundled.s3.endpoint) }}
+{{- $_ = set .Values.storage "authType" "accesskey" }}
+{{- $_ = set .Values.storage "existingSecret" (printf "%s-s3" $name) }}
+{{- end }}
+{{- end }}

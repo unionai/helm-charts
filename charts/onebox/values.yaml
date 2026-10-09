@@ -36,6 +36,38 @@ console:
     artifacts-enabled: true
   env: []
 
+# -- Proof-of-value mode: run Postgres and an S3-compatible store (floci) in
+# the release namespace, each on a PersistentVolumeClaim, and point database
+# and storage at them. Nothing to provision beforehand, but nothing is backed
+# up, highly available or tuned either. For production leave this off and set
+# database and storage to a managed database and bucket. Switching a running
+# install from bundled to external keeps none of its data.
+bundled:
+  enabled: false
+  postgres:
+    image: mirror.gcr.io/library/postgres:17-alpine
+    # -- Only reachable inside the cluster.
+    password: union
+    storage: 10Gi
+    # -- Empty: the cluster's default StorageClass.
+    storageClassName: ""
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+  s3:
+    image: docker.io/floci/floci:1.7.0
+    bucket: onebox
+    storage: 50Gi
+    storageClassName: ""
+    # -- The bucket's address for onebox, task pods and the console's
+    # presigned links. Empty: the in-cluster Service, which browsers cannot
+    # reach, so downloads and reports in the console need this set to an
+    # address that both browsers and the cluster resolve to the store.
+    endpoint: ""
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+  # -- Image for the Job that creates the bucket and its CORS rule.
+  jobImage: docker.io/curlimages/curl:8.10.1
+
 # -- One Postgres database for everything. Every service keeps its own tables
 # (and userclouds-lite its own schema) in it.
 database:
