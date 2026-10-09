@@ -1,0 +1,434 @@
+---
+# Source: onebox/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+
+---
+# Source: onebox/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    onebox:
+      organization: "onebox"
+      seedProjects: ["default"]
+      listen:
+        address: ":8080"
+        tasksAddress: ":8082"
+      consoleUpstream: "http://127.0.0.1:3000"
+      logoutRedirect: "/v2"
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: "release-name-onebox.union.svc:8082"
+      identity:
+        subjectHeaders: ["X-Forwarded-User"]
+        emailHeaders: ["X-Forwarded-Email"]
+        nameHeaders: ["X-Forwarded-Preferred-Username"]
+        groupsHeaders: ["X-Forwarded-Groups"]
+        claimsJWTHeaders: []
+        anonymousSubject: "anonymous"
+      profiles:
+        enabled: true
+      authz:
+        enabled: false
+        adminUsers: []
+        defaultRole: "viewer"
+        tasks:
+          role: "contributor"
+      apps:
+        provider: "none"
+      userclouds:
+        clientSecretPath: /etc/onebox/internal/userclouds-client-secret
+      webhook:
+        enabled: true
+        serviceName: "release-name-onebox"
+      # Union apps, run on Knative Serving in the cluster.
+      serving:
+        enabled: true
+        publicURLPattern: "https://%s.apps.onebox.example.com"
+      clusterData:
+        metadataBucketPrefix: "s3://onebox-data"
+        storageType: "s3"
+        bucketRegion: "us-east-2"
+        gcpProjectId: ""
+    db:
+      host: "postgres.example.internal"
+      port: 5432
+      dbname: "union"
+      username: "union"
+      passwordPath: /etc/onebox/db/password
+      options: "sslmode=disable"
+      connectionPool:
+        maxIdleConnections: 2
+        maxOpenConnections: 40
+    storage:
+      
+      type: stow
+      container: "onebox-data"
+      enable-multicontainer: true
+      stow:
+        kind: s3
+        config:
+          region: "us-east-2"
+          # Credentials come from the pod: IRSA / pod identity, or AWS_* env vars
+          # from storage.existingSecret.
+          auth_type: iam
+    # Task pods, their secrets and their logs all live in this namespace.
+    leaseworker:
+      namespace-template: "union"
+      limit-namespace: "union"
+    namespace_mapping:
+      template: "union"
+    fasttask:
+      callback-uri: "http://release-name-onebox.union.svc:15606"
+    plugins:
+      k8s:
+        default-env-vars:
+          - AWS_REGION: "us-east-2"
+  extra.yaml: |
+    {}
+
+---
+# Source: onebox/templates/rbac.yaml
+# The pod webhook registers itself. Its MutatingWebhookConfiguration only
+# selects pods in this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-release-name-onebox-webhook
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations]
+    verbs: [create]
+  - apiGroups: [admissionregistration.k8s.io]
+    resources: [mutatingwebhookconfigurations]
+    resourceNames: ["release-name-onebox"]
+    verbs: [get, update, patch]
+---
+# Source: onebox/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-release-name-onebox-webhook
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-release-name-onebox-webhook
+subjects:
+  - kind: ServiceAccount
+    name: release-name-onebox
+    namespace: union
+
+---
+# Source: onebox/templates/rbac.yaml
+# onebox runs task pods and keeps their secrets in its own namespace; it needs
+# nothing outside it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Task pods, their logs, and the pod templates tasks may name.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, serviceaccounts]
+    verbs: [get, list, watch]
+  # Secrets: the secret store, image pull secrets, the webhook's certificate.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Task events: read for the console, recorded by the worker.
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+  # The operator proxy's namespace quota route (read only).
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list, watch]
+  # Apps: each is a Knative Service the app controller owns, plus an optional
+  # PodDisruptionBudget for apps that keep several replicas.
+  - apiGroups: [serving.knative.dev]
+    resources: [services, configurations, revisions]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [serving.knative.dev]
+    resources: [services/status]
+    verbs: [get]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# Source: onebox/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-onebox
+subjects:
+  - kind: ServiceAccount
+    name: release-name-onebox
+    namespace: union
+---
+# Source: onebox/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+  ports:
+    # The console (/v2), the Connect and gRPC API and the REST routes. Put the
+    # authenticating proxy in front of this port.
+    - name: http
+      port: 80
+      targetPort: http
+      appProtocol: kubernetes.io/h2c
+    # Task pods call the API here; every request acts as the built-in tasks
+    # app. In-cluster only (see networkPolicy).
+    - name: tasks
+      port: 8082
+      targetPort: tasks
+      appProtocol: kubernetes.io/h2c
+    # Reusable-container (fast task) workers report back here. In-cluster only.
+    - name: fasttask
+      port: 15606
+      targetPort: fasttask
+    # The API server calls the pod webhook here (task pods only).
+    - name: webhook
+      port: 9443
+      targetPort: webhook
+
+---
+# Source: onebox/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # One process serves everything and the leasor holds its queues in memory:
+  # never two at once, not even during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: onebox
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: onebox
+        app.kubernetes.io/instance: release-name
+      annotations:
+        checksum/config: 6dff4bbc7dd0e8e8ee5675765e8be077e1f731dfeb007a8e07dd949070eda2d1
+    spec:
+      serviceAccountName: release-name-onebox
+      securityContext:
+        fsGroup: 1001
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: onebox
+          image: "registry.unionai.cloud/controlplane/onebox:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --config=/etc/onebox/config/config.yaml
+            - --config=/etc/onebox/config/extra.yaml
+            - --work-dir=/var/run/onebox
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: tasks
+              containerPort: 8082
+            - name: fasttask
+              containerPort: 15606
+            - name: metrics
+              containerPort: 10254
+            - name: webhook
+              containerPort: 9443
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onebox/config
+            - name: db-password
+              mountPath: /etc/onebox/db
+            - name: internal
+              mountPath: /etc/onebox/internal
+            - name: work
+              mountPath: /var/run/onebox
+            - name: tmp
+              mountPath: /tmp
+        - name: console
+          image: "registry.unionai.cloud/controlplane/unionconsole:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          env:
+            # Loopback only: onebox serves the console under /v2 on its port.
+            - name: HOSTNAME
+              value: 127.0.0.1
+            - name: PORT
+              value: "3000"
+            - name: UNION_ORG_OVERRIDE
+              value: "onebox"
+            - name: IS_SELF_HOSTED
+              value: "true"
+            - name: DISABLE_EXTERNAL_TELEMETRY
+              value: "true"
+            - name: SELF_HOSTED_FEATURE_FLAGS
+              value: "{\"artifacts-enabled\":true}"
+            # Project and org dashboards, queried from onebox's database. Access
+            # is checked by replaying the caller's request to onebox's public
+            # port (never the internal one, which trusts its callers).
+            - name: DASHBOARD_BACKEND
+              value: postgres
+            - name: DASHBOARD_ORG
+              value: "onebox"
+            - name: DASHBOARD_AUTH_URL
+              value: http://127.0.0.1:8080
+            - name: PG_HOST
+              value: "postgres.example.internal"
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DATABASE
+              value: "union"
+            - name: PG_USER
+              value: "union"
+            - name: PG_PASSWORD_FILE
+              value: /etc/onebox/db/password
+            - name: PG_SSLMODE
+              value: "disable"
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: db-password
+              mountPath: /etc/onebox/db
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-onebox
+        - name: db-password
+          secret:
+            secretName: onebox-db
+            items:
+              - key: password
+                path: password
+        - name: internal
+          secret:
+            secretName: onebox-internal
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
