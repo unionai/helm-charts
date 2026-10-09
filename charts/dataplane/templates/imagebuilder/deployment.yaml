@@ -37,6 +37,68 @@ spec:
       hostUsers: {{ .Values.imageBuilder.buildkit.hostUsers }}
       {{- end }}
       serviceAccountName: {{ include "buildkit.serviceAccountName" . | quote }}
+      {{- $pc := .Values.imageBuilder.buildkit.persistentCache }}
+      {{- if $pc.enabled }}
+      {{- if .Values.imageBuilder.buildkit.rootless }}
+      {{- fail "imageBuilder.buildkit.persistentCache needs the privileged buildkit shape: set rootless: false" }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ $pc.terminationGracePeriodSeconds }}
+      initContainers:
+        # A native sidecar (restartPolicy: Always): Kubernetes starts buildkit
+        # only once its startupProbe passes -- the cache is mounted -- and
+        # stops it only after buildkit has exited, so the final commit sees
+        # a quiet filesystem.
+        - name: volume-cache
+          image: "{{ required "imageBuilder.buildkit.persistentCache.image.repository is required" $pc.image.repository }}:{{ $pc.image.tag | default $.Chart.AppVersion }}"
+          imagePullPolicy: {{ $pc.image.pullPolicy }}
+          restartPolicy: Always
+          args:
+            - --name
+            - {{ include "imagebuilder.buildkit.workloadName" . | quote }}
+            - --bucket
+            - {{ required "imageBuilder.buildkit.persistentCache.bucket is required" $pc.bucket | quote }}
+            - --pointer
+            {{- /* Per workload: the ARM builder (imageBuilder.buildkit.arm) keeps its own
+            cache and pointer, or each architecture would fork the other's state. */}}
+            {{- $defaultPointer := printf "%s/%s/LATEST" (trimSuffix "/" $pc.bucket) (include "imagebuilder.buildkit.workloadName" .) }}
+            - {{ (ternary $pc.armPointer $pc.pointer (not (not .buildkitArm))) | default $defaultPointer | quote }}
+            - --mount-at
+            - /var/lib/buildkit-cache/state
+            - --size
+            - {{ $pc.size | quote }}
+            {{- with $pc.maxSize }}
+            - --max-size
+            - {{ . | quote }}
+            {{- end }}
+            - --grow-at
+            - {{ $pc.growAt | quote }}
+            - --commit-every
+            - {{ $pc.commitEvery | quote }}
+            - --ready-file
+            - /run/volume-cache/ready
+            # FUSE passthrough staging must not sit on a stacked filesystem
+            # (the container's overlay root): the kernel refuses its backing
+            # files there and every write falls back to the slow daemon path.
+            - --staging-dir
+            - /var/lib/volume-cache-staging
+          startupProbe:
+            exec:
+              command: ["test", "-f", "/run/volume-cache/ready"]
+            periodSeconds: 2
+            failureThreshold: 300
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: volume-cache-mnt
+              mountPath: /var/lib/buildkit-cache
+              mountPropagation: Bidirectional
+            - name: volume-cache-run
+              mountPath: /run/volume-cache
+            - name: volume-cache-staging
+              mountPath: /var/lib/volume-cache-staging
+          resources:
+            {{- toYaml $pc.resources | nindent 12 }}
+      {{- end }}
       containers:
         - name: "buildkit"
           image: {{ include "imagebuilder.buildkit.image" . | quote }}
@@ -53,6 +115,11 @@ spec:
           {{- end }}
             - mountPath: /etc/buildkit
               name: buildkit-config
+          {{- if $pc.enabled }}
+            - mountPath: /var/lib/buildkit-cache
+              name: volume-cache-mnt
+              mountPropagation: HostToContainer
+          {{- end }}
           {{- with .Values.imageBuilder.buildkit.additionalVolumeMounts -}}
           {{ tpl (toYaml .) $ | nindent 12 }}
           {{- end }}
@@ -63,6 +130,10 @@ spec:
             - unix:///run/{{ .Values.imageBuilder.buildkit.rootless | ternary "user/1000" ""}}/buildkit/buildkitd.sock
             - --addr
             - tcp://0.0.0.0:1234
+          {{- if $pc.enabled }}
+            - --root
+            - /var/lib/buildkit-cache/state/buildkit
+          {{- end }}
           {{- if .Values.imageBuilder.buildkit.rootless }}
             - --oci-worker-no-process-sandbox
           {{- end }}
@@ -110,6 +181,16 @@ spec:
       - configMap:
           name: {{ include "imagebuilder.buildkit.fullname" . }}
         name: buildkit-config
+      {{- if $pc.enabled }}
+      - name: volume-cache-mnt
+        emptyDir: {}
+      - name: volume-cache-run
+        emptyDir:
+          medium: Memory
+          sizeLimit: 1Mi
+      - name: volume-cache-staging
+        emptyDir: {}
+      {{- end }}
       {{- with .Values.imageBuilder.buildkit.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 6 }}
       {{- end }}

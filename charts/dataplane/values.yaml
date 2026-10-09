@@ -2614,6 +2614,57 @@ imageBuilder:
     # -- Appends additional environment variables to the buildkit container's spec.
     podEnv: []
 
+    # -- Keep buildkitd's state (layers, cache mounts) in a Union Volume across
+    # pod restarts and rescheduling, instead of starting cold on every new pod.
+    # A `union-volume-cache` sidecar (flyteplugins-union) forks the latest
+    # published cache version -- or creates it -- attaches it as an ext4 block
+    # volume and mounts it where buildkitd keeps its state; it commits every
+    # `commitEvery` seconds, grows the image online as it fills, and finalizes
+    # when the pod stops. Needs the privileged buildkit shape (not rootless),
+    # Kubernetes >= 1.29 (native sidecars), and a service account that can
+    # read and write `bucket`.
+    persistentCache:
+      # -- Enable the persistent cache sidecar.
+      enabled: false
+      image:
+        # -- Sidecar image, built by unionai/cloud (operator/deploy/volume-cache)
+        # and published multi-arch with every release.
+        repository: public.ecr.aws/unionai/union-volume-cache
+        # -- Default: the chart's appVersion.
+        tag: ""
+        pullPolicy: IfNotPresent
+      # -- Object-store location for the cache volume's data (required),
+      # e.g. `s3://my-bucket/buildkit-cache`.
+      bucket: ""
+      # -- Object path of the latest-version pointer. Default:
+      # `<bucket>/<buildkit fullname>/LATEST`.
+      pointer: ""
+      # -- The ARM builder's pointer (`imageBuilder.buildkit.arm`). It keeps a
+      # separate cache volume, so the two architectures never fork each other's
+      # state. Default: `<bucket>/<buildkit fullname>-arm/LATEST`.
+      armPointer: ""
+      # -- Size of a new cache volume's image (sparse: only written blocks are
+      # stored).
+      size: 64G
+      # -- Never grow the image past this. Empty: no limit.
+      maxSize: ""
+      # -- Grow (double) the image once its filesystem is this full.
+      growAt: 0.85
+      # -- Seconds between commits. Each commit publishes a version the next
+      # pod can start from; live replicas do not share a cache, so this bounds
+      # how stale a new or restarted builder starts. Delta commits take ~1-3 s.
+      commitEvery: 300
+      # -- Time for the final commit when a pod stops; it uploads what the
+      # last `commitEvery` wrote.
+      terminationGracePeriodSeconds: 900
+      # -- Sidecar resources. Measured on a managed cluster: ~110-160 MiB
+      # steady, 1.2-1.7 GiB peaks around commits; no limit, so commits can
+      # burst. 2 GiB left no room next to BuildKit on 8 GiB builder nodes.
+      resources:
+        requests:
+          cpu: 100m
+          memory: 1Gi
+
 # Disable by default, but can be explicityl enabled if needed.
 ingress-nginx:
   enabled: false

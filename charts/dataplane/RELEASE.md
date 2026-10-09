@@ -1,5 +1,30 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### BuildKit: persistent cache on a Union Volume (opt-in)
+
+`imageBuilder.buildkit.persistentCache` keeps buildkitd's state (layers and
+`RUN --mount=type=cache` contents) in a Union Volume across pod restarts and
+rescheduling, so a new builder pod starts warm instead of cold. A
+`union-volume-cache` native sidecar (built on flyteplugins-union's Volume API) forks the latest
+published cache version -- or creates it -- attaches it as an ext4 block
+volume under `/var/lib/buildkit-cache`, and buildkitd runs with `--root` on
+it. The sidecar commits every `commitEvery` seconds (each commit is a version
+the next pod can start from), grows the image online as it fills, and
+finalizes when the pod stops; Kubernetes stops it only after buildkitd, and
+`terminationGracePeriodSeconds` (default 900) covers that final commit.
+With the ARM builder (`imageBuilder.buildkit.arm`) enabled, it gets its own
+sidecar, cache volume and pointer (`armPointer`, default
+`<bucket>/<buildkit fullname>-arm/LATEST`), so neither architecture starts
+from the other's state.
+
+Off by default. Needs the privileged buildkit shape (the chart refuses
+`rootless: true`), Kubernetes >= 1.29 for native sidecars, a `bucket`, and a
+service account that can read and write it. The sidecar image defaults to
+`public.ecr.aws/unionai/union-volume-cache` at the chart's appVersion, published
+with each release by unionai/cloud (`operator/deploy/volume-cache`). Every existing render is byte-identical.
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`.
