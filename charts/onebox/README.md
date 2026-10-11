@@ -177,6 +177,22 @@ kubectl -n union create secret generic onebox-internal \
 
 and set `internalSecret.existingSecret=onebox-internal`.
 
+## Volumes: the node agent
+
+Volumes mount through the uvol mount broker, a CSI node driver, so the chart
+runs one DaemonSet beside onebox: `<fullname>-node-agent`, the onebox image
+running `onebox nodeagent run` with only the broker on. It is the dataplane's
+union-node-agent without node readiness or the GPU fault watcher, and no other
+node DaemonSets come with it. Tasks opt in with flyteplugins-union's
+`allow_volumes()` pod template.
+
+The agent pod is privileged (it opens `/dev/fuse` and premounts into kubelet's
+directory) and gets no API token. It must run on every node a volume-using task
+can land on; by default it tolerates every taint. Block Volumes are allowed in
+the release namespace (`nodeAgent.block.allow`). Turn it off with
+`nodeAgent.enabled=false`, and do not install it on a cluster that already
+runs a dataplane broker: both register the `volumes.union.ai` CSI driver.
+
 ## Not included (yet)
 
 - Apps / serving (needs Knative), image builder (needs BuildKit), artifacts.

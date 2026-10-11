@@ -274,6 +274,45 @@ webhook:
       tlsCrt: ""
       tlsKey: ""
 
+# The node agent: one DaemonSet running `onebox nodeagent run` from the onebox
+# image with only the uvol mount broker on, the CSI node driver Volumes mount
+# through (flyteplugins-union `allow_volumes()`). It is the dataplane's
+# union-node-agent with its other components (node readiness, the GPU fault
+# watcher) off. It must run on every node a volume-using task pod can land on.
+# The pod is privileged (it opens /dev/fuse and premounts into kubelet's
+# directory with Bidirectional propagation) and has no API token. Do not run it
+# beside a dataplane's broker: both register the same CSI driver.
+nodeAgent:
+  enabled: true
+  # -- CSI driver name; flyteplugins-union's default.
+  driverName: volumes.union.ai
+  kubeletDir: /var/lib/kubelet
+  socketDir: /run/uvol
+  stateDir: /var/lib/uvol/state
+  # -- Node-shared chunk cache that `allow_volumes(shared_node_cache=True)`
+  # pods get a per-namespace subtree of.
+  nodeCache:
+    enabled: true
+    hostPath: /var/lib/uvol/node-cache
+  block:
+    # -- Who may mount block Volumes (namespace and/or serviceAccount
+    # patterns). Empty means the release namespace, where task pods run.
+    allow: []
+    freezeMax: 60s
+  metricsPort: 10254
+  # -- flytestdlib log level (4 is info, 5 is debug).
+  logLevel: "4"
+  priorityClassName: system-node-critical
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 320Mi
+
 # -- Credentials onebox's parts use between themselves (key
 # userclouds-client-secret). By default the chart generates them once and
 # keeps them (via lookup). GitOps tools that render without cluster access
