@@ -1,5 +1,51 @@
 # controlplane — Release Notes
 
+## 2026.10.0
+
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`. Controlplane templates and
+values are unchanged.
+
+### Control-plane and console images
+
+Cut from cloud `66d3a483` (tag `release/2026.10.0`).
+
+- Fleet: chart and template RPCs, values sourced from stored templates, and
+  chart-policy changes attributed to whoever made them
+  ([cloud#19044](https://github.com/unionai/cloud/pull/19044),
+  [cloud#19021](https://github.com/unionai/cloud/pull/19021),
+  [cloud#19065](https://github.com/unionai/cloud/pull/19065)); chart upgrades and
+  values refresh now observed in staging, canary and production
+  ([cloud#19053](https://github.com/unionai/cloud/pull/19053)).
+- Leasor: a `STRICT_FIFO` head reserves only its own demand, across queues and
+  ticks ([cloud#19082](https://github.com/unionai/cloud/pull/19082)); Ray tasks
+  with a reuse policy are charged once as a reusable environment
+  ([cloud#19033](https://github.com/unionai/cloud/pull/19033)); the shadow
+  strategy logs its infeasible verdicts
+  ([cloud#19061](https://github.com/unionai/cloud/pull/19061)).
+- Run service: the outputs of a succeeded action are available immediately
+  ([cloud#19080](https://github.com/unionai/cloud/pull/19080)); dataproxy returns
+  the fully-qualified URI from `UploadInputs`
+  ([cloud#19040](https://github.com/unionai/cloud/pull/19040)); workflow skips the
+  empty `inputs.pb` write when a task reads no inputs
+  ([cloud#18959](https://github.com/unionai/cloud/pull/18959)).
+- Cluster: `ClusterSummary.cloud_provider` comes from the pushed environment
+  ([cloud#19027](https://github.com/unionai/cloud/pull/19027)).
+- ClickHouse: databases, tables and views applied by one schema reconciler
+  ([cloud#19060](https://github.com/unionai/cloud/pull/19060)).
+- Actions: the leasor replication queue is gated on the circuit breaker rather
+  than org backoff ([cloud#18840](https://github.com/unionai/cloud/pull/18840)).
+- Console: agents-view fixes (stable names, order and avatars while loading; no
+  stale "0 live"; a phone keyboard button in the live view)
+  ([cloud#19058](https://github.com/unionai/cloud/pull/19058),
+  [cloud#19089](https://github.com/unionai/cloud/pull/19089)), and lower CPU when
+  restoring run-details tabs
+  ([cloud#19032](https://github.com/unionai/cloud/pull/19032)).
+- flyte2 bumped for unified Redis config
+  ([cloud#19085](https://github.com/unionai/cloud/pull/19085)); Go 1.27.2
+  ([cloud#19088](https://github.com/unionai/cloud/pull/19088)).
+
+Image source: [cloud changes since release/2026.9.7](https://github.com/unionai/cloud/compare/release/2026.9.7...release/2026.10.0).
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`. Controlplane templates

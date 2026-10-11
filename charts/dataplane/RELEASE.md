@@ -1,6 +1,46 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.10.0
+
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`.
+
+### Dataplane images
+
+Cut from cloud `66d3a483` (tag `release/2026.10.0`).
+
+- **The node components are one binary.** nodeobserver, the uvol mount broker and
+  the GPU fault watcher are now goroutines of a single `nodeagent` process behind
+  one DaemonSet, ServiceAccount, ConfigMap and ClusterRole
+  ([cloud#18249](https://github.com/unionai/cloud/pull/18249)). Config moves to
+  flytestdlib named sections, which is why this chart emits `nodeobserver.config`
+  under `nodeReadiness:` as well as at the document root (below) — the old and new
+  binaries each read their own half, so the chart and the image may roll in any
+  order. The unified DaemonSet is off by default (`unionNodeAgent.enabled`);
+  enabling a component requires turning its old gate off in the same change, and
+  the chart refuses to render both.
+- nodeagent: the node-ready (CNI) gate no longer fails open, and the wait is
+  skipped on a node that carries no startup taint
+  ([cloud#19071](https://github.com/unionai/cloud/pull/19071)).
+- Go 1.27.2 ([cloud#19088](https://github.com/unionai/cloud/pull/19088)); flyte2
+  bumped for unified Redis config ([cloud#19085](https://github.com/unionai/cloud/pull/19085)).
+- image builder: optional persistent BuildKit cache on a Union block Volume
+  ([cloud#18887](https://github.com/unionai/cloud/pull/18887)). The broker serves
+  it, so the broker must also run on the image builder's nodes —
+  `uvolMountBroker.extraNodeSelectorTerms`.
+- operator: reports the cluster's own region
+  ([cloud#19034](https://github.com/unionai/cloud/pull/19034)); cluster-snapshot
+  gaps on v2-only dataplanes fixed
+  ([cloud#18903](https://github.com/unionai/cloud/pull/18903)).
+- metrics-gateway: multiple pipelines and native ClickHouse sinks
+  ([cloud#18907](https://github.com/unionai/cloud/pull/18907)); dataplane
+  remote_write filtered to the gateway keep-list at source
+  ([cloud#19041](https://github.com/unionai/cloud/pull/19041)).
+- leaseworker: cached outputs copied in the object store
+  ([cloud#18948](https://github.com/unionai/cloud/pull/18948)); `POD_NAMESPACE`
+  set so default pod templates resolve
+  ([cloud#18951](https://github.com/unionai/cloud/pull/18951)).
+
+Image source: [cloud changes since release/2026.9.7](https://github.com/unionai/cloud/compare/release/2026.9.7...release/2026.10.0).
 
 ### nodeobserver: config is emitted under `nodeReadiness:` as well as at the root
 
@@ -18,7 +58,6 @@ routine image bump would have left the new binary reading an empty
 the pod goes on reporting Ready.
 
 The root copy can be dropped once no dataplane runs a pre-consolidation image.
-
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`.
