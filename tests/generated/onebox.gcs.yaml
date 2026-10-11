@@ -1,0 +1,508 @@
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: false
+---
+# Source: onebox/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    iam.gke.io/gcp-service-account: onebox@acme-prod.iam.gserviceaccount.com
+
+---
+# Source: onebox/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    onebox:
+      organization: "acme"
+      seedProjects: ["default"]
+      listen:
+        address: ":8080"
+        tasksAddress: ":8082"
+      consoleUpstream: ""
+      logoutRedirect: "/v2"
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: "release-name-onebox.union.svc:8082"
+      identity:
+        subjectHeaders: ["X-Forwarded-User"]
+        emailHeaders: ["X-Forwarded-Email"]
+        nameHeaders: ["X-Forwarded-Preferred-Username"]
+        groupsHeaders: ["X-Forwarded-Groups"]
+        claimsJWTHeaders: []
+        anonymousSubject: "anonymous"
+      profiles:
+        enabled: true
+      authz:
+        enabled: false
+        adminUsers: []
+        defaultRole: "viewer"
+        tasks:
+          role: "contributor"
+      apps:
+        provider: "none"
+      userclouds:
+        clientSecretPath: /etc/onebox/internal/userclouds-client-secret
+      webhook:
+        enabled: false
+        serviceName: "release-name-onebox"
+        # templates/webhook.yaml installs the configuration and cert Secret.
+        externalConfiguration: true
+      clusterData:
+        metadataBucketPrefix: "gs://acme-onebox"
+        storageType: "gcs"
+        bucketRegion: "us-east-1"
+        gcpProjectId: "acme-prod"
+    db:
+      host: "10.0.0.5"
+      port: 5432
+      dbname: "union"
+      username: "union"
+      passwordPath: /etc/onebox/db/password
+      options: "sslmode=disable"
+      connectionPool:
+        maxIdleConnections: 2
+        maxOpenConnections: 40
+    storage:
+      
+      type: stow
+      container: "acme-onebox"
+      enable-multicontainer: true
+      stow:
+        kind: google
+        config:
+          json: ""
+          project_id: "acme-prod"
+          scopes: https://www.googleapis.com/auth/cloud-platform
+    # Task pods, their secrets and their logs all live in this namespace.
+    leaseworker:
+      namespace-template: "union"
+      limit-namespace: "union"
+    namespace_mapping:
+      template: "union"
+    fasttask:
+      callback-uri: "http://release-name-onebox.union.svc:15606"
+    plugins:
+      k8s:
+        default-env-vars:
+          - AWS_REGION: "us-east-1"
+  extra.yaml: |
+    {}
+
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  agent.yaml: |
+    nodeReadiness:
+      enabled: false
+    gpuFaultWatcher:
+      enabled: false
+    uvolBroker:
+      enabled: true
+      driverName: volumes.union.ai
+      kubeletDir: /var/lib/kubelet
+      socketDir: /run/uvol
+      stateDir: /var/lib/uvol/state
+      nodeCacheDir: /var/lib/uvol/node-cache
+      blockAllow:
+        - namespace: union
+      blockFreezeMax: "60s"
+      metricsScope: "uvol_broker"
+      profilerPort: 10254
+---
+# Source: onebox/templates/rbac.yaml
+# onebox runs task pods and keeps their secrets in its own namespace; it needs
+# nothing outside it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Task pods, their logs, and the pod templates tasks may name.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, serviceaccounts]
+    verbs: [get, list, watch]
+  # Secrets: the secret store, image pull secrets, the webhook's certificate.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Task events: read for the console, recorded by the worker.
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+  # The operator proxy's namespace quota route (read only).
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list, watch]
+---
+# Source: onebox/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-onebox
+subjects:
+  - kind: ServiceAccount
+    name: release-name-onebox
+    namespace: union
+
+---
+# Source: onebox/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+  ports:
+    # The console (/v2), the Connect and gRPC API and the REST routes. Put the
+    # authenticating proxy in front of this port.
+    - name: http
+      port: 80
+      targetPort: http
+      appProtocol: kubernetes.io/h2c
+    # Task pods call the API here; every request acts as the built-in tasks
+    # app. In-cluster only (see networkPolicy).
+    - name: tasks
+      port: 8082
+      targetPort: tasks
+      appProtocol: kubernetes.io/h2c
+    # Reusable-container (fast task) workers report back here. In-cluster only.
+    - name: fasttask
+      port: 15606
+      targetPort: fasttask
+
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Not onebox's selector labels: the Service selects those.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: release-name-onebox-node-agent
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: release-name-onebox-node-agent
+        app.kubernetes.io/instance: release-name
+      annotations:
+        # Components read the config at start.
+        checksum/config: 3b1897cae953d6ffbf9de6cd278ac250c83da5bed2ad29423b2154545b8809d9
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: release-name-onebox-node-agent
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-onebox-node-agent
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: /run/uvol
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: /var/lib/uvol/state
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        - name: uvol-node-cache
+          hostPath:
+            path: /var/lib/uvol/node-cache
+            type: DirectoryOrCreate
+      containers:
+        - name: node-agent
+          image: "registry.unionai.cloud/controlplane/onebox:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          args: [nodeagent, run, --config, /etc/union/agent.yaml]
+          securityContext:
+            # /dev/fuse is outside the runtime's device allowlist, and only
+            # privileged grants it; the image's non-root USER is forced back
+            # to root because the device is root-owned.
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          # Ready once kubelet has acknowledged the CSI registration; until
+          # then every NodePublish fails with "driver not found".
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 320Mi
+            requests:
+              cpu: 20m
+              memory: 64Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              # The broker premounts FUSE inside kubelet-owned publish targets;
+              # the mounts must propagate to the host and on into task pods.
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: /run/uvol
+            - name: uvol-state
+              mountPath: /var/lib/uvol/state
+            - name: dev-fuse
+              mountPath: /dev/fuse
+            - name: uvol-node-cache
+              mountPath: /var/lib/uvol/node-cache
+
+---
+# Source: onebox/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # One process serves everything and the leasor holds its queues in memory:
+  # never two at once, not even during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: onebox
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: onebox
+        app.kubernetes.io/instance: release-name
+      annotations:
+        checksum/config: d1d993717d43978aade6dec8303bc988f5b13978f0f310ba926d1dde101324a0
+    spec:
+      serviceAccountName: release-name-onebox
+      securityContext:
+        fsGroup: 1001
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: onebox
+          image: "registry.unionai.cloud/controlplane/onebox:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --config=/etc/onebox/config/config.yaml
+            - --config=/etc/onebox/config/extra.yaml
+            - --work-dir=/var/run/onebox
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: tasks
+              containerPort: 8082
+            - name: fasttask
+              containerPort: 15606
+            - name: metrics
+              containerPort: 10254
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onebox/config
+            - name: db-password
+              mountPath: /etc/onebox/db
+            - name: internal
+              mountPath: /etc/onebox/internal
+            - name: work
+              mountPath: /var/run/onebox
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-onebox
+        - name: db-password
+          secret:
+            secretName: onebox-db
+            items:
+              - key: password
+                path: password
+        - name: internal
+          secret:
+            secretName: onebox-internal
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: volumes.union.ai
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Node-local ephemeral inline volumes only: the broker premounts a FUSE
+  # channel per pod and hands its fd to the pod's unprivileged client.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None

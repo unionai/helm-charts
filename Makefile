@@ -99,6 +99,7 @@ gen_version_bump: requirements
 	uv run invoke builder.version-bumper --file charts/dataplane-crds/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/knative-migration/Chart.yaml $(_PRERELEASE_FLAG)
 	uv run invoke builder.version-bumper --file charts/sandbox/Chart.yaml $(_PRERELEASE_FLAG)
+	uv run invoke builder.version-bumper --file charts/onebox/Chart.yaml $(_PRERELEASE_FLAG)
 
 .PHONY: gen_dataplane_release
 gen_dataplane_release: requirements
@@ -116,12 +117,16 @@ gen_knative_migration_release: requirements
 gen_sandbox_release: requirements
 	uv run invoke builder.release --chart sandbox
 
+.PHONY: gen_onebox_release
+gen_onebox_release: requirements
+	uv run invoke builder.release --chart onebox
+
 .PHONY: release-notes-dry-run
 release-notes-dry-run:
 	./scripts/generate-release-notes.sh
 
 .PHONY: lint
-lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox
+lint: lint-dataplane lint-dataplane-crds lint-knative-migration lint-sandbox lint-onebox
 
 .PHONY: lint-dataplane
 lint-dataplane:
@@ -138,6 +143,10 @@ lint-knative-migration:
 .PHONY: lint-sandbox
 lint-sandbox:
 	helm lint charts/sandbox
+
+.PHONY: lint-onebox
+lint-onebox:
+	helm lint charts/onebox --values tests/values/onebox.default.yaml
 
 .PHONY: generate-metrics-manifest
 generate-metrics-manifest:

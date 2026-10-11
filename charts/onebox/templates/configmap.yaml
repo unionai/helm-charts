@@ -1,0 +1,157 @@
+{{- include "onebox.bundled" . }}
+{{- if not .Values.database.host }}
+{{- fail "database.host is required" }}
+{{- end }}
+{{- if not .Values.storage.bucket }}
+{{- fail "storage.bucket is required" }}
+{{- end }}
+{{- if and (not .Values.database.existingSecret) (not .Values.database.password) }}
+{{- fail "set database.existingSecret (preferred) or database.password" }}
+{{- end }}
+{{- $ns := .Release.Namespace }}
+{{- $host := include "onebox.serviceHost" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "onebox.fullname" . }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    onebox:
+      organization: {{ .Values.organization | quote }}
+      seedProjects: {{ toJson .Values.seedProjects }}
+      listen:
+        address: ":8080"
+        tasksAddress: ":8082"
+      consoleUpstream: {{ if .Values.console.enabled }}"http://127.0.0.1:3000"{{ else }}""{{ end }}
+      logoutRedirect: {{ .Values.identity.logoutRedirect | quote }}
+      {{- with .Values.identity.logoutClearCookies }}
+      logoutClearCookies: {{ toJson . }}
+      {{- end }}
+      {{- with .Values.publicScheme }}
+      publicScheme: {{ . | quote }}
+      {{- end }}
+      {{- if .Values.authMetadata.externalAuthServerBaseUrl }}
+      authMetadata:
+        externalAuthServerBaseUrl: {{ .Values.authMetadata.externalAuthServerBaseUrl | quote }}
+        {{- with .Values.authMetadata.externalMetadataUrl }}
+        externalMetadataUrl: {{ . | quote }}
+        {{- end }}
+        flyteClient:
+          {{- toYaml .Values.authMetadata.flyteClient | nindent 10 }}
+      {{- end }}
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: {{ printf "%s:8082" $host | quote }}
+      identity:
+        subjectHeaders: {{ toJson .Values.identity.subjectHeaders }}
+        emailHeaders: {{ toJson .Values.identity.emailHeaders }}
+        nameHeaders: {{ toJson .Values.identity.nameHeaders }}
+        groupsHeaders: {{ toJson .Values.identity.groupsHeaders }}
+        claimsJWTHeaders: {{ toJson .Values.identity.claimsJWTHeaders }}
+        anonymousSubject: {{ .Values.identity.anonymousSubject | quote }}
+        {{- if .Values.identity.proxySecret.existingSecret }}
+        proxySecretHeader: {{ .Values.identity.proxySecret.header | quote }}
+        proxySecretPath: /etc/onebox/proxy/secret
+        {{- end }}
+      profiles:
+        enabled: {{ .Values.profiles.enabled }}
+      authz:
+        enabled: {{ .Values.authz.enabled }}
+        adminUsers: {{ toJson .Values.authz.adminUsers }}
+        defaultRole: {{ .Values.authz.defaultRole | quote }}
+        tasks:
+          role: {{ .Values.authz.tasksRole | quote }}
+      apps:
+        provider: {{ .Values.apps.provider | quote }}
+        {{- if eq .Values.apps.provider "dcr" }}
+        dcr:
+          registrationEndpoint: {{ required "apps.dcr.registrationEndpoint is required with apps.provider=dcr" .Values.apps.dcr.registrationEndpoint | quote }}
+          {{- if .Values.apps.dcr.initialAccessToken.existingSecret }}
+          initialAccessTokenPath: /etc/onebox/apps/initial-access-token
+          {{- end }}
+          scope: {{ .Values.apps.dcr.scope | quote }}
+          issuer: {{ required "apps.dcr.issuer is required with apps.provider=dcr" .Values.apps.dcr.issuer | quote }}
+          audience: {{ .Values.apps.dcr.audience | quote }}
+        {{- end }}
+      userclouds:
+        clientSecretPath: /etc/onebox/internal/userclouds-client-secret
+      webhook:
+        enabled: {{ .Values.webhook.enabled }}
+        serviceName: {{ include "onebox.fullname" . | quote }}
+        # templates/webhook.yaml installs the configuration and cert Secret.
+        externalConfiguration: true
+      {{- if .Values.imageBuilder.enabled }}
+      # onebox registers the build-image task (system/production) itself.
+      buildTask:
+        enabled: true
+        imageRepository: {{ required "imageBuilder.taskImages.repository is required" .Values.imageBuilder.taskImages.repository | quote }}
+        imageTag: {{ required "imageBuilder.taskImages.tag is required" .Values.imageBuilder.taskImages.tag | quote }}
+      {{- end }}
+      {{- if .Values.serving.enabled }}
+      # Union apps, run on Knative Serving in the cluster.
+      serving:
+        enabled: true
+        publicURLPattern: {{ required "serving.publicURLPattern is required with serving.enabled" .Values.serving.publicURLPattern | quote }}
+      {{- end }}
+      clusterData:
+        metadataBucketPrefix: {{ include "onebox.bucketURI" . | quote }}
+        storageType: {{ .Values.storage.type | quote }}
+        bucketRegion: {{ .Values.storage.region | quote }}
+        gcpProjectId: {{ .Values.storage.gcpProjectId | quote }}
+    db:
+      host: {{ .Values.database.host | quote }}
+      port: {{ .Values.database.port }}
+      dbname: {{ .Values.database.name | quote }}
+      username: {{ .Values.database.user | quote }}
+      passwordPath: /etc/onebox/db/password
+      options: {{ printf "sslmode=%s" .Values.database.sslMode | quote }}
+      connectionPool:
+        maxIdleConnections: 2
+        maxOpenConnections: {{ .Values.database.maxOpenConnections }}
+    storage:
+      {{- include "onebox.storage" . | nindent 6 }}
+    {{- if or .Values.metrics.prometheusURL .Values.imageBuilder.enabled }}
+    # The in-process operator proxy: the Metrics tab's queries go to this
+    # Prometheus, and image lookups to this registry.
+    proxy:
+      {{- with .Values.metrics.prometheusURL }}
+      prometheusUrl: {{ . | quote }}
+      {{- end }}
+      {{- if .Values.imageBuilder.enabled }}
+      imageBuilderConfig:
+        authenticationType: noop
+        defaultRepository: {{ required "imageBuilder.repository is required" .Values.imageBuilder.repository | quote }}
+        repositoryOverride: {{ .Values.imageBuilder.lookupURL | quote }}
+      {{- end }}
+    {{- end }}
+    # Task pods, their secrets and their logs all live in this namespace.
+    leaseworker:
+      namespace-template: {{ $ns | quote }}
+      limit-namespace: {{ $ns | quote }}
+    namespace_mapping:
+      template: {{ $ns | quote }}
+    fasttask:
+      callback-uri: {{ printf "http://%s:15606" $host | quote }}
+    plugins:
+      k8s:
+        {{- with .Values.taskDefaults.cpu }}
+        default-cpus: {{ . | quote }}
+        {{- end }}
+        {{- with .Values.taskDefaults.memory }}
+        default-memory: {{ . | quote }}
+        {{- end }}
+        default-env-vars:
+          {{- if .Values.storage.endpoint }}
+          - FLYTE_AWS_ENDPOINT: {{ .Values.storage.endpoint | quote }}
+          - AWS_ENDPOINT_URL: {{ .Values.storage.endpoint | quote }}
+          {{- end }}
+          - AWS_REGION: {{ .Values.storage.region | quote }}
+        {{- if and (eq .Values.storage.type "s3") (eq .Values.storage.authType "accesskey") }}
+        default-env-from-secrets:
+          - {{ .Values.storage.existingSecret | quote }}
+        {{- end }}
+  extra.yaml: |
+    {{- toYaml .Values.extraConfig | nindent 4 }}

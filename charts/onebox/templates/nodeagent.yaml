@@ -1,0 +1,187 @@
+{{- /*
+The node agent: the uvol mount broker Volumes mount through, as the one node
+DaemonSet onebox needs. Same code and config shape as the dataplane chart's
+union-node-agent (unionai/cloud operator/deploy/helm/templates/nodeagent) with
+only the broker component; the broker is a pure CSI node plugin, so the pod gets
+no API token.
+*/}}
+{{- if .Values.nodeAgent.enabled }}
+{{- $na := .Values.nodeAgent }}
+{{- $name := printf "%s-node-agent" (include "onebox.fullname" .) }}
+---
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ $na.driverName }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  # Node-local ephemeral inline volumes only: the broker premounts a FUSE
+  # channel per pod and hands its fd to the pod's unprivileged client.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+data:
+  agent.yaml: |
+    nodeReadiness:
+      enabled: false
+    gpuFaultWatcher:
+      enabled: false
+    uvolBroker:
+      enabled: true
+      driverName: {{ $na.driverName }}
+      kubeletDir: {{ $na.kubeletDir }}
+      socketDir: {{ $na.socketDir }}
+      stateDir: {{ $na.stateDir }}
+      {{- if $na.nodeCache.enabled }}
+      nodeCacheDir: {{ required "nodeAgent.nodeCache.hostPath is required when nodeCache is enabled" $na.nodeCache.hostPath }}
+      {{- end }}
+      blockAllow:
+        {{- toYaml ($na.block.allow | default (list (dict "namespace" .Release.Namespace))) | nindent 8 }}
+      blockFreezeMax: {{ $na.block.freezeMax | default "60s" | quote }}
+      metricsScope: "uvol_broker"
+      profilerPort: {{ $na.metricsPort }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  # Not onebox's selector labels: the Service selects those.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      annotations:
+        # Components read the config at start.
+        checksum/config: {{ toYaml $na | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ $na.metricsPort | quote }}
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: {{ $name }}
+      automountServiceAccountToken: false
+      priorityClassName: {{ $na.priorityClassName }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $na.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $na.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $name }}
+        - name: kubelet-dir
+          hostPath:
+            path: {{ $na.kubeletDir }}
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: {{ $na.socketDir }}
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: {{ $na.stateDir }}
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        {{- if $na.nodeCache.enabled }}
+        - name: uvol-node-cache
+          hostPath:
+            path: {{ $na.nodeCache.hostPath }}
+            type: DirectoryOrCreate
+        {{- end }}
+      containers:
+        - name: node-agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [nodeagent, run, --config, /etc/union/agent.yaml]
+          securityContext:
+            # /dev/fuse is outside the runtime's device allowlist, and only
+            # privileged grants it; the image's non-root USER is forced back
+            # to root because the device is root-owned.
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: metrics
+              containerPort: {{ $na.metricsPort }}
+              protocol: TCP
+          # Ready once kubelet has acknowledged the CSI registration; until
+          # then every NodePublish fails with "driver not found".
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml $na.resources | nindent 12 }}
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: {{ $na.logLevel | quote }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: {{ $na.kubeletDir }}
+              # The broker premounts FUSE inside kubelet-owned publish targets;
+              # the mounts must propagate to the host and on into task pods.
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: {{ $na.socketDir }}
+            - name: uvol-state
+              mountPath: {{ $na.stateDir }}
+            - name: dev-fuse
+              mountPath: /dev/fuse
+            {{- if $na.nodeCache.enabled }}
+            - name: uvol-node-cache
+              mountPath: {{ $na.nodeCache.hostPath }}
+            {{- end }}
+{{- end }}

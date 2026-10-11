@@ -1,0 +1,394 @@
+# onebox: Union in one pod.
+#
+# Required: database.host and a database password, and storage.bucket.
+# Everything else has a working default.
+
+# -- The organization every request is served as.
+organization: onebox
+
+image:
+  repository: registry.unionai.cloud/controlplane/onebox
+  # -- Defaults to the chart appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# -- The console (Next.js) runs as a second container in the pod and is served
+# by onebox under /v2, on the same port as the API.
+console:
+  enabled: true
+  image:
+    repository: registry.unionai.cloud/controlplane/unionconsole
+    # -- Defaults to the chart appVersion.
+    tag: ""
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # -- Console feature gates (SELF_HOSTED_FEATURE_FLAGS), gate -> bool. They
+  # override the console's self-hosted defaults; onebox runs the artifact
+  # service, so its pages are on.
+  featureFlags:
+    artifacts-enabled: true
+  env: []
+
+# -- Proof-of-value mode: run Postgres and an S3-compatible store (floci) in
+# the release namespace, each on a PersistentVolumeClaim, and point database
+# and storage at them. Nothing to provision beforehand, but nothing is backed
+# up, highly available or tuned either. For production leave this off and set
+# database and storage to a managed database and bucket. Switching a running
+# install from bundled to external keeps none of its data.
+bundled:
+  enabled: false
+  postgres:
+    image: mirror.gcr.io/library/postgres:17-alpine
+    # -- Only reachable inside the cluster.
+    password: union
+    storage: 10Gi
+    # -- Empty: the cluster's default StorageClass.
+    storageClassName: ""
+    resources:
+      requests: {cpu: 250m, memory: 512Mi}
+  s3:
+    image: docker.io/floci/floci:1.7.0
+    bucket: onebox
+    storage: 50Gi
+    storageClassName: ""
+    # -- The bucket's address for onebox, task pods and the console's
+    # presigned links. Empty: the in-cluster Service, which browsers cannot
+    # reach, so downloads and reports in the console need this set to an
+    # address that both browsers and the cluster resolve to the store.
+    endpoint: ""
+    # -- Also expose the store on every node at this port (a NodePort
+    # Service), e.g. for an endpoint at a node's address. Empty: in-cluster only.
+    nodePort: null
+    resources:
+      requests: {cpu: 100m, memory: 256Mi}
+  # -- Image for the Job that creates the bucket and its CORS rule.
+  jobImage: docker.io/curlimages/curl:8.10.1
+
+# -- One Postgres database for everything. Every service keeps its own tables
+# (and userclouds-lite its own schema) in it.
+database:
+  host: ""
+  port: 5432
+  name: union
+  user: union
+  # -- disable, require, verify-ca or verify-full. Use disable only for a
+  # database without TLS on a network you trust.
+  sslMode: require
+  # -- Password, stored in a Secret this chart creates. Prefer existingSecret.
+  password: ""
+  # -- Existing Secret holding the password.
+  existingSecret: ""
+  existingSecretKey: password
+  maxOpenConnections: 40
+
+# -- Where task inputs, outputs and code bundles live.
+storage:
+  # -- s3, gcs or azure. S3-compatible stores (MinIO, R2, Ceph) use s3 with an endpoint.
+  type: s3
+  bucket: ""
+  # -- s3 / s3-compatible.
+  region: us-east-1
+  endpoint: ""
+  # -- iam (pod identity / IRSA) or accesskey (from existingSecret below).
+  authType: iam
+  # -- Secret with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY (authType: accesskey).
+  existingSecret: ""
+  # -- gcs.
+  gcpProjectId: ""
+  # -- azure.
+  azureAccount: ""
+
+# -- How onebox learns who is calling. There is nothing to switch on: a request
+# that carries these headers is that user; one that does not is anonymous.
+# Put an authenticating proxy (oauth2-proxy, an OIDC-aware ingress, an ALB,
+# Cloudflare Access, ...) in front of the Service and have it set them. onebox
+# drops any identity header a client sets itself.
+#
+# List exactly the headers your proxy sets on every request it forwards. A
+# proxy overwrites only those; any other header in these lists is passed
+# through from the client, who can then claim to be anyone. The defaults match
+# oauth2-proxy in reverse-proxy mode (--pass-user-headers). For an AWS ALB,
+# empty the four lists and use claimsJWTHeaders.
+identity:
+  subjectHeaders: [X-Forwarded-User]
+  emailHeaders: [X-Forwarded-Email]
+  nameHeaders: [X-Forwarded-Preferred-Username]
+  groupsHeaders: [X-Forwarded-Groups]
+  # -- Headers carrying a proxy-verified JWT (e.g. X-Amzn-Oidc-Data,
+  # Cf-Access-Jwt-Assertion); its sub/email/name/groups claims fill in.
+  claimsJWTHeaders: []
+  anonymousSubject: anonymous
+  # -- A secret the proxy adds to every request it forwards (e.g. oauth2-proxy
+  # --set-xauthrequest plus a static header, or an ingress
+  # configuration-snippet). When set, identity headers on a request without it
+  # are ignored, so nothing that reaches the Service around the proxy can claim
+  # to be a user. Recommended, especially with authz on.
+  proxySecret:
+    existingSecret: ""
+    key: secret
+    header: X-Onebox-Proxy-Secret
+  # -- Where /logout sends the browser, e.g. the proxy's sign-out URL.
+  logoutRedirect: /v2
+  # -- Cookies /logout expires before redirecting: the session cookies of a
+  # proxy without a sign-out endpoint of its own. AWS ALB:
+  # [AWSELBAuthSessionCookie-0, AWSELBAuthSessionCookie-1,
+  # AWSELBAuthSessionCookie-2, AWSELBAuthSessionCookie-3].
+  logoutClearCookies: []
+
+# -- Scheme clients reach onebox with: http or https. Empty takes it from the
+# proxy's X-Forwarded-Proto (ALB and ingress controllers send it). Set https
+# when the proxy terminates TLS itself and does not send the header (e.g.
+# oauth2-proxy with --https-address), or SDK uploads go to an http:// endpoint.
+publicScheme: ""
+
+# -- The Metrics tab reads task CPU, memory (and GPU) series from a Prometheus
+# that scrapes cAdvisor and kube-state-metrics (and dcgm-exporter for GPUs),
+# e.g. the prometheus-community/prometheus chart. Empty: no metrics.
+metrics:
+  prometheusURL: ""
+
+# -- Remote image builds (flyte run --builder remote, or images the SDK can't
+# build locally). Needs a BuildKit daemon and a registry nodes can pull from;
+# see the docs' image builder page. The build-image task itself is deployed
+# once into the system project.
+imageBuilder:
+  enabled: false
+  # -- BuildKit's address, as task pods reach it.
+  buildkitURI: ""
+  # -- Where built images are pushed, as nodes pull them: <registry>/<path>.
+  repository: ""
+  # -- The same repository as this pod reaches it, to check whether an image
+  # already exists (scheme included, e.g. http://registry.<ns>.svc:5000/onebox).
+  # Defaults to https://<repository>. The registry must allow anonymous reads.
+  lookupURL: ""
+  # -- The images of the build-image task, which onebox registers in
+  # system/production: <repository>/build-image:<tag> and
+  # <repository>/frontend-v2:<tag>, at the version this chart was tested with;
+  # to use a mirror, copy both at this tag. These are Union's canary builds
+  # (imagebuilder-canary) for now, because the production repository
+  # (imagebuilder) has no arm64 frontend-v2 yet; they move to it once it has.
+  taskImages:
+    repository: public.ecr.aws/g1m2l3c1/imagebuilder-canary
+    tag: 412914d2f5764423efd200d68296b85c22a003a9
+
+# -- Union apps (serving). Each app runs as a Knative Service in onebox's
+# namespace, so Knative Serving (with an ingress such as Kourier) must be
+# installed in the cluster; see the docs' apps page. onebox serves app hosts
+# itself and forwards each to its app.
+serving:
+  enabled: false
+  # -- App URLs: fmt verbs for the app's subdomain and, optionally, the
+  # organization, e.g. https://%s.apps.onebox.example.com. Point a wildcard
+  # DNS record (*.apps.onebox.example.com) at the same proxy as onebox.
+  publicURLPattern: ""
+
+# -- Project and organization dashboards in the console, read from onebox's
+# database by the console (read-only queries).
+dashboards:
+  enabled: true
+
+# -- OAuth apps: client credentials users create for scripts and CI.
+# none: create them in your identity provider; app calls through onebox fail.
+# dcr: onebox registers them at your IdP's Dynamic Client Registration
+# endpoint (RFC 7591) and manages them with RFC 7592 (e.g. Keycloak).
+apps:
+  provider: none
+  dcr:
+    # -- e.g. https://<keycloak>/realms/<realm>/clients-registrations/openid-connect
+    registrationEndpoint: ""
+    # -- Secret holding the IdP's initial access token for registrations.
+    initialAccessToken:
+      existingSecret: ""
+      key: token
+    # -- Scope requested for every registered client, if the IdP needs one
+    # to put the proxy's expected audience into their tokens.
+    scope: ""
+    # -- The IdP's issuer URL: app tokens must verify against its keys.
+    issuer: ""
+    # -- Audience app tokens must carry, if any.
+    audience: ""
+
+# -- Where the SDK and CLI log in when the proxy in front requires a token.
+# onebox serves the IdP's OAuth2 metadata (proxied from
+# externalAuthServerBaseUrl) and this public client at the unauthenticated
+# discovery endpoints, so clients fetch tokens from your IdP and send them as
+# Authorization: Bearer. Leave externalAuthServerBaseUrl empty when nothing in
+# front requires tokens.
+authMetadata:
+  # -- Your IdP's authorization server, e.g. https://<okta-domain>/oauth2/default.
+  externalAuthServerBaseUrl: ""
+  # -- Metadata path relative to externalAuthServerBaseUrl. Default
+  # .well-known/oauth-authorization-server; IdPs that only publish OIDC
+  # discovery (Google, Entra ID) need .well-known/openid-configuration.
+  externalMetadataUrl: ""
+  flyteClient:
+    # -- Public (PKCE) client registered at your IdP for the SDK/CLI.
+    clientId: ""
+    # -- Register this exact redirect URI on that client.
+    redirectUri: http://localhost:53593/callback
+    scopes: [openid, profile, offline_access]
+    # -- Token audience, for IdPs that need one (e.g. Auth0).
+    audience: ""
+
+# -- Remember the name and email the proxy reports for each user, and show
+# them wherever users are listed or runs are attributed.
+profiles:
+  enabled: true
+
+# -- Role based access control. Off, every request is allowed. On, users get
+# defaultRole the first time they are seen, adminUsers are admins, and
+# requests without identity headers are refused.
+authz:
+  enabled: false
+  # -- Subjects (as the proxy reports them) granted the admin role.
+  adminUsers: []
+  # -- admin, contributor or viewer.
+  defaultRole: viewer
+  # -- Role of the built-in app task pods act as (to launch child actions and
+  # read data). Every request on the in-cluster tasks port gets it, so keep
+  # that port private: networkPolicy is on by default when authz is.
+  tasksRole: contributor
+
+# -- The pod mutating webhook, in-process: injects secrets into task pods. The
+# chart installs its MutatingWebhookConfiguration (which only selects pods in
+# the release namespace) and serving cert, so helm uninstall removes both and
+# onebox needs no cluster-wide permissions.
+webhook:
+  enabled: true
+  certificate:
+    # -- helm: generate a CA and serving cert once, kept across upgrades via
+    # lookup. external: bring your own (GitOps tools that render without
+    # cluster access, e.g. ArgoCD, would otherwise regenerate it every sync).
+    provider: helm
+    # -- provider external: PEM-encoded CA cert, and the serving cert and key
+    # for <fullname>.<namespace>.svc.
+    external:
+      caCert: ""
+      tlsCrt: ""
+      tlsKey: ""
+
+# The node agent: one DaemonSet running `onebox nodeagent run` from the onebox
+# image with only the uvol mount broker on, the CSI node driver Volumes mount
+# through (flyteplugins-union `allow_volumes()`). It is the dataplane's
+# union-node-agent with its other components (node readiness, the GPU fault
+# watcher) off. It must run on every node a volume-using task pod can land on.
+# The pod is privileged (it opens /dev/fuse and premounts into kubelet's
+# directory with Bidirectional propagation) and has no API token. Do not run it
+# beside a dataplane's broker: both register the same CSI driver.
+nodeAgent:
+  enabled: true
+  # -- CSI driver name; flyteplugins-union's default.
+  driverName: volumes.union.ai
+  kubeletDir: /var/lib/kubelet
+  socketDir: /run/uvol
+  stateDir: /var/lib/uvol/state
+  # -- Node-shared chunk cache that `allow_volumes(shared_node_cache=True)`
+  # pods get a per-namespace subtree of.
+  nodeCache:
+    enabled: true
+    hostPath: /var/lib/uvol/node-cache
+  block:
+    # -- Who may mount block Volumes (namespace and/or serviceAccount
+    # patterns). Empty means the release namespace, where task pods run.
+    allow: []
+    freezeMax: 60s
+  metricsPort: 10254
+  # -- flytestdlib log level (4 is info, 5 is debug).
+  logLevel: "4"
+  priorityClassName: system-node-critical
+  nodeSelector: {}
+  tolerations:
+    - operator: Exists
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      memory: 320Mi
+
+# -- Credentials onebox's parts use between themselves (key
+# userclouds-client-secret). By default the chart generates them once and
+# keeps them (via lookup). GitOps tools that render without cluster access
+# (ArgoCD) would regenerate them on every sync: create the Secret yourself and
+# name it here.
+internalSecret:
+  existingSecret: ""
+
+# -- Requests for task containers that set none (the build-image task among
+# them). Empty keeps the platform's (1 CPU, 100Mi); a small single-node
+# cluster wants less CPU.
+taskDefaults:
+  cpu: ""
+  memory: ""
+
+# -- Projects created on first start.
+seedProjects: [default]
+
+# -- Restrict who can reach onebox (needs a CNI that enforces NetworkPolicy).
+# The tasks and fast task ports only accept pods in the release namespace
+# (plus tasksFrom); the API port only accepts proxyFrom when set.
+networkPolicy:
+  # -- true, false, or unset: on when authz.enabled.
+  enabled: null
+  # -- NetworkPolicy peers of the authenticating proxy (podSelector /
+  # namespaceSelector). Empty: the API port stays open.
+  proxyFrom: []
+  # -- Extra peers allowed on the tasks ports, e.g. a namespaceSelector for
+  # other namespaces running onebox tasks.
+  tasksFrom: []
+
+rbac:
+  # -- Extra Role rules, for plugin task types (Spark, Ray, ...) enabled in
+  # extraConfig, e.g. {apiGroups: [ray.io], resources: [rayjobs], verbs: [...]}.
+  extraRules: []
+
+service:
+  type: ClusterIP
+  # -- The console, the Connect/gRPC API and the REST routes.
+  port: 80
+  annotations: {}
+
+# -- Extra onebox configuration, merged over what the chart renders. Any
+# service section can be set here (see onebox's base.yaml).
+extraConfig: {}
+
+serviceAccount:
+  create: true
+  name: ""
+  # -- e.g. IRSA (eks.amazonaws.com/role-arn) or GKE workload identity, for bucket access.
+  annotations: {}
+
+
+resources:
+  requests:
+    cpu: "1"
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+extraEnv: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
