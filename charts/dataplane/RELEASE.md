@@ -1,23 +1,41 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.10.0
 
-### nodeobserver: config is emitted under `nodeReadiness:` as well as at the root
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`.
 
-No values change and nothing to do. `union-nodeobserver`'s ConfigMap now carries
-`nodeobserver.config` twice — once under a `nodeReadiness:` section and once at
-the document root, as before.
+### Dataplane images
 
-The reason is that the nodeobserver binary is being folded into a single
-`nodeagent` binary (cloud#18249), which loads config through flytestdlib and so
-reads named sections rather than root keys. Each binary ignores the other's
-copy, so a node is configured correctly under either image, and this chart's
-version and the dataplane image can roll in any order. Without the section, a
-routine image bump would have left the new binary reading an empty
-`criticalDaemonSets` — which removes the node's startup taint immediately while
-the pod goes on reporting Ready.
+- **The node components are now one binary.** The node-readiness observer, the
+  uvol mount broker and the GPU fault watcher run as goroutines of a single
+  `nodeagent` process behind one DaemonSet, ServiceAccount, ConfigMap and
+  ClusterRole, replacing their separate ones.
 
-The root copy can be dropped once no dataplane runs a pre-consolidation image.
+  Configuration moved to named sections, which is why this chart now emits
+  `nodeobserver.config` under a `nodeReadiness:` key **as well as** at the
+  document root (see Unreleased in 2026.9.7, shipped here). The older and newer
+  binaries each read their own half and ignore the other, so this chart and the
+  dataplane image may be rolled in either order.
+
+  The unified DaemonSet is **off by default** (`unionNodeAgent.enabled`).
+  Enabling a component requires disabling its standalone gate in the same
+  change — the chart refuses to render a component in both shapes, because two
+  brokers on one node rebind the same kubelet CSI socket and write the same
+  journal. For the broker specifically, drain volume-using task pods from a node
+  before cutting it over.
+- Node readiness: the CNI gate no longer fails open, and the wait is skipped on
+  a node that carries no startup taint.
+- Image builder: an optional persistent BuildKit cache on a Union block Volume.
+  The broker serves it, so the broker has to run on the image builder's nodes
+  too — see `uvolMountBroker.extraNodeSelectorTerms`.
+- Operator: reports the cluster's own region, from config or its nodes'
+  topology label; cluster-snapshot gaps on v2-only dataplanes fixed.
+- Metrics gateway: multiple pipelines and native ClickHouse sinks; dataplane
+  `remote_write` is filtered to the gateway keep-list at the source.
+- Leaseworker: cached outputs are copied within the object store, and
+  `POD_NAMESPACE` is set so default pod templates resolve.
+- Go toolchain updated to 1.27.2; flyte2 picks up unified Redis configuration
+  ([flyteorg/flyte#8121](https://github.com/flyteorg/flyte/pull/8121)).
 
 ## 2026.9.7
 
