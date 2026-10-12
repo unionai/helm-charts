@@ -184,7 +184,8 @@ successful connection to the control plane.
 
 ## Zero-trust mode (BYOC only)
 
-See the example [values](./examples/values.zero-trust.yaml) to enable zero-trust mode.
+Zero-trust mode is the default. Set `zero_trust.enabled: false` to fall back to
+the legacy non-zero-trust path.
 
 ### Push prometheus metrics to the control plane
 
