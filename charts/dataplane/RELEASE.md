@@ -7,18 +7,18 @@
 `zero_trust.enabled` now defaults to `true`, so the Envoy gateway, the dataproxy
 backend and the tunnel-service dataplane ingress render without any values change.
 
-An install that relied on the old default and still runs the knative-operator
-path must do one of these before upgrading:
+**Self-hosted installs must set `zero_trust.enabled: false` before upgrading.**
+Zero trust is not supported for self-hosted control planes.
 
-- Run the [`knative-migration`](../knative-migration/README.md) chart first.
-  Skipping it deadlocks the upgrade. Then set `gateway.enabled: true` and
-  `knative-operator.enabled: false` in the dataplane values; zero trust fails to
-  render with `gateway.enabled: false`.
-- Pin `zero_trust.enabled: false` to stay on the legacy non-zero-trust path.
+An install that still runs the knative-operator path must run the
+[`knative-migration`](../knative-migration/README.md) chart before upgrading;
+skipping it deadlocks the upgrade. Then set `gateway.enabled: true` and
+`knative-operator.enabled: false` in the dataplane values; zero trust fails to
+render with `gateway.enabled: false`.
 
 An install with `secrets.admin.enable: false` now fails to render: the zero-trust
 Prometheus `remote_write` reads its oauth2 client secret from `union-secret-auth`.
-Enable `secrets.admin` or pin `zero_trust.enabled: false`.
+Enable `secrets.admin`.
 
 On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero trust.
 
