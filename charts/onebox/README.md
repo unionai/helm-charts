@@ -193,6 +193,17 @@ the release namespace (`nodeAgent.block.allow`). Turn it off with
 `nodeAgent.enabled=false`, and do not install it on a cluster that already
 runs a dataplane broker: both register the `volumes.union.ai` CSI driver.
 
+## License key
+
+Each install needs a free license key to make changes. The console shows the
+install ID and where to get a key (`license.issueURL`), and a key pasted there
+is kept in onebox's database. To manage the key yourself (GitOps), put it in a
+Secret and set `license.existingSecret`; onebox re-reads it when the Secret
+changes. With `license.enforce` on and no valid key, onebox is read-only:
+reads keep working, changes are refused, and runs already in flight finish.
+Keys from Union's issuer verify offline with no configuration; an issuer you
+host is added with `license.trustedKeys`.
+
 ## Not included (yet)
 
 - Apps / serving (needs Knative), image builder (needs BuildKit), artifacts.
