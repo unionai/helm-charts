@@ -55,3 +55,24 @@ If you want a new configuration to become a first-class overlay:
 3. Document any cross-cutting concerns in `MIGRATION.md` if existing consumers are affected
 
 See [MIGRATION.md](./MIGRATION.md) for the migration story behind the current state.
+
+## Every Union workload carries `platform.union.ai/component`
+
+The operator's cluster snapshot discovers Union workloads by this label
+(`unionai/cloud` `operator/pkg/components.go`), not by name, so a Deployment, DaemonSet or
+StatefulSet without it is not reported in the cluster's health. Every workload a chart
+provisions carries it in `metadata.labels` **and** in `spec.template.metadata.labels`, with
+the component's id as the value; subcharts get it through their label values. Never add
+it to `spec.selector` or a `selectorLabels` helper: a Deployment selector is immutable.
+
+The ids are kebab-case and fixed on the operator side, one per component:
+`operator`, `propeller`, `propeller-manager`, `leaseworker`, `webhook`, `proxy`, `dataproxy`,
+`gateway`, `kourier`, `knative-operator`, `knative-activator`, `knative-autoscaler`,
+`knative-autoscaler-hpa`, `knative-controller`, `knative-webhook`, `connector-service`,
+`image-builder`, `spark-history-server`, `prometheus`, `cloudwatch-exporter`,
+`fuse-device-plugin`, `logging`, `cluster-resource-sync`, `otel-collector`,
+`node-otel-collector`, `node-bootstrap`, `node-observer`, `uvol-broker`, `mountpoint`,
+`gpu-fault-watcher`. A new component needs an id on the operator side first.
+`tests/test-workload-labels.py` checks every rendered workload against this list; a
+workload with no component (a monitoring helper, for instance) goes on its allowlist with a
+reason.

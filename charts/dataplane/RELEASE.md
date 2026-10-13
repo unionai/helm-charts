@@ -24,6 +24,17 @@ On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero tr
 
 `examples/values.zero-trust.yaml` is removed because the defaults now match it.
 
+### Every Union workload carries `platform.union.ai/component`
+
+No values change and nothing to do. Every Deployment and DaemonSet this chart provisions,
+and the `knative-operator`, `prometheus` and `fluent-bit` subcharts through their label
+values, now carry `platform.union.ai/component: <id>` in `metadata.labels` and on their pod
+template (see `CONVENTIONS.md` for the ids). The operator's cluster snapshot discovers
+Union workloads by this label instead of by their names (the operator change that follows
+[cloud#19143](https://github.com/unionai/cloud/pull/19143)), so such an operator reports no
+`components` section until a dataplane runs this release. Selectors are untouched, so the upgrade is a
+plain rollout.
+
 ### The operator reads plugin configuration from its own ConfigMap, and connector-config as a mount
 
 No values change and nothing to do. The operator ConfigMap gains a `plugins.yaml` key
