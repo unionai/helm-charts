@@ -1,0 +1,18 @@
+{{- if .Values.gpuFaultWatcher.enabled }}
+{{- if hasKey .Values.gpuFaultWatcher.config "metricsBindAddress" }}
+{{- fail "set gpuFaultWatcher.metricsPort instead of gpuFaultWatcher.config.metricsBindAddress, so the probes and the scrape follow the port" }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-gpufaultwatcher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gpuFaultWatcher.labels" . | nindent 4 }}
+data:
+  # The node name comes from KUBE_NODE_NAME, so one file serves every node.
+  config.yaml: |
+    {{- toYaml .Values.gpuFaultWatcher.config | nindent 4 }}
+    metricsBindAddress: ":{{ .Values.gpuFaultWatcher.metricsPort }}"
+{{- end }}
