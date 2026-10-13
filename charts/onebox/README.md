@@ -195,7 +195,8 @@ runs a dataplane broker: both register the `volumes.union.ai` CSI driver.
 
 ## License key
 
-Each install needs a free license key to make changes. The console shows the
+Each install needs a license key to make changes: a 30-day trial (one per
+install; reinstall for a new one), or a key that lasts for a contract. The console shows the
 install ID and where to get a key (`license.issueURL`), and a key pasted there
 is kept in onebox's database. To manage the key yourself (GitOps), put it in a
 Secret and set `license.existingSecret`; onebox re-reads it when the Secret
