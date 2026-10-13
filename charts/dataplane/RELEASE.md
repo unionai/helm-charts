@@ -24,6 +24,28 @@ On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero tr
 
 `examples/values.zero-trust.yaml` is removed because the defaults now match it.
 
+### The operator reads plugin configuration from its own ConfigMap, and connector-config as a mount
+
+No values change and nothing to do. The operator ConfigMap gains a `plugins.yaml` key
+rendered from the same `config.enabled_plugins` and `config.core.manager` values the
+leaseworker and propeller run from: the enabled plugin ids, the `agent-service`,
+`connector-service` and task-log `logs` sections, and the manager's sharding. The cluster health snapshot
+the operator pushes to the control plane
+([cloud#19143](https://github.com/unionai/cloud/pull/19143)) reads its plugins and
+connectors sections from there instead of fetching the leaseworker and propeller
+ConfigMaps on every push. As in the leaseworker ConfigMap, the connector sections are
+rendered only while `flyteconnector.enabled`.
+
+The operator pod also mounts the `connector-config` ConfigMap, where the apps
+controller keeps the connector apps' endpoints, at `/etc/union/connector-config`
+(`operator.clusterHealth.connectorConfigPath`). The mount is optional: this chart does
+not ship that ConfigMap, so the directory stays empty and the operator reads it as no
+apps.
+
+An operator older than cloud#19143 ignores the new key; an operator at or after it on
+a chart without it reports no plugins or connectors in the snapshot until the chart is
+upgraded.
+
 ## 2026.10.0
 
 `version` and `appVersion` move `2026.9.7` → `2026.10.0`.

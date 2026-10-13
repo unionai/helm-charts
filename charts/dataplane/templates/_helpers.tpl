@@ -1676,3 +1676,56 @@ tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm"
 {{- .Values.imageBuilder.buildkitUriArm -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+operator.pluginsConfig renders plugins.yaml for the operator's own ConfigMap: the
+plugin configuration the cluster snapshot reports plugins and connectors from
+(unionai/cloud operator/pkg/plugin_config.go), taken from the same values that
+configure the leaseworker and propeller, so the operator reads it from memory like the
+rest of its configuration rather than fetching their ConfigMaps. The operator loads its
+configuration in strict mode and links only the sections rendered here: the enabled
+plugin ids, the agent-service and connector-service sections, the task log link
+configuration (the leaseworker's when it runs, propeller's otherwise), and the
+manager's sharding. Everything else in config.enabled_plugins and config.core configures
+plugins the operator does not link and stays out. As in the leaseworker ConfigMap, the
+connector sections are rendered only while the connector is deployed. Renders nothing
+when none of them is configured.
+*/}}
+{{- define "operator.pluginsConfig" -}}
+{{- $values := .Values.config | default dict -}}
+{{- $enabledPlugins := index $values "enabled_plugins" | default dict -}}
+{{- $sections := dict -}}
+{{- with index (index (index $enabledPlugins "tasks" | default dict) "task-plugins" | default dict) "enabled-plugins" -}}
+{{- $_ := set $sections "tasks" (dict "task-plugins" (dict "enabled-plugins" .)) -}}
+{{- end -}}
+{{- $services := dict -}}
+{{- if .Values.flyteconnector.enabled -}}
+{{- $plugins := index $enabledPlugins "plugins" | default dict -}}
+{{- range $id := list "agent-service" "connector-service" -}}
+{{- with index $plugins $id -}}
+{{- $_ := set $services $id . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
+     picks them (the deprecated executor.task_logs first), with no fallback to
+     propeller's, which the leaseworker does not read either. */ -}}
+{{- $taskLogs := dict -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- else -}}
+{{- $taskLogs = index $values "task_logs" | default dict -}}
+{{- end -}}
+{{- with index (index $taskLogs "plugins" | default dict) "logs" -}}
+{{- $_ := set $services "logs" . -}}
+{{- end -}}
+{{- if $services -}}
+{{- $_ := set $sections "plugins" $services -}}
+{{- end -}}
+{{- with index (index (index $values "core" | default dict) "manager" | default dict) "shard" -}}
+{{- $_ := set $sections "manager" (dict "shard" .) -}}
+{{- end -}}
+{{- if $sections -}}
+{{- tpl (toYaml $sections) $ -}}
+{{- end -}}
+{{- end -}}
