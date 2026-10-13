@@ -774,6 +774,9 @@ plugins:
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
       {{- end }}
+      {{- if not (dig "enabled" true (.Values.telemetry | default dict)) }}
+      - FLYTE_DISABLE_TELEMETRY: "true"
+      {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
