@@ -26,14 +26,22 @@ On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero tr
 
 ### Every Union workload carries `platform.union.ai/component`
 
-No values change and nothing to do. Every Deployment and DaemonSet this chart provisions,
-and the `knative-operator`, `prometheus` and `fluent-bit` subcharts through their label
-values, now carry `platform.union.ai/component: <id>` in `metadata.labels` and on their pod
-template (see `CONVENTIONS.md` for the ids). The operator's cluster snapshot discovers
-Union workloads by this label instead of by their names (the operator change that follows
-[cloud#19143](https://github.com/unionai/cloud/pull/19143)), so such an operator reports no
-`components` section until a dataplane runs this release. Selectors are untouched, so the upgrade is a
-plain rollout.
+Nothing to do: the only values change is new defaults, `fluentbit.labels`,
+`fluentbit.podLabels` and `prometheus.commonMetaLabels`, that carry the label into those
+subcharts. Every Deployment and DaemonSet this chart provisions, and the `prometheus` and
+`fluent-bit` subcharts through those values, now carry `platform.union.ai/component: <id>`
+in `metadata.labels` and on their pod template (see `CONVENTIONS.md` for the ids). The
+label is emitted after `additionalPodLabels`, a component's `podLabels` and a gateway
+component's `labels`, so a values layer that sets the same key cannot override it. The
+operator's cluster snapshot discovers Union workloads by this label instead of by their
+names ([cloud#19163](https://github.com/unionai/cloud/pull/19163)), so such an operator
+reports no `components` section until a dataplane runs this release. Selectors are
+untouched, so the upgrade is a plain rollout.
+
+The `knative-operator` subchart carries the label from its own 2026.10.0 release, which
+ships with this change; the `knative-operator` dependency stays pinned to 2026.6.0 here and
+is bumped in a follow-up once 2026.10.0 is published, so a legacy install's knative
+operator is not reported until then.
 
 ### The operator reads plugin configuration from its own ConfigMap, and connector-config as a mount
 

@@ -89,7 +89,9 @@ class WorkloadLabels(unittest.TestCase):
                 kind, name = doc["kind"], doc["metadata"].get("name", "<unnamed>")
                 where = f"{path.name}: {kind} {name}"
                 meta = (doc["metadata"].get("labels") or {}).get(LABEL)
-                pod = (((doc.get("spec") or {}).get("template") or {}).get("metadata") or {}).get("labels") or {}
+                pod = (((doc.get("spec") or {}).get("template") or {}).get("metadata") or {}).get(
+                    "labels"
+                ) or {}
                 pod = pod.get(LABEL)
                 if meta is None and pod is None:
                     if name not in ALLOWLIST:
@@ -98,18 +100,50 @@ class WorkloadLabels(unittest.TestCase):
                 if name in ALLOWLIST:
                     problems.append(f"{where} is labelled but allowlisted; drop one")
                 if meta is None or pod is None:
-                    problems.append(f"{where} carries {LABEL} on only one of metadata.labels and the pod template")
+                    problems.append(
+                        f"{where} carries {LABEL} on only one of metadata.labels and the pod template"
+                    )
                 elif meta != pod:
-                    problems.append(f"{where} carries {LABEL}={meta!r} in metadata.labels and {pod!r} on the pod template")
+                    problems.append(
+                        f"{where} carries {LABEL}={meta!r} in metadata.labels and {pod!r} on the pod template"
+                    )
                 for value in {meta, pod} - {None}:
                     if value not in COMPONENT_IDS:
-                        problems.append(f"{where} carries {LABEL}={value!r}, which the operator does not know")
+                        problems.append(
+                            f"{where} carries {LABEL}={value!r}, which the operator does not know"
+                        )
         self.assertGreater(seen, 0)
         self.assertEqual([], problems, "\n" + "\n".join(problems))
 
+    def test_user_labels_cannot_override_the_component_label(self):
+        # tests/values/dataplane.component-label-override.yaml sets the label through
+        # every user-extensible label value; the chart emits its own id after them, so
+        # the chart's value wins the duplicate key on every workload.
+        path = GENERATED / "dataplane.component-label-override.yaml"
+        self.assertTrue(path.exists(), f"{path.name} missing; run make generate-expected")
+        overridden = []
+        custom_seen = False
+        for doc in workloads(path):
+            for labels in (
+                doc["metadata"].get("labels") or {},
+                (((doc.get("spec") or {}).get("template") or {}).get("metadata") or {}).get(
+                    "labels"
+                )
+                or {},
+            ):
+                custom_seen = custom_seen or labels.get("custom-label") == "custom-value"
+                if labels.get(LABEL) == "user-override":
+                    overridden.append(f"{doc['kind']} {doc['metadata'].get('name')}")
+        self.assertTrue(custom_seen, "the fixture's user labels did not render at all")
+        self.assertEqual([], overridden, f"user values overrode {LABEL} on: {overridden}")
+
     def test_allowlist_names_are_rendered_somewhere(self):
         # A stale allowlist entry would hide a workload renamed into it.
-        names = {doc["metadata"].get("name") for path in GENERATED.glob("dataplane.*.yaml") for doc in workloads(path)}
+        names = {
+            doc["metadata"].get("name")
+            for path in GENERATED.glob("dataplane.*.yaml")
+            for doc in workloads(path)
+        }
         stale = sorted(ALLOWLIST - names)
         self.assertEqual([], stale, f"allowlisted workloads no chart renders: {stale}")
 

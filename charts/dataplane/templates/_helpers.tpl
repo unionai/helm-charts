@@ -1734,8 +1734,10 @@ when none of them is configured.
 dataplane.componentLabel is the label the operator's cluster snapshot discovers Union
 workloads by (unionai/cloud operator/pkg/components.go): every Deployment, DaemonSet and
 StatefulSet this chart provisions carries it in metadata.labels and in its pod template,
-with the component's id as the value (see CONVENTIONS.md). Never add it to a selector: a
-Deployment selector is immutable. Call with the id, e.g.
+with the component's id as the value (see CONVENTIONS.md). Emit it last in the labels
+block, after the user-extensible labels, so a values layer that sets the same key cannot
+override it: the last duplicate key wins. Never add it to a selector: a Deployment
+selector is immutable. Call with the id, e.g.
 {{ include "dataplane.componentLabel" "leaseworker" | nindent 4 }}.
 */}}
 {{- define "dataplane.componentLabel" -}}

@@ -62,8 +62,12 @@ The operator's cluster snapshot discovers Union workloads by this label
 (`unionai/cloud` `operator/pkg/components.go`), not by name, so a Deployment, DaemonSet or
 StatefulSet without it is not reported in the cluster's health. Every workload a chart
 provisions carries it in `metadata.labels` **and** in `spec.template.metadata.labels`, with
-the component's id as the value; subcharts get it through their label values. Never add
-it to `spec.selector` or a `selectorLabels` helper: a Deployment selector is immutable.
+the component's id as the value; subcharts get it through their label values. Emit it
+last in each labels block, after the user-extensible labels (`additionalPodLabels`, a
+component's `podLabels`, a gateway component's `labels`): a values layer that sets the
+same key then loses the duplicate-key resolution, so the chart's id always wins and the
+workload stays discoverable. Never add it to `spec.selector` or a `selectorLabels` helper:
+a Deployment selector is immutable.
 
 The ids are kebab-case and fixed on the operator side, one per component:
 `operator`, `propeller`, `propeller-manager`, `leaseworker`, `webhook`, `proxy`, `dataproxy`,
@@ -73,6 +77,6 @@ The ids are kebab-case and fixed on the operator side, one per component:
 `fuse-device-plugin`, `logging`, `cluster-resource-sync`, `otel-collector`,
 `node-otel-collector`, `node-bootstrap`, `node-observer`, `uvol-broker`, `mountpoint`,
 `gpu-fault-watcher`. A new component needs an id on the operator side first.
-`tests/test-workload-labels.py` checks every rendered workload against this list; a
-workload with no component (a monitoring helper, for instance) goes on its allowlist with a
-reason.
+`tests/test-workload-labels.py` checks every rendered workload against this list, and
+that a values layer setting the label cannot override it; a workload with no component (a
+monitoring helper, for instance) goes on its allowlist with a reason.
