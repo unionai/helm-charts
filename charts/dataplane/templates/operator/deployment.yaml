@@ -46,6 +46,15 @@ spec:
           configMap:
             name: {{ include "union-operator.fullname" . }}-connection
         {{- end }}
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       {{- with .Values.operator.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
@@ -70,6 +79,9 @@ spec:
               name: connection-config-volume
               readOnly: true
             {{- end }}
+            - mountPath: /etc/union/connector-config
+              name: connector-config-volume
+              readOnly: true
           {{- with .Values.operator.additionalVolumeMounts -}}
           {{ tpl (toYaml .) $ | nindent 12 }}
           {{- end }}

@@ -5327,6 +5327,66 @@ data:
         non-interruptible-node-selector-requirement:
           key: kubernetes.azure.com/scalesetpriority
           operator: DoesNotExist
+  plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+    tasks:
+      task-plugins:
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+        - artifact-trigger
   config.yaml: |
     union:
       connection:
@@ -5357,6 +5417,9 @@ data:
       type: Authorizer
     operator:
       enableTunnelService: true
+      clusterHealth:
+        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
+        connectorConfigPath: /etc/union/connector-config
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: true
@@ -8854,7 +8917,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5add73a1122fd043c1017e22a5dba0ee13806da884ee573a3552096f02b2f57"
+        configChecksum: "0a09dc898f2ffc8c1110a279f39cbcfa7fcff96aed24c9467279cdef3ed6545"
         
       labels:
         
@@ -10094,7 +10157,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5add73a1122fd043c1017e22a5dba0ee13806da884ee573a3552096f02b2f57"
+        configChecksum: "0a09dc898f2ffc8c1110a279f39cbcfa7fcff96aed24c9467279cdef3ed6545"
         
       labels:
         
@@ -10233,7 +10296,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "5add73a1122fd043c1017e22a5dba0ee13806da884ee573a3552096f02b2f57"
+        configChecksum: "0a09dc898f2ffc8c1110a279f39cbcfa7fcff96aed24c9467279cdef3ed6545"
         
       labels:
         
@@ -10253,6 +10316,15 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       containers:
         - name: operator
           securityContext:
@@ -10272,6 +10344,9 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: /etc/union/connector-config
+              name: connector-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
               value: "2026.10.0"
