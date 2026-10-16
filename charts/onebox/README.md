@@ -77,6 +77,23 @@ Task pods run in the release namespace as its `default` service account
 bucket access, e.g. annotate it with the same IRSA role or GCP service
 account.
 
+For a cloud identity per project, set `projectIdentity.enabled`: onebox then
+creates a service account per project-domain (`{{ project }}-{{ domain }}` by
+default) when a project is created, and task pods of that project-domain run as
+it unless the task names another (run-as). Annotation values are templates too:
+
+```yaml
+projectIdentity:
+  enabled: true
+  annotations:
+    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/onebox-{{ project }}-{{ domain }}
+```
+
+Each role needs a trust policy for `system:serviceaccount:<namespace>:<project>-<domain>`.
+Accounts onebox did not create are left as they are, so one can be prepared by
+hand. Everything still runs in the one namespace; per-project namespaces are not
+supported yet.
+
 ### A private CA, extra mounts and proxies
 
 `caBundle` names a ConfigMap (or Secret) key holding a PEM bundle that onebox,

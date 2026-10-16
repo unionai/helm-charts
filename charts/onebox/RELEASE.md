@@ -7,6 +7,8 @@
 - `extraVolumes`/`extraVolumeMounts` for the onebox container, and
   `taskPods.extraEnv`/`extraVolumes`/`extraVolumeMounts` for task pods, through
   a PodTemplate every task pod starts from.
+- `projectIdentity`: a service account per project-domain, with templated
+  annotations (IRSA, GKE workload identity), that the project's task pods run as.
 
 ## 2026.9.7
 
