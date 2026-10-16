@@ -1,0 +1,232 @@
+{{- include "onebox.bundled" . }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "onebox.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  # One process serves everything and the leasor holds its queues in memory:
+  # never two at once, not even during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "onebox.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "onebox.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "onebox.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: onebox
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - --config=/etc/onebox/config/config.yaml
+            - --config=/etc/onebox/config/extra.yaml
+            - --work-dir=/var/run/onebox
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: tasks
+              containerPort: 8082
+            - name: fasttask
+              containerPort: 15606
+            - name: metrics
+              containerPort: 10254
+            {{- if .Values.webhook.enabled }}
+            - name: webhook
+              containerPort: 9443
+            {{- end }}
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- if and (eq .Values.storage.type "s3") (eq .Values.storage.authType "accesskey") }}
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "storage.existingSecret is required with storage.authType=accesskey" .Values.storage.existingSecret }}
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.storage.existingSecret }}
+                  key: AWS_SECRET_ACCESS_KEY
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onebox/config
+            - name: db-password
+              mountPath: /etc/onebox/db
+            - name: internal
+              mountPath: /etc/onebox/internal
+            {{- if .Values.identity.proxySecret.existingSecret }}
+            - name: proxy-secret
+              mountPath: /etc/onebox/proxy
+            {{- end }}
+            {{- if .Values.apps.dcr.initialAccessToken.existingSecret }}
+            - name: apps-iat
+              mountPath: /etc/onebox/apps
+            {{- end }}
+            - name: work
+              mountPath: /var/run/onebox
+            - name: tmp
+              mountPath: /tmp
+        {{- if .Values.console.enabled }}
+        - name: console
+          image: "{{ .Values.console.image.repository }}:{{ .Values.console.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.console.image.pullPolicy }}
+          env:
+            # Loopback only: onebox serves the console under /v2 on its port.
+            - name: HOSTNAME
+              value: 127.0.0.1
+            - name: PORT
+              value: "3000"
+            - name: UNION_ORG_OVERRIDE
+              value: {{ .Values.organization | quote }}
+            - name: IS_SELF_HOSTED
+              value: "true"
+            - name: DISABLE_EXTERNAL_TELEMETRY
+              value: "true"
+            {{- $flags := deepCopy (.Values.console.featureFlags | default dict) }}
+            {{- if .Values.serving.enabled }}
+            {{- /* LLM gateways deploy as apps: on with serving unless set. */}}
+            {{- $_ := set $flags "llm-gateway-enabled" (dig "llm-gateway-enabled" true $flags) }}
+            {{- end }}
+            {{- with $flags }}
+            - name: SELF_HOSTED_FEATURE_FLAGS
+              value: {{ toJson . | quote }}
+            {{- end }}
+            {{- if .Values.dashboards.enabled }}
+            # Project and org dashboards, queried from onebox's database. Access
+            # is checked by replaying the caller's request to onebox's public
+            # port (never the internal one, which trusts its callers).
+            - name: DASHBOARD_BACKEND
+              value: postgres
+            - name: DASHBOARD_ORG
+              value: {{ .Values.organization | quote }}
+            - name: DASHBOARD_AUTH_URL
+              value: http://127.0.0.1:8080
+            - name: PG_HOST
+              value: {{ .Values.database.host | quote }}
+            - name: PG_PORT
+              value: {{ .Values.database.port | quote }}
+            - name: PG_DATABASE
+              value: {{ .Values.database.name | quote }}
+            - name: PG_USER
+              value: {{ .Values.database.user | quote }}
+            - name: PG_PASSWORD_FILE
+              value: /etc/onebox/db/password
+            - name: PG_SSLMODE
+              value: {{ .Values.database.sslMode | quote }}
+            {{- end }}
+            {{- with .Values.console.env }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.console.resources | nindent 12 }}
+          {{- if .Values.dashboards.enabled }}
+          volumeMounts:
+            - name: db-password
+              mountPath: /etc/onebox/db
+              readOnly: true
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+        {{- end }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "onebox.fullname" . }}
+        - name: db-password
+          secret:
+            secretName: {{ include "onebox.dbSecretName" . }}
+            items:
+              - key: {{ include "onebox.dbSecretKey" . }}
+                path: password
+        - name: internal
+          secret:
+            secretName: {{ include "onebox.internalSecretName" . }}
+        {{- with .Values.apps.dcr.initialAccessToken.existingSecret }}
+        - name: apps-iat
+          secret:
+            secretName: {{ . }}
+            items:
+              - key: {{ $.Values.apps.dcr.initialAccessToken.key | default "token" }}
+                path: initial-access-token
+        {{- end }}
+        {{- with .Values.identity.proxySecret.existingSecret }}
+        - name: proxy-secret
+          secret:
+            secretName: {{ . }}
+            items:
+              - key: {{ $.Values.identity.proxySecret.key }}
+                path: secret
+        {{- end }}
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
