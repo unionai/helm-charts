@@ -108,3 +108,53 @@ same values again is harmless. */}}
 {{- $_ = set .Values.storage "existingSecret" (printf "%s-s3" $name) }}
 {{- end }}
 {{- end }}
+
+{{/* The CA bundle's volume, mount and environment, for onebox and task pods. */}}
+{{- define "onebox.caBundle.enabled" -}}
+{{- if or .Values.caBundle.configMap .Values.caBundle.secret }}true{{- end }}
+{{- end }}
+
+{{- define "onebox.caBundle.path" -}}
+/etc/onebox/ca/{{ .Values.caBundle.key }}
+{{- end }}
+
+{{- define "onebox.caBundle.volume" -}}
+- name: onebox-ca-bundle
+  {{- if .Values.caBundle.secret }}
+  secret:
+    secretName: {{ .Values.caBundle.secret }}
+    items:
+      - key: {{ .Values.caBundle.key }}
+        path: {{ .Values.caBundle.key }}
+  {{- else }}
+  configMap:
+    name: {{ .Values.caBundle.configMap }}
+    items:
+      - key: {{ .Values.caBundle.key }}
+        path: {{ .Values.caBundle.key }}
+  {{- end }}
+{{- end }}
+
+{{- define "onebox.caBundle.mount" -}}
+- name: onebox-ca-bundle
+  mountPath: /etc/onebox/ca
+  readOnly: true
+{{- end }}
+
+{{/* Each client reads its own variable: Go and OpenSSL, Python requests, curl,
+the AWS SDKs (boto, obstore), gRPC, pip and uv. */}}
+{{- define "onebox.caBundle.env" -}}
+{{- $p := include "onebox.caBundle.path" . }}
+{{- range list "SSL_CERT_FILE" "REQUESTS_CA_BUNDLE" "CURL_CA_BUNDLE" "AWS_CA_BUNDLE" "GRPC_DEFAULT_SSL_ROOTS_FILE_PATH" "PIP_CERT" }}
+- name: {{ . }}
+  value: {{ $p }}
+{{- end }}
+{{- end }}
+
+{{- define "onebox.taskPodTemplate.enabled" -}}
+{{- if or (include "onebox.caBundle.enabled" .) .Values.taskPods.extraEnv .Values.taskPods.extraVolumes .Values.taskPods.extraVolumeMounts }}true{{- end }}
+{{- end }}
+
+{{- define "onebox.taskPodTemplate.name" -}}
+{{- printf "%s-task-defaults" (include "onebox.fullname" .) }}
+{{- end }}
