@@ -29,3 +29,23 @@ NetworkPolicy any pod in the cluster can reach it.
 Authorization is OFF: anyone who can reach the Service can do anything.
 Requests are attributed to the user in {{ first .Values.identity.subjectHeaders }} when present.
 {{- end }}
+{{- if include "onebox.caBundle.enabled" . }}
+{{- $data := "" }}
+{{- if .Values.caBundle.configMap }}
+{{- with lookup "v1" "ConfigMap" .Release.Namespace .Values.caBundle.configMap }}{{ $data = index (.data | default dict) $.Values.caBundle.key | default "" }}{{ end }}
+{{- else }}
+{{- with lookup "v1" "Secret" .Release.Namespace .Values.caBundle.secret }}{{ $data = index (.data | default dict) $.Values.caBundle.key | default "" | b64dec }}{{ end }}
+{{- end }}
+{{- $certs := len (regexFindAll "BEGIN CERTIFICATE" $data -1) }}
+
+caBundle is set: onebox, the console and every task pod trust ONLY the
+certificates in {{ .Values.caBundle.configMap | default .Values.caBundle.secret }}/{{ .Values.caBundle.key }}, in place of the system store.
+{{- if and $data (lt $certs 20) }}
+
+WARNING: that bundle has {{ $certs }} certificate(s); a system store has well over 100.
+Unless nothing is reached over the internet, include the public roots, or
+TLS to public endpoints (image registries, pip, cloud APIs) fails, and it
+will look like a network error:
+  cat /etc/ssl/certs/ca-certificates.crt corp-ca.pem > ca-bundle.pem
+{{- end }}
+{{- end }}
