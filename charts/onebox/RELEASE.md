@@ -1,5 +1,13 @@
 # onebox — Release Notes
 
+## Unreleased
+
+- `caBundle`: a private CA bundle trusted by onebox, the console and every task
+  pod (S3, database, identity provider, registry).
+- `extraVolumes`/`extraVolumeMounts` for the onebox container, and
+  `taskPods.extraEnv`/`extraVolumes`/`extraVolumeMounts` for task pods, through
+  a PodTemplate every task pod starts from.
+
 ## 2026.9.7
 
 First release. Union in one pod: the v2 control plane, the in-process data

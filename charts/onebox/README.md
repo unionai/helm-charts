@@ -77,6 +77,28 @@ Task pods run in the release namespace as its `default` service account
 bucket access, e.g. annotate it with the same IRSA role or GCP service
 account.
 
+### A private CA, extra mounts and proxies
+
+`caBundle` names a ConfigMap (or Secret) key holding a PEM bundle that onebox,
+the console and every task pod trust: for an S3 endpoint, database, identity
+provider or registry signed by a private CA. It replaces the system trust store
+(`SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, `AWS_CA_BUNDLE`, `GRPC_DEFAULT_SSL_ROOTS_FILE_PATH`,
+`PIP_CERT`, `CURL_CA_BUNDLE`; the console adds it with `NODE_EXTRA_CA_CERTS`), so
+include the public roots if anything is reached over the internet:
+
+```bash
+cat /etc/ssl/certs/ca-certificates.crt corp-ca.pem > ca-bundle.pem
+kubectl -n onebox create configmap ca-bundle --from-file=ca-bundle.pem
+helm upgrade --install onebox ... --set caBundle.configMap=ca-bundle
+```
+
+`extraVolumes`/`extraVolumeMounts` add volumes to the onebox container. Task
+pods get theirs from `taskPods.extraVolumes`/`extraVolumeMounts`/`extraEnv` (an
+outbound proxy's `HTTPS_PROXY`/`NO_PROXY`, a shared dataset): the chart renders
+a PodTemplate every task pod starts from (`plugins.k8s.default-pod-template-name`)
+whenever any of these, or `caBundle`, is set. A task's own `pod_template` still
+applies on top.
+
 ## Who is calling: identity headers
 
 onebox does not authenticate anyone. Put an authenticating proxy in front of
