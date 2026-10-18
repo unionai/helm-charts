@@ -18,7 +18,7 @@ generate-expected: $(GEN_DIR) vendor-crds
 	./tests/run.sh generate
 
 .PHONY: test
-test: check-vendored-crds helm-test kubeconform-test check-image-paths
+test: check-vendored-crds helm-test kubeconform-test check-image-paths check-app-dashboards
 
 .PHONY: snapshot-generator-test
 snapshot-generator-test:
@@ -31,6 +31,17 @@ snapshot-generator-test:
 .PHONY: check-image-paths
 check-image-paths:
 	python3 scripts/check-image-paths.py
+
+# The grafana-dataplane Flyte App serves dashboards synced from charts/dataplane. Keep the
+# synced copies in lockstep with the chart: sync regenerates them, check fails on drift.
+.PHONY: sync-app-dashboards
+sync-app-dashboards:
+	python3 apps/grafana-dataplane/sync_dashboards.py
+
+.PHONY: check-app-dashboards
+check-app-dashboards: sync-app-dashboards
+	@git diff --exit-code -- apps/grafana-dataplane/grafana/dashboards \
+	  || { echo "apps/grafana-dataplane dashboards drift from charts/dataplane — run 'make sync-app-dashboards' and commit"; exit 1; }
 
 # Vendored CRDs (crds/<name>/) — see crds/README.md.
 # Each subdirectory has its own scripts/sync.sh (refresh from upstream chart)
