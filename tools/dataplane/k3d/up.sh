@@ -91,10 +91,20 @@ _need() { for b in "$@"; do command -v "$b" >/dev/null || { echo "ERROR: '$b' no
 # accounts the pulls to this AWS principal. It is read-only: the token carries the
 # principal's own permissions, and the CI deployer holds no write on any registry.
 #
-# Credentials are optional. Without them the config is left as it was and pulls stay
-# anonymous, so local use needs no AWS setup and gets the behaviour it has today.
+# Deliberately CI-only, because the credential is static and the cluster can outlive it.
+# The token lasts 12 hours; a local cluster lasts as long as its owner leaves it running,
+# and once a credential is configured an expired one does NOT degrade to an anonymous pull
+# — the registry hands back a token that fails the manifest request, so uncached pulls
+# break instead of being merely rate limited. Nor can a re-run repair it: the
+# existing-cluster guard below skips `k3d cluster create`, and the config written here is
+# deleted either way. CI clusters are created fresh on a throwaway runner and torn down
+# well inside the token's life, which is also where the rate limit actually bites.
+#
+# Credentials are optional even there. Without them the config is left as it was and pulls
+# stay anonymous, so no leg depends on the token being mintable.
 _append_ecr_public_auth() {
   local reg="$1" token
+  [ -n "${GITHUB_ACTIONS:-}" ] || return 0
   command -v aws >/dev/null || {
     echo ">> [cluster] no aws CLI — public.ecr.aws pulls stay anonymous (rate limited)"; return 0; }
   # Public-registry tokens are only issued in us-east-1, whatever region the caller uses.
@@ -102,9 +112,9 @@ _append_ecr_public_auth() {
     echo ">> [cluster] could not mint an ECR Public token — public.ecr.aws pulls stay anonymous (rate limited)" >&2
     return 0
   fi
-  # Keep the token out of the CI log if anything downstream echoes it. Emitted only under
-  # Actions, where the runner consumes the directive instead of printing it.
-  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$token"
+  # Keep the token out of the CI log if anything downstream echoes it. The runner consumes
+  # the directive rather than printing it.
+  echo "::add-mask::$token"
   cat >> "$reg" <<EOF
 configs:
   "public.ecr.aws":
