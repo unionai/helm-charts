@@ -60,7 +60,7 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test gpu-fault-handling-test
 	./tests/run.sh helm
 
 # Every Union workload the dataplane chart renders carries the component label the
@@ -82,6 +82,11 @@ billing-test: requirements
 buildkit-arm-test: requirements
 	helm dependency update $(CHART_DIR)
 	uv run python tests/test-buildkit-arm.py
+
+.PHONY: gpu-fault-handling-test
+gpu-fault-handling-test: requirements
+	helm dependency update $(CHART_DIR)
+	uv run python tests/test-gpu-fault-handling.py
 
 .PHONY: kubeconform-test
 kubeconform-test:
