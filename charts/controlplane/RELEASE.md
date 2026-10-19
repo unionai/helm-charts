@@ -1,5 +1,32 @@
 # controlplane — Release Notes
 
+## 2026.10.0
+
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`. Controlplane templates and
+values are unchanged.
+
+### Control-plane and console images
+
+- Fleet: chart and template RPCs; values sourced from stored templates; chart
+  policy changes are attributed to whoever made them; chart upgrades and values
+  refresh are observed in staging, canary and production.
+- Leasor: a `STRICT_FIFO` queue head reserves only its own demand, across queues
+  and ticks; Ray tasks with a reuse policy are treated as a reusable environment
+  and charged once; the shadow scheduling strategy logs its infeasible verdicts.
+- Run service: the outputs of a succeeded action are available immediately after
+  it succeeds; the data proxy returns a fully-qualified URI from `UploadInputs`;
+  the empty `inputs.pb` write is skipped for a task that reads no inputs.
+- Cluster: `ClusterSummary.cloud_provider` comes from the pushed environment.
+- ClickHouse: databases, tables and views are applied by a single schema
+  reconciler.
+- Actions: the leasor replication queue is gated on the circuit breaker rather
+  than org backoff.
+- Console: agents-view fixes — names, order and avatars stay stable while
+  loading, a hidden tab no longer reports "0 live", and phones get a keyboard
+  button in the live view — plus lower CPU when restoring run-details tabs.
+- Go toolchain updated to 1.27.2; flyte2 picks up unified Redis configuration
+  ([flyteorg/flyte#8121](https://github.com/flyteorg/flyte/pull/8121)).
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`. Controlplane templates
