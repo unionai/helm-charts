@@ -14,12 +14,10 @@ global:
   DB_USER: ""
   DB_DEBUG: false             # Enable GORM SQL debug logging
   BUCKET_NAME: ""             # S3 bucket for metadata
-  ARTIFACTS_BUCKET_NAME: ""   # S3 bucket for artifacts
   KUBERNETES_SECRET_NAME: ""  # K8s secret with DB password under key "pass.txt"
 
   # --- AWS IAM (IRSA) ---
-  ARTIFACT_IAM_ROLE_ARN: ""   # IAM role for the artifacts service
-  FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role shared by flyteadmin, datacatalog, cacheservice
+  FLYTEADMIN_IAM_ROLE_ARN: "" # IAM role shared by flyteadmin, datacatalog, cacheservice, dataproxy
 
   # --- Service-to-Service OAuth2 ---
   INTERNAL_CLIENT_ID: ""      # client_credentials client ID
@@ -29,6 +27,23 @@ global:
 configMap:
   connection:
     region: '{{ .Values.global.AWS_REGION }}'
+
+trackedRuns:
+  enabled: true
+  storage:
+    type: s3
+    container: '{{ .Values.global.BUCKET_NAME }}'
+    stow:
+      kind: s3
+      config:
+        auth_type: iam
+        region: '{{ .Values.global.AWS_REGION }}'
+
+services:
+  dataproxy:
+    serviceAccount:
+      annotations:
+        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
 
 flyte:
   region: '{{ .Values.global.AWS_REGION }}'
@@ -60,11 +75,6 @@ flyte:
       annotations:
         "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.FLYTEADMIN_IAM_ROLE_ARN }}"
 
-services:
-  artifacts:
-    serviceAccount:
-      annotations:
-        "{{ .Values.global.AWS_POD_IDENTITY_ANNOTATION_PREFIX }}/role-arn": "{{ .Values.global.ARTIFACT_IAM_ROLE_ARN }}"
 
 scylla:
   storageClass:

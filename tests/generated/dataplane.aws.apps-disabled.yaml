@@ -1,4 +1,19 @@
 ---
+# Source: dataplane/templates/uvol-broker/priorityclass.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: release-name-uvol-broker
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+value: 1000000
+globalDefault: false
+description: "Priority for the Union uvol mount broker (a node-critical CSI DaemonSet on the task Volume-mount path) so it schedules ahead of task pods and a node's broker is not evicted out from under pods that depend on it to mount Volumes. Uses a custom class rather than a reserved system class (e.g. system-node-critical), which GKE restricts to kube-system."
+
+---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/serviceaccount.yaml
 apiVersion: v1
 kind: ServiceAccount
@@ -26,6 +41,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
   annotations:
@@ -51,17 +67,6 @@ metadata:
   annotations:
     eks.amazonaws.com/role-arn: test-worker-iam-role-arn
 automountServiceAccountToken: true
----
-# Source: dataplane/templates/flyteconnector/serviceaccount.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: flyteconnector
-  namespace: union
-  labels: 
-    app.kubernetes.io/name: flyteconnector
-    app.kubernetes.io/instance: release-name
-    app.kubernetes.io/managed-by: Helm
 ---
 # Source: dataplane/templates/common/auth-secret.yaml
 apiVersion: v1
@@ -297,6 +302,10 @@ data:
       - Embedded
       - K8s
       secretName: union-pod-webhook
+      selinuxTaskPods:
+        enabled: false
+        nodeOSImageSubstrings: []
+        type: spc_t
       serviceName: union-pod-webhook
       servicePort: '443'
   enabled_plugins.yaml: |
@@ -327,7 +336,7 @@ data:
       dispatcherCount: 512
       limit-namespace: union
       namespace-template: union
-      organization: 'test-org-name'
+      organization: 'union'
       refreshInterval: 10s
       task_resources:
         defaults:
@@ -340,7 +349,7 @@ data:
       unionAuth:
         injectSecret: true
         secretName: EAGER_API_KEY
-      workerName: 'test-org-name-test-cluster-name-worker1'
+      workerName: 'union-test-cluster-name-worker1'
     union:
       connection:
         host: 'dns:///test-controlplane-host'
@@ -406,7 +415,7 @@ data:
           deckFilename: report.html
       k8s:
         co-pilot:
-          image: 'cr.flyte.org/flyteorg/flytecopilot:v1.14.1'
+          image: 'cr.flyte.org/flyteorg/flyte-binary-v2:v2.0.45'
           name: flyte-copilot-
           start-timeout: 30s
         default-cpus: 100m
@@ -3273,6 +3282,66 @@ data:
         default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
+  plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+    tasks:
+      task-plugins:
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+        - artifact-trigger
   config.yaml: |
     union:
       connection:
@@ -3302,8 +3371,10 @@ data:
           insecureSkipVerify: false
       type: Authorizer
     operator:
-      enabled: true
       enableTunnelService: true
+      clusterHealth:
+        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
+        connectorConfigPath: /etc/union/connector-config
       #  enableDepot: false
       tunnel:
         enableDirectToAppIngress: false
@@ -3316,7 +3387,7 @@ data:
         enabled: false
       clusterId:
         name: 'test-cluster-name'
-        organization: 'test-org-name'
+        organization: 'union'
       clusterData:
         appId: ''
         bucketName: 'test-metadata-bucket'
@@ -3330,8 +3401,10 @@ data:
       collectUsages:
         enabled: false
       billing:
-        model: 'ResourceUsage'
+        model: ResourceUsage
       dependenciesHeartbeat:
+        leaseworker:
+          endpoint: 'http://union-operator-leaseworker:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
@@ -3347,7 +3420,12 @@ data:
           union.ai/namespace-type: flyte
         referenceConfigmapName: union-operator
         targetConfigMapName: "build-image-config"
+      apiKey:
+        enabled: true
     proxy:
+      imageBuilderConfig:
+        authenticationType: 'noop'
+        defaultRepository: ''
       persistedLogs:
         objectStore:
           pathTemplate: namespace-{{.KubernetesNamespace}}.pod-{{.KubernetesPodName}}.cont-{{.KubernetesContainerName}}
@@ -3410,10 +3488,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.8.4
+    helm.sh/chart: dataplane-2026.10.0
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.8.5"
+    app.kubernetes.io/version: "2026.10.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -4623,6 +4701,29 @@ data:
   rules: |
     {}
 ---
+# Source: dataplane/templates/uvol-broker/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: union-uvol-broker
+  namespace: union
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+data:
+  broker.yaml: |
+    uvolBroker:
+      driverName: volumes.union.ai
+      kubeletDir: /var/lib/kubelet
+      socketDir: /run/uvol
+      stateDir: /var/lib/uvol/state
+      nodeCacheDir: /var/lib/uvol/node-cache
+      metricsScope: "uvol_broker"
+      profilerPort: 10254
+
+---
 # Source: dataplane/charts/fluentbit/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -4788,6 +4889,17 @@ rules:
       - watch
       - create
       - update
+  # Read-only: the cluster snapshot reports the namespace's DaemonSets and
+  # StatefulSets next to its Deployments.
+  - apiGroups:
+      - apps
+    resources:
+      - daemonsets
+      - statefulsets
+    verbs:
+      - get
+      - list
+      - watch
   - apiGroups:
       - flyte.lyft.com
     resources:
@@ -5164,6 +5276,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -5386,6 +5499,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: logging
 spec:
   selector:
     matchLabels:
@@ -5396,6 +5510,7 @@ spec:
       labels:
         app.kubernetes.io/name: fluentbit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: logging
       annotations:
         checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     spec:
@@ -5450,6 +5565,145 @@ spec:
           name: etcmachineid
       tolerations:
         - operator: Exists
+
+---
+# Source: dataplane/templates/uvol-broker/daemonset.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-uvol-broker
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: uvol-broker
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: uvol-broker
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+  template:
+    metadata:
+      annotations:
+        configChecksum: "07b7507eb2797c90b2f72e5946a2c4136f77a843c43ffb3c95072c102df0692"
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+        prometheus.io/path: /metrics
+        
+      labels:
+        platform.union.ai/zone: "dataplane"
+        app.kubernetes.io/name: uvol-broker
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/component: uvol-broker
+    spec:
+      # No ServiceAccount and no token: the broker never calls the Kubernetes
+      # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
+      # credential cannot be turned into a confused deputy for the cluster.
+      automountServiceAccountToken: false
+      priorityClassName: release-name-uvol-broker
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: union-uvol-broker
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: /run/uvol
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: /var/lib/uvol/state
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        # The node-shared chunk cache root. Task pods never mount this
+        # themselves: the broker bind-mounts a per-namespace subtree into the
+        # pod's CSI target (kind=node-cache), so the privilege stays here.
+        - name: uvol-node-cache
+          hostPath:
+            path: /var/lib/uvol/node-cache
+            type: DirectoryOrCreate
+      containers:
+        # Privileged (mount(2), /dev/fuse, backing-registration ioctl) so task
+        # pods don't have to be — they run restricted-PSS and collect a
+        # connected fd over a per-volume socket. Holds no object storage
+        # credentials: the data plane runs in-pod under pod IAM.
+        # In-place upgrade safe: kernel mounts and pod-held fds survive
+        # restarts; the state journal + client fd re-registration resume the rest.
+        - name: uvol-mount-broker
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          args:
+            - nodeobserver
+            - broker
+            - --config
+            - /etc/union/broker.yaml
+          securityContext:
+            privileged: true
+            runAsUser: 0
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          # Ready means kubelet has acknowledged the CSI registration — not
+          # merely that the process is up. An unregistered driver fails every
+          # NodePublish, so this is the signal a node-readiness gate needs.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 30m
+              memory: 32Mi
+          # Deliberately NOT global.podEnvVars: that block injects control-plane
+          # service URLs and a cluster-name secretKeyRef. The broker never talks
+          # to the control plane or the Kubernetes API, and giving a privileged
+          # container credentials it cannot use is exactly the confused-deputy
+          # surface the no-ServiceAccount design above exists to avoid. It also
+          # would make this DaemonSet fail to start on a secret it never reads.
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              # Broker premounts FUSE inside kubelet-owned publish targets;
+              # those mounts must propagate back to the host mount ns (and
+              # from there into task pods via kubelet's container rbind).
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: /run/uvol
+            - name: uvol-state
+              mountPath: /var/lib/uvol/state
+            - name: dev-fuse
+              mountPath: /dev/fuse
+            - name: uvol-node-cache
+              mountPath: /var/lib/uvol/node-cache
 
 ---
 # Source: dataplane/charts/prometheus/charts/kube-state-metrics/templates/deployment.yaml
@@ -5550,6 +5804,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -5575,6 +5830,7 @@ spec:
         app.kubernetes.io/version: v2.55.1
         helm.sh/chart: prometheus-25.30.2
         app.kubernetes.io/part-of: prometheus
+        platform.union.ai/component: prometheus
     spec:
       enableServiceLinks: true
       serviceAccountName: union-operator-prometheus
@@ -5693,6 +5949,7 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: connector-service
 spec:
   replicas: 2
   selector:
@@ -5708,6 +5965,7 @@ spec:
         app.kubernetes.io/name: flyteconnector
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: connector-service
     spec:
       containers:
         - command:
@@ -5744,7 +6002,7 @@ spec:
               cpu: 100m
               ephemeral-storage: 100Mi
               memory: 384Mi
-      serviceAccountName: flyteconnector
+      serviceAccountName: union-system
 
 ---
 # Source: dataplane/templates/imagebuilder/deployment.yaml
@@ -5757,6 +6015,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: image-builder
 spec:
   strategy:
     type: Recreate
@@ -5771,6 +6030,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: image-builder
     spec:
       serviceAccountName: "union-system"
       containers:
@@ -5867,6 +6127,7 @@ metadata:
   namespace: union
   labels:
     app: leaseworker
+    platform.union.ai/component: leaseworker
 spec:
   replicas: 1
   strategy:
@@ -5877,7 +6138,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "e0b5d8e43eba539b8b72f65344b0a55ead0e7f91f4bc893b55ead4c5595971a"
+        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -5885,6 +6146,7 @@ spec:
         app: leaseworker
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: leaseworker
+        platform.union.ai/component: leaseworker
     spec:
       securityContext:
         fsGroup: 1337
@@ -5902,7 +6164,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -5974,6 +6236,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: proxy
 spec:
   replicas: 1
   selector:
@@ -5983,7 +6246,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "71f2aa09fec2c865c23099ac37c335a44fafc6afc68be3cd8b7244bf69552ec"
+        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -5992,6 +6255,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: proxy
     spec:
       volumes:
         - name: config-volume
@@ -6009,7 +6273,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6077,7 +6341,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -6114,6 +6378,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: operator
 spec:
   selector:
     matchLabels:
@@ -6122,7 +6387,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "71f2aa09fec2c865c23099ac37c335a44fafc6afc68be3cd8b7244bf69552ec"
+        configChecksum: "0dbc71ea437b9764741d98505a2845519a106988ad51025688ebe8c0d007401"
         
       labels:
         
@@ -6130,6 +6395,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: operator
     spec:
       serviceAccountName: union-system
       securityContext:
@@ -6141,11 +6407,20 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       containers:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6160,11 +6435,14 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: /etc/union/connector-config
+              name: connector-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.8.4"
+              value: "2026.10.0"
             - name: HELM_APP_VERSION
-              value: "2026.8.5"
+              value: "2026.10.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6232,6 +6510,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: webhook
 spec:
   replicas: 1
   selector:
@@ -6247,8 +6526,9 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: webhook
       annotations:
-        configChecksum: "e0b5d8e43eba539b8b72f65344b0a55ead0e7f91f4bc893b55ead4c5595971a"
+        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
         
     spec:
       securityContext:
@@ -6259,7 +6539,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.8.5"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -6364,7 +6644,7 @@ spec:
 apiVersion: admissionregistration.k8s.io/v1
 kind: MutatingWebhookConfiguration
 metadata:
-  name: union-pod-webhook-test-org-name
+  name: union-pod-webhook-union
   labels:
     app.kubernetes.io/name: union-pod-webhook
     app.kubernetes.io/instance: release-name
@@ -6387,7 +6667,7 @@ webhooks:
     objectSelector:
       matchLabels:
         inject-flyte-secrets: "true"
-        organization: 'test-org-name'
+        organization: 'union'
     reinvocationPolicy: Never
     rules:
       - apiGroups:
@@ -6405,6 +6685,29 @@ webhooks:
 ---
 # Source: dataplane/templates/propeller/serviceaccount.yaml
 ---
+
+---
+# Source: dataplane/templates/uvol-broker/csidriver.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: volumes.union.ai
+  labels:
+    app.kubernetes.io/name: uvol-broker
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Node-local ephemeral inline volumes only: the driver premounts a FUSE
+  # channel per pod and hands the fd to the pod's unprivileged client. No
+  # controller service, no attach/provision, no per-volume secrets — the
+  # data plane authenticates in-pod with the pod's own identity.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None
 
 ---
 # Source: dataplane/templates/common/task-podtemplate.yaml

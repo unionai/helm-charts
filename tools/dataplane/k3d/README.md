@@ -16,6 +16,17 @@ and RustFS manifest (`tools/dataplane/k3d/rustfs.yaml`), so they can't drift.
 (minio-client, to create the RustFS bucket) and `awscli`+`jq` (for
 `--from-aws-secret`).
 
+Storage setup uses `mc` from `PATH` when available. Otherwise it downloads
+MinIO Client `RELEASE.2025-08-13T08-35-41Z` from GitHub for Linux or macOS on
+x86-64 or ARM64, verifies its pinned SHA-256, and installs it as `.mc` in the
+checkout. This requires `curl` and either `sha256sum` or `shasum`. Other
+platforms need `mc` installed beforehand.
+
+The storage phase waits for RustFS at `/health/live` before creating the bucket
+and stops its port-forward on success or failure. Run `make k3d-storage-test`
+for the offline regression tests; they use command fixtures and never connect
+to Kubernetes.
+
 ## Operator credentials
 
 The dataplane operator authenticates to the control plane with a machine-identity

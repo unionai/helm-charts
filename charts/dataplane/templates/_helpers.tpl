@@ -325,6 +325,28 @@ tolerations:
 flyteconnector
 {{- end -}}
 
+{{/*
+Returns the flyteconnector service account name, using the common SA when enabled.
+*/}}
+{{- define "flyteconnector.serviceAccountName" -}}
+{{- if include "useCommonServiceAccount" . -}}
+{{- include "common.serviceAccountName" . -}}
+{{- else -}}
+{{- include "flyteconnector.name" . -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Annotations for a standalone flyteconnector service account: the platform cloud identity
+first, then any component-specific overrides.
+*/}}
+{{- define "flyteconnector.serviceAccount.annotations" -}}
+{{- include "global.serviceAccountAnnotations" . }}
+{{- with .Values.flyteconnector.serviceAccount.annotations }}
+{{ tpl (toYaml .) $ }}
+{{- end }}
+{{- end }}
+
 {{- define "flyteconnector.selectorLabels" -}}
 app.kubernetes.io/name: {{ template "flyteconnector.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
@@ -357,15 +379,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.selectorLabels" -}}
-app.kubernetes.io/name: fuse-device-plugin
+{{- define "uvolBroker.selectorLabels" -}}
+app.kubernetes.io/name: uvol-broker
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
-{{- define "fuseDevicePlugin.labels" -}}
-{{- include "fuseDevicePlugin.selectorLabels" . }}
+{{- define "uvolBroker.labels" -}}
+{{- include "uvolBroker.selectorLabels" . }}
 platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+Effective PriorityClass name for the uvol broker (only invoked when the broker
+is enabled): explicit name wins; else when the chart creates the class, a
+release-scoped default (RFC 1123: lowercased, <=63 chars, no trailing '-').
+Empty name with priorityClass.create=false is rejected — the broker is critical
+infra and must have a deliberate class, so bring your own or let the chart make one.
+*/}}
+{{- define "uvolBroker.priorityClassName" -}}
+{{- if .Values.uvolMountBroker.priorityClassName -}}
+{{- .Values.uvolMountBroker.priorityClassName -}}
+{{- else if .Values.uvolMountBroker.priorityClass.create -}}
+{{- printf "%s-uvol-broker" .Release.Name | lower | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- fail "uvolMountBroker: priorityClassName is empty and priorityClass.create is false — set priorityClassName to bring your own class, or enable priorityClass.create." -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "nodeobserver.podLabels" -}}
@@ -699,7 +738,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_ACCESS_KEY_ID" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_ACCESS_KEY_ID: {{ index $secret.data (.Values.storage.credentialsSecretRef.accessKeyIdKey | default "access_key_id") | b64dec | quote }}
 {{- end }}
@@ -712,7 +751,7 @@ app.kubernetes.io/component: kube-state-metrics
 
 {{- define "var.FLYTE_AWS_SECRET_ACCESS_KEY" -}}
 {{- if .Values.storage.credentialsSecretRef.name }}
-{{- $secret := lookup "v1" "Secret" .Release.Namespace .Values.storage.credentialsSecretRef.name }}
+{{- $secret := lookup "v1" "Secret" (.Values.storage.credentialsSecretRef.namespace | default .Release.Namespace) .Values.storage.credentialsSecretRef.name }}
 {{- if $secret }}
 - FLYTE_AWS_SECRET_ACCESS_KEY: {{ index $secret.data (.Values.storage.credentialsSecretRef.secretKeyKey | default "secret_key") | b64dec | quote }}
 {{- end }}
@@ -734,6 +773,9 @@ plugins:
       {{- end }}
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
+      {{- end }}
+      {{- if not (dig "enabled" true (.Values.telemetry | default dict)) }}
+      - DO_NOT_TRACK: "1"
       {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
@@ -775,6 +817,10 @@ http://flytepropeller:10254
 
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
+{{- end -}}
+
+{{- define "leaseworker.health.url" -}}
+http://{{ include "union-operator.fullname" . }}-leaseworker:10254
 {{- end -}}
 
 {{- define "proxy.service.url" -}}
@@ -1206,7 +1252,7 @@ The URI to connect to buildkit
 */}}
 {{- define "imagebuilder.buildkit.uri" -}}
 {{- if .Values.imageBuilder.buildkitUri -}}
-{{- .Values.imageBuilder.buildkitUri | quote -}}
+{{- .Values.imageBuilder.buildkitUri -}}
 {{- else -}}
 tcp://{{ include "imagebuilder.buildkit.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
 {{- end -}}
@@ -1555,6 +1601,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "leaseworker") (not $.Values.leaseworker.enabled) }}
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
@@ -1590,4 +1637,112 @@ propeller:
 {{- end }}
 webhook:
 {{- tpl (toYaml $webhook) . | nindent 2 }}
+{{- end -}}
+
+{{/* Per-architecture workload names/selectors; shared config and identity keep their existing names. */}}
+{{- define "imagebuilder.buildkit.workloadName" -}}
+{{- if .buildkitArm -}}
+{{- printf "%s-arm" (include "imagebuilder.buildkit.fullname" . | trunc 59 | trimSuffix "-") -}}
+{{- else -}}
+{{- include "imagebuilder.buildkit.fullname" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.workloadSelectorLabels" -}}
+{{- if .buildkitArm }}
+app.kubernetes.io/name: imagebuilder-buildkit-arm
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- else -}}
+{{- include "imagebuilder.buildkit.selectorLabels" . -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.workloadLabels" -}}
+{{- include "imagebuilder.buildkit.workloadSelectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{- define "imagebuilder.buildkit.armUri" -}}
+{{- if (.Values.imageBuilder.buildkit.arm | default dict).enabled -}}
+{{- if not .Values.imageBuilder.buildkit.enabled -}}
+{{- fail "imageBuilder.buildkit.arm.enabled requires imageBuilder.buildkit.enabled" -}}
+{{- end -}}
+{{- if .Values.imageBuilder.buildkitUriArm -}}
+{{- fail "Set either imageBuilder.buildkit.arm.enabled or imageBuilder.buildkitUriArm, not both" -}}
+{{- end -}}
+tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm" true) .) }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.imageBuilder.buildkit.service.port }}
+{{- else if .Values.imageBuilder.buildkitUriArm -}}
+{{- if not (or .Values.imageBuilder.buildkit.enabled .Values.imageBuilder.buildkitUri) -}}
+{{- fail "imageBuilder.buildkitUriArm requires a primary BuildKit endpoint (buildkitUri or buildkit.enabled)" -}}
+{{- end -}}
+{{- .Values.imageBuilder.buildkitUriArm -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+operator.pluginsConfig renders plugins.yaml for the operator's own ConfigMap: the
+plugin configuration the cluster snapshot reports plugins and connectors from
+(unionai/cloud operator/pkg/plugin_config.go), taken from the same values that
+configure the leaseworker and propeller, so the operator reads it from memory like the
+rest of its configuration rather than fetching their ConfigMaps. The operator loads its
+configuration in strict mode and links only the sections rendered here: the enabled
+plugin ids, the agent-service and connector-service sections, the task log link
+configuration (the leaseworker's when it runs, propeller's otherwise), and the
+manager's sharding. Everything else in config.enabled_plugins and config.core configures
+plugins the operator does not link and stays out. As in the leaseworker ConfigMap, the
+connector sections are rendered only while the connector is deployed. Renders nothing
+when none of them is configured.
+*/}}
+{{- define "operator.pluginsConfig" -}}
+{{- $values := .Values.config | default dict -}}
+{{- $enabledPlugins := index $values "enabled_plugins" | default dict -}}
+{{- $sections := dict -}}
+{{- with index (index (index $enabledPlugins "tasks" | default dict) "task-plugins" | default dict) "enabled-plugins" -}}
+{{- $_ := set $sections "tasks" (dict "task-plugins" (dict "enabled-plugins" .)) -}}
+{{- end -}}
+{{- $services := dict -}}
+{{- if .Values.flyteconnector.enabled -}}
+{{- $plugins := index $enabledPlugins "plugins" | default dict -}}
+{{- range $id := list "agent-service" "connector-service" -}}
+{{- with index $plugins $id -}}
+{{- $_ := set $services $id . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
+     picks them (the deprecated executor.task_logs first), with no fallback to
+     propeller's, which the leaseworker does not read either. */ -}}
+{{- $taskLogs := dict -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- else -}}
+{{- $taskLogs = index $values "task_logs" | default dict -}}
+{{- end -}}
+{{- with index (index $taskLogs "plugins" | default dict) "logs" -}}
+{{- $_ := set $services "logs" . -}}
+{{- end -}}
+{{- if $services -}}
+{{- $_ := set $sections "plugins" $services -}}
+{{- end -}}
+{{- with index (index (index $values "core" | default dict) "manager" | default dict) "shard" -}}
+{{- $_ := set $sections "manager" (dict "shard" .) -}}
+{{- end -}}
+{{- if $sections -}}
+{{- tpl (toYaml $sections) $ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dataplane.componentLabel is the label the operator's cluster snapshot discovers Union
+workloads by (unionai/cloud operator/pkg/components.go): every Deployment, DaemonSet and
+StatefulSet this chart provisions carries it in metadata.labels and in its pod template,
+with the component's id as the value (see CONVENTIONS.md). Emit it last in the labels
+block, after the user-extensible labels, so a values layer that sets the same key cannot
+override it: the last duplicate key wins. Never add it to a selector: a Deployment
+selector is immutable. Call with the id, e.g.
+{{ include "dataplane.componentLabel" "leaseworker" | nindent 4 }}.
+*/}}
+{{- define "dataplane.componentLabel" -}}
+platform.union.ai/component: {{ . }}
 {{- end -}}

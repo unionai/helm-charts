@@ -60,8 +60,28 @@ check-vendored-crds:
 	exit $${fail}
 
 .PHONY: helm-test
-helm-test: $(TMP_DIR) snapshot-generator-test
+helm-test: $(TMP_DIR) snapshot-generator-test k3d-storage-test billing-test buildkit-arm-test workload-labels-test
 	./tests/run.sh helm
+
+# Every Union workload the dataplane chart renders carries the component label the
+# operator's cluster snapshot discovers workloads by; checked over tests/generated/.
+.PHONY: workload-labels-test
+workload-labels-test: requirements
+	uv run python tests/test-workload-labels.py
+
+.PHONY: k3d-storage-test
+k3d-storage-test:
+	python3 tests/test-k3d-storage.py
+
+.PHONY: billing-test
+billing-test: requirements
+	helm dependency update $(CHART_DIR)
+	uv run python tests/test-operator-billing.py
+
+.PHONY: buildkit-arm-test
+buildkit-arm-test: requirements
+	helm dependency update $(CHART_DIR)
+	uv run python tests/test-buildkit-arm.py
 
 .PHONY: kubeconform-test
 kubeconform-test:

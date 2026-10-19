@@ -4,7 +4,7 @@ One-shot Job that prepares a Union dataplane for upgrade to zero-trust mode.
 
 ## When to run it
 
-**Before** upgrading the `dataplane` chart to a version with `gateway.enabled: true`. Skipping this step deadlocks the upgrade.
+**Before** upgrading the `dataplane` chart to a release with `zero_trust.enabled: true`. Skipping this step deadlocks the upgrade.
 
 The `knative-operator` must be **healthy** when the Job runs. Confirm with:
 

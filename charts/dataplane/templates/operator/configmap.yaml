@@ -1,3 +1,4 @@
+{{- include "serving.validateGateway" . -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,6 +7,10 @@ metadata:
     {{- include "operator.labels" . | nindent 4 }}
 data:
   k8s.yaml: | {{ tpl (include "k8s.plugins" .) $ | nindent 4 }}
+  {{- /* The plugin configuration the cluster snapshot reads; see the helper. */}}
+  {{- with include "operator.pluginsConfig" . }}
+  plugins.yaml: | {{ . | nindent 4 }}
+  {{- end }}
   config.yaml: |
     union:
     {{- with .Values.config.union.connection }}
@@ -25,13 +30,25 @@ data:
       {{- tpl (toYaml .) $ | nindent 6 }}
   {{- end }}
     operator:
-      enabled: {{ .Values.config.operator.enabled }}
       enableTunnelService: {{ .Values.operator.enableTunnelService }}
       {{- if include "dataplane.connectionConfig.emit" . }}
       # Path to the chart-rendered connection_config JSON the operator
       # self-reports on every UpdateStatus call. Empty path = disabled.
       connectionConfigPath: /etc/union/connection-config/connection_config.json
       {{- end }}
+      clusterHealth:
+        # Where operator/deployment.yaml mounts the connector-config ConfigMap.
+        connectorConfigPath: /etc/union/connector-config
+        {{- if .Values.config.operator.clusterHealth.nodeCapacity.enabled }}
+        nodeCapacity:
+          # Paired with the node-capacity ClusterRole in operator/serviceaccount.yaml:
+          # the collector needs cluster-scoped read on nodes, and omits node_pools
+          # rather than failing the push when it does not have it.
+          enabled: true
+          {{- if .Values.config.operator.clusterHealth.nodeCapacity.clusterWidePods }}
+          clusterWidePods: true
+          {{- end }}
+        {{- end }}
       #  enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
         enableDirectToAppIngress: {{ if and (include "apps.enabled" .) .Values.tunnelService.apps.enableGlobalIngress }}true{{ else }}false{{ end }}
@@ -39,7 +56,7 @@ data:
         {{- if include "apps.enabled" . }}
         {{- if .Values.tunnelService.apps.originURL }}
         appIngressOriginURL: {{ .Values.tunnelService.apps.originURL | quote }}
-        {{- else if .Values.zero_trust.enabled }}
+        {{- else if include "serving.useVendoredGateway" . }}
         appIngressOriginURL: "http://{{ include "gateway.fullname" . }}:{{ .Values.gateway.service.httpAppsPort }}"
         {{- else }}
         appIngressOriginURL: "http://kourier-internal"
@@ -84,10 +101,8 @@ data:
       collectUsages:
         {{- tpl (toYaml .) $ | nindent 8 }}
     {{- end }}
-    {{- with .Values.config.operator.billing }}
       billing:
-        {{- tpl (toYaml .) $ | nindent 8 }}
-    {{- end }}
+        {{- include "operator.billing.config" . | nindent 8 }}
     {{- with .Values.config.operator.computeResourceManager }}
       computeResourceManager:
         {{- tpl (toYaml .) $ | nindent 8 }}
@@ -139,8 +154,10 @@ data:
       clusterSelector:
         type: local
       secureTunnelTenantURLPattern: "http://{{ include "union-operator.fullname" . }}-proxy:8080"
+    {{- with .Values.dataproxy.taskMetrics }}
       taskMetrics:
-        metricDelayToleranceDuration: 0s
+        {{- tpl (toYaml .) $ | nindent 8 }}
+    {{- end }}
   {{- end }}
   logger.yaml: |
 {{- with .Values.logging }}
@@ -159,6 +176,9 @@ data:
   image-builder.buildkit-uri: {{ (include "imagebuilder.buildkit.uri" .) | quote }}
 {{- else }}
   image-builder.buildkit-uri: ""
+{{- end }}
+{{- with (include "imagebuilder.buildkit.armUri" .) }}
+  image-builder.buildkit-uri-arm: {{ . | quote }}
 {{- end }}
   image-builder.default-repository: {{ include "imagebuilder.defaultRepository" . | quote }}
   image-builder.authentication-type: {{ .Values.imageBuilder.authenticationType | quote }}

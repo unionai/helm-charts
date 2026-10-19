@@ -21,10 +21,10 @@ Helm charts for deploying Union.ai onto Kubernetes:
 
 ## Releasing
 
-- [`RELEASING.md`](./RELEASING.md) — stable releases (merge to `main`) and alpha/beta pre-releases (tag push), versioning, and how to consume each.
+- [`RELEASING.md`](./RELEASING.md) — stable releases and alpha/beta pre-releases (both cut by committing the `Chart.yaml` version to `main`; there is no tag-driven path), versioning, and how to consume each.
 
 ## Local development
 
-Sample Terraform configurations for spinning up substrate to test against live in [`providers/`](./providers).
+For a local dataplane on k3d (ephemeral cluster + registry + object store), see [`tools/dataplane/k3d/`](./tools/dataplane/k3d).
 
-Helm version: 3.18+ (CI pins 3.19). Snapshot tests: `make test`.
+Helm version: CI pins Helm v4.2.x (see `.github/workflows/checks.yaml`); older majors can hit Helm's 1 MB release-secret limit on these charts. Snapshot tests: `make test`.
