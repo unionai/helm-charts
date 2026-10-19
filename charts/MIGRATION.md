@@ -34,8 +34,8 @@ support.
   installed during the initial chart install and skipped on all subsequent upgrades. Environments
   deploying via plain Helm, Terraform (`helm_release`), or Helmfile must apply CRDs out-of-band:
   ```bash
-  # Apply updated CRDs via server-side apply from the matching git tag:
-  kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/unionai/helm-charts/<VERSION_TAG>/crds/dataplane/
+  # Apply updated CRDs via server-side apply from the cloned repo (or checkout at the matching tag):
+  kubectl apply --server-side --force-conflicts -f crds/dataplane/
   ```
   ArgoCD applications should configure a dedicated application pointing to `crds/dataplane/`
   with `ServerSideApply=true`.
