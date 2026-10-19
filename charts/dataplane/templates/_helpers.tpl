@@ -822,6 +822,9 @@ plugins:
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
       {{- end }}
+      {{- if not (dig "enabled" true (.Values.telemetry | default dict)) }}
+      - DO_NOT_TRACK: "1"
+      {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
@@ -862,6 +865,10 @@ http://flytepropeller:10254
 
 {{- define "proxy.health.url" -}}
 http://{{ include "union-operator.fullname" . }}-proxy:10254
+{{- end -}}
+
+{{- define "leaseworker.health.url" -}}
+http://{{ include "union-operator.fullname" . }}-leaseworker:10254
 {{- end -}}
 
 {{- define "proxy.service.url" -}}
@@ -1642,6 +1649,7 @@ the caller that emits directly (the operator) applies tpl itself.
 {{- $heartbeat := dict }}
 {{- range $key, $value := .Values.config.operator.dependenciesHeartbeat }}
 {{- if and (eq $key "propeller") (not $.Values.flytepropeller.enabled) }}
+{{- else if and (eq $key "leaseworker") (not $.Values.leaseworker.enabled) }}
 {{- /* The executor was removed from this chart; drop stale overlay entries so
        the operator doesn't heartbeat a nonexistent service. */}}
 {{- else if eq $key "executor" }}
@@ -1718,4 +1726,71 @@ tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm"
 {{- end -}}
 {{- .Values.imageBuilder.buildkitUriArm -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+operator.pluginsConfig renders plugins.yaml for the operator's own ConfigMap: the
+plugin configuration the cluster snapshot reports plugins and connectors from
+(unionai/cloud operator/pkg/plugin_config.go), taken from the same values that
+configure the leaseworker and propeller, so the operator reads it from memory like the
+rest of its configuration rather than fetching their ConfigMaps. The operator loads its
+configuration in strict mode and links only the sections rendered here: the enabled
+plugin ids, the agent-service and connector-service sections, the task log link
+configuration (the leaseworker's when it runs, propeller's otherwise), and the
+manager's sharding. Everything else in config.enabled_plugins and config.core configures
+plugins the operator does not link and stays out. As in the leaseworker ConfigMap, the
+connector sections are rendered only while the connector is deployed. Renders nothing
+when none of them is configured.
+*/}}
+{{- define "operator.pluginsConfig" -}}
+{{- $values := .Values.config | default dict -}}
+{{- $enabledPlugins := index $values "enabled_plugins" | default dict -}}
+{{- $sections := dict -}}
+{{- with index (index (index $enabledPlugins "tasks" | default dict) "task-plugins" | default dict) "enabled-plugins" -}}
+{{- $_ := set $sections "tasks" (dict "task-plugins" (dict "enabled-plugins" .)) -}}
+{{- end -}}
+{{- $services := dict -}}
+{{- if .Values.flyteconnector.enabled -}}
+{{- $plugins := index $enabledPlugins "plugins" | default dict -}}
+{{- range $id := list "agent-service" "connector-service" -}}
+{{- with index $plugins $id -}}
+{{- $_ := set $services $id . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
+     picks them (the deprecated executor.task_logs first), with no fallback to
+     propeller's, which the leaseworker does not read either. */ -}}
+{{- $taskLogs := dict -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- else -}}
+{{- $taskLogs = index $values "task_logs" | default dict -}}
+{{- end -}}
+{{- with index (index $taskLogs "plugins" | default dict) "logs" -}}
+{{- $_ := set $services "logs" . -}}
+{{- end -}}
+{{- if $services -}}
+{{- $_ := set $sections "plugins" $services -}}
+{{- end -}}
+{{- with index (index (index $values "core" | default dict) "manager" | default dict) "shard" -}}
+{{- $_ := set $sections "manager" (dict "shard" .) -}}
+{{- end -}}
+{{- if $sections -}}
+{{- tpl (toYaml $sections) $ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dataplane.componentLabel is the label the operator's cluster snapshot discovers Union
+workloads by (unionai/cloud operator/pkg/components.go): every Deployment, DaemonSet and
+StatefulSet this chart provisions carries it in metadata.labels and in its pod template,
+with the component's id as the value (see CONVENTIONS.md). Emit it last in the labels
+block, after the user-extensible labels, so a values layer that sets the same key cannot
+override it: the last duplicate key wins. Never add it to a selector: a Deployment
+selector is immutable. Call with the id, e.g.
+{{ include "dataplane.componentLabel" "leaseworker" | nindent 4 }}.
+*/}}
+{{- define "dataplane.componentLabel" -}}
+platform.union.ai/component: {{ . }}
 {{- end -}}

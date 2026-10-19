@@ -16,7 +16,8 @@ CHART = ROOT / "charts/dataplane"
 HELM = os.environ.get("HELM_BIN", "helm")
 
 BASE_VALUES = {
-    "global": {"UNION_CONTROL_PLANE_HOST": "test-controlplane-host"},
+    # Zero trust is on by default, and its Prometheus remote_write needs a client ID.
+    "global": {"UNION_CONTROL_PLANE_HOST": "test-controlplane-host", "AUTH_CLIENT_ID": "test-client-id"},
     "secrets": {"admin": {"create": False}},
 }
 WATCHER = {"gpuFaultWatcher": {"enabled": True}}

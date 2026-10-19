@@ -67,6 +67,13 @@ global:
 # Per-service constraints (services.<name>.nodeSelector / affinity / tolerations)
 # always take precedence. Mirrors the dataplane chart's `scheduling` block so a
 # single value steers both planes (e.g. onto a Spot node pool).
+# Telemetry sent to Union: the console's analytics tags (Google Tag Manager) and
+# real-user monitoring (Grafana Faro).
+telemetry:
+  # -- Set to false to opt out. Sets DO_NOT_TRACK=1 (https://donottrack.sh)
+  # on the console, the same switch flyte-sdk and the Flyte backend honour.
+  enabled: true
+
 scheduling:
   # -- See https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node
   affinity: {}
@@ -567,6 +574,14 @@ configMap:
       authorizationMetadataKey: flyte-authorization
       scopes:
         - '{{ default "all" .Values.global.OIDC_S2S_SCOPE }}'
+
+# Tracked Runs are runs orchestrated outside the platform and reported through
+# the SDK. This single switch enables the workflow service, its control-plane
+# object-storage data path, and the console surface. The AWS and GCP overlays
+# enable this and configure storage; custom deployments can do the same here.
+trackedRuns:
+  enabled: false
+  storage: {}
 
 services:
   artifacts:
@@ -1812,15 +1827,17 @@ console:
   # Wins over the console's built-in self-hosted defaults, so an operator can
   # turn a surface on/off without rebuilding the image. Only applies when the
   # console runs self-hosted (IS_SELF_HOSTED). The artifacts and factories gates
-  # default to services.artifacts.enabled. Example: {factories-enabled: false}
+  # default to services.artifacts.enabled; localruns defaults to
+  # trackedRuns.enabled. Example: {factories-enabled: false, localruns: false}
   featureFlags: {}
 
   # Additional environment variables from ConfigMap
   envFrom: []
 
   telemetry:
-    # Set to false to disable external telemetry calls (Grafana Faro).
-    # Useful for egress-restricted selfhosted/selfmanaged deployments.
+    # Set to false to disable external telemetry calls (Grafana Faro and Google
+    # Tag Manager). Useful for egress-restricted selfhosted/selfmanaged deployments.
+    # Prefer the top-level telemetry.enabled, which this predates.
     externalEnabled: true
 
   nodeSelector: {}
