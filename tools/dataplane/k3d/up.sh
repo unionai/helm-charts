@@ -81,6 +81,40 @@ done
 
 _need() { for b in "$@"; do command -v "$b" >/dev/null || { echo "ERROR: '$b' not found on PATH." >&2; exit 3; }; done; }
 
+# Append an ECR Public credential to the registries config the cluster is created with.
+#
+# The dataplane images come from public.ecr.aws, where anonymous pulls draw on a
+# 500 GB/month, 1-per-second budget that is shared, unraisable, and routinely spent by
+# other traffic from the same egress. Once it is gone every pull returns 429
+# ("toomanyrequests: Data limit exceeded") and the chart install times out with every pod
+# in ImagePullBackOff. An authorization token raises that to the authenticated limits and
+# accounts the pulls to this AWS principal. It is read-only: the token carries the
+# principal's own permissions, and the CI deployer holds no write on any registry.
+#
+# Credentials are optional. Without them the config is left as it was and pulls stay
+# anonymous, so local use needs no AWS setup and gets the behaviour it has today.
+_append_ecr_public_auth() {
+  local reg="$1" token
+  command -v aws >/dev/null || {
+    echo ">> [cluster] no aws CLI — public.ecr.aws pulls stay anonymous (rate limited)"; return 0; }
+  # Public-registry tokens are only issued in us-east-1, whatever region the caller uses.
+  if ! token="$(aws ecr-public get-login-password --region us-east-1 2>/dev/null)" || [ -z "$token" ]; then
+    echo ">> [cluster] could not mint an ECR Public token — public.ecr.aws pulls stay anonymous (rate limited)" >&2
+    return 0
+  fi
+  # Keep the token out of the CI log if anything downstream echoes it. Emitted only under
+  # Actions, where the runner consumes the directive instead of printing it.
+  [ -n "${GITHUB_ACTIONS:-}" ] && echo "::add-mask::$token"
+  cat >> "$reg" <<EOF
+configs:
+  "public.ecr.aws":
+    auth:
+      username: AWS
+      password: '$token'
+EOF
+  echo ">> [cluster] public.ecr.aws pulls authenticated (token valid 12h)"
+}
+
 _resolve_creds() {
   if [ -n "$FROM_AWS_SECRET" ]; then
     _need aws jq
@@ -103,6 +137,7 @@ mirrors:
     endpoint:
       - "http://k3d-registry:5000"
 EOF
+  _append_ecr_public_auth "$reg"
   # CI pre-loads a pinned k3s image and passes it via K3S_IMAGE to skip a Docker
   # Hub pull; locally it's unset and k3d pulls the default. Retry the create — a
   # transient blip during node bring-up otherwise fails the whole run.
