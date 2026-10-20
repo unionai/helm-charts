@@ -9,6 +9,13 @@ overlay. Use it to reproduce and debug the CI environment locally.
 CI and this script share the **same** overlay (`charts/dataplane/values.k3d.yaml`)
 and RustFS manifest (`tools/dataplane/k3d/rustfs.yaml`), so they can't drift.
 
+One deliberate difference: on non-release PRs, CI runs the operator image named by
+`K3D_OPERATOR_TAG` in integration-checks.yaml instead of the chart's `appVersion`, because
+the chart on `main` can render config the `appVersion` image predates. `up.sh` always
+installs `appVersion`; to reproduce such a run, repeat its install command (see
+[What `up.sh` does](#what-upsh-does)) with `--set-string image.union.tag=<sha>` added. The
+SHA tags are amd64-only.
+
 ## Prerequisites
 
 `k3d`, `kubectl`, `helm` (**3.17.x** — matches CI; other majors can hit helm's

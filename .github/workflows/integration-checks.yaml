@@ -27,6 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
+      is_release: ${{ steps.detect.outputs.is_release }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -82,6 +83,7 @@ jobs:
             include=$(jq -c -n --argjson k "$k3d_leg" '[$k]')
           fi
           echo "matrix={\"include\":$include}" >> "$GITHUB_OUTPUT"
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
           echo "chart_bump=$chart_bump title_release=$title_release label=$label_run force=${FORCE:-} is_release=$is_release run_cloud=$run_cloud"
           echo "matrix include: $include"
 
@@ -124,6 +126,14 @@ jobs:
       # boot + image pulls) — the smallest AWS DP leg races the old 12m and the
       # gate fails with pods still Pending though nothing is capped.
       CHART_TIMEOUT: "20m"
+      # Operator image the k3d leg runs on NON-release PRs, as a unionoperator tag (a
+      # cloud main commit SHA). Between releases the chart on main renders config the
+      # appVersion image predates, and the operator's strict config decode makes any
+      # unknown key fatal at startup, so testing a feature PR against appVersion fails
+      # for reasons the PR did not cause. Release PRs keep appVersion: that pairing is
+      # what ships. Bump this to a newer published SHA when the chart outruns it again;
+      # SHA tags exist only for cloud commits that rebuild the operator, and are amd64-only.
+      K3D_OPERATOR_TAG: "ffcaa2818bbaa53aaf6d0d63816a1e3d5465d5f3"
     steps:
       - uses: actions/checkout@v4              # candidate charts @ PR HEAD
       - uses: azure/setup-helm@v4.3.1
@@ -306,8 +316,13 @@ jobs:
           if [ "${{ matrix.cloud }}" = "k3d" ]; then
             # k3d has no pulled contract: install the dataplane chart with the k3d
             # overlay and the ephemeral operator creds from bootstrap.
+            extra=()
+            if [ "${{ needs.classify.outputs.is_release }}" != "true" ]; then
+              extra+=(--set-string "image.union.tag=$K3D_OPERATOR_TAG")
+              echo ">> k3d: non-release PR, running operator image $K3D_OPERATOR_TAG"
+            fi
             tools/dataplane/install.sh chart union charts/dataplane -n dataplane --create-namespace \
-              -f charts/dataplane/values.k3d.yaml -f values-provision.yaml
+              -f charts/dataplane/values.k3d.yaml -f values-provision.yaml "${extra[@]}"
             exit 0
           fi
           for chart in ${{ matrix.charts }}; do
