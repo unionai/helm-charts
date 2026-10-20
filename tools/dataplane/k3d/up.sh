@@ -81,15 +81,10 @@ done
 
 _need() { for b in "$@"; do command -v "$b" >/dev/null || { echo "ERROR: '$b' not found on PATH." >&2; exit 3; }; done; }
 
-# Append an ECR Public credential to the registries config the cluster is created with.
-#
-# The dataplane images come from public.ecr.aws, where anonymous pulls draw on a
-# 500 GB/month, 1-per-second budget that is shared, unraisable, and routinely spent by
-# other traffic from the same egress. Once it is gone every pull returns 429
-# ("toomanyrequests: Data limit exceeded") and the chart install times out with every pod
-# in ImagePullBackOff. An authorization token raises that to the authenticated limits and
-# accounts the pulls to this AWS principal. It is read-only: the token carries the
-# principal's own permissions, and the CI deployer holds no write on any registry.
+# Append an ECR Public credential to the registries config the cluster is created with, so
+# the dataplane image pulls from public.ecr.aws count against the authenticated limits
+# rather than the shared anonymous quota, which returns 429 once spent. The CI deployer
+# role's permission to mint the token is granted in unionai/cloud, alongside the role.
 #
 # Deliberately CI-only, because the credential is static and the cluster can outlive it.
 # The token lasts 12 hours; a local cluster lasts as long as its owner leaves it running,
