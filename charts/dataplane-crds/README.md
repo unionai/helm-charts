@@ -16,19 +16,36 @@ client-side apply hits on large operator CRDs.
 
 ## Migration Guide (Decommissioning this chart)
 
-If you currently manage a `helm_release` for `dataplane-crds` in Terraform or Helm:
+> [!CAUTION]
+> **Do not run `helm uninstall` or `terraform destroy` without following the steps below.**
+> Because `templates/flyteworkflow.yaml` rendered the `FlyteWorkflow` CRD as an ordinary template (rather than inside Helm's `crds/` directory), **a standard `helm uninstall` or Terraform resource destruction will delete the `flyteworkflows.flyte.lyft.com` CRD and every existing FlyteWorkflow object across the cluster**.
+> Server-side apply does not remove the CRD from Helm's stored release manifest. You must decouple the release safely before removing it.
 
-1. **Adopt CRDs via Server-Side Apply**:
-   Before removing the chart release, apply the CRDs directly using server-side apply:
-   ```bash
-   kubectl apply --server-side --force-conflicts -f crds/dataplane/
-   kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
-   ```
-2. **Remove the Helm Release**:
-   - In Terraform: Remove the `helm_release` resource for `dataplane-crds` (or use `terraform state rm` if you want to ensure Helm's uninstall hook doesn't touch cluster resources).
-   - In plain Helm: `helm uninstall <release-name> -n <namespace>`. Standard Kubernetes CRDs are retained when deleting a Helm release, but server-side apply ensures the desired CRD manifests remain actively managed.
-3. **Future Upgrades**:
-   On future dataplane chart bumps, keep CRDs updated by server-side applying manifests directly from `crds/dataplane/` at the matching git tag.
+### Step 1: Adopt CRDs via Server-Side Apply
+Apply the current CRD manifests directly using server-side apply:
+```bash
+kubectl apply --server-side --force-conflicts -f crds/dataplane/
+kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
+```
+
+### Step 2: Decouple and remove the Helm release
+
+#### If using Terraform (`helm_release`)
+Do **NOT** destroy the resource. Detach the resource from Terraform state so Terraform forgets it without deleting cluster resources:
+```bash
+terraform state rm helm_release.dataplane_crds
+```
+Then safely remove the `resource "helm_release" "dataplane_crds"` configuration block from your `.tf` files.
+
+#### If using plain Helm
+Before uninstalling, annotate the `FlyteWorkflow` CRD with `helm.sh/resource-policy: keep` so Helm retains it when the release is deleted:
+```bash
+kubectl annotate crd flyteworkflows.flyte.lyft.com helm.sh/resource-policy=keep --overwrite
+helm uninstall <release-name> -n <namespace>
+```
+
+### Step 3: Ongoing maintenance
+On future dataplane chart bumps, keep CRDs updated by server-side applying manifests directly from `crds/dataplane/` at the matching git tag.
 
 ## Values (deprecated chart)
 
