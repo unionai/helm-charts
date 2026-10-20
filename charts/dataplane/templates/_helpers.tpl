@@ -1746,3 +1746,58 @@ selector is immutable. Call with the id, e.g.
 {{- define "dataplane.componentLabel" -}}
 platform.union.ai/component: {{ . }}
 {{- end -}}
+
+{{/*
+dataplane.configMapDataChecksum is the config hash the cluster health contract shares
+with the operator: the hex sha256 of the ConfigMap's data serialized as JSON, with the
+keys sorted (helm's toJson is Go's json.Marshal, which the operator uses too, see
+unionai/cloud operator/common/componentconfig). Stamped as the configChecksum
+annotation on the pod template of every workload that runs from a ConfigMap the
+operator tracks, so the pods carry the hash of the data they were started on and the
+operator can compare it with the live ConfigMap: ComponentConfig.config_hash in the
+snapshot is the same value over the ConfigMap's current data, and a pod whose
+PodInstanceInfo.config_hash differs from it does not run that data. The config syncer
+stamps the same value when it rolls a workload onto a synced config. The same helper
+lives in the union-operator and flyte-core charts of unionai/cloud; a change here is a
+change there too.
+
+Takes a dict: root (the top-level context), path (the rendered ConfigMap template's
+path, as print .Template.BasePath "/propeller/configmap.yaml" gives it) and name (the
+ConfigMap to hash, since a template may render several). Only the data is hashed,
+never the manifest text, so a change of labels or whitespace does not roll the pods.
+
+The data must be read exactly as the API server stores it, so the include output is
+treated the way helm treats a rendered file: "<no value>" becomes "" (helm does that on
+the final render but not on include), and each document keeps the newline that ends
+it, which the split removes and a trailing block scalar's final line break needs.
+
+A name that matches none of the ConfigMaps the template rendered is a template error,
+not a hash: the stamp would otherwise be the constant sha256 of "{}", the pods would
+stop rolling on config change and the snapshot would report them drifted for good. So
+the helper fails the render then, and on a document that does not parse. A template
+that rendered nothing (gated off by values) still hashes "{}", as the workload that
+uses it is gated off with it.
+*/}}
+{{- define "dataplane.configMapDataChecksum" -}}
+{{- $data := dict -}}
+{{- $found := false -}}
+{{- $seen := list -}}
+{{- range $doc := splitList "\n---" (include .path .root | replace "<no value>" "") -}}
+{{- $obj := fromYaml (print $doc "\n") -}}
+{{- if hasKey $obj "Error" -}}
+{{- fail (printf "configMapDataChecksum: %s does not parse: %s" $.path (get $obj "Error")) -}}
+{{- end -}}
+{{- if eq (get $obj "kind") "ConfigMap" -}}
+{{- $cmName := dig "metadata" "name" "" $obj -}}
+{{- $seen = append $seen $cmName -}}
+{{- if eq $cmName $.name -}}
+{{- $data = (get $obj "data") | default dict -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $found) $seen -}}
+{{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
+{{- end -}}
