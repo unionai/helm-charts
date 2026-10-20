@@ -90,14 +90,16 @@ ConfigMaps on every push. As in the leaseworker ConfigMap, the connector section
 rendered only while `flyteconnector.enabled`.
 
 The operator pod also mounts the `connector-config` ConfigMap, where the apps
-controller keeps the connector apps' endpoints, at `/etc/union/connector-config`
-(`operator.clusterHealth.connectorConfigPath`). The mount is optional: this chart does
-not ship that ConfigMap, so the directory stays empty and the operator reads it as no
-apps.
+controller keeps the connector apps' endpoints, at `operator.connectorConfigMountPath`
+(default `/etc/union/connector-config`). The mount is optional: this chart does not ship
+that ConfigMap, so the directory stays empty and the operator reads it as no apps.
 
-An operator older than cloud#19143 ignores the new key; an operator at or after it on
-a chart without it reports no plugins or connectors in the snapshot until the chart is
-upgraded.
+The operator defaults to that same path, so its ConfigMap sets
+`clusterHealth.connectorConfigPath` only when `operator.connectorConfigMountPath` is
+changed. An operator older than cloud#19143 decodes its config strictly and fails at
+startup on that key, so set a non-default mount path only with an operator at or after
+it. An operator at or after cloud#19143 on a chart without `plugins.yaml` reports no
+plugins or connectors in the snapshot until the chart is upgraded.
 
 ## 2026.10.0
 
