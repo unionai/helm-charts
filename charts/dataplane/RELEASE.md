@@ -24,6 +24,40 @@ On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero tr
 
 `examples/values.zero-trust.yaml` is removed because the defaults now match it.
 
+### `configChecksum` is the hash of the ConfigMap's data
+
+No values change. Every Union workload the operator tracks (propeller, the pod
+webhook, the leaseworker, the operator, its proxy, the dataproxy and syncresources)
+now stamps `configChecksum` on its pod template with the config hash of the cluster
+health contract: the hex sha256 of its ConfigMap's `data` serialized as JSON with the
+keys sorted, which is what the operator computes over the live ConfigMap for
+`ComponentConfig.config_hash` ([cloud#19176](https://github.com/unionai/cloud/pull/19176),
+[cloud#19218](https://github.com/unionai/cloud/pull/19218)). Before, the stamp was the
+sha256 of the rendered manifest text, truncated to 63 characters, which equalled
+nothing the operator could compute, so the control plane could not tell whether a pod
+ran its ConfigMap's current data. With this release it can, and the console's
+per-component config state ([cloud#19250](https://github.com/unionai/cloud/pull/19250))
+lights up for these workloads instead of reading "unknown". Until a dataplane runs
+this release its pods read "unknown", never "restart required".
+
+Each of those workloads rolls once on the upgrade, since the annotation value
+changes. Only the `data` is hashed now, so a later change to a ConfigMap's labels or
+to template whitespace no longer rolls its pods; a change to the data still does.
+`union-nodeobserver` and `union-uvol-broker` keep the old stamp: the operator does not
+track their ConfigMaps, and re-stamping them would roll both DaemonSets for nothing.
+
+To check a stamp by hand:
+
+```sh
+kubectl -n union get cm leaseworker -o json \
+  | jq -j '.data // {} | tojson | gsub("<";"\\u003c") | gsub(">";"\\u003e") | gsub("&";"\\u0026")' \
+  | shasum -a 256
+kubectl -n union get deploy leaseworker -o jsonpath='{.spec.template.metadata.annotations.configChecksum}'
+```
+
+The three `gsub`s matter: Go's `json.Marshal`, and so helm's `toJson`, HTML-escapes
+`<`, `>` and `&`; jq does not.
+
 ### Every Union workload carries `platform.union.ai/component`
 
 Nothing to do: the only values change is new defaults, `fluentbit.labels`,
