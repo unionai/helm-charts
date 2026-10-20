@@ -28,20 +28,23 @@ kubectl apply --server-side --force-conflicts -f crds/dataplane/
 kubectl apply --server-side --force-conflicts -f crds/kube-prometheus-stack/
 ```
 
-### Step 2: Decouple and remove the Helm release
+### Step 2: Decouple the deprecated release
 
 #### If using Terraform (`helm_release`)
-Do **NOT** destroy the resource. Detach the resource from Terraform state so Terraform forgets it without deleting cluster resources:
+Do **NOT** run `terraform destroy`. Detach the release from Terraform state so Terraform forgets it without deleting cluster resources:
 ```bash
 terraform state rm helm_release.dataplane_crds
 ```
 Then safely remove the `resource "helm_release" "dataplane_crds"` configuration block from your `.tf` files.
 
 #### If using plain Helm
-Before uninstalling, annotate the `FlyteWorkflow` CRD with `helm.sh/resource-policy: keep` so Helm retains it when the release is deleted:
+**Do not run `helm uninstall`.** Leave the existing `dataplane-crds` release installed. Because CRDs are now managed out-of-band via server-side apply, the existing release is dormant and does not interfere with cluster operations.
+
+Running `helm uninstall` will delete the `FlyteWorkflow` and Prometheus Operator CRDs because Helm evaluates the `helm.sh/resource-policy` annotation from its stored release manifest (where `keep` was not set at install time), not from live cluster state ([helm/helm#8132](https://github.com/helm/helm/issues/8132)).
+
+If you must remove the release record from Helm's history, delete the Helm release Secret directly without touching cluster resources:
 ```bash
-kubectl annotate crd flyteworkflows.flyte.lyft.com helm.sh/resource-policy=keep --overwrite
-helm uninstall <release-name> -n <namespace>
+kubectl delete secret -n <namespace> -l owner=helm,name=<release-name>
 ```
 
 ### Step 3: Ongoing maintenance
