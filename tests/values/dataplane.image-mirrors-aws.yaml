@@ -1,0 +1,28 @@
+# helm-values: examples/values-test-certs.yaml
+# helm-args: --is-upgrade
+
+# Routes the chart's images through an ECR pull-through cache for ECR Public,
+# as an AWS dataplane would. Exercises the image pre-warm hook's ecr-token init
+# container and IRSA-bound service account. --is-upgrade renders the kubectl
+# pre-upgrade hook too, whose image the pre-warm must cover.
+
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+  AUTH_CLIENT_ID: "test-client-id"
+  imageMirrors:
+    public.ecr.aws: 123456789012.dkr.ecr.us-east-1.amazonaws.com/ecr-public
+
+secrets:
+  admin:
+    create: false
+
+# Offline hook rendering does not read an installed operator ConfigMap.
+config:
+  operator:
+    billing:
+      model: ResourceUsage
+
+imagePrewarm:
+  serviceAccount:
+    annotations:
+      eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/union-image-prewarm

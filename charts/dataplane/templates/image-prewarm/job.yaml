@@ -1,0 +1,277 @@
+{{- /*
+Pre-warm the dataplane's image mirror before an install or upgrade rolls out.
+
+A pull-through cache only avoids the upstream rate limit for images it already
+holds. On a new tag every pod misses at once, and the mirror's own fetches from
+upstream get throttled. This hook runs before the release is applied (ArgoCD
+maps it to PreSync) and pulls each of the chart's images through the mirror
+with crane, every layer of every platform the image is built for, whatever the
+cluster's nodes run. The rollout then finds them cached.
+
+crane logs in to the mirror as the image-prewarm service account
+(serviceaccount.yaml), which imagePrewarm.serviceAccount.annotations bind to a
+cloud identity that can read from it.
+
+Ported from the BYOC operator and imagebuild charts; from the mirror filter
+down it is the same. Keep the image list in step with the templates that render
+these images. `make check-image-prewarm` fails if an image served from the
+mirror is missing here.
+*/}}
+{{- if and .Values.imagePrewarm.enabled .Values.global.imageMirrors }}
+{{- $images := dict }}
+
+{{- /* Union's image, shared by the operator, propeller, webhook and the rest. */}}
+{{- $union := .Values.image.union }}
+{{- $_ := set $images (printf "%s:%s" (tpl $union.repository .) ($union.tag | default .Chart.AppVersion)) true }}
+
+{{- /* Gateway: component => container, gated and rendered as in templates/gateway/. */}}
+{{- range $component, $gate := dict "envoy" "serving.renderGateway" "kourier-controller" "serving.useVendoredGateway" }}
+{{- if include $gate $ }}
+{{- $containers := (index $.Values.gateway.components $component).containers }}
+{{- $image := (index $containers (ternary "envoy" "controller" (eq $component "envoy"))).image }}
+{{- $repo := tpl $image.repository $ }}
+{{- $tag := tpl ($image.tag | default "") $ }}
+{{- $_ := set $images (ternary (printf "%s:%s" $repo $tag) $repo (ne $tag "")) true }}
+{{- end }}
+{{- end }}
+
+{{- /* buildkit, as templates/imagebuilder/ renders it (rootless and all). */}}
+{{- if include "imagebuilder.buildkit.enabled" . }}
+{{- $_ := set $images (include "imagebuilder.buildkit.image" .) true }}
+{{- end }}
+{{- if .Values.flyteconnector.enabled }}
+{{- $_ := set $images (printf "%s:%s" (tpl .Values.flyteconnector.image.repository .) .Values.flyteconnector.image.tag) true }}
+{{- end }}
+
+{{- /* The other hooks, which run after this one. */}}
+{{- if .Release.IsUpgrade }}
+{{- $_ := set $images (printf "%s:%s" (tpl .Values.image.kubectl.repository .) .Values.image.kubectl.tag) true }}
+{{- end }}
+{{- if and .Values.flytepropellerwebhook.enabled .Values.flytepropellerwebhook.legacyWebhookCleanup.enabled }}
+{{- $cleanup := .Values.flytepropellerwebhook.legacyWebhookCleanup.image }}
+{{- $_ := set $images (printf "%s:%s" (tpl $cleanup.repository .) $cleanup.tag) true }}
+{{- end }}
+
+{{- /* The copilot sidecar starts in every task pod. */}}
+{{- with index .Values.config.copilot.plugins.k8s "co-pilot" }}
+{{- $_ := set $images (tpl .image $) true }}
+{{- end }}
+{{- /* So does the init container the webhook adds to mount secrets as files. */}}
+{{- with dig "webhook" "embeddedSecretManagerConfig" "fileMountInitContainer" "image" "" .Values.config.core }}
+{{- $_ := set $images (tpl . $) true }}
+{{- end }}
+
+{{- /* Warm only images a mirror serves; pulling the rest would go upstream. */}}
+{{- $warm := list }}
+{{- range $ref := keys $images | sortAlpha }}
+{{- range $mirror := values $.Values.global.imageMirrors }}
+{{- if and (hasPrefix (printf "%s/" $mirror) $ref) (not (has $ref $warm)) }}
+{{- $warm = append $warm $ref }}
+{{- end }}
+{{- end }}
+{{- end }}
+
+{{- /* Registry hosts to log in to: the host part of each mirror. */}}
+{{- $hosts := list }}
+{{- range $mirror := values .Values.global.imageMirrors }}
+{{- $hosts = append $hosts (first (splitList "/" $mirror)) | uniq }}
+{{- end }}
+{{- $ecr := false }}
+{{- range $host := $hosts }}
+{{- if contains ".dkr.ecr." $host }}{{- $ecr = true }}{{- end }}
+{{- end }}
+{{- $prewarm := .Values.imagePrewarm }}
+
+{{- if $warm }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: image-prewarm
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "unionai-dataplane.labels" . | nindent 4 }}
+    app.kubernetes.io/component: image-prewarm
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: {{ $prewarm.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: image-prewarm
+        {{- if hasKey ($prewarm.serviceAccount.annotations | default dict) "azure.workload.identity/client-id" }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: image-prewarm
+      nodeSelector:
+        kubernetes.io/os: linux
+      volumes:
+        - name: work
+          emptyDir:
+            sizeLimit: 8Gi
+      {{- if $ecr }}
+      initContainers:
+        # crane has no ECR credential helper, so fetch a token as the pre-warm
+        # role (IRSA) and hand it over through the shared volume. A missing
+        # token doesn't stop the pod: crane reports the failed login and counts
+        # that host's images as failed pulls. It also records when the pod
+        # started, so the crane container's time budget includes this step.
+        - name: ecr-token
+          image: "{{ tpl $prewarm.awsCli.repository . }}:{{ $prewarm.awsCli.tag }}"
+          command:
+            - sh
+            - -c
+            - |
+              date +%s > /work/start
+              {{- range $host := $hosts }}
+              {{- if contains ".dkr.ecr." $host }}
+              if aws ecr get-login-password --region {{ index (splitList "." $host) 3 }} > /work/{{ $host }}.password; then
+                echo "image-prewarm: event=ecr-token status=ok host={{ $host }}"
+              else
+                echo "image-prewarm: event=ecr-token status=failed host={{ $host }}"
+                rm -f /work/{{ $host }}.password
+              fi
+              {{- end }}
+              {{- end }}
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 256Mi}
+      {{- end }}
+      containers:
+        - name: crane
+          image: {{ $prewarm.crane.image }}
+          command:
+            - sh
+            - -c
+            - |
+              set -u
+              export DOCKER_CONFIG=/work/docker
+              # The Job's deadline counts from pod start, so the budget does
+              # too: from the ecr-token init container if there is one, else
+              # from here, before any registry login. The run stops itself a
+              # minute short of the deadline, since reaching it would fail the
+              # hook.
+              start=$(cat /work/start 2>/dev/null || date +%s)
+              budget=$(( {{ $prewarm.activeDeadlineSeconds }} - 60 ))
+              remaining() { echo $(( budget - ($(date +%s) - start) )); }
+              # One line per event, key=value, so logs can be filtered by event or ref.
+              log() { echo "image-prewarm: $(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+              # crane's own output, flattened onto one line.
+              oneline() { tr '\n' ' ' | sed 's/  */ /g; s/ $//'; }
+
+              images="
+              {{- range $ref := $warm }}
+              {{ $ref }}
+              {{- end }}
+              "
+              total=$(echo "$images" | grep -c .)
+              log "event=start images=$total hosts={{ len $hosts }} deadline={{ $prewarm.activeDeadlineSeconds }}s"
+
+              # login HOST USER TOKEN. crane accepts an empty password (it only
+              # writes $DOCKER_CONFIG, in this pod's scratch volume), so a missing
+              # token is caught here rather than reported as a successful login.
+              # crane's warning about storing it unencrypted is dropped.
+              login() {
+                if [ -z "$3" ]; then
+                  log "event=login status=failed host=$1 error=\"$4\""
+                  return
+                fi
+                if out=$(echo "$3" | crane auth login "$1" -u "$2" --password-stdin 2>&1); then
+                  log "event=login status=ok host=$1"
+                else
+                  log "event=login status=failed host=$1 error=\"$(echo "$out" | grep -v -i 'warning\|credential\|docs.docker.com' | oneline)\""
+                fi
+              }
+              {{- range $host := $hosts }}
+              {{- if contains ".dkr.ecr." $host }}
+              # From the ecr-token init container.
+              login {{ $host }} AWS "$(cat /work/{{ $host }}.password 2>/dev/null)" "no ECR token from the ecr-token init container"
+              {{- else if hasSuffix "-docker.pkg.dev" $host }}
+              # Workload Identity: the metadata server returns the pre-warm
+              # service account's token.
+              response=$(wget -qO- --header "Metadata-Flavor: Google" \
+                http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token 2>&1)
+              login {{ $host }} oauth2accesstoken \
+                "$(echo "$response" | sed -n 's/.*"access_token" *: *"\([^"]*\)".*/\1/p')" \
+                "no Workload Identity token: $(echo "$response" | oneline)"
+              {{- end }}
+              {{- end }}
+
+              # Every layer of every platform, into a scratch layout that's
+              # deleted after each image. A pull that fails is retried with
+              # backoff, then counted, until the budget above runs out.
+              warmed=0
+              failed_refs=""
+              for ref in $images; do
+                attempt=1
+                while :; do
+                  if [ "$(remaining)" -le 0 ]; then
+                    log "event=failed ref=$ref attempts=$((attempt - 1)) error=\"out of time\""
+                    failed_refs="$failed_refs $ref"
+                    break
+                  fi
+                  began=$(date +%s)
+                  if out=$(timeout "$(remaining)" crane pull --platform all --format oci "$ref" /work/image 2>&1); then
+                    # The architectures in the pulled index; none for a
+                    # single-platform image.
+                    top=$(sed -n 's/.*"digest": *"sha256:\([0-9a-f]*\)".*/\1/p' /work/image/index.json | head -1)
+                    platforms=$(grep -o '"architecture": *"[a-z0-9]*"' "/work/image/blobs/sha256/$top" 2>/dev/null \
+                      | sed 's/.*"\([a-z0-9]*\)"$/\1/' | sort -u | tr '\n' ',' | sed 's/,$//')
+                    log "event=pulled ref=$ref attempt=$attempt seconds=$(( $(date +%s) - began )) size=$(du -sh /work/image | cut -f1) platforms=${platforms:-single}"
+                    warmed=$((warmed + 1))
+                    break
+                  fi
+                  error=$(echo "$out" | oneline)
+                  if [ "$attempt" -ge 5 ]; then
+                    log "event=failed ref=$ref attempts=$attempt error=\"$error\""
+                    failed_refs="$failed_refs $ref"
+                    break
+                  fi
+                  wait=$((attempt * 15))
+                  left=$(remaining)
+                  [ "$wait" -gt "$left" ] && wait=$left
+                  log "event=retry ref=$ref attempt=$attempt retry_in=${wait}s error=\"$error\""
+                  rm -rf /work/image
+                  [ "$wait" -gt 0 ] && sleep "$wait"
+                  attempt=$((attempt + 1))
+                done
+                rm -rf /work/image
+              done
+
+              failed=$(echo $failed_refs | wc -w)
+              log "event=done warmed=$warmed failed=$failed total=$total seconds=$(( $(date +%s) - start ))"
+              {{- if $prewarm.failOnError }}
+              # failOnError: an image that couldn't be warmed fails the hook,
+              # and so the sync, rather than the rollout pulling it cold.
+              if [ "$failed" -gt 0 ]; then
+                log "event=error failed=$failed total=$total message=\"not every image was pre-warmed; failing\""
+                for ref in $failed_refs; do log "event=summary status=failed ref=$ref"; done
+                exit 1
+              fi
+              {{- else }}
+              # Pre-warming is best effort: an image it couldn't warm is pulled
+              # through the mirror on rollout as it would be without this hook,
+              # so warn and let the sync go on.
+              if [ "$failed" -gt 0 ]; then
+                log "event=warning failed=$failed total=$total message=\"not every image was pre-warmed; continuing\""
+                for ref in $failed_refs; do log "event=summary status=failed ref=$ref"; done
+              fi
+              {{- end }}
+              exit 0
+          volumeMounts:
+            - name: work
+              mountPath: /work
+          resources:
+            requests: {cpu: 250m, memory: 128Mi, ephemeral-storage: 2Gi}
+            limits: {memory: 512Mi, ephemeral-storage: 8Gi}
+{{- end }}
+{{- end }}
