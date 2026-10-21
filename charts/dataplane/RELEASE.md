@@ -115,6 +115,10 @@ account to an identity that can read the mirror with
 Third-party subcharts are routed through their own image values. See the README's
 *Image mirrors* section.
 
+Union's images now default to the `public.ecr.aws/unionai` registry alias instead of
+`public.ecr.aws/p0i0a9q8`. Both aliases serve the same images, but a pull-through cache
+keys on the path, so this chart and Union's BYOC dataplanes now pull the same one.
+
 `image.union.repository`, `image.envoy.repository`, `image.kubectl.repository`,
 `image.flytecopilot.repository`, `flyteconnector.image.repository`,
 `imageBuilder.buildkit.image.repository` and
