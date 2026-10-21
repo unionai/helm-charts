@@ -11,4 +11,5 @@ port where they act as a built-in app (`authz.tasksRole`); no credentials are
 injected into them. Namespaced least-privilege RBAC (extend with
 `rbac.extraRules` for plugin task types), a NetworkPolicy that is on whenever
 authz is, and an optional proxy shared secret; `database.sslMode` defaults to
-`require`.
+`require`. The chart and the software it deploys are under the Union License
+(`LICENSE`, with Union's copyright in `NOTICE`).
