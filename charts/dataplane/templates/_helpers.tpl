@@ -1326,7 +1326,7 @@ resolves wherever the value is rendered.
 {{- end }}
 
 {{/*
-Where Union's own images (public.ecr.aws/p0i0a9q8/<image>) are pulled from, as a
+Where Union's own images (public.ecr.aws/unionai/<image>) are pulled from, as a
 prefix to put "/<image>" after. A cluster with a us-docker.pkg.dev mirror pulls
 Union's public Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai)
 through it; any other cluster pulls from ECR Public, through its ECR Public
@@ -1339,7 +1339,7 @@ mirror if it has one.
 {{- with index $mirrors "us-docker.pkg.dev" -}}
 {{ . }}/union-public-images/unionai
 {{- else -}}
-{{ index $mirrors "public.ecr.aws" | default "public.ecr.aws" }}/p0i0a9q8
+{{ index $mirrors "public.ecr.aws" | default "public.ecr.aws" }}/unionai
 {{- end -}}
 {{- end }}
 
