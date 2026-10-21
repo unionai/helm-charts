@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Prometheus enables `auto-gomemlimit` by default
+
+`prometheus.server.extraFlags` now includes `enable-feature=auto-gomemlimit`. In
+Prometheus 2.55+ (dataplane chart bundles Prometheus v2.55.1), this automatically
+configures Go runtime `GOMEMLIMIT` to 90% of the container cgroup memory limit,
+preventing the Go memory allocator from retaining freed heap and causing
+cgroup-level OOM kills at nightly load peaks.
+
+If your installation overrides `prometheus.server.extraFlags`, ensure you include
+`enable-feature=auto-gomemlimit` along with the baseline flags `web.enable-lifecycle`
+and `enable-feature=expand-external-labels`. Alternatively, use `prometheus.server.extraArgs`
+(a map, which merges cleanly in Helm) to append custom flags without replacing defaults.
+
 ### Zero trust is the default
 
 `zero_trust.enabled` now defaults to `true`, so the Envoy gateway, the dataproxy
