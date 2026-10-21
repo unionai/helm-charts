@@ -1,0 +1,33 @@
+# helm-values: examples/values-test-certs.yaml
+# helm-args: --is-upgrade
+
+# Routes the chart's images through Artifact Registry remote repositories, as a
+# GCP dataplane would: Union's images from their public Artifact Registry copy,
+# and a mirror for every other upstream the chart pulls from. Exercises the
+# image pre-warm hook's Workload Identity login, the docker.io mirror keyed
+# registry-1.docker.io, and the task-pod rewrite rules in the webhook config.
+
+global:
+  CONTROLPLANE_HOST: "test-controlplane-host"
+  AUTH_CLIENT_ID: "test-client-id"
+  imageMirrors:
+    public.ecr.aws: us-central1-docker.pkg.dev/test-project/aws
+    registry-1.docker.io: us-central1-docker.pkg.dev/test-project/docker
+    ghcr.io: us-central1-docker.pkg.dev/test-project/ghcr
+    cr.flyte.org: us-central1-docker.pkg.dev/test-project/flyte
+    us-docker.pkg.dev/union-public-images/unionai: us-central1-docker.pkg.dev/test-project/union-public-gar
+
+secrets:
+  admin:
+    create: false
+
+# Offline hook rendering does not read an installed operator ConfigMap.
+config:
+  operator:
+    billing:
+      model: ResourceUsage
+
+imagePrewarm:
+  serviceAccount:
+    annotations:
+      iam.gke.io/gcp-service-account: image-prewarm@test-project.iam.gserviceaccount.com

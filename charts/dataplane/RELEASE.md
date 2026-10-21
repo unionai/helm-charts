@@ -101,6 +101,26 @@ startup on that key, so set a non-default mount path only with an operator at or
 it. An operator at or after cloud#19143 on a chart without `plugins.yaml` reports no
 plugins or connectors in the snapshot until the chart is upgraded.
 
+### Image mirrors and pre-warm
+
+`global.imageMirrors` (upstream registry => mirror prefix) routes the chart's images
+through a pull-through cache, such as an ECR pull-through cache for `public.ecr.aws` or
+Artifact Registry remote repositories. It covers Union's images, the kubectl hook,
+BuildKit, flyteconnector and copilot images. The pod webhook rewrites task-pod
+images from `flytepropellerwebhook.imageMirrorPaths` and the secrets init container
+through the mirror. With the map set, an `image-prewarm` pre-install/pre-upgrade hook
+pulls every mirrored image through the cache before the rollout. Bind its service
+account to an identity that can read the mirror with
+`imagePrewarm.serviceAccount.annotations`, or set `imagePrewarm.enabled: false`.
+Third-party subcharts are routed through their own image values. See the README's
+*Image mirrors* section.
+
+`image.union.repository`, `image.envoy.repository`, `image.kubectl.repository`,
+`image.flytecopilot.repository`, `flyteconnector.image.repository`,
+`imageBuilder.buildkit.image.repository` and
+`flytepropellerwebhook.legacyWebhookCleanup.image.repository` are now run through
+`tpl`. Literal overrides work as before.
+
 ## 2026.10.0
 
 `version` and `appVersion` move `2026.9.7` → `2026.10.0`.

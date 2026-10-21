@@ -29,6 +29,22 @@ global:
   AUTH_CLIENT_ID: ""            # client_credentials client ID
   OIDC_S2S_SCOPE: ""            # Okta: leave empty. Entra ID: "api://my-app/.default"
 
+  # --- Image mirrors (pull-through caches) ---
+  # Upstream registry => the mirror that serves it, as a prefix to put the
+  # image's path after. Union's images and the chart's other images, the
+  # task-pod images the webhook rewrites (flytepropellerwebhook.imageMirrorPaths)
+  # and the secrets init container are pulled through it; an upstream with no
+  # entry is pulled directly. Setting it also turns on the image pre-warm hook
+  # (imagePrewarm). Third-party subcharts are routed through their own image
+  # values; see the README. For example:
+  #   public.ecr.aws: 123456789012.dkr.ecr.us-east-1.amazonaws.com/ecr-public
+  #   registry-1.docker.io: us-central1-docker.pkg.dev/my-project/docker
+  #   ghcr.io: us-central1-docker.pkg.dev/my-project/ghcr
+  # Union's images are also served from a public Artifact Registry copy; a
+  # mirror keyed us-docker.pkg.dev/union-public-images/unionai is preferred
+  # for them over the public.ecr.aws one.
+  imageMirrors: {}
+
 # -- Override the chart name.
 nameOverride: ""
 # -- Override the chart fullname.
@@ -478,7 +494,7 @@ config:
         # -- Structure documented [here](https://pkg.go.dev/github.com/lyft/flyteplugins@v0.5.28/go/tasks/pluginmachinery/flytek8s/config#FlyteCoPilotConfig)
         co-pilot:
           name: flyte-copilot-
-          image: "{{ .Values.image.flytecopilot.repository }}:{{ .Values.image.flytecopilot.tag }}"
+          image: "{{ tpl .Values.image.flytecopilot.repository . }}:{{ .Values.image.flytecopilot.tag }}"
           start-timeout: 30s
   # -- Core propeller configuration
   core:
@@ -551,12 +567,26 @@ config:
         imagePullSecrets:
           enabled: true
         # -- Init container used to mount embedded secrets as files into task pods.
-        # -- Uncomment and override `image` to repoint the default upstream busybox
-        # -- image (public.ecr.aws/docker/library/busybox:latest) at a private or
-        # -- mirrored registry — required for air-gapped clusters that cannot reach
-        # -- public.ecr.aws. Maps to webhook.embeddedSecretManagerConfig.fileMountInitContainer.
-        # fileMountInitContainer:
-        #   image: <your-registry>/busybox:latest
+        # -- It is pulled as often as a task pod starts. Same image the webhook
+        # -- defaults to, through the public.ecr.aws mirror in global.imageMirrors
+        # -- when the cluster has one. Override `image` to repoint it at a private
+        # -- registry — required for air-gapped clusters that cannot reach
+        # -- public.ecr.aws.
+        fileMountInitContainer:
+          image: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/docker/library/busybox:latest'
+      # -- Managed-image rewrites the webhook applies to task pods. The chart
+      # -- appends rules for global.imageMirrors (see
+      # -- flytepropellerwebhook.imageMirrorPaths) and enables it when there are any.
+      images:
+        enabled: false
+        labelSelector:
+          matchExpressions:
+            - key: organization
+              operator: Exists
+            - key: project
+              operator: Exists
+            - key: domain
+              operator: Exists
   # -- Domains configuration for Union projects. This enables the specified number of domains across all projects in Union.
   domain:
     domains:
@@ -1294,11 +1324,21 @@ flytepropellerwebhook:
       # Registry host spelled out — an unqualified repository resolves against
       # the implicit docker.io default and fails on clusters that pin an
       # allowed-registry policy.
-      repository: docker.io/alpine/k8s
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
       tag: "1.32.3"
       pullPolicy: IfNotPresent
     # -- ImagePullSecrets for the cleanup job (use if kubectl image is in a private registry)
     imagePullSecrets: []
+  # -- Task-pod images the webhook rewrites through the image mirror in
+  # -- global.imageMirrors (upstream host => mirror prefix): upstream host =>
+  # -- repository namespaces, "*" for the whole registry. List only namespaces
+  # -- whose images are all public: the mirror pulls with its own credentials, so
+  # -- a private image rewritten through it fails to pull. docker.io also matches
+  # -- registry-1.docker.io.
+  imageMirrorPaths:
+    public.ecr.aws: ["*"]
+    ghcr.io: [flyteorg, unionai-oss]
+    docker.io: [library, unionai-oss]
   # -- Replicas
   replicaCount: 1
   # -- Sets priorityClassName for webhook pod
@@ -1489,7 +1529,7 @@ flyteconnector:
   replicaCount: 2
   image:
     # -- Docker image for flyteconnector deployment
-    repository: ghcr.io/flyteorg/flyte-connectors
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "ghcr.io") }}/flyteorg/flyte-connectors'
     tag: py3.13-2.0.0b50.dev3-g695bb1db3.d20260122
     # -- Docker image pull policy
     pullPolicy: IfNotPresent
@@ -1555,7 +1595,7 @@ flyteconnector:
 image:
     # -- Image repository for the operator and union services
   union:
-    repository: public.ecr.aws/p0i0a9q8/unionoperator
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
     tag: ""
     pullPolicy: IfNotPresent
   # -- Kubectl image configuration for Helm hook cleanup jobs.
@@ -1566,7 +1606,7 @@ image:
   # `latest` — nothing pinnable. Matches flytepropellerwebhook.legacyWebhookCleanup.
   kubectl:
     # -- Kubectl image repository used by dataplane Helm hook cleanup jobs.
-    repository: docker.io/alpine/k8s
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/alpine/k8s'
     # -- Kubectl image tag used by dataplane Helm hook cleanup jobs.
     tag: "1.32.3"
     # -- Optional imagePullPolicy for dataplane Helm hook cleanup jobs. Omit when empty.
@@ -1580,17 +1620,47 @@ image:
     pullPolicy: IfNotPresent
   # -- flytecopilot repository and tag.
   flytecopilot:
-    repository: "cr.flyte.org/flyteorg/flyte-binary-v2"
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "cr.flyte.org") }}/flyteorg/flyte-binary-v2'
     tag: "v2.0.45"
     pullPolicy: IfNotPresent
   # -- Union envoy build for the zero-trust gateway.
   envoy:
-    repository: public.ecr.aws/p0i0a9q8/envoy
+    repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/envoy'
     tag: ""
     pullPolicy: IfNotPresent
 
 metrics-server:
   enabled: false
+
+# -- Pre-warm the image mirror before an install or upgrade: a pre-install/
+# -- pre-upgrade hook (ArgoCD PreSync) pulls each of the chart's images, for every
+# -- platform it's built for, through the mirror with crane, so the rollout finds
+# -- them cached instead of missing together and being throttled upstream. Only
+# -- rendered when global.imageMirrors is set, and only for images served from
+# -- one of those mirrors. See templates/image-prewarm/job.yaml.
+imagePrewarm:
+  enabled: true
+  # -- Bounds the whole run; the Job stops pulling a minute before it, so the
+  # -- deadline itself doesn't fail the hook.
+  activeDeadlineSeconds: 900
+  # -- Fail the Job, and so the hook and the install or upgrade, if any image
+  # -- couldn't be warmed after its retries. False makes pre-warming best effort:
+  # -- failures are logged as warnings and the hook succeeds.
+  failOnError: true
+  serviceAccount:
+    # -- Annotations (run through tpl) binding the Job's service account to a
+    # -- cloud identity that can read from the mirror: eks.amazonaws.com/role-arn
+    # -- (ECR: ecr:GetAuthorizationToken plus pull-through read),
+    # -- iam.gke.io/gcp-service-account (Artifact Registry reader) or
+    # -- azure.workload.identity/client-id (AcrPull).
+    annotations: {}
+  # -- crane with a busybox shell (the :debug variant), pinned by digest.
+  crane:
+    image: gcr.io/go-containerregistry/crane:debug@sha256:e78770b31258a3846f878036d9c1f63fbe4c871f9f56990bf77fd95c013e3c1b
+  # -- ECR mirrors only: fetches an ECR token for crane as the service account's role.
+  awsCli:
+    repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/aws-cli/aws-cli'
+    tag: 2.36.49
 
 # -- nodeobserver contains the configuration information for the node observer service.
 uvolMountBroker:
@@ -2550,7 +2620,7 @@ imageBuilder:
 
     image:
       # -- Image name
-      repository: docker.io/moby/buildkit
+      repository: '{{ include "dataplane.mirror" (dict "root" . "upstream" "docker.io") }}/moby/buildkit'
       # -- Pull policy
       pullPolicy: IfNotPresent
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
@@ -2951,7 +3021,7 @@ gateway:
       containers:
         envoy:
           image:
-            repository: '{{ .Values.image.envoy.repository }}'
+            repository: '{{ tpl .Values.image.envoy.repository . }}'
             tag: '{{ .Values.image.envoy.tag | default .Chart.AppVersion }}'
           resources:
             limits:
@@ -2994,7 +3064,7 @@ gateway:
       containers:
         controller:
           image:
-            repository: '{{ .Values.image.union.repository }}'
+            repository: '{{ tpl .Values.image.union.repository . }}'
             tag: '{{ .Values.image.union.tag | default .Chart.AppVersion }}'
           resources:
             limits:
