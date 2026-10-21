@@ -1897,9 +1897,24 @@ prometheus:
     useExistingClusterRoleName: ""
 
     configMapOverrideName: "prometheus"
+    # CLI flags passed to the Prometheus server container.
+    # NOTE: In Helm, extraFlags is an array and customer overrides completely
+    # replace this list. If you override extraFlags, you MUST preserve:
+    #   - web.enable-lifecycle (required for HTTP config reload /-/reload)
+    #   - enable-feature=expand-external-labels (required to expand ${POD_NAME} in
+    #     prometheus.yml for multi-replica HA deduplication)
+    #
+    # enable-feature=auto-gomemlimit automatically detects the container cgroup
+    # memory limit and sets Go runtime's GOMEMLIMIT to 90%, preventing Prometheus
+    # from being OOMKilled by Go runtime allocator retention during load peaks.
+    #
+    # To pass additional custom arguments without overriding this list, you can
+    # also use the upstream subchart's `extraArgs` map (e.g. server.extraArgs: { ... })
+    # which merges cleanly across Helm value layers.
     extraFlags:
       - web.enable-lifecycle
       - enable-feature=expand-external-labels
+      - enable-feature=auto-gomemlimit
     env:
       - name: POD_NAME
         valueFrom:
