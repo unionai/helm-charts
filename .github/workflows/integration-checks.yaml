@@ -460,6 +460,21 @@ jobs:
 
       # Debug dump on failure. NOTE: public repo -> public logs; contract config values
       # may appear (secrets stay in external-secrets, never printed).
+      # Zero-trust routing depends on the operator-proxy's cloudflared sidecar holding
+      # the tunnel open and on the operator latching dataplane_ingress_endpoint_ready.
+      # Both pods stay Running when either fails, so the failure dump never shows
+      # them; dump the relevant lines unconditionally.
+      - name: Tunnel + dataplane ingress dump
+        if: always() && contains(matrix.charts, 'dataplane')
+        run: |
+          ns=dataplane
+          echo "--- operator tunnel config ---"
+          kubectl -n "$ns" get cm union-operator -o jsonpath='{.data}' 2>&1 | tr ',' '\n' | grep -iE 'tunnel|ingress|connection' | head -20 || true
+          echo "--- operator-proxy tunnel container ---"
+          kubectl -n "$ns" logs deploy/union-operator-proxy -c tunnel --tail=200 2>&1 | grep -viE 'token' | tail -200 || true
+          echo "--- operator: tunnel / ingress / probe lines ---"
+          kubectl -n "$ns" logs deploy/union-operator --tail=2000 2>&1 | grep -iE 'tunnel|ingress|probe|endpoint|cloudflare' | grep -viE 'token' | tail -120 || true
+
       - name: Debug dump (on failure)
         if: failure()
         run: |
