@@ -488,7 +488,24 @@ IfNotPresent
   {{- $_ := set $task "useActionsServiceForOrgs" (list .Values.global.UNION_ORG) }}
   {{- $_ := set $task "rejectLegacySDKVersions" true }}
   {{- $_ := set $executions "task" $task }}
+  {{- $trackedRuns := index $executions "trackedRuns" | default dict }}
+  {{- $_ := set $trackedRuns "enabled" .Values.trackedRuns.enabled }}
+  {{- $_ := set $executions "trackedRuns" $trackedRuns }}
   {{- $_ := set $merged "executions" $executions }}
+{{- end }}
+
+{{- /* Tracked Runs store SDK-reported inputs, outputs, and reports in the
+       control plane's object store. The workflow service, data proxy, and
+       console are all controlled by trackedRuns.enabled. */}}
+{{- if eq .key "dataproxy" }}
+  {{- $dataproxy := index $merged "dataproxy" | default dict }}
+  {{- $trackedRuns := index $dataproxy "trackedRuns" | default dict }}
+  {{- $_ := set $trackedRuns "enabled" .Values.trackedRuns.enabled }}
+  {{- if .Values.trackedRuns.enabled }}
+    {{- $_ := set $trackedRuns "storage" .Values.trackedRuns.storage }}
+  {{- end }}
+  {{- $_ := set $dataproxy "trackedRuns" $trackedRuns }}
+  {{- $_ := set $merged "dataproxy" $dataproxy }}
 {{- end }}
 
 {{- /* artifactReplicationEnabled: derive from the artifacts service being deployed

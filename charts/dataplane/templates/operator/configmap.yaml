@@ -7,6 +7,10 @@ metadata:
     {{- include "operator.labels" . | nindent 4 }}
 data:
   k8s.yaml: | {{ tpl (include "k8s.plugins" .) $ | nindent 4 }}
+  {{- /* The plugin configuration the cluster snapshot reads; see the helper. */}}
+  {{- with include "operator.pluginsConfig" . }}
+  plugins.yaml: | {{ . | nindent 4 }}
+  {{- end }}
   config.yaml: |
     union:
     {{- with .Values.config.union.connection }}
@@ -31,6 +35,16 @@ data:
       # Path to the chart-rendered connection_config JSON the operator
       # self-reports on every UpdateStatus call. Empty path = disabled.
       connectionConfigPath: /etc/union/connection-config/connection_config.json
+      {{- end }}
+      {{- /*
+        Where operator/deployment.yaml mounts the connector-config ConfigMap. Named only
+        when it differs from the operator's built-in default, /etc/union/connector-config:
+        the operator decodes its config strictly, so an image that predates the key fails
+        at startup on it, while an image that knows it already defaults to that path.
+      */}}
+      {{- if ne .Values.operator.connectorConfigMountPath "/etc/union/connector-config" }}
+      clusterHealth:
+        connectorConfigPath: {{ .Values.operator.connectorConfigMountPath | quote }}
       {{- end }}
       #  enableDepot: {{ include "operator.enableDepot" . | default "false" }}
       tunnel:
