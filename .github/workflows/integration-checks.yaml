@@ -387,8 +387,17 @@ jobs:
       # ── CP-side health gate: poll until the CP reports this DP enabled + healthy.
       #    Every leg — k3d's fresh operator must register; the standing legs confirm
       #    health after the chart upgrade. ──
+      #    Selfmanaged legs run zero trust (the chart default), so they also wait for
+      #    the tunnel and the dataplane ingress endpoint, which SelectCluster requires;
+      #    a cluster's first zero-trust install provisions that endpoint's DNS and
+      #    certificate, hence the longer timeout. Selfhosted legs run zero trust off.
       - name: Cluster API health gate
-        run: python .github/ci-scripts/integration_ops.py wait-healthy --timeout 360
+        run: |
+          if [[ "${{ matrix.topology }}" == selfmanaged-dp ]]; then
+            python .github/ci-scripts/integration_ops.py wait-healthy --timeout 900 --zero-trust
+          else
+            python .github/ci-scripts/integration_ops.py wait-healthy --timeout 360
+          fi
 
       # ── Create this leg's cluster pool + project + queue and route to them (isolated
       #    per leg on the shared tenant). ──
@@ -468,8 +477,6 @@ jobs:
         if: always() && contains(matrix.charts, 'dataplane')
         run: |
           ns=dataplane
-          echo "--- operator tunnel config ---"
-          kubectl -n "$ns" get cm union-operator -o jsonpath='{.data}' 2>&1 | tr ',' '\n' | grep -iE 'tunnel|ingress|connection' | head -20 || true
           echo "--- operator-proxy tunnel container ---"
           kubectl -n "$ns" logs deploy/union-operator-proxy -c tunnel --tail=200 2>&1 | grep -viE 'token' | tail -200 || true
           echo "--- operator: tunnel / ingress / probe lines ---"
