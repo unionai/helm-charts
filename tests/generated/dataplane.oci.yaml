@@ -41,6 +41,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
   annotations:
@@ -88,7 +89,7 @@ metadata:
   name: net-kourier
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -117,7 +118,7 @@ metadata:
   name: controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -131,7 +132,7 @@ metadata:
   name: activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -182,7 +183,7 @@ metadata:
   name: webhook-certs
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -263,7 +264,7 @@ metadata:
   name: union-operator-gateway-envoy-bootstrap
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -413,6 +414,26 @@ data:
                             - "union-oci.dp.union.us-west-2.union.ai"
                           routes:
                             - match:
+                                prefix: "/spark-history-server/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
+                                prefix: "/dataplane/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
+                                prefix: "/prometheus/cluster/"
+                              route:
+                                cluster: dataproxy-http
+                                timeout: 3600s
+                            - match:
+                                prefix: "/"
+                              route:
+                                cluster: dataproxy
+                                timeout: 3600s
+                            - match:
                                 prefix: "/"
                               direct_response:
                                 status: 404
@@ -449,7 +470,37 @@ data:
                   connection_keepalive:
                     interval: 30s
                     timeout: 5s
-        
+        - name: dataproxy
+          connect_timeout: 0.25s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: dataproxy
+            endpoints:
+              lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: union-operator-dataproxy
+                        port_value: 8080
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options: {}
+        - name: dataproxy-http
+          connect_timeout: 0.25s
+          type: STRICT_DNS
+          lb_policy: ROUND_ROBIN
+          load_assignment:
+            cluster_name: dataproxy-http
+            endpoints:
+              lb_endpoints:
+                - endpoint:
+                    address:
+                      socket_address:
+                        address: union-operator-dataproxy
+                        port_value: 8089
     stats_config:
       stats_tags:
         - tag_name: name
@@ -492,7 +543,7 @@ metadata:
   name: config-autoscaler
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -707,7 +758,7 @@ metadata:
   name: config-certmanager
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -781,7 +832,7 @@ metadata:
   name: config-defaults
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -941,7 +992,7 @@ metadata:
   name: config-deployment
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1080,7 +1131,7 @@ metadata:
   name: config-domain
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1149,7 +1200,7 @@ metadata:
   name: config-features
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1412,7 +1463,7 @@ metadata:
   name: config-gc
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1516,7 +1567,7 @@ metadata:
   name: config-kourier
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1604,7 +1655,7 @@ metadata:
   name: config-leader-election
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1670,7 +1721,7 @@ metadata:
   name: config-logging
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1755,7 +1806,7 @@ metadata:
   name: config-network
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -1965,7 +2016,7 @@ metadata:
   name: config-observability
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -2089,7 +2140,7 @@ metadata:
   name: config-tracing
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -5280,6 +5331,66 @@ data:
         - SOME_CONFIG_BOOL: "true"
         default-memory: 100Mi
         default-pod-template-name: task-template
+  plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/union-oci/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+    tasks:
+      task-plugins:
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+        - artifact-trigger
   config.yaml: |
     union:
       connection:
@@ -5315,6 +5426,8 @@ data:
         enableDirectToAppIngress: true
         deploymentToRestart: union-operator-proxy
         appIngressOriginURL: "http://union-operator-gateway:80"
+        enableDataplaneIngress: true
+        dataplaneIngressOriginURL: "http://union-operator-gateway:8888"
       limitNamespace: union
       disableClusterPermissions: true
       apps:
@@ -5339,6 +5452,8 @@ data:
       billing:
         model: ResourceUsage
       dependenciesHeartbeat:
+        leaseworker:
+          endpoint: 'http://union-operator-leaseworker:10254'
         proxy:
           endpoint: 'http://union-operator-proxy:10254'
       org:
@@ -5371,6 +5486,168 @@ data:
           namespace: 'union'
         type: 'K8s'
         webhookHostTemplate: union-pod-webhook-headless.%s.svc
+    dataproxy:
+      clusterSelector:
+        type: local
+      secureTunnelTenantURLPattern: "http://union-operator-proxy:8080"
+      taskMetrics:
+        agentQuery:
+          mappings:
+            dgx_job:
+              queries:
+                EXECUTION_METRIC_ALLOCATED_CPU_AVG: CPU_ALLOCATION:MEAN
+                EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: MEM_ALLOCATION:MEAN
+                EXECUTION_METRIC_CPU_UTILIZATION: CPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_GPU_UTILIZATION: GPU_UTILIZATION:MEAN
+                EXECUTION_METRIC_MEMORY_UTILIZATION: MEM_UTILIZATION:MEAN
+        metricDelayToleranceDuration: 0s
+        promQuery:
+          queries:
+            EXECUTION_METRIC_ALLOCATED_CPU_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_ALLOCATED_MEMORY_BYTES_AVG: |
+              max by (namespace, pod) (
+                (
+                  sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) >
+                  sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+                )
+                or
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})
+              ) *
+              on (namespace, pod) group_left max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_APP_REPLICA_COUNT: |
+              sum (kube_pod_status_phase{phase=~"Running|Pending", namespace="{{.Namespace}}", pod=~"{{.AppName}}.*"} == 1) or vector(0)
+            EXECUTION_METRIC_APP_REQUESTS: |
+              sum(rate((
+                envoy_cluster_upstream_rq_xx{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, envoy_response_code_class)
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P50: |
+              histogram_quantile(0.5, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P90: |
+              histogram_quantile(0.90, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_APP_RESPONSE_TIME_P95: |
+              histogram_quantile(0.95, sum(rate((
+                envoy_cluster_upstream_rq_time_bucket{
+                  job="serving-envoy",
+                  project=~"{{.Project}}",
+                  domain=~"{{.Domain}}",
+                  name=~"{{.AppName}}",
+                  name!=""}
+              )[5m:])) by (project, domain, name, le))
+            EXECUTION_METRIC_CPU_UTILIZATION: |
+              (sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m])) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_DRAM_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_DRAM_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_ECC_DBE_VOLATILE: |
+              sum by (namespace, pod, gpu) (increase(DCGM_FI_DEV_ECC_DBE_VOL_TOTAL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_FRAME_BUFFER_UTILIZATION: |
+              (sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}) /
+                sum by (namespace, pod, gpu) (DCGM_FI_DEV_FB_USED{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} + DCGM_FI_DEV_FB_FREE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_GPU_MEMORY_CLOCK: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_CLOCK{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_MEMORY_TEMPERATURE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEMORY_TEMP{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_MEMORY_UTILIZATION: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_MEM_COPY_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_GPU_NVLINK_BANDWIDTH: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_NVLINK_BANDWIDTH_TOTAL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_PCIE_RX_BYTES: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_RX_BYTES{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_PCIE_TX_BYTES: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PCIE_TX_BYTES{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_POWER_USAGE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_POWER_USAGE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_POWER_VIOLATION: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[2m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_CLOCK: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_SM_CLOCK{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_SM_OCCUPANCY: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_SM_OCCUPANCY{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_TEMPERATURE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_TEMP{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_TENSOR_ACTIVE: |
+              sum by (namespace, pod, gpu) (DCGM_FI_PROF_PIPE_TENSOR_ACTIVE{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_THERMAL_VIOLATION: |
+              sum by (namespace, pod, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION{namespace="{{.Namespace}}",pod=~"{{.PodName}}"}[2m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_UNCORRECTABLE_REMAPPED_ROWS: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_GPU_UTILIZATION: |
+              sum by (namespace, pod, gpu) (DCGM_FI_DEV_GPU_UTIL{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)) / 100.0
+            EXECUTION_METRIC_GPU_XID_LAST_ERROR: |
+              max by (namespace, pod, gpu) (DCGM_FI_DEV_XID_ERRORS{namespace="{{.Namespace}}",pod=~"{{.PodName}}"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_LIMIT_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_LIMIT_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_limits{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_MEMORY_UTILIZATION: |
+              (sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}) /
+                sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"})) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1)
+            EXECUTION_METRIC_REQUEST_CPU: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="cpu"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_REQUEST_MEMORY_BYTES: |
+              sum by (namespace, pod) (kube_pod_container_resource_requests{namespace="{{.Namespace}}",pod=~"{{.PodName}}",resource="memory"} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_CPU_AVG: |
+              sum by (namespace, pod) (irate(container_cpu_usage_seconds_total{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""}[5m]) *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
+            EXECUTION_METRIC_USED_MEMORY_BYTES_AVG: |
+              sum by (namespace, pod) (container_memory_working_set_bytes{namespace="{{.Namespace}}",pod=~"{{.PodName}}",image!=""} *
+              on (namespace, pod) group_left() max by (namespace, pod) (kube_pod_status_phase{namespace="{{.Namespace}}",pod=~"{{.PodName}}",phase=~"Pending|Running"} == 1))
   logger.yaml: |
     logger:
       formatter:
@@ -5427,10 +5704,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/version: "2026.10.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -5441,8 +5718,18 @@ data:
   prometheus.yml: |
     global:
       evaluation_interval: 1m
+      external_labels:
+        __replica__: ${POD_NAME}
       scrape_interval: 1m
       scrape_timeout: 10s
+    remote_write:
+    - oauth2:
+        client_id: clientId
+        client_secret_file: /etc/prometheus/secrets/app_secret
+        scopes:
+        - all
+        token_url: https://union.us-west-2.union.ai/auth/token
+      url: https://union.us-west-2.union.ai/metrics/remote_write
     rule_files:
     - /etc/config/recording_rules.yml
     - /etc/config/alerting_rules.yml
@@ -6691,7 +6978,7 @@ kind: ClusterRole
 metadata:
   name: net-kourier
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6724,7 +7011,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-activator-cluster
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6761,7 +7048,7 @@ metadata:
   # (which should be identical, but isn't guaranteed to be installed alongside serving).
   name: knative-serving-aggregated-addressable-resolver
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6777,7 +7064,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-addressable-resolver
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6818,7 +7105,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-namespaced-admin
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6838,7 +7125,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-namespaced-edit
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6858,7 +7145,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-namespaced-view
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6889,7 +7176,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-core
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6966,7 +7253,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-podspecable-binding
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -6991,7 +7278,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 metadata:
   name: knative-serving-admin
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7027,7 +7314,7 @@ kind: ClusterRoleBinding
 metadata:
   name: net-kourier
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7049,7 +7336,7 @@ kind: ClusterRoleBinding
 metadata:
   name: knative-serving-controller-admin
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7070,7 +7357,7 @@ kind: ClusterRoleBinding
 metadata:
   name: knative-serving-controller-addressable-resolver
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7091,7 +7378,7 @@ kind: ClusterRoleBinding
 metadata:
   name: knative-serving-activator-cluster
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7128,7 +7415,7 @@ metadata:
   name: knative-serving-activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7478,7 +7765,7 @@ metadata:
   name: knative-serving-activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7687,6 +7974,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -7725,6 +8013,37 @@ spec:
       app.kubernetes.io/instance: release-name
 
 ---
+# Source: dataplane/templates/dataproxy/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: union-operator-dataproxy
+  labels:
+    platform.union.ai/prometheus-group: "union-services"
+    app.kubernetes.io/name: union-dataproxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8080
+      targetPort: connect
+      protocol: TCP
+      name: connect
+    - port: 8089
+      targetPort: http
+      protocol: TCP
+      name: http
+    - port: 10254
+      targetPort: debug
+      protocol: TCP
+      name: debug
+  selector:
+    app.kubernetes.io/name: union-dataproxy
+    app.kubernetes.io/instance: release-name
+
+---
 # Source: dataplane/templates/flyteconnector/service.yaml
 apiVersion: v1
 kind: Service
@@ -7757,7 +8076,7 @@ metadata:
   name: activator-service
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7792,7 +8111,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7819,7 +8138,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7849,7 +8168,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7879,7 +8198,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -7908,7 +8227,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -7932,7 +8251,7 @@ metadata:
   name: net-kourier-controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -7959,7 +8278,7 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -8144,6 +8463,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: logging
 spec:
   selector:
     matchLabels:
@@ -8154,6 +8474,7 @@ spec:
       labels:
         app.kubernetes.io/name: fluentbit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: logging
       annotations:
         checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     spec:
@@ -8220,6 +8541,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: uvol-broker
 spec:
   selector:
     matchLabels:
@@ -8241,6 +8563,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: uvol-broker
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: uvol-broker
     spec:
       # No ServiceAccount and no token: the broker never calls the Kubernetes
       # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
@@ -8284,7 +8607,7 @@ spec:
         # In-place upgrade safe: kernel mounts and pod-held fds survive
         # restarts; the state journal + client fd re-registration resume the rest.
         - name: uvol-mount-broker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           args:
@@ -8445,6 +8768,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -8470,6 +8794,7 @@ spec:
         app.kubernetes.io/version: v2.55.1
         helm.sh/chart: prometheus-25.30.2
         app.kubernetes.io/part-of: prometheus
+        platform.union.ai/component: prometheus
     spec:
       enableServiceLinks: true
       serviceAccountName: union-operator-prometheus
@@ -8518,6 +8843,7 @@ spec:
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
             - --enable-feature=expand-external-labels
+            - --enable-feature=auto-gomemlimit
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -8578,6 +8904,129 @@ spec:
           emptyDir:
             sizeLimit: 10Gi
 ---
+# Source: dataplane/templates/dataproxy/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: union-operator-dataproxy
+  labels:
+    app.kubernetes.io/name: union-dataproxy
+    app.kubernetes.io/instance: release-name
+    platform.union.ai/service-group: release-name
+    app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: dataproxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: union-dataproxy
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      annotations:
+        configChecksum: "94ee20bc63b47c061280ec12af4d9231b66317ce7faa94cd5f27f02cddf516b8"
+        
+      labels:
+        
+        app.kubernetes.io/name: union-dataproxy
+        app.kubernetes.io/instance: release-name
+        platform.union.ai/service-group: release-name
+        app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: dataproxy
+    spec:
+      serviceAccountName: union-system
+      securityContext:
+        {}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: union-operator
+        - name: secret-volume
+          secret:
+            secretName: union-secret-auth
+      containers:
+        - name: dataproxy
+          securityContext:
+            {}
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          terminationMessagePolicy: FallbackToLogsOnError
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 250Mi
+          volumeMounts:
+            - mountPath: /etc/union/config
+              name: config-volume
+            - mountPath: /etc/union/secret
+              name: secret-volume
+          args:
+            - dataproxy
+            - serve
+            - --config
+            - /etc/union/config/*.yaml
+          ports:
+            - name: connect
+              containerPort: 8080
+              protocol: TCP
+            - name: http
+              containerPort: 8089
+              protocol: TCP
+            - name: debug
+              containerPort: 10254
+              protocol: TCP
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: 1
+                  resource: limits.cpu
+            - name: CLUSTER_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: operator-cluster-name
+                  key: cluster_name
+            - name: DEPLOYMENT_NAME
+              value: operator
+            - name: PROXY_SERVICE_URL
+              value: http://union-operator-proxy:8080
+            - name: PROMETHEUS_SERVICE_URL
+              value: http://union-operator-prometheus:80
+            - name: KNATIVE_PROXY_SERVICE_URL
+              value: http://kourier-internal
+            - name: AWS_REQUEST_CHECKSUM_CALCULATION
+              value: "when_required"
+            - name: CREATE_UPRIVER_DATA_SOURCE
+              value: "true"
+            - name: SOME_NUMERIC_VAR
+              value: "42"
+      
+      nodeSelector:
+        flyte.org/node-role: worker
+      tolerations:
+        - effect: NoSchedule
+          key: flyte.org/node-role
+          operator: Equal
+          value: worker
+      
+
+---
 # Source: dataplane/templates/flyteconnector/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -8588,6 +9037,7 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: connector-service
 spec:
   replicas: 2
   selector:
@@ -8603,6 +9053,7 @@ spec:
         app.kubernetes.io/name: flyteconnector
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: connector-service
     spec:
       containers:
         - command:
@@ -8671,12 +9122,13 @@ metadata:
   name: activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: activator
+    platform.union.ai/component: knative-activator
 spec:
   selector:
     matchLabels:
@@ -8690,6 +9142,7 @@ spec:
         app.kubernetes.io/component: activator
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-activator
     spec:
       nodeSelector:
         flyte.org/node-role: worker
@@ -8809,13 +9262,14 @@ metadata:
   name: autoscaler-hpa
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: autoscaler-hpa
     autoscaling.knative.dev/autoscaler-provider: hpa
+    platform.union.ai/component: knative-autoscaler-hpa
 spec:
   replicas: 2
   selector:
@@ -8828,6 +9282,7 @@ spec:
         app.kubernetes.io/component: autoscaler-hpa
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-autoscaler-hpa
     spec:
       nodeSelector:
         flyte.org/node-role: worker
@@ -8922,12 +9377,13 @@ metadata:
   name: autoscaler
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: autoscaler
+    platform.union.ai/component: knative-autoscaler
 spec:
   replicas: 2
   selector:
@@ -8944,6 +9400,7 @@ spec:
         app.kubernetes.io/component: autoscaler
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-autoscaler
     spec:
       nodeSelector:
         flyte.org/node-role: worker
@@ -9044,12 +9501,13 @@ metadata:
   name: controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: controller
+    platform.union.ai/component: knative-controller
 spec:
   replicas: 2
   selector:
@@ -9062,6 +9520,7 @@ spec:
         app.kubernetes.io/component: controller
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
+        platform.union.ai/component: knative-controller
     spec:
       nodeSelector:
         flyte.org/node-role: worker
@@ -9152,9 +9611,10 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
+    platform.union.ai/component: gateway
 spec:
   selector:
     matchLabels:
@@ -9168,9 +9628,10 @@ spec:
     metadata:
       labels:
         app: gateway
-        helm.sh/chart: dataplane-2026.9.7
+        helm.sh/chart: dataplane-2026.10.1
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: gateway
       annotations:
         # Envoy's xDS dynamic config is delivered by net-kourier-controller,
         # but the bootstrap file (gateway.host, auth URLs, extra routes/
@@ -9179,14 +9640,14 @@ spec:
         # makes the pod-template hash drift when the configmap content
         # does. Mirrors the legacy serving/knative-serving.yaml workload-
         # block at .annotations.checksum/bootstrap-config.
-        checksum/bootstrap-config: 10a081000b1691bf6bc5c2386274877a275efb47f401648c38d97a43371c0c8e
+        checksum/bootstrap-config: 4d4d2fe408508c4c880c12f9432ec01efff776ff56d747c0a0ba855ba4375c46
         prometheus.io/scrape: "true"
         prometheus.io/port: "9000"
         prometheus.io/path: "/stats/prometheus"
     spec:
       containers:
         - name: kourier-gateway
-          image: public.ecr.aws/p0i0a9q8/envoy:2026.9.7
+          image: public.ecr.aws/p0i0a9q8/envoy:2026.10.0
           args:
             - --base-id 1
             - -c /tmp/config/envoy-bootstrap.yaml
@@ -9302,13 +9763,14 @@ metadata:
   name: net-kourier-controller
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     networking.knative.dev/ingress-provider: kourier
     app.kubernetes.io/component: net-kourier
+    platform.union.ai/component: kourier
 spec:
   strategy:
     type: RollingUpdate
@@ -9327,16 +9789,17 @@ spec:
         prometheus.io/path: "/metrics"
       labels:
         app: net-kourier-controller
-        helm.sh/chart: dataplane-2026.9.7
+        helm.sh/chart: dataplane-2026.10.1
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/name: knative-serving
         app.kubernetes.io/version: "1.23.0"
         networking.knative.dev/ingress-provider: kourier
+        platform.union.ai/component: kourier
     spec:
       containers:
         - name: controller
-          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7
+          image: public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0
           command:
             - /bin/kourier
           env:
@@ -9441,12 +9904,13 @@ metadata:
   name: webhook
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
     app.kubernetes.io/version: "1.23.0"
     app.kubernetes.io/component: webhook
+    platform.union.ai/component: knative-webhook
 spec:
   selector:
     matchLabels:
@@ -9460,6 +9924,7 @@ spec:
         app.kubernetes.io/component: webhook
         app.kubernetes.io/version: "1.23.0"
         app.kubernetes.io/name: knative-serving
+        platform.union.ai/component: knative-webhook
     spec:
       nodeSelector:
         flyte.org/node-role: worker
@@ -9557,6 +10022,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: image-builder
 spec:
   strategy:
     type: Recreate
@@ -9571,6 +10037,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: image-builder
     spec:
       serviceAccountName: "union-system"
       containers:
@@ -9673,6 +10140,7 @@ metadata:
   namespace: union
   labels:
     app: leaseworker
+    platform.union.ai/component: leaseworker
 spec:
   replicas: 1
   strategy:
@@ -9683,7 +10151,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "93e643ce33e793471c52c3f73e1aa5a716c0047ed666cb0dd9c714f7fcc735f"
+        configChecksum: "f5230a286497965f511b4853f24e1bc2b059a4a82ed7c7388a559c9994e3fad8"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -9691,6 +10159,7 @@ spec:
         app: leaseworker
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: leaseworker
+        platform.union.ai/component: leaseworker
     spec:
       securityContext:
         fsGroup: 1337
@@ -9708,7 +10177,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -9793,6 +10262,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: proxy
 spec:
   replicas: 1
   selector:
@@ -9802,7 +10272,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "078eb3416ffdd1ae37d701d75fa6937b79ca021207142e7f4eccbe2d2ff4eec"
+        configChecksum: "94ee20bc63b47c061280ec12af4d9231b66317ce7faa94cd5f27f02cddf516b8"
         
       labels:
         
@@ -9810,6 +10280,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: proxy
     spec:
       volumes:
         - name: config-volume
@@ -9827,7 +10298,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9901,7 +10372,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -9945,6 +10416,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: operator
 spec:
   selector:
     matchLabels:
@@ -9953,7 +10425,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "078eb3416ffdd1ae37d701d75fa6937b79ca021207142e7f4eccbe2d2ff4eec"
+        configChecksum: "94ee20bc63b47c061280ec12af4d9231b66317ce7faa94cd5f27f02cddf516b8"
         
       labels:
         
@@ -9961,6 +10433,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: operator
     spec:
       serviceAccountName: union-system
       securityContext:
@@ -9972,11 +10445,20 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       containers:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -9991,11 +10473,14 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: "/etc/union/connector-config"
+              name: connector-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.9.7"
+              value: "2026.10.1"
             - name: HELM_APP_VERSION
-              value: "2026.9.7"
+              value: "2026.10.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -10076,6 +10561,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: webhook
 spec:
   replicas: 1
   selector:
@@ -10091,8 +10577,9 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: webhook
       annotations:
-        configChecksum: "93e643ce33e793471c52c3f73e1aa5a716c0047ed666cb0dd9c714f7fcc735f"
+        configChecksum: "f5230a286497965f511b4853f24e1bc2b059a4a82ed7c7388a559c9994e3fad8"
         
     spec:
       securityContext:
@@ -10103,7 +10590,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller
@@ -10237,7 +10724,7 @@ metadata:
   name: activator
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10272,7 +10759,7 @@ metadata:
   namespace: union
   labels:
     app: gateway
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
 spec:
@@ -10317,7 +10804,7 @@ metadata:
   name: webhook
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10364,7 +10851,7 @@ kind: MutatingWebhookConfiguration
 metadata:
   name: webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10571,7 +11058,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: config.webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10616,7 +11103,7 @@ kind: ValidatingWebhookConfiguration
 metadata:
   name: validation.webhook.serving.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10794,7 +11281,7 @@ metadata:
   annotations:
     networking.knative.dev/certificate.class: cert-manager.certificate.networking.knative.dev
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
@@ -10829,7 +11316,7 @@ metadata:
   name: queue-proxy
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/name: knative-serving
