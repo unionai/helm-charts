@@ -1,6 +1,12 @@
 # dataplane — Release Notes
 
-## Unreleased
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the Union images are unchanged.
+
+**Read "Zero trust is the default" before upgrading** — self-hosted installs must
+set `zero_trust.enabled: false` first.
 
 ### Prometheus enables `auto-gomemlimit` by default
 
@@ -113,6 +119,23 @@ changed. An operator older than cloud#19143 decodes its config strictly and fail
 startup on that key, so set a non-default mount path only with an operator at or after
 it. An operator at or after cloud#19143 on a chart without `plugins.yaml` reports no
 plugins or connectors in the snapshot until the chart is upgraded.
+
+### Zero-trust metrics `remote_write` authenticates as `secrets.admin.clientId`
+
+In zero-trust mode the Prometheus `remote_write` oauth2 `client_id` was derived as
+`<global.ORG_NAME>-<global.CLUSTER_NAME>-operator`, while its `client_secret_file`
+is the secret of the `secrets.admin` app. The two matched only when the admin app
+happened to follow that naming; otherwise every batch failed with
+`400 invalid_client` (and with the globals unset it rendered `--operator`). The
+`client_id` is now `secrets.admin.clientId`, the same app id the operator reports
+in its heartbeat, and the chart fails at render time when it is empty.
+
+### `telemetry.enabled: false` opts task pods out of telemetry
+
+New value `telemetry.enabled` (default `true`). Setting it to `false` injects
+`DO_NOT_TRACK=1` ([donottrack.sh](https://donottrack.sh)) into every task pod
+through the k8s plugin's `default-env-vars`, which turns off flyte-sdk's crash
+reports and usage counts. Defaults render unchanged.
 
 ## 2026.10.0
 
