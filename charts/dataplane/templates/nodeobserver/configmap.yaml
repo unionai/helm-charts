@@ -7,6 +7,21 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   {{- with .Values.nodeobserver.config }}
-  config.yaml: | {{ tpl (toYaml .) $ | nindent 4 }}
+  # Emitted twice on purpose, so this chart and the dataplane image can roll in
+  # either order.
+  #
+  # nodeobserver is being folded into a single `nodeagent` binary that loads
+  # config through flytestdlib, which keys each component by a named section:
+  # the new binary reads `nodeReadiness:` and nothing else, the current one
+  # reads these keys at the document root and nothing else. Each ignores the
+  # other's copy — the old parser is a plain yaml.Unmarshal, not a strict one.
+  #
+  # Without the section, a routine image bump would leave the new binary
+  # reading an empty criticalDaemonSets, which removes the node's startup taint
+  # immediately while the pod goes on reporting Ready. The root copy can go
+  # once no dataplane runs a pre-consolidation image.
+  config.yaml: |
+    nodeReadiness:{{ tpl (toYaml .) $ | nindent 6 }}
+    {{- tpl (toYaml .) $ | nindent 4 }}
   {{- end }}
 {{- end }}

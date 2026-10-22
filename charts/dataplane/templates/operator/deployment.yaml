@@ -4,6 +4,7 @@ metadata:
   name: {{ include "union-operator.fullname" . }}
   labels:
     {{- include "operator.labels" . | nindent 4 }}
+    {{- include "dataplane.componentLabel" "operator" | nindent 4 }}
 spec:
   {{- if not .Values.operator.autoscaling }}
   replicas: {{ .Values.operator.replicas }}
@@ -14,13 +15,14 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: {{ include (print .Template.BasePath "/operator/configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        configChecksum: {{ include "dataplane.configMapDataChecksum" (dict "root" . "path" (print .Template.BasePath "/operator/configmap.yaml") "name" (include "union-operator.fullname" .)) | quote }}
         {{- with .Values.operator.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
         {{- include "global.podAnnotations" . | nindent 8 }}
       labels:
         {{- include "operator.podLabels" . | nindent 8 }}
+        {{- include "dataplane.componentLabel" "operator" | nindent 8 }}
     spec:
       {{- with .Values.operator.priorityClassName }}
       priorityClassName: {{ . }}
@@ -46,6 +48,15 @@ spec:
           configMap:
             name: {{ include "union-operator.fullname" . }}-connection
         {{- end }}
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       {{- with .Values.operator.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
@@ -70,6 +81,9 @@ spec:
               name: connection-config-volume
               readOnly: true
             {{- end }}
+            - mountPath: /etc/union/connector-config
+              name: connector-config-volume
+              readOnly: true
           {{- with .Values.operator.additionalVolumeMounts -}}
           {{ tpl (toYaml .) $ | nindent 12 }}
           {{- end }}

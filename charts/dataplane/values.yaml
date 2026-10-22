@@ -87,6 +87,12 @@ updateStatus:
       # -- Serve app URLs over http:// instead of https:// when true. Default https.
       insecure: false
 
+# Telemetry the Flyte SDK sends from task pods (crash reports and usage counts).
+telemetry:
+  # -- Set to false to opt out. Injects DO_NOT_TRACK=1 (https://donottrack.sh)
+  # into every task pod, the same switch flyte-sdk, the Flyte backend and the console honour.
+  enabled: true
+
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
 #  key1: "value1"
@@ -1010,6 +1016,12 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # The label the operator's cluster snapshot discovers Union workloads by, on the
+  # DaemonSet and on its pods.
+  labels:
+    platform.union.ai/component: logging
+  podLabels:
+    platform.union.ai/component: logging
   # Upstream defaults this to a bare `busybox`, which resolves against the
   # implicit docker.io/library/ default and fails on clusters that pin an
   # allowed-registry policy. Only rendered by `helm test`, but the policy
@@ -1861,6 +1873,10 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
+  # The label the operator's cluster snapshot discovers Union workloads by; the
+  # subchart puts commonMetaLabels on every resource it renders, pods included.
+  commonMetaLabels:
+    platform.union.ai/component: prometheus
   # Disable the chart's own RBAC (which creates ClusterRoles).
   # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
   rbac:
@@ -2160,13 +2176,14 @@ prometheus:
 #   identified.
 low_privilege: true
 
-# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# -- Zero-trust dataplane mode (the default). Installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
-# the tunnel-service dataplane ingress. Customers must also set
-# `knative-operator.enabled: false` because Helm evaluates that subchart
-# condition at parse time and can't derive it from this flag.
+# the tunnel-service dataplane ingress. `knative-operator.enabled` must stay
+# false (its default) because Helm evaluates that subchart condition at parse
+# time and can't derive it from this flag. Set false for deployments with
+# self-hosted control planes.
 zero_trust:
-  enabled: false
+  enabled: true
 
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.

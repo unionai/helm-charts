@@ -1,5 +1,141 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Zero trust is the default
+
+`zero_trust.enabled` now defaults to `true`, so the Envoy gateway, the dataproxy
+backend and the tunnel-service dataplane ingress render without any values change.
+
+**Self-hosted installs must set `zero_trust.enabled: false` before upgrading.**
+Zero trust is not supported for self-hosted control planes.
+
+An install that still runs the knative-operator path must run the
+[`knative-migration`](../knative-migration/README.md) chart before upgrading;
+skipping it deadlocks the upgrade. Then set `gateway.enabled: true` and
+`knative-operator.enabled: false` in the dataplane values; zero trust fails to
+render with `gateway.enabled: false`.
+
+An install with `secrets.admin.enable: false` now fails to render: the zero-trust
+Prometheus `remote_write` reads its oauth2 client secret from `union-secret-auth`.
+Enable `secrets.admin`.
+
+On OpenShift, the Kourier gateway SCC and its RBAC now also render under zero trust.
+
+`examples/values.zero-trust.yaml` is removed because the defaults now match it.
+
+### `configChecksum` is the hash of the ConfigMap's data
+
+No values change. Every Union workload the operator tracks (propeller, the pod
+webhook, the leaseworker, the operator, its proxy, the dataproxy and syncresources)
+now stamps `configChecksum` on its pod template with the config hash of the cluster
+health contract: the hex sha256 of its ConfigMap's `data` serialized as JSON with the
+keys sorted, which is what the operator computes over the live ConfigMap for
+`ComponentConfig.config_hash` ([cloud#19176](https://github.com/unionai/cloud/pull/19176),
+[cloud#19218](https://github.com/unionai/cloud/pull/19218)). Before, the stamp was the
+sha256 of the rendered manifest text, truncated to 63 characters, which equalled
+nothing the operator could compute, so the control plane could not tell whether a pod
+ran its ConfigMap's current data. With this release it can, and the console's
+per-component config state ([cloud#19250](https://github.com/unionai/cloud/pull/19250))
+lights up for these workloads instead of reading "unknown". Until a dataplane runs
+this release its pods read "unknown", never "restart required".
+
+Each of those workloads rolls once on the upgrade, since the annotation value
+changes. Only the `data` is hashed now, so a later change to a ConfigMap's labels or
+to template whitespace no longer rolls its pods; a change to the data still does.
+`union-nodeobserver` and `union-uvol-broker` keep the old stamp: the operator does not
+track their ConfigMaps, and re-stamping them would roll both DaemonSets for nothing.
+
+To check a stamp by hand:
+
+```sh
+kubectl -n union get cm leaseworker -o json \
+  | jq -j '.data // {} | tojson | gsub("<";"\\u003c") | gsub(">";"\\u003e") | gsub("&";"\\u0026")' \
+  | shasum -a 256
+kubectl -n union get deploy leaseworker -o jsonpath='{.spec.template.metadata.annotations.configChecksum}'
+```
+
+The three `gsub`s matter: Go's `json.Marshal`, and so helm's `toJson`, HTML-escapes
+`<`, `>` and `&`; jq does not.
+
+### Every Union workload carries `platform.union.ai/component`
+
+Nothing to do: the only values change is new defaults, `fluentbit.labels`,
+`fluentbit.podLabels` and `prometheus.commonMetaLabels`, that carry the label into those
+subcharts. Every Deployment and DaemonSet this chart provisions, and the `prometheus` and
+`fluent-bit` subcharts through those values, now carry `platform.union.ai/component: <id>`
+in `metadata.labels` and on their pod template (see `CONVENTIONS.md` for the ids). The
+label is emitted after `additionalPodLabels`, a component's `podLabels` and a gateway
+component's `labels`, so a values layer that sets the same key cannot override it. The
+operator's cluster snapshot discovers Union workloads by this label instead of by their
+names ([cloud#19163](https://github.com/unionai/cloud/pull/19163)), so such an operator
+reports no `components` section until a dataplane runs this release. Selectors are
+untouched, so the upgrade is a plain rollout.
+
+The `knative-operator` subchart carries the label from its own 2026.10.0 release, which
+ships with this change; the `knative-operator` dependency stays pinned to 2026.6.0 here and
+is bumped in a follow-up once 2026.10.0 is published, so a legacy install's knative
+operator is not reported until then.
+
+### The operator reads plugin configuration from its own ConfigMap, and connector-config as a mount
+
+No values change and nothing to do. The operator ConfigMap gains a `plugins.yaml` key
+rendered from the same `config.enabled_plugins` and `config.core.manager` values the
+leaseworker and propeller run from: the enabled plugin ids, the `agent-service`,
+`connector-service` and task-log `logs` sections, and the manager's sharding. The cluster health snapshot
+the operator pushes to the control plane
+([cloud#19143](https://github.com/unionai/cloud/pull/19143)) reads its plugins and
+connectors sections from there instead of fetching the leaseworker and propeller
+ConfigMaps on every push. As in the leaseworker ConfigMap, the connector sections are
+rendered only while `flyteconnector.enabled`.
+
+The operator pod also mounts the `connector-config` ConfigMap, where the apps
+controller keeps the connector apps' endpoints, at `/etc/union/connector-config`
+(`operator.clusterHealth.connectorConfigPath`). The mount is optional: this chart does
+not ship that ConfigMap, so the directory stays empty and the operator reads it as no
+apps.
+
+An operator older than cloud#19143 ignores the new key; an operator at or after it on
+a chart without it reports no plugins or connectors in the snapshot until the chart is
+upgraded.
+
+## 2026.10.0
+
+`version` and `appVersion` move `2026.9.7` → `2026.10.0`.
+
+### Dataplane images
+
+- **The node components are now one binary.** The node-readiness observer, the
+  uvol mount broker and the GPU fault watcher run as goroutines of a single
+  `nodeagent` process behind one DaemonSet, ServiceAccount, ConfigMap and
+  ClusterRole, replacing their separate ones.
+
+  Configuration moved to named sections, which is why this chart now emits
+  `nodeobserver.config` under a `nodeReadiness:` key **as well as** at the
+  document root (see Unreleased in 2026.9.7, shipped here). The older and newer
+  binaries each read their own half and ignore the other, so this chart and the
+  dataplane image may be rolled in either order.
+
+  The unified DaemonSet is **off by default** (`unionNodeAgent.enabled`).
+  Enabling a component requires disabling its standalone gate in the same
+  change — the chart refuses to render a component in both shapes, because two
+  brokers on one node rebind the same kubelet CSI socket and write the same
+  journal. For the broker specifically, drain volume-using task pods from a node
+  before cutting it over.
+- Node readiness: the CNI gate no longer fails open, and the wait is skipped on
+  a node that carries no startup taint.
+- Image builder: an optional persistent BuildKit cache on a Union block Volume.
+  The broker serves it, so the broker has to run on the image builder's nodes
+  too — see `uvolMountBroker.extraNodeSelectorTerms`.
+- Operator: reports the cluster's own region, from config or its nodes'
+  topology label; cluster-snapshot gaps on v2-only dataplanes fixed.
+- Metrics gateway: multiple pipelines and native ClickHouse sinks; dataplane
+  `remote_write` is filtered to the gateway keep-list at the source.
+- Leaseworker: cached outputs are copied within the object store, and
+  `POD_NAMESPACE` is set so default pod templates resolve.
+- Go toolchain updated to 1.27.2; flyte2 picks up unified Redis configuration
+  ([flyteorg/flyte#8121](https://github.com/flyteorg/flyte/pull/8121)).
+
 ## 2026.9.7
 
 `version` and `appVersion` move `2026.9.6` → `2026.9.7`.

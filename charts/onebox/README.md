@@ -218,3 +218,9 @@ host is added with `license.trustedKeys`.
 | 8082 | Task pods; requests act as the built-in tasks app. In-cluster only. |
 | 9443 | The Kubernetes API server (pod webhook). |
 | 15606 | Reusable-container workers. In-cluster only. |
+
+## License
+
+The onebox chart and the software it deploys are under the Union License: see
+[`LICENSE`](LICENSE), with Union's copyright notice in [`NOTICE`](NOTICE). The third-party
+notices ship in the onebox image, at `/usr/share/doc/onebox/`.
