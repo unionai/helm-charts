@@ -1,0 +1,32 @@
+{{- if include "scale.proxyNetworkPolicy.rendered" . }}
+{{- /* Defense in depth for the operator proxy, which serves Scale's IssueService with no
+       authorizer of its own: the dataproxy's signed caller assertion is the check, and this
+       keeps task pods (in other namespaces) from reaching the proxy at all. The tunnel runs in the
+       proxy pod, so traffic through it is not affected. It covers the whole proxy pod, not only
+       Scale: list every other in-cluster caller in scale.proxyNetworkPolicy.from. */}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "union-operator.fullname" . }}-proxy-scale
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "proxy.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+        {{- with .Values.scale.proxyNetworkPolicy.from }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    {{- /* Metrics only, from anywhere: Prometheus usually runs in its own namespace. */}}
+    - ports:
+        - port: debug
+          protocol: TCP
+{{- end }}

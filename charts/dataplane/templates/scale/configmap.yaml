@@ -1,0 +1,70 @@
+{{- if .Values.scale.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: scale
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    scale:
+      organization: {{ include "scale.org" . | quote }}
+      cluster: {{ include "getClusterName" . | quote }}
+      {{- /* Shared with the operator proxy (templates/operator/configmap.yaml, proxy.scale). */}}
+      storageContainer: {{ .Values.scale.storageContainer | quote }}
+      {{- with .Values.scale.signing.secretName }}
+      signingKeyPath: /etc/scale/signing/{{ $.Values.scale.signing.key }}
+      {{- end }}
+      {{- with .Values.scale.notify }}
+      {{- $notify := omit . "secretName" }}
+      {{- if not $notify.consoleURL }}
+      {{- $_ := set $notify "consoleURL" (printf "https://%s" (include "dataplane.cp.host" $)) }}
+      {{- end }}
+      notify:
+        {{- toYaml $notify | nindent 8 }}
+      {{- end }}
+      {{- if .Values.scale.agent.enabled }}
+      {{- /* Wake the agent to diagnose new and reopened issues. */}}
+      agent:
+        enabled: true
+        url: {{ include "scale-agent.url" . }}
+        dailyDiagnoses: {{ .Values.scale.agent.dailyDiagnoses | int }}
+        timeout: {{ printf "%ds" (.Values.scale.agent.timeoutSeconds | int) }}
+      {{- end }}
+      {{- with .Values.scale.config }}
+      {{- tpl (toYaml .) $ | nindent 6 }}
+      {{- end }}
+      {{- $git := .Values.scale.git | default dict }}
+      {{- if $git.enabled }}
+      git:
+        enabled: true
+        github:
+          appId: {{ $git.github.appId | int64 }}
+          installationId: {{ $git.github.installationId | default 0 | int64 }}
+          apiUrl: {{ $git.github.apiUrl | quote }}
+          webUrl: {{ $git.github.webUrl | quote }}
+          privateKeyPath: /etc/scale/github/{{ $git.privateKeySecret.key }}
+        {{- with $git.sources }}
+        sources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
+      {{- end }}
+    union:
+      connection:
+        {{- tpl (toYaml .Values.config.union.connection) $ | nindent 8 }}
+      auth:
+        type: ClientSecret
+        {{- /* Scale's own view-only app when configured, else the operator's. */}}
+        clientId: {{ tpl (.Values.scale.auth.appId | default .Values.secrets.admin.clientId) $ | quote }}
+        clientSecretLocation: /etc/union/secret/app_secret
+        authorizationMetadataKey: "flyte-authorization"
+        tokenRefreshWindow: 5m
+    logger:
+      {{- tpl (omit .Values.logging "pythonLevel" | toYaml) $ | nindent 6 }}
+    sharedService:
+      metrics:
+        scope: "scale:"
+  {{- /* The same store the operator proxy reads issues from. */}}
+  storage.yaml: | {{ tpl (include "storage" .) $ | nindent 4 }}
+{{- end }}

@@ -1,0 +1,135 @@
+{{- if and .Values.scale.enabled .Values.scale.agent.enabled }}
+{{- $agent := .Values.scale.agent }}
+{{- /* Scale's agent (unionai/cloud scale/agent). A Knative service visible only inside the
+       cluster. It scales to zero when idle and to at most one replica; the activator holds a
+       request while it wakes. It needs no GPU: the model runs behind scale.agent.model.baseURL.
+       Its required settings are checked in scale.guards (templates/scale/_scale.tpl). */}}
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: scale-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "scale-agent.labels" . | nindent 4 }}
+    networking.knative.dev/visibility: cluster-local
+spec:
+  template:
+    metadata:
+      labels:
+        app: scale-agent
+        {{- with $agent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "1"
+        autoscaling.knative.dev/scale-down-delay: {{ $agent.scaleDownDelay | quote }}
+        autoscaling.knative.dev/metric: concurrency
+    spec:
+      serviceAccountName: scale-agent
+      automountServiceAccountToken: false
+      timeoutSeconds: {{ $agent.timeoutSeconds | int }}
+      {{- /* As many requests as the agent runs at once; Knative's queue holds the rest, so none
+             wait inside the pod past their timeout. */}}
+      containerConcurrency: {{ $agent.concurrency | int }}
+      securityContext:
+        {{- toYaml $agent.podSecurityContext | nindent 8 }}
+      {{- with $agent.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $agent.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $agent.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: scale-agent
+          image: "{{ $agent.image.repository }}:{{ $agent.image.tag | default .Values.image.union.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ $agent.image.pullPolicy }}
+          ports:
+            {{- /* Knative routes HTTP/2 without TLS to a port named h2c, as gRPC needs. */}}
+            - name: h2c
+              containerPort: 8080
+          env:
+            - name: SCALE_AGENT_PORT
+              value: "8080"
+            - name: SCALE_AGENT_ORG
+              value: {{ include "scale.org" . | quote }}
+            - name: SCALE_AGENT_ISSUES_URL
+              value: "http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080"
+            - name: SCALE_AGENT_CONCURRENCY
+              value: {{ $agent.concurrency | quote }}
+            - name: SCALE_AGENT_MODEL
+              value: {{ $agent.model.name | quote }}
+            - name: SCALE_AGENT_MODEL_BASE_URL
+              value: {{ $agent.model.baseURL | quote }}
+            {{- if $agent.model.headersSecret.name }}
+            - name: SCALE_AGENT_MODEL_HEADERS_FILE
+              value: /etc/scale-agent/model-headers/{{ $agent.model.headersSecret.key }}
+            {{- end }}
+            {{- if $agent.model.apiKeySecret.name }}
+            - name: SCALE_AGENT_MODEL_API_KEY_FILE
+              value: /etc/scale-agent/model/{{ $agent.model.apiKeySecret.key }}
+            {{- end }}
+            - name: SCALE_AGENT_FLYTE_ENDPOINT
+              value: {{ include "dataplane.cp.endpoint" . | quote }}
+            - name: SCALE_AGENT_FLYTE_CLIENT_ID
+              value: {{ tpl (.Values.scale.auth.appId | toString) $ | quote }}
+            - name: SCALE_AGENT_FLYTE_CLIENT_SECRET_FILE
+              value: /etc/scale-agent/app/app_secret
+            - name: SCALE_AGENT_READ_LOGS
+              value: {{ $agent.readLogs | quote }}
+          securityContext:
+            {{- toYaml $agent.securityContext | nindent 12 }}
+          resources:
+            {{- toYaml $agent.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: app
+              mountPath: /etc/scale-agent/app
+              readOnly: true
+            {{- if $agent.model.apiKeySecret.name }}
+            - name: model
+              mountPath: /etc/scale-agent/model
+              readOnly: true
+            {{- end }}
+            {{- if $agent.model.headersSecret.name }}
+            - name: model-headers
+              mountPath: /etc/scale-agent/model-headers
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- /* Only the Scale app's client secret, which can view runs and tasks and nothing else. */}}
+        - name: app
+          secret:
+            secretName: {{ .Values.scale.auth.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.auth.secretKey }}
+                path: app_secret
+        {{- with $agent.model.apiKeySecret.name }}
+        - name: model
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+            items:
+              - key: {{ $agent.model.apiKeySecret.key }}
+                path: {{ $agent.model.apiKeySecret.key }}
+        {{- end }}
+        {{- with $agent.model.headersSecret.name }}
+        - name: model-headers
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0440
+            items:
+              - key: {{ $agent.model.headersSecret.key }}
+                path: {{ $agent.model.headersSecret.key }}
+        {{- end }}
+{{- end }}

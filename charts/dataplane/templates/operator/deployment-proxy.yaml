@@ -40,6 +40,27 @@ spec:
           secret:
             secretName: {{ .Values.operator.secretName }}
         {{- end }}
+        {{- if and .Values.scale.enabled .Values.scale.signing.secretName }}
+        {{- /* The key Scale's objects are signed with, shared with the Scale runtime. */}}
+        - name: scale-signing
+          secret:
+            secretName: {{ .Values.scale.signing.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.signing.key }}
+                path: {{ .Values.scale.signing.key }}
+        {{- end }}
+        {{- if and .Values.scale.enabled .Values.scale.callerAuth.secretName }}
+        {{- /* The key the dataproxy signs Scale caller assertions with (this cluster's). Only the
+               proxy mounts it; the Scale runtime does not need it. */}}
+        - name: scale-caller
+          secret:
+            secretName: {{ .Values.scale.callerAuth.secretName }}
+            defaultMode: 0440
+            items:
+              - key: {{ .Values.scale.callerAuth.key }}
+                path: {{ .Values.scale.callerAuth.key }}
+        {{- end }}
       {{- with .Values.proxy.additionalVolumes -}}
       {{ tpl (toYaml .) $ | nindent 8 }}
       {{- end }}
@@ -51,8 +72,13 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "proxy.serviceAccountName" . }}
+      {{- $podSecurityContext := deepCopy (.Values.proxy.podSecurityContext | default dict) }}
+      {{- if and .Values.scale.enabled (or .Values.scale.signing.secretName .Values.scale.callerAuth.secretName) (not (hasKey $podSecurityContext "fsGroup")) }}
+      {{- /* Scale's keys are mounted 0440 and root-owned; fsGroup lets the proxy read them. */}}
+      {{- $_ := set $podSecurityContext "fsGroup" 65532 }}
+      {{- end }}
       securityContext:
-        {{- toYaml .Values.proxy.podSecurityContext | nindent 8 }}
+        {{- toYaml $podSecurityContext | nindent 8 }}
       containers:
         - name: operator-proxy
           securityContext:
@@ -68,6 +94,16 @@ spec:
             {{- if .Values.secrets.admin.enable }}
             - mountPath: /etc/union/secret
               name: secret-volume
+            {{- end }}
+            {{- if and .Values.scale.enabled .Values.scale.signing.secretName }}
+            - mountPath: /etc/union/scale-signing
+              name: scale-signing
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.scale.enabled .Values.scale.callerAuth.secretName }}
+            - mountPath: /etc/union/scale-caller
+              name: scale-caller
+              readOnly: true
             {{- end }}
           {{- with .Values.proxy.additionalVolumeMounts -}}
           {{ tpl (toYaml .) $ | nindent 12 }}
@@ -94,6 +130,11 @@ spec:
             {{- include "global.podEnvVars" . | nindent 10 }}
             {{- with .Values.proxy.podEnv }}
             {{- toYaml . | nindent 10 }}
+            {{- end }}
+            {{- if and .Values.scale.enabled .Values.scale.signing.acceptUnsignedUntil }}
+            {{- /* Shared with the Scale runtime (templates/scale/deployment.yaml). */}}
+          - name: SCALE_SIGNING_ACCEPT_UNSIGNED_UNTIL
+            value: {{ .Values.scale.signing.acceptUnsignedUntil | quote }}
             {{- end }}
         {{- if .Values.operator.enableTunnelService }}
         - name: "tunnel"
