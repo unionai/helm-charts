@@ -40,9 +40,10 @@ global:
   #   public.ecr.aws: 123456789012.dkr.ecr.us-east-1.amazonaws.com/ecr-public
   #   registry-1.docker.io: us-central1-docker.pkg.dev/my-project/docker
   #   ghcr.io: us-central1-docker.pkg.dev/my-project/ghcr
-  # Union's images are also served from a public Artifact Registry copy; a
-  # mirror keyed us-docker.pkg.dev/union-public-images/unionai is preferred
-  # for them over the public.ecr.aws one.
+  #   us-docker.pkg.dev: us-central1-docker.pkg.dev/my-project/gar
+  # Union's images are also served from a public Artifact Registry copy, at
+  # us-docker.pkg.dev/union-public-images/unionai; a us-docker.pkg.dev mirror
+  # is preferred for them over the public.ecr.aws one.
   imageMirrors: {}
 
 # -- Override the chart name.
@@ -1334,7 +1335,8 @@ flytepropellerwebhook:
   # -- repository namespaces, "*" for the whole registry. List only namespaces
   # -- whose images are all public: the mirror pulls with its own credentials, so
   # -- a private image rewritten through it fails to pull. docker.io also matches
-  # -- registry-1.docker.io.
+  # -- registry-1.docker.io. A namespace may be a nested path, e.g.
+  # -- us-docker.pkg.dev: [union-public-images/unionai].
   imageMirrorPaths:
     public.ecr.aws: ["*"]
     ghcr.io: [flyteorg, unionai-oss]
@@ -1471,7 +1473,12 @@ flytepropellerwebhook:
             volumes.union.ai/channel: "true"
       # -- Managed image webhook configuration (requires Union operator support)
       managedImage:
-        enabled: false
+        # -- Register the managed-image path. Unset by default: it is then
+        # -- registered only when global.imageMirrors yields task-pod rewrite
+        # -- rules (flytepropellerwebhook.imageMirrorPaths). true always
+        # -- registers it; false never does, and also keeps those rules out of
+        # -- the webhook's config.
+        # enabled: true
         # -- Name of the webhook
         name: managed-image-webhook.union.ai
         # -- Path for the webhook

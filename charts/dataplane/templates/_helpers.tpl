@@ -1295,17 +1295,17 @@ resolves wherever the value is rendered.
 
 {{/*
 Where Union's own images (public.ecr.aws/p0i0a9q8/<image>) are pulled from, as a
-prefix to put "/<image>" after. A cluster whose mirror serves Union's public
-Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai) pulls
-through that; any other cluster pulls from ECR Public, through its ECR Public
+prefix to put "/<image>" after. A cluster with a us-docker.pkg.dev mirror pulls
+Union's public Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai)
+through it; any other cluster pulls from ECR Public, through its ECR Public
 mirror if it has one.
 
   repository: '{{ include "dataplane.unionImages" (dict "root" .) }}/unionoperator'
 */}}
 {{- define "dataplane.unionImages" -}}
 {{- $mirrors := (.root.Values.global | default dict).imageMirrors | default dict -}}
-{{- with index $mirrors "us-docker.pkg.dev/union-public-images/unionai" -}}
-{{ . }}
+{{- with index $mirrors "us-docker.pkg.dev" -}}
+{{ . }}/union-public-images/unionai
 {{- else -}}
 {{ index $mirrors "public.ecr.aws" | default "public.ecr.aws" }}/p0i0a9q8
 {{- end -}}
@@ -1354,6 +1354,33 @@ through the mirror as well.
 {{- end }}
 
 {{- /*
+This chart's image-mirror rules for task pods, as a YAML list: empty without
+global.imageMirrors, or when flytepropellerwebhook.webhook.webhooks.managedImage.enabled
+is explicitly false.
+*/}}
+{{- define "dataplane.webhook.mirrorRules" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if and (hasKey $managed "enabled") (not $managed.enabled) }}
+{{- toYaml list }}
+{{- else }}
+{{- include "dataplane.webhook.imageMirrorRules" (dict "mirrors" (.Values.global | default dict).imageMirrors "paths" .Values.flytepropellerwebhook.imageMirrorPaths) }}
+{{- end }}
+{{- end }}
+
+{{- /*
+Whether the chart-managed MutatingWebhookConfiguration registers the
+managed-image path: managedImage.enabled when it is set, otherwise whenever
+there are image-mirror rules for it to apply. "true" or empty.
+*/}}
+{{- define "dataplane.webhook.managedImageRegistered" -}}
+{{- $managed := .Values.flytepropellerwebhook.webhook.webhooks.managedImage }}
+{{- if hasKey $managed "enabled" }}
+{{- if $managed.enabled }}true{{ end }}
+{{- else if include "dataplane.webhook.mirrorRules" . | fromYamlArray }}true
+{{- end }}
+{{- end }}
+
+{{- /*
 The pod webhook's config with the image-mirror rules appended to
 webhook.images.images (after the configured rules) and the managed-image
 mutator enabled, when global.imageMirrors yields any. Takes a dict:
@@ -1361,9 +1388,8 @@ mutator enabled, when global.imageMirrors yields any. Takes a dict:
   webhook: a copy of config.core.webhook, changed in place
 */}}
 {{- define "dataplane.webhook.withImageMirrorRules" -}}
-{{- $root := .root }}
 {{- $webhook := .webhook }}
-{{- $rules := include "dataplane.webhook.imageMirrorRules" (dict "mirrors" ($root.Values.global | default dict).imageMirrors "paths" $root.Values.flytepropellerwebhook.imageMirrorPaths) | fromYamlArray }}
+{{- $rules := include "dataplane.webhook.mirrorRules" .root | fromYamlArray }}
 {{- if $rules }}
 {{- $images := $webhook.images | default dict }}
 {{- $_ := set $images "enabled" true }}

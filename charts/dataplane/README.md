@@ -455,29 +455,71 @@ global:
     public.ecr.aws: us-central1-docker.pkg.dev/my-project/aws
     registry-1.docker.io: us-central1-docker.pkg.dev/my-project/docker
     ghcr.io: us-central1-docker.pkg.dev/my-project/ghcr
-    # Union's images, from a remote repository whose upstream is Union's public
-    # Artifact Registry copy (us-docker.pkg.dev/union-public-images/unionai).
-    us-docker.pkg.dev/union-public-images/unionai: us-central1-docker.pkg.dev/my-project/union-public-gar
+    # Union's images, from their public Artifact Registry copy
+    # (us-docker.pkg.dev/union-public-images/unionai): a remote repository whose
+    # upstream is https://us-docker.pkg.dev.
+    us-docker.pkg.dev: us-central1-docker.pkg.dev/my-project/gar
 ```
 
 An upstream with no entry is pulled directly. With the map set, the chart pulls these
 through the mirror:
 
-- **Union's images** (`image.union`, `image.envoy`): through the
-  `us-docker.pkg.dev/union-public-images/unionai` mirror if there is one, otherwise
+- **Union's images** (`image.union`, `image.envoy`): from their public Artifact
+  Registry copy through the `us-docker.pkg.dev` mirror if there is one, otherwise
   through the `public.ecr.aws` mirror.
 - **The chart's other images**: the kubectl hook image (`docker.io`), BuildKit
   (`docker.io`), flyteconnector (`ghcr.io`) and copilot (`cr.flyte.org`). A
   `docker.io` image also takes a mirror keyed `registry-1.docker.io`.
-- **Task pods**: the pod webhook rewrites task-pod images from the public namespaces
-  in `flytepropellerwebhook.imageMirrorPaths` (all of `public.ecr.aws`; `flyteorg`
-  and `unionai-oss` on `ghcr.io`; `library` and `unionai-oss` on `docker.io`)
-  through their upstream's mirror. List only namespaces whose images are all public:
-  the mirror pulls with its own credentials, so a private image rewritten through it
-  fails to pull. The secrets init container that the webhook adds to task pods is
-  pulled through the `public.ecr.aws` mirror.
+- **Task pods**: the pod webhook rewrites task-pod images from a set of public
+  namespaces through their upstream's mirror; see [Task-pod images](#task-pod-images).
+  The secrets init container that the webhook adds to task pods is pulled through the
+  `public.ecr.aws` mirror.
 
 Overriding an image's `repository` replaces the mirror lookup for that image.
+
+### Task-pod images
+
+Task pods run images the chart doesn't name: the user's own, Flyte's default task
+images, Union's public images. The pod webhook rewrites a task-pod image through the
+mirror only when its upstream has a mirror in `global.imageMirrors` and its repository
+is in a namespace listed in `flytepropellerwebhook.imageMirrorPaths`
+(upstream => namespaces, `"*"` for every repository):
+
+| Upstream | Namespaces rewritten by default |
+| --- | --- |
+| `public.ecr.aws` | all (`"*"`) |
+| `ghcr.io` | `flyteorg`, `unionai-oss` |
+| `docker.io` (also `registry-1.docker.io`) | `library`, `unionai-oss` |
+
+Any other task-pod image, for example `docker.io/my-org/private-image` or any image on
+Artifact Registry, is left as it is and pulled with the pod's own credentials, even
+when that registry has a mirror (such as the `us-docker.pkg.dev` mirror for Union's
+images). With a `ghcr.io` mirror, the webhook also
+pulls the Flyte v2 default task image (`.../orgs/<org>/flyte:py<version>-v...`) from
+`ghcr.io/flyteorg/flyte` through it.
+
+Only rewrite namespaces whose images are all public. The mirror pulls from the upstream
+with its own credentials, so a private image rewritten through it fails to pull. Helm
+merges your map into the defaults: add or change an upstream's list, or set it to
+`null` to drop it. A namespace may be a nested path:
+
+```yaml
+flytepropellerwebhook:
+  imageMirrorPaths:
+    ghcr.io: [flyteorg, unionai-oss, my-public-org]
+    docker.io: null  # leave Docker Hub task images alone
+    us-docker.pkg.dev: [union-public-images/unionai]  # only Union's public copy
+```
+
+The rules apply only to task pods, which carry the `organization`, `project` and
+`domain` labels. They're added after any rules already configured under
+`config.core.webhook.images.images`. When there are any, the chart also registers the
+webhook's managed-image endpoint (`flytepropellerwebhook.webhook.webhooks.managedImage`)
+in the `MutatingWebhookConfiguration` it manages, with that entry's own selector.
+`managedImage.enabled` is unset by default. Set it to `true` to always register the
+endpoint, or to `false` to turn the task-pod rewrite off: the endpoint isn't registered
+and the rules are left out of the webhook's config, while the chart's own images are
+still pulled through the mirror.
 
 ### Subcharts
 
