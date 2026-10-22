@@ -1,5 +1,27 @@
 # controlplane — Release Notes
 
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the control-plane and console images are unchanged.
+
+### `WatchExecutionStatusUpdates` requires authentication
+
+With auth enabled, `/flyteidl.service.WatchService/WatchExecutionStatusUpdates`
+was reachable unauthenticated at the edge. It is removed from the unprotected
+`GRPCRoute` (the protected route already covers `flyteidl.service.WatchService`),
+and on NGINX Ingress the `-grpc-streaming` ingress now carries
+`ingress.protectedIngressAnnotationsGrpc` when auth is enabled. Authless installs
+(`useAuth` false) are unchanged. The `envoy-gateway-config` chart drops the same
+path from its `unprotectedRoutes` default.
+
+### `telemetry.enabled: false` opts the console out of telemetry
+
+New top-level value `telemetry.enabled` (default `true`). Setting it to `false`
+sets `DO_NOT_TRACK=1` ([donottrack.sh](https://donottrack.sh)) on the console,
+which then skips Google Tag Manager and Grafana Faro.
+`console.telemetry.externalEnabled` keeps working. Defaults render unchanged.
+
 ## 2026.10.0
 
 `version` and `appVersion` move `2026.9.7` → `2026.10.0`. Controlplane templates and
