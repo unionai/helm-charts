@@ -31,6 +31,8 @@ VALUES_DIR = REPO_ROOT / "tests" / "values"
 GENERATED_DIR = REPO_ROOT / "tests" / "generated"
 PROFILE_GLOB = "dataplane.image-mirrors*.yaml"
 JOB_SOURCE = "# Source: dataplane/templates/image-prewarm/job.yaml"
+# The crane script's list of images to pull, one per line between images=" and ".
+WARM_LIST_RE = re.compile(r'^\s*images="\n(.*?)^\s*"$', re.MULTILINE | re.DOTALL)
 
 
 def mirror_refs(text: str, mirrors: list[str]) -> set[str]:
@@ -60,7 +62,11 @@ def check(profile: Path) -> list[str]:
     job = [doc for doc in rendered.split("\n---\n") if JOB_SOURCE in doc]
     if not job:
         return [f"{profile.name}: the pre-warm Job did not render"]
-    warmed = mirror_refs(job[0], mirrors)
+    # Only what crane pulls counts as warmed, not the Job's own container images.
+    warm_list = WARM_LIST_RE.search(job[0])
+    if not warm_list:
+        return [f"{profile.name}: no images list in the pre-warm Job's crane script"]
+    warmed = mirror_refs(warm_list.group(1), mirrors)
     if not warmed:
         return [f"{profile.name}: the pre-warm Job warms no images"]
 

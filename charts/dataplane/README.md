@@ -575,6 +575,12 @@ imagePrewarm:
       eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/union-image-prewarm
 ```
 
+The Job runs on Linux nodes with the chart's `scheduling.tolerations`. On an ECR
+mirror, an init container fetches crane's ECR token with the AWS CLI. That init
+container's image, `imagePrewarm.awsCli`, is pulled from ECR Public directly, not
+through the mirror, because nodes pull it with their own credentials, which may not be
+allowed to import it into a cold pull-through cache.
+
 By default an image that can't be warmed after its retries fails the hook, and so
 the install or upgrade. Set `imagePrewarm.failOnError: false` to log a warning and
 continue instead, or `imagePrewarm.enabled: false` to turn the hook off.

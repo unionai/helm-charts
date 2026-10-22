@@ -5,7 +5,8 @@
 # as an AWS dataplane would. Exercises the image pre-warm hook's ecr-token init
 # container and IRSA-bound service account. --is-upgrade renders the kubectl
 # pre-upgrade hook too, whose image the pre-warm must cover. The leaseworker's
-# copilot override is another image the pre-warm must cover.
+# copilot override is another image the pre-warm must cover. The worker taint
+# toleration must reach the pre-warm Job, or it stays Pending on tainted nodes.
 
 global:
   CONTROLPLANE_HOST: "test-controlplane-host"
@@ -28,6 +29,12 @@ leaseworker:
     k8s:
       co-pilot:
         image: '{{ include "dataplane.mirror" (dict "root" . "upstream" "public.ecr.aws") }}/unionai/flytecopilot:v2.0.45'
+
+scheduling:
+  tolerations:
+    - key: "flyte.org/node-role"
+      operator: "Equal"
+      value: "worker"
 
 imagePrewarm:
   serviceAccount:
