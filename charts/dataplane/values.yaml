@@ -1733,6 +1733,45 @@ uvolMountBroker:
     limits:
       memory: 256Mi
 
+# -- Node bootstrap: installs the Nydus snapshotter on each node so pods lazily
+# pull images the image builder exported in Nydus format (see
+# imageBuilder.enableImageOptimization). Privileged, hostPID, writes to the
+# host's /etc and /home/kubernetes and starts systemd units. Supports aws, gcp
+# and azure node images with systemd and a writable /etc (EKS AL2023, GKE COS,
+# AKS Ubuntu); not Bottlerocket.
+nodeBootstrap:
+  # -- Enable the node-bootstrap DaemonSet.
+  enabled: false
+  # -- aws, gcp or azure. Empty uses the top-level `provider`.
+  cloudProvider: ""
+  image:
+    repository: public.ecr.aws/unionai/node-bootstrap
+    # -- Required when enabled. Published by unionai/cloud commit SHA only.
+    tag: ""
+    pullPolicy: IfNotPresent
+  # -- Startup taint union-node-readiness removes once the snapshotter runs.
+  # Add it to the worker nodepools as a startup taint so nothing schedules onto
+  # a node that cannot pull Nydus images yet. Empty: no taint handling, and the
+  # ServiceAccount gets no API access.
+  startupTaintKey: startup-taint.cluster-autoscaler.kubernetes.io/unionai-node-not-ready
+  # -- Restrict to the nodes that run task pods; empty means every node.
+  nodeSelector: {}
+  # -- Must tolerate the startup taint above and any worker taints.
+  tolerations:
+    - operator: Exists
+  affinity: {}
+  priorityClassName: system-node-critical
+  podLabels: {}
+  podAnnotations: {}
+  resources: {}
+  # -- Sidecar that streams the snapshotter's journal to the pod log.
+  fluentBit:
+    image:
+      repository: cr.fluentbit.io/fluent/fluent-bit
+      tag: "3.2.8"
+      pullPolicy: IfNotPresent
+    resources: {}
+
 nodeobserver:
   # -- Enable or disable nodeobserver
   enabled: false
@@ -2500,6 +2539,12 @@ imageBuilder:
   # -- Mutually exclusive with imageBuilder.buildkit.arm.enabled.
   buildkitUriArm: ""
 
+  # -- Export user images the user opted into optimizing (`optimize`) in Nydus
+  # format, for lazy pulls on nodes running nodeBootstrap. Every builder must
+  # carry the nydus-image binary: with the in-release BuildKit that means
+  # imageBuilder.buildkit.nydus.enabled; an external buildkitUri is on you.
+  enableImageOptimization: false
+
   # -- The default container image repository for user-built images.
   # -- When empty, auto-generated from storage.provider, storage.region, storage.gcp.projectId,
   # -- and imageBuilder.registryName:
@@ -2592,6 +2637,16 @@ imageBuilder:
       # -- Image tag. When rootless mode is enabled, "-rootless" is appended automatically
       # -- (e.g. "buildx-stable-1" becomes "buildx-stable-1-rootless") unless the tag already contains "rootless".
       tag: "buildx-stable-1"
+
+    # -- Run Union's BuildKit image, which bundles nydus-image, instead of
+    # buildkit.image. Needed for imageBuilder.enableImageOptimization.
+    nydus:
+      enabled: false
+      image:
+        repository: public.ecr.aws/unionai/buildkit
+        # -- Required when enabled. Published by unionai/cloud commit SHA only;
+        # "-rootless" is appended in rootless mode, as for buildkit.image.
+        tag: ""
 
     # -- Run buildkit in rootless mode (non-privileged). Uses the moby/buildkit rootless
     # -- image variant which bundles RootlessKit to set up user namespaces. Requires

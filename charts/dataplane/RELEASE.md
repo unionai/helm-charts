@@ -8,6 +8,25 @@ a chart-only release, so the Union images are unchanged.
 **Read "Zero trust is the default" before upgrading** — self-hosted installs must
 set `zero_trust.enabled: false` first.
 
+### Nydus lazy image pulls (opt-in)
+
+Self-managed dataplanes can now pull user images lazily with Nydus, as the
+managed BYOC dataplanes already do. Three switches, all off by default:
+
+- `nodeBootstrap.enabled` deploys the `union-node-bootstrap` DaemonSet, which
+  installs and starts the Nydus snapshotter on each node. It is privileged,
+  uses `hostPID`/`hostNetwork` and writes to the host's `/etc` and
+  `/home/kubernetes`. It needs an aws, gcp or azure node image with systemd and a
+  writable `/etc` (not Bottlerocket). Set `nodeBootstrap.image.tag`, and put
+  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint.
+- `imageBuilder.buildkit.nydus.enabled` runs Union's BuildKit image, which
+  bundles `nydus-image` (set `imageBuilder.buildkit.nydus.image.tag`).
+- `imageBuilder.enableImageOptimization` exports images a user marks for
+  optimization in Nydus format. It refuses to render with the stock BuildKit image.
+
+Both images are published by unionai/cloud commit SHA only, so the tags have
+no default yet.
+
 ### Prometheus enables `auto-gomemlimit` by default
 
 `prometheus.server.extraFlags` now includes `enable-feature=auto-gomemlimit`. In

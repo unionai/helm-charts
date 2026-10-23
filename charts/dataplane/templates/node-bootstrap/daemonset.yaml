@@ -1,0 +1,137 @@
+{{- /*
+node-bootstrap: installs and configures node-level runtime pieces that the
+container image cannot carry. Today that is the Nydus snapshotter (nydusd +
+containerd-nydus-grpc, registered with containerd) so pods can lazily pull
+images the image builder exported with `compression=nydus`, instead of
+downloading every layer before the container starts.
+
+Ported from the managed union-operator chart (unionai/cloud
+operator/deploy/helm/templates/node-bootstrap). The image is the same one: its
+install-deps init container copies binaries to /home/kubernetes/bin, config to
+/etc/<component>, installs systemd units and starts them through the host's
+PID 1, so it needs hostPID, a privileged container and hostPath /etc. That is
+a deliberate cost: weigh it before enabling on a cluster whose security
+policy forbids privileged node agents.
+
+Opt-in: disabled by default; enable with nodeBootstrap.enabled.
+*/}}
+{{- if .Values.nodeBootstrap.enabled }}
+{{- $cloud := include "nodeBootstrap.cloudProvider" . }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: union-node-bootstrap
+  labels:
+    {{- include "nodeBootstrap.labels" . | nindent 4 }}
+    {{- include "dataplane.componentLabel" "node-bootstrap" | nindent 4 }}
+spec:
+  # OnDelete, as in the managed chart: a new revision must not restart the
+  # snapshotter under running pods. New nodes get it; existing nodes pick it up
+  # when they are replaced or their pod is deleted.
+  updateStrategy:
+    type: OnDelete
+  selector:
+    matchLabels:
+      {{- include "nodeBootstrap.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        configChecksum: {{ include (print .Template.BasePath "/node-bootstrap/fluent-bit-configmap.yaml") . | sha256sum | trunc 63 | quote }}
+        {{- with .Values.nodeBootstrap.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "global.podAnnotations" . | nindent 8 }}
+      labels:
+        platform.union.ai/zone: "dataplane"
+        {{- include "nodeBootstrap.selectorLabels" . | nindent 8 }}
+        {{- with .Values.nodeBootstrap.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- include "dataplane.componentLabel" "node-bootstrap" | nindent 8 }}
+    spec:
+      priorityClassName: {{ .Values.nodeBootstrap.priorityClassName }}
+      serviceAccountName: union-node-bootstrap
+      hostPID: true
+      hostNetwork: true
+      {{- with .Values.operator.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeBootstrap.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      tolerations:
+        {{- toYaml .Values.nodeBootstrap.tolerations | nindent 8 }}
+      {{- with .Values.nodeBootstrap.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: install-deps
+          image: "{{ .Values.nodeBootstrap.image.repository }}:{{ required "nodeBootstrap.image.tag is required: node-bootstrap images are published by commit SHA only, not by chart version" .Values.nodeBootstrap.image.tag }}"
+          imagePullPolicy: {{ .Values.nodeBootstrap.image.pullPolicy }}
+          args:
+            - entrypoint.sh
+          env:
+            - name: CLOUD_PROVIDER
+              value: {{ $cloud | quote }}
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            {{- with .Values.nodeBootstrap.startupTaintKey }}
+            # union-node-readiness removes this taint once the snapshotter is
+            # up. Put the same key on the nodepool as a startup taint so no
+            # pod is scheduled onto a node that cannot yet pull Nydus images.
+            - name: STARTUP_TAINT_KEY
+              value: {{ . | quote }}
+            {{- end }}
+          securityContext:
+            privileged: true
+          {{- with .Values.nodeBootstrap.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: etc
+              mountPath: /etc
+            - name: home
+              mountPath: /home/kubernetes
+      containers:
+        # Streams the snapshotter's journal to stdout, so `kubectl logs` shows
+        # Nydus pull failures without shelling onto the node.
+        - name: nydus-logs
+          image: "{{ .Values.nodeBootstrap.fluentBit.image.repository }}:{{ .Values.nodeBootstrap.fluentBit.image.tag }}"
+          imagePullPolicy: {{ .Values.nodeBootstrap.fluentBit.image.pullPolicy }}
+          {{- with .Values.nodeBootstrap.fluentBit.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          volumeMounts:
+            - name: fluent-bit-conf
+              mountPath: /fluent-bit/etc
+              readOnly: true
+            - name: var-log
+              mountPath: /var/log
+      volumes:
+        - name: home
+          hostPath:
+            path: /home/kubernetes
+            type: DirectoryOrCreate
+        - name: etc
+          hostPath:
+            path: /etc
+            type: Directory
+        - name: var-log
+          hostPath:
+            path: /var/log
+            type: Directory
+        - name: fluent-bit-conf
+          configMap:
+            name: union-node-bootstrap-fluent-bit
+            items:
+              - key: fluent-bit.conf
+                path: fluent-bit.conf
+{{- end }}

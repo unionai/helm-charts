@@ -390,6 +390,32 @@ platform.union.ai/service-group: {{ .Release.Name }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 
+{{- define "nodeBootstrap.selectorLabels" -}}
+app.kubernetes.io/name: union-node-bootstrap
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{- define "nodeBootstrap.labels" -}}
+{{- include "nodeBootstrap.selectorLabels" . }}
+platform.union.ai/service-group: {{ .Release.Name }}
+app.kubernetes.io/managed-by: {{ .Release.Service }}
+{{- end -}}
+
+{{/*
+The CLOUD_PROVIDER node-bootstrap installs for: it picks the image's
+/union/install.d/<cloud> tree (registry credential helpers, and on aws the
+criu/gvisor extras). nodeBootstrap.cloudProvider wins; else the top-level
+`provider`. Only aws, gcp and azure have an install tree, so anything else
+(custom, oci, metal) fails here rather than crash-looping on every node.
+*/}}
+{{- define "nodeBootstrap.cloudProvider" -}}
+{{- $p := .Values.nodeBootstrap.cloudProvider | default (.Values.provider | default "") -}}
+{{- if not (has $p (list "aws" "gcp" "azure")) -}}
+{{- fail (printf "nodeBootstrap.enabled needs a cloud provider of aws, gcp or azure (got %q from nodeBootstrap.cloudProvider / provider); node-bootstrap has no install tree for other platforms" $p) -}}
+{{- end -}}
+{{- $p -}}
+{{- end -}}
+
 {{/*
 Effective PriorityClass name for the uvol broker (only invoked when the broker
 is enabled): explicit name wins; else when the chart creates the class, a
@@ -1265,6 +1291,11 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- define "imagebuilder.buildkit.image" -}}
 {{- $repo := .Values.imageBuilder.buildkit.image.repository -}}
 {{- $tag := .Values.imageBuilder.buildkit.image.tag -}}
+{{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
+{{- if $nydus.enabled -}}
+  {{- $repo = $nydus.image.repository -}}
+  {{- $tag = required "imageBuilder.buildkit.nydus.image.tag is required: Union's BuildKit images are published by commit SHA only" $nydus.image.tag -}}
+{{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}
 {{- if and $rootless (not (hasSuffix "-rootless" $tag)) (ne $tag "rootless") -}}
@@ -1800,4 +1831,20 @@ uses it is gated off with it.
 {{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
 {{- end -}}
 {{- toJson $data | sha256sum -}}
+{{- end -}}
+
+{{/*
+imageBuilder.enableImageOptimization exports Nydus layers, which needs the
+nydus-image binary in BuildKit. Refuse the in-release stock BuildKit image
+rather than let every optimized build fail at export time.
+*/}}
+{{- define "imagebuilder.imageOptimization" -}}
+{{- if .Values.imageBuilder.enableImageOptimization -}}
+{{- if and .Values.imageBuilder.buildkit.enabled (not .Values.imageBuilder.buildkitUri) (not (.Values.imageBuilder.buildkit.nydus | default dict).enabled) -}}
+{{- fail "imageBuilder.enableImageOptimization needs imageBuilder.buildkit.nydus.enabled: the stock BuildKit image cannot export Nydus layers" -}}
+{{- end -}}
+true
+{{- else -}}
+false
+{{- end -}}
 {{- end -}}
