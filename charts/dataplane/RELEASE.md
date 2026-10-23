@@ -25,7 +25,7 @@ managed BYOC dataplanes already do. Three switches, all off by default:
   optimization in Nydus format. It refuses to render with the stock BuildKit image.
 
 Both images default to the appVersion tag, which releases publish from
-unionai/cloud#NNNNN onward; earlier releases have no such tag, so set
+unionai/cloud#19504 onward; earlier releases have no such tag, so set
 `nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
 SHA to try this on one.
 
