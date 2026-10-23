@@ -121,6 +121,11 @@ spec:
             - name: apps-iat
               mountPath: /etc/onebox/apps
             {{- end }}
+            {{- if .Values.license.existingSecret }}
+            - name: license
+              mountPath: /etc/onebox/license
+              readOnly: true
+            {{- end }}
             - name: work
               mountPath: /var/run/onebox
             - name: tmp
@@ -209,6 +214,17 @@ spec:
             items:
               - key: {{ $.Values.apps.dcr.initialAccessToken.key | default "token" }}
                 path: initial-access-token
+        {{- end }}
+        {{- with .Values.license.existingSecret }}
+        # A directory mount (no subPath), so a rotated key reaches the pod and
+        # onebox picks it up on its next reload.
+        - name: license
+          secret:
+            secretName: {{ . }}
+            optional: true
+            items:
+              - key: {{ $.Values.license.key | default "license-key" }}
+                path: key
         {{- end }}
         {{- with .Values.identity.proxySecret.existingSecret }}
         - name: proxy-secret
