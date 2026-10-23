@@ -222,27 +222,24 @@ host is added with `license.trustedKeys`.
 
 ## Apps
 
-With `serving.enabled`, onebox forwards every app host (`serving.publicURLPattern`)
-to the apps gateway (`serving.gateway.url`): Union's Kourier controller and
-Envoy, as a Union data plane runs them, installed with Knative Serving. Set the
-gateway Envoy's union-apps filter to call onebox's gateway port:
+With `serving.enabled`, the chart installs Union's Kourier controller and
+Envoy gateway in the release namespace (the Kourier a Union data plane runs),
+and onebox forwards every app host (`serving.publicURLPattern`) to it. You
+install Knative Serving, with `config-network`'s `ingress-class` set to
+`kourier.ingress.networking.knative.dev`; the chart adds `config-kourier` to
+Knative's namespace (`serving.knativeNamespace`).
 
-| Envoy env | Value |
-|---|---|
-| `UNION_AUTH_TENANTAUTHURL` | `http://<release>-onebox.<namespace>.svc.cluster.local:8083/me` |
-| `UNION_AUTH_TENANTCONTROLPLANEURL` | `http://<release>-onebox.<namespace>.svc.cluster.local:8083` |
-| `UNION_AUTH_TENANTAUTHSIGNINURL` | Your proxy's sign-in, e.g. `https://onebox.example.com/oauth2/start` |
-| `UNION_AUTH_OVERRIDENORG` | `organization` |
+With `serving.gateway.auth.enabled` (the default), the gateway's union-apps
+filter decides who may call each app, asking onebox's gateway port (8083): it
+needs `serving.gateway.auth.signInURL` (the proxy's sign-in) and
+`authMetadata.externalAuthServerBaseUrl`. onebox's `/me` there returns the
+claims of the token in the caller's `Authorization` header without checking
+it, so the proxy in front must authenticate app hosts and pass the user's
+token on (oauth2-proxy: `--pass-authorization-header`). Apps that allow
+anonymous callers need their hosts to bypass the proxy.
 
-and `KOURIER_UNION_APPS_ENABLED=true` on the controller. The filter reads
-onebox's OAuth2 metadata when Envoy starts, so set
-`authMetadata.externalAuthServerBaseUrl`. `/me` returns the
-claims of the token in the caller's `Authorization` header without checking it,
-so the proxy in front of onebox must authenticate app hosts too and pass the
-user's token on (oauth2-proxy: `--pass-authorization-header`). With
-networkPolicy on, only the gateway's pods (`serving.gateway.namespace`,
-`serving.gateway.podLabels`) reach port 8083, and a policy in the gateway's
-namespace lets only onebox reach its external listener.
+With networkPolicy on, only the gateway reaches port 8083, and only onebox and
+Kourier's controller reach the gateway's external listener.
 
 ## License
 
