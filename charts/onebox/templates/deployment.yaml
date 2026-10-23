@@ -83,6 +83,9 @@ spec:
                   name: {{ .Values.storage.existingSecret }}
                   key: AWS_SECRET_ACCESS_KEY
             {{- end }}
+            {{- if include "onebox.caBundle.enabled" . }}
+            {{- include "onebox.caBundle.env" . | nindent 12 }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -125,6 +128,12 @@ spec:
               mountPath: /var/run/onebox
             - name: tmp
               mountPath: /tmp
+            {{- if include "onebox.caBundle.enabled" . }}
+            {{- include "onebox.caBundle.mount" . | nindent 12 }}
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
         {{- if .Values.console.enabled }}
         - name: console
           image: "{{ .Values.console.image.repository }}:{{ .Values.console.image.tag | default .Chart.AppVersion }}"
@@ -173,16 +182,26 @@ spec:
             - name: PG_SSLMODE
               value: {{ .Values.database.sslMode | quote }}
             {{- end }}
+            {{- if include "onebox.caBundle.enabled" . }}
+            # Node reads NODE_EXTRA_CA_CERTS (added to its built-in roots).
+            - name: NODE_EXTRA_CA_CERTS
+              value: {{ include "onebox.caBundle.path" . }}
+            {{- end }}
             {{- with .Values.console.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           resources:
             {{- toYaml .Values.console.resources | nindent 12 }}
-          {{- if .Values.dashboards.enabled }}
+          {{- if or .Values.dashboards.enabled (include "onebox.caBundle.enabled" .) }}
           volumeMounts:
+            {{- if .Values.dashboards.enabled }}
             - name: db-password
               mountPath: /etc/onebox/db
               readOnly: true
+            {{- end }}
+            {{- if include "onebox.caBundle.enabled" . }}
+            {{- include "onebox.caBundle.mount" . | nindent 12 }}
+            {{- end }}
           {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -222,6 +241,12 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if include "onebox.caBundle.enabled" . }}
+        {{- include "onebox.caBundle.volume" . | nindent 8 }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
