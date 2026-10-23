@@ -245,3 +245,34 @@ runs a dataplane broker: both register the `volumes.union.ai` CSI driver.
 | 8082 | Task pods; requests act as the built-in tasks app. In-cluster only. |
 | 9443 | The Kubernetes API server (pod webhook). |
 | 15606 | Reusable-container workers. In-cluster only. |
+| 8083 | With `serving.enabled`: the apps gateway's union-apps filter (`/me`, authorization). Only the gateway. |
+
+## Apps
+
+With `serving.enabled`, onebox forwards every app host (`serving.publicURLPattern`)
+to the apps gateway (`serving.gateway.url`): Union's Kourier controller and
+Envoy, as a Union data plane runs them, installed with Knative Serving. Set the
+gateway Envoy's union-apps filter to call onebox's gateway port:
+
+| Envoy env | Value |
+|---|---|
+| `UNION_AUTH_TENANTAUTHURL` | `http://<release>-onebox.<namespace>.svc.cluster.local:8083/me` |
+| `UNION_AUTH_TENANTCONTROLPLANEURL` | `http://<release>-onebox.<namespace>.svc.cluster.local:8083` |
+| `UNION_AUTH_TENANTAUTHSIGNINURL` | Your proxy's sign-in, e.g. `https://onebox.example.com/oauth2/start` |
+| `UNION_AUTH_OVERRIDENORG` | `organization` |
+
+and `KOURIER_UNION_APPS_ENABLED=true` on the controller. The filter reads
+onebox's OAuth2 metadata when Envoy starts, so set
+`authMetadata.externalAuthServerBaseUrl`. `/me` returns the
+claims of the token in the caller's `Authorization` header without checking it,
+so the proxy in front of onebox must authenticate app hosts too and pass the
+user's token on (oauth2-proxy: `--pass-authorization-header`). With
+networkPolicy on, only the gateway's pods (`serving.gateway.namespace`,
+`serving.gateway.podLabels`) reach port 8083, and a policy in the gateway's
+namespace lets only onebox reach its external listener.
+
+## License
+
+The onebox chart and the software it deploys are under the Union License: see
+[`LICENSE`](LICENSE), with Union's copyright notice in [`NOTICE`](NOTICE). The third-party
+notices ship in the onebox image, at `/usr/share/doc/onebox/`.

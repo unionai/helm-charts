@@ -41,6 +41,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
   annotations:
@@ -3281,6 +3282,66 @@ data:
         default-env-vars: []
         default-memory: 100Mi
         default-pod-template-name: task-template
+  plugins.yaml: | 
+    plugins:
+      connector-service:
+        defaultConnector:
+          defaultServiceConfig: '{"loadBalancingConfig": [{"round_robin":{}}]}'
+          endpoint: k8s:///flyteconnector.union:8000
+      logs:
+        cloudwatch-enabled: false
+        dynamic-log-links:
+        - vscode:
+            displayName: VS Code Debugger
+            linkType: ide
+            templateUris:
+            - /dataplane/pod/v1/generated_name/6060/task/{{.executionProject}}/{{.executionDomain}}/{{.executionName}}/{{.nodeID}}/{{.taskRetryAttempt}}/{{ .Values.global.CLUSTER_NAME }}/{{.namespace}}/{{.taskProject}}/{{.taskDomain}}/{{.taskID}}/{{.taskVersion}}/{{.generatedName}}/
+        - wandb-execution-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .podName }}'
+        - wandb-custom-id:
+            displayName: Weights & Biases
+            linkType: dashboard
+            templateUris:
+            - '{{ .taskConfig.host }}/{{ .taskConfig.entity }}/{{ .taskConfig.project
+              }}/runs/{{ .taskConfig.id }}'
+        - comet-ml-execution-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .executionName }}{{ .nodeId }}{{
+              .taskRetryAttempt }}{{ .taskConfig.link_suffix }}'
+        - comet-ml-custom-id:
+            displayName: Comet
+            linkType: dashboard
+            templateUris: '{{ .taskConfig.host }}/{{ .taskConfig.workspace }}/{{
+              .taskConfig.project_name }}/{{ .taskConfig.experiment_key }}'
+        - neptune-scale-run:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .podName }}
+        - neptune-scale-custom-id:
+            displayName: Neptune Run
+            linkType: dashboard
+            templateUris:
+            - https://scale.neptune.ai/{{ .taskConfig.project }}/-/run/?customId={{
+              .taskConfig.id }}
+        kubernetes-enabled: false
+    tasks:
+      task-plugins:
+        enabled-plugins:
+        - container
+        - sidecar
+        - k8s-array
+        - echo
+        - fast-task
+        - connector-service
+        - artifact-trigger
   config.yaml: |
     union:
       connection:
@@ -3424,10 +3485,10 @@ metadata:
   name: release-name-prometheus
   namespace: union
   labels:
-    helm.sh/chart: dataplane-2026.9.7
+    helm.sh/chart: dataplane-2026.10.1
     app.kubernetes.io/name: release-name-dataplane
     app.kubernetes.io/instance: release-name
-    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/version: "2026.10.0"
     app.kubernetes.io/managed-by: Helm
 data:
   allow-snippet-annotations: "false"
@@ -5210,6 +5271,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -5432,6 +5494,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/version: "3.2.8"
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: logging
 spec:
   selector:
     matchLabels:
@@ -5442,6 +5505,7 @@ spec:
       labels:
         app.kubernetes.io/name: fluentbit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: logging
       annotations:
         checksum/config: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
     spec:
@@ -5508,6 +5572,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: uvol-broker
 spec:
   selector:
     matchLabels:
@@ -5529,6 +5594,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: uvol-broker
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: uvol-broker
     spec:
       # No ServiceAccount and no token: the broker never calls the Kubernetes
       # API. A privileged (host root + CAP_SYS_ADMIN) container with no API
@@ -5572,7 +5638,7 @@ spec:
         # In-place upgrade safe: kernel mounts and pod-held fds survive
         # restarts; the state journal + client fd re-registration resume the rest.
         - name: uvol-mount-broker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           args:
@@ -5733,6 +5799,7 @@ metadata:
     app.kubernetes.io/version: v2.55.1
     helm.sh/chart: prometheus-25.30.2
     app.kubernetes.io/part-of: prometheus
+    platform.union.ai/component: prometheus
   name: union-operator-prometheus
   namespace: union
 spec:
@@ -5758,6 +5825,7 @@ spec:
         app.kubernetes.io/version: v2.55.1
         helm.sh/chart: prometheus-25.30.2
         app.kubernetes.io/part-of: prometheus
+        platform.union.ai/component: prometheus
     spec:
       enableServiceLinks: true
       serviceAccountName: union-operator-prometheus
@@ -5806,6 +5874,7 @@ spec:
             - --web.console.templates=/etc/prometheus/consoles
             - --web.enable-lifecycle
             - --enable-feature=expand-external-labels
+            - --enable-feature=auto-gomemlimit
             - --web.route-prefix=/prometheus
             - --web.external-url=/prometheus/
           ports:
@@ -5876,6 +5945,7 @@ metadata:
     app.kubernetes.io/name: flyteconnector
     app.kubernetes.io/instance: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: connector-service
 spec:
   replicas: 2
   selector:
@@ -5891,6 +5961,7 @@ spec:
         app.kubernetes.io/name: flyteconnector
         app.kubernetes.io/instance: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: connector-service
     spec:
       containers:
         - command:
@@ -5940,6 +6011,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: image-builder
 spec:
   strategy:
     type: Recreate
@@ -5954,6 +6026,7 @@ spec:
         platform.union.ai/zone: "dataplane"
         app.kubernetes.io/name: imagebuilder-buildkit
         app.kubernetes.io/instance: release-name
+        platform.union.ai/component: image-builder
     spec:
       serviceAccountName: "union-system"
       containers:
@@ -6050,6 +6123,7 @@ metadata:
   namespace: union
   labels:
     app: leaseworker
+    platform.union.ai/component: leaseworker
 spec:
   replicas: 1
   strategy:
@@ -6060,7 +6134,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "ef84f4220415e8803248f2ece8ca59f52446f52d22cc35348ad40794ab3fd922"
         
       labels:
         platform.union.ai/zone: "dataplane"
@@ -6068,6 +6142,7 @@ spec:
         app: leaseworker
         app.kubernetes.io/instance: 'release-name'
         app.kubernetes.io/name: leaseworker
+        platform.union.ai/component: leaseworker
     spec:
       securityContext:
         fsGroup: 1337
@@ -6085,7 +6160,7 @@ spec:
             secretName: union-secret-auth
       containers:
         - name: leaseworker
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           command:
             - leaseworker
@@ -6157,6 +6232,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: proxy
 spec:
   replicas: 1
   selector:
@@ -6166,7 +6242,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "44208aed361e699d5b1a3c54f9d67fec5b78c24989db00c5df2fe914ee0aeaa"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         karpenter.sh/do-not-disrupt: "true"
         
       labels:
@@ -6175,6 +6251,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: proxy
     spec:
       volumes:
         - name: config-volume
@@ -6192,7 +6269,7 @@ spec:
         - name: operator-proxy
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6260,7 +6337,7 @@ spec:
         - name: "tunnel"
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           args:
             - cloudflared
@@ -6297,6 +6374,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: operator
 spec:
   selector:
     matchLabels:
@@ -6305,7 +6383,7 @@ spec:
   template:
     metadata:
       annotations:
-        configChecksum: "44208aed361e699d5b1a3c54f9d67fec5b78c24989db00c5df2fe914ee0aeaa"
+        configChecksum: "8dbe79a92c037d868fae77d1d4e1ec811ec841662927dd603c62765bec63cc24"
         
       labels:
         
@@ -6313,6 +6391,7 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: operator
     spec:
       serviceAccountName: union-system
       securityContext:
@@ -6324,11 +6403,20 @@ spec:
         - name: secret-volume
           secret:
             secretName: union-secret-auth
+        # connector-config holds the connector apps' endpoints, written by the apps
+        # controller at runtime; the cluster snapshot reads it from this mount. Optional
+        # because this chart does not ship the ConfigMap: the mount stays empty until
+        # something creates it, and the operator reads an empty directory as no apps.
+        # Mounted whole (no subPath) so the kubelet refreshes it as the controller writes.
+        - name: connector-config-volume
+          configMap:
+            name: connector-config
+            optional: true
       containers:
         - name: operator
           securityContext:
             {}
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: IfNotPresent
           terminationMessagePolicy: FallbackToLogsOnError
           resources:
@@ -6343,11 +6431,14 @@ spec:
               name: config-volume
             - mountPath: /etc/union/secret
               name: secret-volume
+            - mountPath: "/etc/union/connector-config"
+              name: connector-config-volume
+              readOnly: true
           env:
             - name: HELM_CHART_VERSION
-              value: "2026.9.7"
+              value: "2026.10.1"
             - name: HELM_APP_VERSION
-              value: "2026.9.7"
+              value: "2026.10.0"
             - name: POD_NAME
               valueFrom:
                 fieldRef:
@@ -6415,6 +6506,7 @@ metadata:
     app.kubernetes.io/instance: release-name
     platform.union.ai/service-group: release-name
     app.kubernetes.io/managed-by: Helm
+    platform.union.ai/component: webhook
 spec:
   replicas: 1
   selector:
@@ -6430,8 +6522,9 @@ spec:
         app.kubernetes.io/instance: release-name
         platform.union.ai/service-group: release-name
         app.kubernetes.io/managed-by: Helm
+        platform.union.ai/component: webhook
       annotations:
-        configChecksum: "99723b4ed327ccf408481282e00f5c7ccd98f194332df6b74c17c7700fcc654"
+        configChecksum: "ef84f4220415e8803248f2ece8ca59f52446f52d22cc35348ad40794ab3fd922"
         
     spec:
       securityContext:
@@ -6442,7 +6535,7 @@ spec:
       serviceAccountName: union-system
       containers:
         - name: webhook
-          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.9.7"
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
           imagePullPolicy: "IfNotPresent"
           command:
             - flytepropeller

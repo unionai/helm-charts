@@ -87,6 +87,12 @@ updateStatus:
       # -- Serve app URLs over http:// instead of https:// when true. Default https.
       insecure: false
 
+# Telemetry the Flyte SDK sends from task pods (crash reports and usage counts).
+telemetry:
+  # -- Set to false to opt out. Injects DO_NOT_TRACK=1 (https://donottrack.sh)
+  # into every task pod, the same switch flyte-sdk, the Flyte backend and the console honour.
+  enabled: true
+
 # -- Define additional pod environment variables for all of the Union pods.
 additionalPodEnvVars: { }
 #  key1: "value1"
@@ -1010,6 +1016,12 @@ opencost:
 fluentbit:
   enabled: true
   existingConfigMap: fluentbit-system
+  # The label the operator's cluster snapshot discovers Union workloads by, on the
+  # DaemonSet and on its pods.
+  labels:
+    platform.union.ai/component: logging
+  podLabels:
+    platform.union.ai/component: logging
   # Upstream defaults this to a bare `busybox`, which resolves against the
   # implicit docker.io/library/ default and fails on clusters that pin an
   # allowed-registry policy. Only rendered by `helm test`, but the policy
@@ -1801,6 +1813,10 @@ operator:
   # (used by everyone except self-hosted / intra-cluster deployments, which set
   # this to false).
   enableTunnelService: true
+  # -- Directory the operator mounts the `connector-config` ConfigMap at; the cluster
+  # health snapshot reads the connector apps' endpoints from it. The operator's own
+  # default is this same path, so the operator config names it only when it differs.
+  connectorConfigMountPath: /etc/union/connector-config
   secretName: union-secret-auth
   securityContext: { }
   resources:
@@ -1861,6 +1877,10 @@ ingress:
 # to avoid creating ServiceMonitor CRDs.
 prometheus:
   enabled: true
+  # The label the operator's cluster snapshot discovers Union workloads by; the
+  # subchart puts commonMetaLabels on every resource it renders, pods included.
+  commonMetaLabels:
+    platform.union.ai/component: prometheus
   # Disable the chart's own RBAC (which creates ClusterRoles).
   # A namespace-scoped Role + RoleBinding is created by the dataplane chart instead.
   rbac:
@@ -1877,9 +1897,24 @@ prometheus:
     useExistingClusterRoleName: ""
 
     configMapOverrideName: "prometheus"
+    # CLI flags passed to the Prometheus server container.
+    # NOTE: In Helm, extraFlags is an array and customer overrides completely
+    # replace this list. If you override extraFlags, you MUST preserve:
+    #   - web.enable-lifecycle (required for HTTP config reload /-/reload)
+    #   - enable-feature=expand-external-labels (required to expand ${POD_NAME} in
+    #     prometheus.yml for multi-replica HA deduplication)
+    #
+    # enable-feature=auto-gomemlimit automatically detects the container cgroup
+    # memory limit and sets Go runtime's GOMEMLIMIT to 90%, preventing Prometheus
+    # from being OOMKilled by Go runtime allocator retention during load peaks.
+    #
+    # To pass additional custom arguments without overriding this list, you can
+    # also use the upstream subchart's `extraArgs` map (e.g. server.extraArgs: { ... })
+    # which merges cleanly across Helm value layers.
     extraFlags:
       - web.enable-lifecycle
       - enable-feature=expand-external-labels
+      - enable-feature=auto-gomemlimit
     env:
       - name: POD_NAME
         valueFrom:
@@ -2160,13 +2195,14 @@ prometheus:
 #   identified.
 low_privilege: true
 
-# -- Opt-in zero-trust dataplane mode. When true, installs the Kourier+Envoy
+# -- Zero-trust dataplane mode (the default). Installs the Kourier+Envoy
 # gateway (replaces the knative-operator path), the dataproxy backend, and
-# the tunnel-service dataplane ingress. Customers must also set
-# `knative-operator.enabled: false` because Helm evaluates that subchart
-# condition at parse time and can't derive it from this flag.
+# the tunnel-service dataplane ingress. `knative-operator.enabled` must stay
+# false (its default) because Helm evaluates that subchart condition at parse
+# time and can't derive it from this flag. Set false for deployments with
+# self-hosted control planes.
 zero_trust:
-  enabled: false
+  enabled: true
 
 # -- Namespace of the control plane (for selfhosted-intracluster mode).
 # When set and secretsWatcher is enabled, RBAC roles are created in this namespace for cross-namespace access.

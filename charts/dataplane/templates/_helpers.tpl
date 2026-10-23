@@ -774,6 +774,9 @@ plugins:
       {{- range $k, $v := .Values.additionalPodEnvVars }}
       - {{ $k }}: {{ $v | quote }}
       {{- end }}
+      {{- if not (dig "enabled" true (.Values.telemetry | default dict)) }}
+      - DO_NOT_TRACK: "1"
+      {{- end }}
       {{- $configDevEnvVars := index .Values.config.k8s.plugins.k8s "default-env-vars" }}
       {{- range $kk, $vv := $configDevEnvVars }}
       {{- range $k, $v := $vv }}
@@ -1675,4 +1678,126 @@ tcp://{{ include "imagebuilder.buildkit.workloadName" (merge (dict "buildkitArm"
 {{- end -}}
 {{- .Values.imageBuilder.buildkitUriArm -}}
 {{- end -}}
+{{- end -}}
+
+{{/*
+operator.pluginsConfig renders plugins.yaml for the operator's own ConfigMap: the
+plugin configuration the cluster snapshot reports plugins and connectors from
+(unionai/cloud operator/pkg/plugin_config.go), taken from the same values that
+configure the leaseworker and propeller, so the operator reads it from memory like the
+rest of its configuration rather than fetching their ConfigMaps. The operator loads its
+configuration in strict mode and links only the sections rendered here: the enabled
+plugin ids, the agent-service and connector-service sections, the task log link
+configuration (the leaseworker's when it runs, propeller's otherwise), and the
+manager's sharding. Everything else in config.enabled_plugins and config.core configures
+plugins the operator does not link and stays out. As in the leaseworker ConfigMap, the
+connector sections are rendered only while the connector is deployed. Renders nothing
+when none of them is configured.
+*/}}
+{{- define "operator.pluginsConfig" -}}
+{{- $values := .Values.config | default dict -}}
+{{- $enabledPlugins := index $values "enabled_plugins" | default dict -}}
+{{- $sections := dict -}}
+{{- with index (index (index $enabledPlugins "tasks" | default dict) "task-plugins" | default dict) "enabled-plugins" -}}
+{{- $_ := set $sections "tasks" (dict "task-plugins" (dict "enabled-plugins" .)) -}}
+{{- end -}}
+{{- $services := dict -}}
+{{- if .Values.flyteconnector.enabled -}}
+{{- $plugins := index $enabledPlugins "plugins" | default dict -}}
+{{- range $id := list "agent-service" "connector-service" -}}
+{{- with index $plugins $id -}}
+{{- $_ := set $services $id . -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- /* The task logs of the dispatcher that runs: the leaseworker's, as its ConfigMap
+     picks them (the deprecated executor.task_logs first), with no fallback to
+     propeller's, which the leaseworker does not read either. */ -}}
+{{- $taskLogs := dict -}}
+{{- if .Values.leaseworker.enabled -}}
+{{- $taskLogs = (.Values.executor | default dict).task_logs | default .Values.leaseworker.task_logs | default dict -}}
+{{- else -}}
+{{- $taskLogs = index $values "task_logs" | default dict -}}
+{{- end -}}
+{{- with index (index $taskLogs "plugins" | default dict) "logs" -}}
+{{- $_ := set $services "logs" . -}}
+{{- end -}}
+{{- if $services -}}
+{{- $_ := set $sections "plugins" $services -}}
+{{- end -}}
+{{- with index (index (index $values "core" | default dict) "manager" | default dict) "shard" -}}
+{{- $_ := set $sections "manager" (dict "shard" .) -}}
+{{- end -}}
+{{- if $sections -}}
+{{- tpl (toYaml $sections) $ -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+dataplane.componentLabel is the label the operator's cluster snapshot discovers Union
+workloads by (unionai/cloud operator/pkg/components.go): every Deployment, DaemonSet and
+StatefulSet this chart provisions carries it in metadata.labels and in its pod template,
+with the component's id as the value (see CONVENTIONS.md). Emit it last in the labels
+block, after the user-extensible labels, so a values layer that sets the same key cannot
+override it: the last duplicate key wins. Never add it to a selector: a Deployment
+selector is immutable. Call with the id, e.g.
+{{ include "dataplane.componentLabel" "leaseworker" | nindent 4 }}.
+*/}}
+{{- define "dataplane.componentLabel" -}}
+platform.union.ai/component: {{ . }}
+{{- end -}}
+
+{{/*
+dataplane.configMapDataChecksum is the config hash the cluster health contract shares
+with the operator: the hex sha256 of the ConfigMap's data serialized as JSON, with the
+keys sorted (helm's toJson is Go's json.Marshal, which the operator uses too, see
+unionai/cloud operator/common/componentconfig). Stamped as the configChecksum
+annotation on the pod template of every workload that runs from a ConfigMap the
+operator tracks, so the pods carry the hash of the data they were started on and the
+operator can compare it with the live ConfigMap: ComponentConfig.config_hash in the
+snapshot is the same value over the ConfigMap's current data, and a pod whose
+PodInstanceInfo.config_hash differs from it does not run that data. The config syncer
+stamps the same value when it rolls a workload onto a synced config. The same helper
+lives in the union-operator and flyte-core charts of unionai/cloud; a change here is a
+change there too.
+
+Takes a dict: root (the top-level context), path (the rendered ConfigMap template's
+path, as print .Template.BasePath "/propeller/configmap.yaml" gives it) and name (the
+ConfigMap to hash, since a template may render several). Only the data is hashed,
+never the manifest text, so a change of labels or whitespace does not roll the pods.
+
+The data must be read exactly as the API server stores it, so the include output is
+treated the way helm treats a rendered file: "<no value>" becomes "" (helm does that on
+the final render but not on include), and each document keeps the newline that ends
+it, which the split removes and a trailing block scalar's final line break needs.
+
+A name that matches none of the ConfigMaps the template rendered is a template error,
+not a hash: the stamp would otherwise be the constant sha256 of "{}", the pods would
+stop rolling on config change and the snapshot would report them drifted for good. So
+the helper fails the render then, and on a document that does not parse. A template
+that rendered nothing (gated off by values) still hashes "{}", as the workload that
+uses it is gated off with it.
+*/}}
+{{- define "dataplane.configMapDataChecksum" -}}
+{{- $data := dict -}}
+{{- $found := false -}}
+{{- $seen := list -}}
+{{- range $doc := splitList "\n---" (include .path .root | replace "<no value>" "") -}}
+{{- $obj := fromYaml (print $doc "\n") -}}
+{{- if hasKey $obj "Error" -}}
+{{- fail (printf "configMapDataChecksum: %s does not parse: %s" $.path (get $obj "Error")) -}}
+{{- end -}}
+{{- if eq (get $obj "kind") "ConfigMap" -}}
+{{- $cmName := dig "metadata" "name" "" $obj -}}
+{{- $seen = append $seen $cmName -}}
+{{- if eq $cmName $.name -}}
+{{- $data = (get $obj "data") | default dict -}}
+{{- $found = true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (not $found) $seen -}}
+{{- fail (printf "configMapDataChecksum: %s renders no ConfigMap named %q (found %v)" $.path $.name $seen) -}}
+{{- end -}}
+{{- toJson $data | sha256sum -}}
 {{- end -}}
