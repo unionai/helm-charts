@@ -179,26 +179,53 @@ imageBuilder:
     tag: 412914d2f5764423efd200d68296b85c22a003a9
 
 # -- Union apps (serving). Each app runs as a Knative Service in onebox's
-# namespace, so Knative Serving with Union's Kourier and Envoy must be
-# installed in the cluster; see the docs' apps page. onebox forwards app hosts
-# to that gateway, whose union-apps filter decides who may call each app,
-# asking onebox's gateway port (8083).
+# namespace. Install Knative Serving yourself (with config-network's
+# ingress-class set to Kourier, see the docs' apps page); the chart installs
+# Union's Kourier controller and Envoy gateway beside onebox. onebox forwards
+# app hosts to that gateway, whose union-apps filter decides who may call
+# each app by asking onebox (port 8083).
 serving:
   enabled: false
   # -- App URLs: fmt verbs for the app's subdomain and, optionally, the
   # organization, e.g. https://%s.apps.onebox.example.com. Point a wildcard
   # DNS record (*.apps.onebox.example.com) at the same proxy as onebox.
   publicURLPattern: ""
+  # -- Knative Serving's namespace. Kourier reads its config-network there,
+  # and the chart adds config-kourier to it.
+  knativeNamespace: knative-serving
   gateway:
-    # -- The apps gateway (Union's Kourier) onebox forwards app hosts to.
-    url: http://kourier.kourier-system.svc.cluster.local
-    # -- The gateway's namespace and pod labels. With networkPolicy on, only
-    # these pods may reach onebox's gateway port, and (a policy rendered in
-    # this namespace) only onebox and the namespace's own pods (the Kourier
-    # controller probes the gateway) may reach the gateway.
-    namespace: kourier-system
-    podLabels:
-      app: 3scale-kourier-gateway
+    auth:
+      # -- The union-apps filter: callers of an app must be signed in and
+      # allowed to use it (apps that allow anonymous callers excepted). Off,
+      # the gateway only routes. Needs authMetadata.externalAuthServerBaseUrl.
+      enabled: true
+      # -- Where a caller without a session is sent to sign in: the proxy's
+      # sign-in, e.g. https://onebox.example.com/oauth2/start.
+      signInURL: ""
+    # -- Union's Kourier controller: /bin/kourier in the Union operator image.
+    controller:
+      image:
+        repository: public.ecr.aws/p0i0a9q8/unionoperator
+        tag: "2026.10.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 1Gi
+    # -- Union's Envoy, which carries the union-apps filter.
+    envoy:
+      image:
+        repository: public.ecr.aws/unionai/envoy
+        tag: "2026.10.0"
+        pullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          memory: 800Mi
 
 # -- Project and organization dashboards in the console, read from onebox's
 # database by the console (read-only queries).
@@ -208,7 +235,9 @@ dashboards:
 # -- OAuth apps: client credentials users create for scripts and CI.
 # none: create them in your identity provider; app calls through onebox fail.
 # dcr: onebox registers them at your IdP's Dynamic Client Registration
-# endpoint (RFC 7591) and manages them with RFC 7592 (e.g. Keycloak).
+# endpoint (RFC 7591) and manages them with RFC 7592 (e.g. Keycloak). A caller
+# the proxy identifies as a registered app (its token's subject, or Keycloak's
+# service-account-<client> username) acts as that app.
 apps:
   provider: none
   dcr:
@@ -221,10 +250,6 @@ apps:
     # -- Scope requested for every registered client, if the IdP needs one
     # to put the proxy's expected audience into their tokens.
     scope: ""
-    # -- The IdP's issuer URL: app tokens must verify against its keys.
-    issuer: ""
-    # -- Audience app tokens must carry, if any.
-    audience: ""
 
 # -- Where the SDK and CLI log in when the proxy in front requires a token.
 # onebox serves the IdP's OAuth2 metadata (proxied from
