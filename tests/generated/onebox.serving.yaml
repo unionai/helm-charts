@@ -67,6 +67,7 @@ data:
       listen:
         address: ":8080"
         tasksAddress: ":8082"
+        gatewayAddress: ":8083"
       consoleUpstream: "http://127.0.0.1:3000"
       logoutRedirect: "/v2"
       # Task pods call back over the in-cluster tasks port, where every
@@ -100,6 +101,7 @@ data:
       serving:
         enabled: true
         publicURLPattern: "https://%s.apps.onebox.example.com"
+        gatewayURL: "http://kourier.kourier-system.svc.cluster.local"
       license:
         enforce: false
         issueURL: ""
@@ -275,6 +277,12 @@ spec:
       port: 8082
       targetPort: tasks
       appProtocol: kubernetes.io/h2c
+    # The apps gateway's union-apps filter asks here who a caller is (/me) and
+    # whether they may use an app. Only the gateway (see networkPolicy).
+    - name: gateway
+      port: 8083
+      targetPort: gateway
+      appProtocol: kubernetes.io/h2c
     # Reusable-container (fast task) workers report back here. In-cluster only.
     - name: fasttask
       port: 15606
@@ -432,7 +440,7 @@ spec:
         app.kubernetes.io/name: onebox
         app.kubernetes.io/instance: release-name
       annotations:
-        checksum/config: f4bcdcf4eae52cc8708fee717087ace2d8dbf9ee468fe783d20e9f307c6ca428
+        checksum/config: ec7a8a6a75bbe96340aa620c462e1e77315162cfdce35c6d9eaa1d2bb509309e
     spec:
       serviceAccountName: release-name-onebox
       securityContext:
@@ -456,6 +464,8 @@ spec:
               containerPort: 8080
             - name: tasks
               containerPort: 8082
+            - name: gateway
+              containerPort: 8083
             - name: fasttask
               containerPort: 15606
             - name: metrics
