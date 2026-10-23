@@ -33,8 +33,58 @@ spec:
         {{- with .Values.networkPolicy.tasksFrom }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+    {{- if .Values.serving.enabled }}
+    - ports:
+        - port: 8083
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.serving.gateway.namespace }}
+          podSelector:
+            matchLabels:
+              {{- toYaml .Values.serving.gateway.podLabels | nindent 14 }}
+    {{- end }}
     - ports:
         - port: 9443
     - ports:
         - port: 10254
+{{- if .Values.serving.enabled }}
+---
+# The apps gateway's external listener (8080, 8443: app hosts) serves every
+# app without asking who is calling when its union-apps filter is off, so only
+# onebox (which forwards app hosts to it) and the gateway's own namespace may
+# reach it. Its other ports stay open: the cluster-local listener (in-cluster
+# callers of an app's .svc.cluster.local address), probes and metrics.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "onebox.fullname" . }}-apps-gateway
+  namespace: {{ .Values.serving.gateway.namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- toYaml .Values.serving.gateway.podLabels | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - ports:
+        - port: 8080
+        - port: 8443
+      from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Release.Namespace }}
+          podSelector:
+            matchLabels:
+              {{- include "onebox.selectorLabels" . | nindent 14 }}
+        - podSelector: {}
+    - ports:
+        - port: 1
+          endPort: 8079
+        - port: 8081
+          endPort: 8442
+        - port: 8444
+          endPort: 65535
+{{- end }}
 {{- end }}
