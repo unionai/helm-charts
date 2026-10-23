@@ -1,9 +1,10 @@
 {{- if and .Values.scale.enabled .Values.scale.agent.enabled }}
 {{- $agent := .Values.scale.agent }}
 {{- /* Scale's agent (unionai/cloud scale/agent). A Knative service visible only inside the
-       cluster. It scales to zero when idle and to at most one replica; the activator holds a
-       request while it wakes. It needs no GPU: the model runs behind scale.agent.model.baseURL.
-       Its required settings are checked in scale.guards (templates/scale/_scale.tpl). */}}
+       cluster. It scales between minScale (0 by default: to zero when idle) and maxScale
+       replicas; the activator holds a request while it wakes. It needs no GPU: the model runs at
+       its provider. Its required settings are checked in scale.guards (templates/scale/_scale.tpl)
+       and scale.agent.modelGuards (templates/scale/_agent.tpl). */}}
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
@@ -21,8 +22,8 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       annotations:
-        autoscaling.knative.dev/min-scale: "0"
-        autoscaling.knative.dev/max-scale: "1"
+        autoscaling.knative.dev/min-scale: {{ $agent.minScale | default 0 | int | quote }}
+        autoscaling.knative.dev/max-scale: {{ $agent.maxScale | default 1 | int | quote }}
         autoscaling.knative.dev/scale-down-delay: {{ $agent.scaleDownDelay | quote }}
         autoscaling.knative.dev/metric: concurrency
     spec:
@@ -63,10 +64,20 @@ spec:
               value: "http://{{ include "union-operator.fullname" . }}-proxy.{{ .Release.Namespace }}.svc.cluster.local:8080"
             - name: SCALE_AGENT_CONCURRENCY
               value: {{ $agent.concurrency | quote }}
+            - name: SCALE_AGENT_MODEL_PROVIDER
+              value: {{ $agent.model.provider | default "openai" | quote }}
             - name: SCALE_AGENT_MODEL
               value: {{ $agent.model.name | quote }}
+            {{- with $agent.model.baseURL }}
             - name: SCALE_AGENT_MODEL_BASE_URL
-              value: {{ $agent.model.baseURL | quote }}
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if eq ($agent.model.provider | default "openai") "anthropic" }}
+            - name: SCALE_AGENT_MODEL_EFFORT
+              value: {{ $agent.model.effort | default "" | quote }}
+            - name: SCALE_AGENT_MODEL_REFUSAL_FALLBACK
+              value: {{ $agent.model.refusalFallback | quote }}
+            {{- end }}
             {{- if $agent.model.headersSecret.name }}
             - name: SCALE_AGENT_MODEL_HEADERS_FILE
               value: /etc/scale-agent/model-headers/{{ $agent.model.headersSecret.key }}

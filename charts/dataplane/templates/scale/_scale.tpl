@@ -59,6 +59,10 @@ storageContainer: {{ $s.storageContainer | quote }}
 {{- with $s.callerAuth.secretName }}
 callerKeyPath: /etc/union/scale-caller/{{ $s.callerAuth.key }}
 {{- end }}
+{{- if $s.callerAuth.requireDigest }}
+{{- /* Refuse caller assertions that do not bind the request body. */}}
+requireDigest: true
+{{- end }}
 {{- /* Caller assertions must name this org and cluster. */}}
 organization: {{ include "scale.org" . | quote }}
 cluster: {{ include "getClusterName" . | quote }}
@@ -70,7 +74,25 @@ agent:
   awakeFor: {{ $s.agent.scaleDownDelay }}
   dailyQuestions: {{ $s.agent.dailyQuestions | int }}
   dailyDiagnoses: {{ $s.agent.dailyTrackedRuns | int }}
+  {{- /* The agent's model and key as people save them in the console, read from this cluster's
+         secret store; see templates/scale/_agent.tpl. */}}
+  modelFromSecret: {{ include "scale.agent.modelFromConsole" . | eq "true" }}
 {{- end }}
+{{- end -}}
+
+{{/*
+The cloud Scale prices issues for (scale.config.detectors.cost.cloud): provider, else gcp for a
+cluster that stores data in GCS. Empty when neither says, which the Scale runtime takes as the
+usage price table's own cloud (AWS).
+*/}}
+{{- define "scale.cloud" -}}
+{{- $provider := tpl (.Values.provider | default "" | toString) . -}}
+{{- $storage := tpl (.Values.storage.provider | default "" | toString) . -}}
+{{- if $provider -}}
+{{- lower $provider -}}
+{{- else if has $storage (list "gcs" "gcp") -}}
+gcp
+{{- end -}}
 {{- end -}}
 
 {{/*
@@ -195,9 +217,7 @@ for (unionai/cloud scale/README.md, Security).
 {{- if not .Values.scale.auth.appId }}
 {{- fail "scale.agent needs scale.auth.appId, the cluster's view-only Scale app; it never reads with the operator's app" }}
 {{- end }}
-{{- if not .Values.scale.agent.model.baseURL }}
-{{- fail "scale.agent.model.baseURL is required: an LLM gateway or a local OpenAI-compatible endpoint" }}
-{{- end }}
+{{- include "scale.agent.modelGuards" . }}
 {{- if not (include "apps.enabled" .) }}
 {{- fail "scale.agent runs as a Knative service and needs app serving: set apps.enabled" }}
 {{- end }}

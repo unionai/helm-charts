@@ -32,7 +32,20 @@ data:
         dailyDiagnoses: {{ .Values.scale.agent.dailyDiagnoses | int }}
         timeout: {{ printf "%ds" (.Values.scale.agent.timeoutSeconds | int) }}
       {{- end }}
-      {{- with .Values.scale.config }}
+      {{- /*
+      The usage price table holds AWS prices only, and an empty detectors.cost.cloud means it
+      applies, so a GCP or Azure cluster gets the cluster's cloud here unless the values set one.
+      */}}
+      {{- $config := deepCopy (.Values.scale.config | default dict) }}
+      {{- $detectors := get $config "detectors" | default dict }}
+      {{- $cost := get $detectors "cost" | default dict }}
+      {{- $cloud := include "scale.cloud" . }}
+      {{- if and $cloud (not (get $cost "cloud")) }}
+      {{- $_ := set $cost "cloud" $cloud }}
+      {{- $_ := set $detectors "cost" $cost }}
+      {{- $_ := set $config "detectors" $detectors }}
+      {{- end }}
+      {{- with $config }}
       {{- tpl (toYaml .) $ | nindent 6 }}
       {{- end }}
       {{- $git := .Values.scale.git | default dict }}

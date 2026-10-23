@@ -4,6 +4,7 @@
        internal gateway (once it is up) and the autoscaler (metrics). A task pod cannot reach it
        directly; through the gateway it gets nothing done without a token the operator proxy
        accepts. */}}
+{{- $egress := $np.egress | default dict }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -17,6 +18,9 @@ spec:
       app: scale-agent
   policyTypes:
     - Ingress
+    {{- if $egress.enabled }}
+    - Egress
+    {{- end }}
   ingress:
     - from:
         - namespaceSelector:
@@ -28,4 +32,49 @@ spec:
                 operator: In
                 values:
                   {{- include "scale-agent.knativeApps" . | nindent 18 }}
+  {{- if $egress.enabled }}
+  {{- /* Out, only what the agent calls: DNS, the operator proxy, the control plane's read APIs and
+         the model provider. */}}
+  egress:
+    - to:
+        {{- toYaml $egress.dns | nindent 8 }}
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "proxy.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: http
+    - to:
+        {{- range $egress.controlPlaneCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- /* With the console's settings, people pick the provider: allow both the model rules and the
+           Anthropic API, whichever these values list. */}}
+    {{- $console := include "scale.agent.modelFromConsole" . }}
+    {{- $fromValues := include "scale.agent.modelEgressFromValues" . }}
+    {{- if and (or $console $fromValues) $egress.model }}
+    {{- toYaml $egress.model | nindent 4 }}
+    {{- end }}
+    {{- if and (or $console (not $fromValues)) $egress.anthropicCIDRs }}
+    {{- /* provider anthropic: only the Anthropic API's published addresses. */}}
+    - to:
+        {{- range $egress.anthropicCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
+  {{- end }}
 {{- end }}
