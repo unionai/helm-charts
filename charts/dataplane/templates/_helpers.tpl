@@ -1294,7 +1294,7 @@ Appends "-rootless" to the tag when rootless mode is enabled, unless the tag alr
 {{- $nydus := .Values.imageBuilder.buildkit.nydus | default dict -}}
 {{- if $nydus.enabled -}}
   {{- $repo = $nydus.image.repository -}}
-  {{- $tag = required "imageBuilder.buildkit.nydus.image.tag is required: Union's BuildKit images are published by commit SHA only" $nydus.image.tag -}}
+  {{- $tag = $nydus.image.tag | default .Chart.AppVersion -}}
 {{- end -}}
 {{- $rootless := .Values.imageBuilder.buildkit.rootless -}}
 {{- $suffix := "" -}}

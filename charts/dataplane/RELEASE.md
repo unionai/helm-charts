@@ -17,15 +17,17 @@ managed BYOC dataplanes already do. Three switches, all off by default:
   installs and starts the Nydus snapshotter on each node. It is privileged,
   uses `hostPID`/`hostNetwork` and writes to the host's `/etc` and
   `/home/kubernetes`. It needs an aws, gcp or azure node image with systemd and a
-  writable `/etc` (not Bottlerocket). Set `nodeBootstrap.image.tag`, and put
-  `nodeBootstrap.startupTaintKey` on worker nodepools as a startup taint.
+  writable `/etc` (not Bottlerocket). Put `nodeBootstrap.startupTaintKey` on
+  worker nodepools as a startup taint.
 - `imageBuilder.buildkit.nydus.enabled` runs Union's BuildKit image, which
-  bundles `nydus-image` (set `imageBuilder.buildkit.nydus.image.tag`).
+  bundles `nydus-image`.
 - `imageBuilder.enableImageOptimization` exports images a user marks for
   optimization in Nydus format. It refuses to render with the stock BuildKit image.
 
-Both images are published by unionai/cloud commit SHA only, so the tags have
-no default yet.
+Both images default to the appVersion tag, which releases publish from
+unionai/cloud#NNNNN onward; earlier releases have no such tag, so set
+`nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
+SHA to try this on one.
 
 ### Prometheus enables `auto-gomemlimit` by default
 
