@@ -1,12 +1,6 @@
 # dataplane — Release Notes
 
-## 2026.10.1
-
-`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
-a chart-only release, so the Union images are unchanged.
-
-**Read "Zero trust is the default" before upgrading** — self-hosted installs must
-set `zero_trust.enabled: false` first.
+## Unreleased
 
 ### Nydus lazy image pulls (opt-in)
 
@@ -28,6 +22,14 @@ Both images default to the appVersion tag, which releases publish from
 unionai/cloud#19504 onward; earlier releases have no such tag, so set
 `nodeBootstrap.image.tag` / `imageBuilder.buildkit.nydus.image.tag` to a commit
 SHA to try this on one.
+
+## 2026.10.1
+
+`version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is
+a chart-only release, so the Union images are unchanged.
+
+**Read "Zero trust is the default" before upgrading** — self-hosted installs must
+set `zero_trust.enabled: false` first.
 
 ### Prometheus enables `auto-gomemlimit` by default
 
