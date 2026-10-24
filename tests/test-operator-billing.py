@@ -383,6 +383,7 @@ data:
 
     def test_real_chart_config_and_workload_inventory(self):
         inventories = []
+        comp_ns_read = []
         for model in ("None", "ResourceUsage"):
             result = self.helm(
                 "template",
@@ -403,31 +404,42 @@ data:
                 "imageBuilder.enabled=false",
             )
             self.assertEqual(model, self.operator(result.stdout)["billing"]["model"])
+            docs = [doc for doc in yaml.safe_load_all(result.stdout) if doc]
             inventories.append(
+                {(doc["apiVersion"], doc["kind"], doc["metadata"]["name"]) for doc in docs}
+            )
+            comp_ns_read.append(
                 {
-                    (doc["apiVersion"], doc["kind"], doc["metadata"]["name"])
-                    for doc in yaml.safe_load_all(result.stdout)
-                    if doc
+                    (group, resource)
+                    for doc in docs
+                    if doc["kind"] == "Role"
+                    and doc["metadata"]["name"] == f"{NAMESPACE}-operator-comp-ns-read"
+                    for rule in doc.get("rules") or []
+                    for group in rule.get("apiGroups") or []
+                    for resource in rule.get("resources") or []
                 }
             )
         # The billing model changes no workload or config object. The one thing it
-        # does change is RBAC. With collectUsages off, only a ResourceUsage or Shadow
-        # model starts the usage aggregator, which under singleNamespace lists pod
-        # metrics in the release namespace (with the image builder off, the operator's
-        # comp-ns-read Role holds only that rule here), and only a model other than None starts the node
-        # informer, whose cluster-wide nodes read is all the operator's cluster-read
-        # role holds under singleNamespace.
+        # does change is RBAC. With collectUsages off, only a model other than None
+        # starts the node informer, whose cluster-wide nodes read is all the
+        # operator's cluster-read role holds under singleNamespace, so that role
+        # appears with it.
         none, resource_usage = inventories
         self.assertEqual(
             {
-                ("rbac.authorization.k8s.io/v1", "Role", f"{NAMESPACE}-operator-comp-ns-read"),
-                ("rbac.authorization.k8s.io/v1", "RoleBinding", f"{NAMESPACE}-operator-comp-ns-read"),
                 ("rbac.authorization.k8s.io/v1", "ClusterRole", f"{NAMESPACE}-operator-cluster-read"),
                 ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding", f"{NAMESPACE}-operator-cluster-read"),
             },
             resource_usage - none,
         )
         self.assertEqual(set(), none - resource_usage)
+        # Only a ResourceUsage or Shadow model starts the usage aggregator, which under
+        # singleNamespace lists pod metrics in the release namespace. The operator's
+        # comp-ns-read Role renders in every model, for the cluster snapshot's
+        # workload reads, so the difference is that one rule.
+        none_rules, resource_usage_rules = comp_ns_read
+        self.assertEqual({("metrics.k8s.io", "pods")}, resource_usage_rules - none_rules)
+        self.assertEqual(set(), none_rules - resource_usage_rules)
 
 
 if __name__ == "__main__":
