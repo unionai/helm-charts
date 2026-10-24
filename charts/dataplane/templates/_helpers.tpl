@@ -1801,3 +1801,10 @@ uses it is gated off with it.
 {{- end -}}
 {{- toJson $data | sha256sum -}}
 {{- end -}}
+
+{{/*
+The dataplane STS token endpoint task pods call (operator Service <operator>-sts).
+*/}}
+{{- define "sts.endpoint" -}}
+http://{{ include "union-operator.fullname" . }}-sts.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.sts.port }}/oauth2/token
+{{- end -}}

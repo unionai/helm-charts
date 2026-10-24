@@ -3460,3 +3460,24 @@ dataproxy:
   additionalVolumes: []
   # -- Appends additional volume mounts to the main container's spec. May include template values.
   additionalVolumeMounts: []
+
+# -- Dataplane STS: task pods get short-lived tokens that act as their run's
+# creator (within the run's project and domain) instead of EAGER_API_KEY. The
+# operator serves the token endpoint and publishes its keys to the control
+# plane; the leaseworker binds every task pod to its action attempt; task pods
+# get a projected service-account token through the task-template PodTemplate.
+# Turn on the control plane's side first (cluster workloadIdentity.enabled and
+# the edge's workloadTokenVerifyURL): a task pod pointed at the STS stops using
+# EAGER_API_KEY, so its control plane calls fail if the control plane does not
+# accept STS tokens yet.
+sts:
+  # -- Run the STS and point task pods at it.
+  enabled: false
+  # -- Port of the token endpoint (Service <operator>-sts).
+  port: 8095
+  # -- Lifetime of an issued token (at most 15m).
+  tokenLifetime: 10m
+  # -- Where task pods get the projected service-account token (audience union-sts).
+  tokenMountPath: /var/run/secrets/union.ai/sts
+  # -- Lifetime the kubelet requests for the projected token; it rotates it before expiry.
+  projectedTokenExpirationSeconds: 3600

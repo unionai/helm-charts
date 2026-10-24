@@ -1,5 +1,32 @@
 # dataplane — Release Notes
 
+## Unreleased
+
+### Dataplane STS (opt-in): task pods without EAGER_API_KEY
+
+`sts.enabled: true` gives task pods short-lived tokens that act as the run's
+creator, held to the run's project and domain, in place of the long-lived
+EAGER_API_KEY. Off by default; nothing renders differently while it is off.
+
+With it on:
+
+- the operator serves the token endpoint (`Service <operator>-sts`, port
+  `sts.port`). It verifies projected tokens offline against the cluster's
+  service-account issuer keys (read from the API server's OIDC discovery,
+  which every service account may read by default) and looks pods up in an
+  informer, so it adds no RBAC;
+- the leaseworker mounts the `union-sts-binding` Secret the operator creates,
+  and stamps every task pod with a binding to its action attempt;
+- the `task-template` PodTemplate gives task pods a projected service-account
+  token (audience `union-sts`) at `sts.tokenMountPath`.
+
+**Turn on the control plane side first** (the cluster service's
+`workloadIdentity.enabled` and the edge's `workloadTokenVerifyURL`). A task pod
+pointed at the STS stops using EAGER_API_KEY, so its control-plane calls fail
+if the control plane does not accept STS tokens yet. Needs Union images with
+the STS (unionai/cloud `haytham/dataplane-sts`) and an SDK with the
+`WorkloadToken` authenticator.
+
 ## 2026.10.1
 
 `version` moves `2026.10.0` → `2026.10.1`. `appVersion` stays `2026.10.0`: this is

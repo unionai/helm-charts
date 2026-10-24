@@ -1,4 +1,4 @@
-{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) .Values.taskPodTemplate.nodeSelector .Values.taskPodTemplate.affinity .Values.taskPodTemplate.tolerations }}
+{{- if or (include "singleNamespace" .) (include "operator.enableDepot" .) .Values.taskPodTemplate.nodeSelector .Values.taskPodTemplate.affinity .Values.taskPodTemplate.tolerations .Values.sts.enabled }}
 apiVersion: v1
 kind: PodTemplate
 metadata:
@@ -13,11 +13,30 @@ template:
     imagePullSecrets:
       - name: depot-token
 {{- end }}
+{{- if .Values.sts.enabled }}
+    # The dataplane STS: a token bound to this pod, for audience union-sts only
+    # (it is no good against the Kubernetes API), rotated by the kubelet. The
+    # pod exchanges it at the STS for a short-lived Union token.
+    volumes:
+      - name: union-sts-token
+        projected:
+          sources:
+            - serviceAccountToken:
+                audience: union-sts
+                expirationSeconds: {{ .Values.sts.projectedTokenExpirationSeconds }}
+                path: token
+{{- end }}
     containers:
       - name: default
         image: docker.io/rwgrim/docker-noop
 {{- with .Values.taskPodTemplate.workingDir }}
         workingDir: {{ . | quote }}
+{{- end }}
+{{- if .Values.sts.enabled }}
+        volumeMounts:
+          - name: union-sts-token
+            mountPath: {{ .Values.sts.tokenMountPath }}
+            readOnly: true
 {{- end }}
 {{- with .Values.taskPodTemplate.nodeSelector }}
     nodeSelector:
