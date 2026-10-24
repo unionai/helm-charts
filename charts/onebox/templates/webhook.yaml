@@ -1,0 +1,89 @@
+{{- if .Values.webhook.enabled }}
+{{- /* Union mutators other than secret injection would need entries here too;
+       none applies to onebox, so refuse rather than leave them unregistered. */}}
+{{- $hook := (.Values.extraConfig.webhook | default dict) }}
+{{- range $key := list "imageBuilderConfig" "images" "selinuxTaskPods" "nodeStartupTaints" }}
+{{- if (get $hook $key | default dict).enabled }}
+{{- fail (printf "extraConfig.webhook.%s.enabled: onebox's chart only registers the secrets webhook" $key) }}
+{{- end }}
+{{- end }}
+{{- $name := include "onebox.fullname" . }}
+{{- $ns := .Release.Namespace }}
+{{- $secretName := printf "%s-webhook-certs" $name }}
+{{- $c := .Values.webhook.certificate }}
+{{- $ca := "" }}{{- $crt := "" }}{{- $key := "" }}
+{{- if eq $c.provider "external" }}
+{{- $ca = required "webhook.certificate.external.caCert is required" $c.external.caCert | b64enc }}
+{{- $crt = required "webhook.certificate.external.tlsCrt is required" $c.external.tlsCrt | b64enc }}
+{{- $key = required "webhook.certificate.external.tlsKey is required" $c.external.tlsKey | b64enc }}
+{{- else if eq $c.provider "helm" }}
+{{- $existing := lookup "v1" "Secret" $ns $secretName }}
+{{- if and $existing $existing.data (index $existing.data "ca.crt") (index $existing.data "tls.crt") (index $existing.data "tls.key") }}
+{{- $ca = index $existing.data "ca.crt" }}
+{{- $crt = index $existing.data "tls.crt" }}
+{{- $key = index $existing.data "tls.key" }}
+{{- else }}
+{{- $host := printf "%s.%s.svc" $name $ns }}
+{{- $dns := list $name (printf "%s.%s" $name $ns) $host (printf "%s.cluster.local" $host) }}
+{{- /* Ten years: onebox replaces a cert within 30 days of expiry, which would
+       leave this configuration's caBundle stale until the next upgrade. */}}
+{{- $gen := genCA (printf "%s-webhook-ca" $name) 3650 }}
+{{- $cert := genSignedCert $host nil $dns 3650 $gen }}
+{{- $ca = $gen.Cert | b64enc }}
+{{- $crt = $cert.Cert | b64enc }}
+{{- $key = $cert.Key | b64enc }}
+{{- end }}
+{{- else }}
+{{- fail "webhook.certificate.provider must be helm or external" }}
+{{- end }}
+# The pod webhook's serving cert. onebox serves with it and keeps it while it
+# is valid.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+type: Opaque
+data:
+  ca.crt: {{ $ca }}
+  tls.crt: {{ $crt }}
+  tls.key: {{ $key }}
+---
+# Secret injection into task pods in this namespace only. Named after the
+# namespace too: the object is cluster-scoped.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: {{ printf "%s-%s" $ns $name }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+webhooks:
+  - name: flyte-pod-webhook.flyte.org
+    admissionReviewVersions: [v1, v1beta1]
+    clientConfig:
+      caBundle: {{ $ca }}
+      service:
+        name: {{ $name }}
+        namespace: {{ $ns }}
+        path: /mutate--v1-pod
+        port: 9443
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: {{ $ns }}
+    objectSelector:
+      matchLabels:
+        inject-flyte-secrets: "true"
+    reinvocationPolicy: Never
+    rules:
+      - apiGroups: ["*"]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: "*"
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 30
+{{- end }}

@@ -1,0 +1,447 @@
+{{- if .Values.serving.enabled }}
+{{- $gw := .Values.serving.gateway }}
+{{- $knative := .Values.serving.knativeNamespace }}
+{{- if $gw.auth.enabled }}
+{{- if not .Values.authMetadata.externalAuthServerBaseUrl }}
+{{- fail "serving.gateway.auth.enabled needs authMetadata.externalAuthServerBaseUrl: the union-apps filter reads onebox's OAuth2 metadata when the gateway starts" }}
+{{- end }}
+{{- end }}
+# Union's Kourier, as a Union data plane runs it: the controller routes each
+# app by the hosts onebox gives it (serving.unionai.dev/external-hosts) and,
+# with serving.gateway.auth, adds the union-apps filter to the gateway's
+# Envoy. Based on net-kourier's kourier.yaml (knative-v1.16), whose controller
+# looks for the gateway as Services kourier and kourier-internal and pods
+# labeled app=3scale-kourier-gateway in KOURIER_GATEWAY_NAMESPACE: here, the
+# release namespace (one onebox per namespace).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+{{- with .Values.imagePullSecrets }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "onebox.fullname" . }}-kourier
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Namespace }}-{{ include "onebox.fullname" . }}-kourier
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Namespace }}-{{ include "onebox.fullname" . }}-kourier
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "onebox.fullname" . }}-kourier
+    namespace: {{ .Release.Namespace }}
+---
+# Kourier reads it (and Knative's config-network) from Knative's namespace.
+# The defaults are what onebox needs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-kourier
+  namespace: {{ $knative }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+    networking.knative.dev/ingress-provider: kourier
+data: {}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: net-kourier-controller
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: net-kourier-controller
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ include "onebox.fullname" . }}-kourier
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: controller
+          image: "{{ $gw.controller.image.repository }}:{{ $gw.controller.image.tag }}"
+          imagePullPolicy: {{ $gw.controller.image.pullPolicy }}
+          command: [/bin/kourier]
+          env:
+            - name: CERTS_SECRET_NAMESPACE
+              value: ""
+            - name: CERTS_SECRET_NAME
+              value: ""
+            - name: SYSTEM_NAMESPACE
+              value: {{ $knative | quote }}
+            - name: METRICS_DOMAIN
+              value: "knative.dev/samples"
+            - name: KOURIER_GATEWAY_NAMESPACE
+              value: {{ .Release.Namespace | quote }}
+            - name: ENABLE_SECRET_INFORMER_FILTERING_BY_CERT_UID
+              value: "false"
+            {{- if $gw.auth.enabled }}
+            - name: KOURIER_UNION_APPS_ENABLED
+              value: "true"
+            {{- end }}
+          ports:
+            - name: http2-xds
+              containerPort: 18000
+              protocol: TCP
+          readinessProbe:
+            grpc:
+              port: 18000
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 18000
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          {{- with $gw.controller.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+spec:
+  ports:
+    - name: grpc-xds
+      port: 18000
+      targetPort: 18000
+  selector:
+    app: net-kourier-controller
+    app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier-bootstrap
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier
+data:
+  envoy-bootstrap.yaml: |
+    dynamic_resources:
+      ads_config:
+        transport_api_version: V3
+        api_type: GRPC
+        rate_limit_settings: {}
+        grpc_services:
+        - envoy_grpc: {cluster_name: xds_cluster}
+      cds_config:
+        resource_api_version: V3
+        ads: {}
+      lds_config:
+        resource_api_version: V3
+        ads: {}
+    node:
+      cluster: kourier-knative
+      id: 3scale-kourier-gateway
+    static_resources:
+      listeners:
+        - name: stats_listener
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 9000
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: stats_server
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                      virtual_hosts:
+                        - name: admin_interface
+                          domains: ["*"]
+                          routes:
+                            - match:
+                                safe_regex:
+                                  regex: '/(certs|stats(/prometheus)?|server_info|clusters|listeners|ready)?'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: GET
+                              route:
+                                cluster: service_stats
+                            - match:
+                                safe_regex:
+                                  regex: '/drain_listeners'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: POST
+                              route:
+                                cluster: service_stats
+      clusters:
+        - name: service_stats
+          connect_timeout: 0.250s
+          type: static
+          load_assignment:
+            cluster_name: service_stats
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 9901
+        - name: xds_cluster
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options:
+                  connection_keepalive:
+                    interval: 30s
+                    timeout: 5s
+          connect_timeout: 1s
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: "{{ include "onebox.fullname" . }}-kourier-controller.{{ .Release.Namespace }}"
+                      port_value: 18000
+          type: STRICT_DNS
+    admin:
+      access_log:
+      - name: envoy.access_loggers.stdout
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+      address:
+        socket_address:
+          address: 127.0.0.1
+          port_value: 9901
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "onebox.fullname" . }}-kourier-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 100%
+  selector:
+    matchLabels:
+      app: 3scale-kourier-gateway
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: 3scale-kourier-gateway
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      serviceAccountName: {{ include "onebox.fullname" . }}-kourier
+      automountServiceAccountToken: false
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: kourier-gateway
+          image: "{{ $gw.envoy.image.repository }}:{{ $gw.envoy.image.tag }}"
+          imagePullPolicy: {{ $gw.envoy.image.pullPolicy }}
+          command: [/usr/local/bin/envoy]
+          args:
+            - --base-id 1
+            - -c /tmp/config/envoy-bootstrap.yaml
+            - --log-level info
+            - --drain-time-s $(DRAIN_TIME_SECONDS)
+            - --drain-strategy immediate
+          env:
+            - name: DRAIN_TIME_SECONDS
+              value: "15"
+            {{- if $gw.auth.enabled }}
+            {{- $onebox := printf "http://%s.%s.svc.cluster.local:8083" (include "onebox.fullname" .) .Release.Namespace }}
+            # The union-apps filter asks onebox's gateway port who a caller is
+            # (/me) and whether they may use the app (AuthorizerService).
+            - name: UNION_AUTH_TENANTAUTHURL
+              value: "{{ $onebox }}/me"
+            - name: UNION_AUTH_TENANTCONTROLPLANEURL
+              value: {{ $onebox | quote }}
+            - name: UNION_AUTH_TENANTAUTHSIGNINURL
+              value: {{ required "serving.gateway.auth.signInURL is required with serving.gateway.auth.enabled" $gw.auth.signInURL | quote }}
+            - name: UNION_AUTH_OVERRIDENORG
+              value: {{ .Values.organization | quote }}
+            {{- end }}
+          ports:
+            - name: http2-external
+              containerPort: 8080
+            - name: http2-internal
+              containerPort: 8081
+            - name: https-external
+              containerPort: 8443
+            - name: http-probe
+              containerPort: 8090
+            - name: https-probe
+              containerPort: 9443
+            - name: metrics
+              containerPort: 9000
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: config-volume
+              mountPath: /tmp/config
+          readinessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: internalkourier
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: internalkourier
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          {{- with $gw.envoy.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+      volumes:
+        - name: config-volume
+          configMap:
+            name: {{ include "onebox.fullname" . }}-kourier-bootstrap
+---
+# The names Kourier's controller looks for in KOURIER_GATEWAY_NAMESPACE.
+# onebox forwards app hosts to kourier (serving.gatewayURL); Knative points
+# each app's cluster-local address at kourier-internal.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8080
+    - name: https
+      port: 443
+      targetPort: 8443
+  selector:
+    app: 3scale-kourier-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier-internal
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "onebox.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8081
+    - name: https
+      port: 443
+      targetPort: 8444
+  selector:
+    app: 3scale-kourier-gateway
+    app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end }}

@@ -1,0 +1,1131 @@
+---
+# Source: onebox/templates/kourier.yaml
+# Union's Kourier, as a Union data plane runs it: the controller routes each
+# app by the hosts onebox gives it (serving.unionai.dev/external-hosts) and,
+# with serving.gateway.auth, adds the union-apps filter to the gateway's
+# Envoy. Based on net-kourier's kourier.yaml (knative-v1.16), whose controller
+# looks for the gateway as Services kourier and kourier-internal and pods
+# labeled app=3scale-kourier-gateway in KOURIER_GATEWAY_NAMESPACE: here, the
+# release namespace (one onebox per namespace).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox-kourier
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+automountServiceAccountToken: false
+---
+# Source: onebox/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+
+---
+# Source: onebox/templates/webhook.yaml
+# The pod webhook's serving cert. onebox serves with it and keeps it while it
+# is valid.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: release-name-onebox-webhook-certs
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+data:
+  ca.crt: dGVzdC1jYQ==
+  tls.crt: dGVzdC1jcnQ=
+  tls.key: dGVzdC1rZXk=
+---
+# Source: onebox/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  config.yaml: |
+    onebox:
+      organization: "onebox"
+      seedProjects: ["default"]
+      listen:
+        address: ":8080"
+        tasksAddress: ":8082"
+        gatewayAddress: ":8083"
+      consoleUpstream: "http://127.0.0.1:3000"
+      logoutRedirect: "/v2"
+      authMetadata:
+        externalAuthServerBaseUrl: "https://idp.example.com"
+        flyteClient:
+          audience: ""
+          clientId: ""
+          redirectUri: http://localhost:53593/callback
+          scopes:
+          - openid
+          - profile
+          - offline_access
+      # Task pods call back over the in-cluster tasks port, where every
+      # request acts as the built-in tasks app (authz.tasksRole).
+      taskEndpoint: "release-name-onebox.union.svc:8082"
+      identity:
+        subjectHeaders: ["X-Forwarded-User"]
+        emailHeaders: ["X-Forwarded-Email"]
+        nameHeaders: ["X-Forwarded-Preferred-Username"]
+        groupsHeaders: ["X-Forwarded-Groups"]
+        claimsJWTHeaders: []
+        anonymousSubject: "anonymous"
+      profiles:
+        enabled: true
+      authz:
+        enabled: false
+        adminUsers: []
+        defaultRole: "viewer"
+        tasks:
+          role: "contributor"
+      apps:
+        provider: "none"
+      userclouds:
+        clientSecretPath: /etc/onebox/internal/userclouds-client-secret
+      webhook:
+        enabled: true
+        serviceName: "release-name-onebox"
+        # templates/webhook.yaml installs the configuration and cert Secret.
+        externalConfiguration: true
+      # Union apps, run on Knative Serving in the cluster.
+      serving:
+        enabled: true
+        publicURLPattern: "https://%s.apps.onebox.example.com"
+        gatewayURL: "http://kourier.union.svc.cluster.local"
+      clusterData:
+        metadataBucketPrefix: "s3://onebox-data"
+        storageType: "s3"
+        bucketRegion: "us-east-2"
+        gcpProjectId: ""
+    db:
+      host: "postgres.example.internal"
+      port: 5432
+      dbname: "union"
+      username: "union"
+      passwordPath: /etc/onebox/db/password
+      options: "sslmode=disable"
+      connectionPool:
+        maxIdleConnections: 2
+        maxOpenConnections: 40
+    storage:
+      
+      type: stow
+      container: "onebox-data"
+      enable-multicontainer: true
+      stow:
+        kind: s3
+        config:
+          region: "us-east-2"
+          # Credentials come from the pod: IRSA / pod identity, or AWS_* env vars
+          # from storage.existingSecret.
+          auth_type: iam
+    # Task pods, their secrets and their logs all live in this namespace.
+    leaseworker:
+      namespace-template: "union"
+      limit-namespace: "union"
+    namespace_mapping:
+      template: "union"
+    fasttask:
+      callback-uri: "http://release-name-onebox.union.svc:15606"
+    plugins:
+      k8s:
+        default-env-vars:
+          - AWS_REGION: "us-east-2"
+  extra.yaml: |
+    {}
+
+---
+# Source: onebox/templates/kourier.yaml
+# Kourier reads it (and Knative's config-network) from Knative's namespace.
+# The defaults are what onebox needs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-kourier
+  namespace: knative-serving
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+    networking.knative.dev/ingress-provider: kourier
+data: {}
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox-kourier-bootstrap
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+data:
+  envoy-bootstrap.yaml: |
+    dynamic_resources:
+      ads_config:
+        transport_api_version: V3
+        api_type: GRPC
+        rate_limit_settings: {}
+        grpc_services:
+        - envoy_grpc: {cluster_name: xds_cluster}
+      cds_config:
+        resource_api_version: V3
+        ads: {}
+      lds_config:
+        resource_api_version: V3
+        ads: {}
+    node:
+      cluster: kourier-knative
+      id: 3scale-kourier-gateway
+    static_resources:
+      listeners:
+        - name: stats_listener
+          address:
+            socket_address:
+              address: 0.0.0.0
+              port_value: 9000
+          filter_chains:
+            - filters:
+                - name: envoy.filters.network.http_connection_manager
+                  typed_config:
+                    "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+                    stat_prefix: stats_server
+                    http_filters:
+                      - name: envoy.filters.http.router
+                        typed_config:
+                          "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                    route_config:
+                      virtual_hosts:
+                        - name: admin_interface
+                          domains: ["*"]
+                          routes:
+                            - match:
+                                safe_regex:
+                                  regex: '/(certs|stats(/prometheus)?|server_info|clusters|listeners|ready)?'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: GET
+                              route:
+                                cluster: service_stats
+                            - match:
+                                safe_regex:
+                                  regex: '/drain_listeners'
+                                headers:
+                                  - name: ':method'
+                                    string_match:
+                                      exact: POST
+                              route:
+                                cluster: service_stats
+      clusters:
+        - name: service_stats
+          connect_timeout: 0.250s
+          type: static
+          load_assignment:
+            cluster_name: service_stats
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: 127.0.0.1
+                      port_value: 9901
+        - name: xds_cluster
+          typed_extension_protocol_options:
+            envoy.extensions.upstreams.http.v3.HttpProtocolOptions:
+              "@type": type.googleapis.com/envoy.extensions.upstreams.http.v3.HttpProtocolOptions
+              explicit_http_config:
+                http2_protocol_options:
+                  connection_keepalive:
+                    interval: 30s
+                    timeout: 5s
+          connect_timeout: 1s
+          load_assignment:
+            cluster_name: xds_cluster
+            endpoints:
+              lb_endpoints:
+                endpoint:
+                  address:
+                    socket_address:
+                      address: "release-name-onebox-kourier-controller.union"
+                      port_value: 18000
+          type: STRICT_DNS
+    admin:
+      access_log:
+      - name: envoy.access_loggers.stdout
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.access_loggers.stream.v3.StdoutAccessLog
+      address:
+        socket_address:
+          address: 127.0.0.1
+          port_value: 9901
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+data:
+  agent.yaml: |
+    nodeReadiness:
+      enabled: false
+    gpuFaultWatcher:
+      enabled: false
+    uvolBroker:
+      enabled: true
+      driverName: volumes.union.ai
+      kubeletDir: /var/lib/kubelet
+      socketDir: /run/uvol
+      stateDir: /var/lib/uvol/state
+      nodeCacheDir: /var/lib/uvol/node-cache
+      blockAllow:
+        - namespace: union
+      blockFreezeMax: "60s"
+      metricsScope: "uvol_broker"
+      profilerPort: 10254
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: union-release-name-onebox-kourier
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+rules:
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["pods", "endpoints", "services", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "create", "update", "delete", "patch", "watch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["networking.internal.knative.dev"]
+    resources: ["ingresses/status"]
+    verbs: ["update"]
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: union-release-name-onebox-kourier
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: union-release-name-onebox-kourier
+subjects:
+  - kind: ServiceAccount
+    name: release-name-onebox-kourier
+    namespace: union
+---
+# Source: onebox/templates/rbac.yaml
+# onebox runs task pods and keeps their secrets in its own namespace; it needs
+# nothing outside it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  # Task pods, their logs, and the pod templates tasks may name.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, update, patch, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [pods/log, podtemplates, serviceaccounts]
+    verbs: [get, list, watch]
+  # Secrets: the secret store, image pull secrets, the webhook's certificate.
+  - apiGroups: [""]
+    resources: [secrets, configmaps]
+    verbs: [get, list, watch, create, update, patch, delete]
+  # Task events: read for the console, recorded by the worker.
+  - apiGroups: ["", events.k8s.io]
+    resources: [events]
+    verbs: [get, list, watch, create, update, patch]
+  # The operator proxy's namespace quota route (read only).
+  - apiGroups: [""]
+    resources: [resourcequotas]
+    verbs: [get, list, watch]
+  # Apps: each is a Knative Service the app controller owns, plus an optional
+  # PodDisruptionBudget for apps that keep several replicas.
+  - apiGroups: [serving.knative.dev]
+    resources: [services, configurations, revisions]
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups: [serving.knative.dev]
+    resources: [services/status]
+    verbs: [get]
+  - apiGroups: [policy]
+    resources: [poddisruptionbudgets]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# Source: onebox/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: release-name-onebox
+subjects:
+  - kind: ServiceAccount
+    name: release-name-onebox
+    namespace: union
+
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-onebox-kourier-controller
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+spec:
+  ports:
+    - name: grpc-xds
+      port: 18000
+      targetPort: 18000
+  selector:
+    app: net-kourier-controller
+    app.kubernetes.io/instance: release-name
+---
+# Source: onebox/templates/kourier.yaml
+# The names Kourier's controller looks for in KOURIER_GATEWAY_NAMESPACE.
+# onebox forwards app hosts to kourier (serving.gatewayURL); Knative points
+# each app's cluster-local address at kourier-internal.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8080
+    - name: https
+      port: 443
+      targetPort: 8443
+  selector:
+    app: 3scale-kourier-gateway
+    app.kubernetes.io/instance: release-name
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: kourier-internal
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  ports:
+    - name: http2
+      port: 80
+      targetPort: 8081
+    - name: https
+      port: 443
+      targetPort: 8444
+  selector:
+    app: 3scale-kourier-gateway
+    app.kubernetes.io/instance: release-name
+
+---
+# Source: onebox/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+  ports:
+    # The console (/v2), the Connect and gRPC API and the REST routes. Put the
+    # authenticating proxy in front of this port.
+    - name: http
+      port: 80
+      targetPort: http
+      appProtocol: kubernetes.io/h2c
+    # Task pods call the API here; every request acts as the built-in tasks
+    # app. In-cluster only (see networkPolicy).
+    - name: tasks
+      port: 8082
+      targetPort: tasks
+      appProtocol: kubernetes.io/h2c
+    # The apps gateway's union-apps filter asks here who a caller is (/me) and
+    # whether they may use an app. Only the gateway (see networkPolicy).
+    - name: gateway
+      port: 8083
+      targetPort: gateway
+      appProtocol: kubernetes.io/h2c
+    # Reusable-container (fast task) workers report back here. In-cluster only.
+    - name: fasttask
+      port: 15606
+      targetPort: fasttask
+    # The API server calls the pod webhook here (task pods only).
+    - name: webhook
+      port: 9443
+      targetPort: webhook
+
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: release-name-onebox-node-agent
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Not onebox's selector labels: the Service selects those.
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: release-name-onebox-node-agent
+      app.kubernetes.io/instance: release-name
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: release-name-onebox-node-agent
+        app.kubernetes.io/instance: release-name
+      annotations:
+        # Components read the config at start.
+        checksum/config: 3b1897cae953d6ffbf9de6cd278ac250c83da5bed2ad29423b2154545b8809d9
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "10254"
+        prometheus.io/path: /metrics
+    spec:
+      serviceAccountName: release-name-onebox-node-agent
+      automountServiceAccountToken: false
+      priorityClassName: system-node-critical
+      tolerations:
+        - operator: Exists
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-onebox-node-agent
+        - name: kubelet-dir
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory
+        - name: uvol-sockets
+          hostPath:
+            path: /run/uvol
+            type: DirectoryOrCreate
+        - name: uvol-state
+          hostPath:
+            path: /var/lib/uvol/state
+            type: DirectoryOrCreate
+        - name: dev-fuse
+          hostPath:
+            path: /dev/fuse
+            type: CharDevice
+        - name: uvol-node-cache
+          hostPath:
+            path: /var/lib/uvol/node-cache
+            type: DirectoryOrCreate
+      containers:
+        - name: node-agent
+          image: "registry.unionai.cloud/controlplane/onebox:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          args: [nodeagent, run, --config, /etc/union/agent.yaml]
+          securityContext:
+            # /dev/fuse is outside the runtime's device allowlist, and only
+            # privileged grants it; the image's non-root USER is forced back
+            # to root because the device is root-owned.
+            privileged: true
+            runAsUser: 0
+            readOnlyRootFilesystem: true
+            seccompProfile:
+              type: RuntimeDefault
+          ports:
+            - name: metrics
+              containerPort: 10254
+              protocol: TCP
+          # Ready once kubelet has acknowledged the CSI registration; until
+          # then every NodePublish fails with "driver not found".
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            failureThreshold: 3
+          resources:
+            limits:
+              memory: 320Mi
+            requests:
+              cpu: 20m
+              memory: 64Mi
+          env:
+            - name: KUBE_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "4"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/union
+            - name: kubelet-dir
+              mountPath: /var/lib/kubelet
+              # The broker premounts FUSE inside kubelet-owned publish targets;
+              # the mounts must propagate to the host and on into task pods.
+              mountPropagation: Bidirectional
+            - name: uvol-sockets
+              mountPath: /run/uvol
+            - name: uvol-state
+              mountPath: /var/lib/uvol/state
+            - name: dev-fuse
+              mountPath: /dev/fuse
+            - name: uvol-node-cache
+              mountPath: /var/lib/uvol/node-cache
+
+---
+# Source: onebox/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-onebox
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # One process serves everything and the leasor holds its queues in memory:
+  # never two at once, not even during a rollout.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: onebox
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: onebox
+        app.kubernetes.io/instance: release-name
+      annotations:
+        checksum/config: e3d30b2cbf86eac4e5217a6b22987850e7b6d2ef0493533a970dca45d0d9ed05
+    spec:
+      serviceAccountName: release-name-onebox
+      securityContext:
+        fsGroup: 1001
+        runAsNonRoot: true
+        runAsUser: 1001
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: onebox
+          image: "registry.unionai.cloud/controlplane/onebox:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          args:
+            - serve
+            - --config=/etc/onebox/config/config.yaml
+            - --config=/etc/onebox/config/extra.yaml
+            - --work-dir=/var/run/onebox
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: tasks
+              containerPort: 8082
+            - name: gateway
+              containerPort: 8083
+            - name: fasttask
+              containerPort: 15606
+            - name: metrics
+              containerPort: 10254
+            - name: webhook
+              containerPort: 9443
+          env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          resources:
+            limits:
+              memory: 4Gi
+            requests:
+              cpu: "1"
+              memory: 2Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/onebox/config
+            - name: db-password
+              mountPath: /etc/onebox/db
+            - name: internal
+              mountPath: /etc/onebox/internal
+            - name: work
+              mountPath: /var/run/onebox
+            - name: tmp
+              mountPath: /tmp
+        - name: console
+          image: "registry.unionai.cloud/controlplane/unionconsole:2026.9.7"
+          imagePullPolicy: IfNotPresent
+          env:
+            # Loopback only: onebox serves the console under /v2 on its port.
+            - name: HOSTNAME
+              value: 127.0.0.1
+            - name: PORT
+              value: "3000"
+            - name: UNION_ORG_OVERRIDE
+              value: "onebox"
+            - name: IS_SELF_HOSTED
+              value: "true"
+            - name: DISABLE_EXTERNAL_TELEMETRY
+              value: "true"
+            - name: SELF_HOSTED_FEATURE_FLAGS
+              value: "{\"artifacts-enabled\":true,\"llm-gateway-enabled\":true}"
+            # Project and org dashboards, queried from onebox's database. Access
+            # is checked by replaying the caller's request to onebox's public
+            # port (never the internal one, which trusts its callers).
+            - name: DASHBOARD_BACKEND
+              value: postgres
+            - name: DASHBOARD_ORG
+              value: "onebox"
+            - name: DASHBOARD_AUTH_URL
+              value: http://127.0.0.1:8080
+            - name: PG_HOST
+              value: "postgres.example.internal"
+            - name: PG_PORT
+              value: "5432"
+            - name: PG_DATABASE
+              value: "union"
+            - name: PG_USER
+              value: "union"
+            - name: PG_PASSWORD_FILE
+              value: /etc/onebox/db/password
+            - name: PG_SSLMODE
+              value: "disable"
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          volumeMounts:
+            - name: db-password
+              mountPath: /etc/onebox/db
+              readOnly: true
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+      volumes:
+        - name: config
+          configMap:
+            name: release-name-onebox
+        - name: db-password
+          secret:
+            secretName: onebox-db
+            items:
+              - key: password
+                path: password
+        - name: internal
+          secret:
+            secretName: onebox-internal
+        - name: work
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-onebox-kourier-controller
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: net-kourier-controller
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app: net-kourier-controller
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: release-name-onebox-kourier
+      containers:
+        - name: controller
+          image: "public.ecr.aws/p0i0a9q8/unionoperator:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          command: [/bin/kourier]
+          env:
+            - name: CERTS_SECRET_NAMESPACE
+              value: ""
+            - name: CERTS_SECRET_NAME
+              value: ""
+            - name: SYSTEM_NAMESPACE
+              value: "knative-serving"
+            - name: METRICS_DOMAIN
+              value: "knative.dev/samples"
+            - name: KOURIER_GATEWAY_NAMESPACE
+              value: "union"
+            - name: ENABLE_SECRET_INFORMER_FILTERING_BY_CERT_UID
+              value: "false"
+            - name: KOURIER_UNION_APPS_ENABLED
+              value: "true"
+          ports:
+            - name: http2-xds
+              containerPort: 18000
+              protocol: TCP
+          readinessProbe:
+            grpc:
+              port: 18000
+            periodSeconds: 10
+          livenessProbe:
+            grpc:
+              port: 18000
+            periodSeconds: 10
+            failureThreshold: 6
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            limits:
+              memory: 1Gi
+            requests:
+              cpu: 50m
+              memory: 128Mi
+---
+# Source: onebox/templates/kourier.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-name-onebox-kourier-gateway
+  namespace: union
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: kourier-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 100%
+  selector:
+    matchLabels:
+      app: 3scale-kourier-gateway
+      app.kubernetes.io/instance: release-name
+  template:
+    metadata:
+      labels:
+        app: 3scale-kourier-gateway
+        app.kubernetes.io/instance: release-name
+    spec:
+      serviceAccountName: release-name-onebox-kourier
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: kourier-gateway
+          image: "public.ecr.aws/unionai/envoy:2026.10.0"
+          imagePullPolicy: IfNotPresent
+          command: [/usr/local/bin/envoy]
+          args:
+            - --base-id 1
+            - -c /tmp/config/envoy-bootstrap.yaml
+            - --log-level info
+            - --drain-time-s $(DRAIN_TIME_SECONDS)
+            - --drain-strategy immediate
+          env:
+            - name: DRAIN_TIME_SECONDS
+              value: "15"
+            # The union-apps filter asks onebox's gateway port who a caller is
+            # (/me) and whether they may use the app (AuthorizerService).
+            - name: UNION_AUTH_TENANTAUTHURL
+              value: "http://release-name-onebox.union.svc.cluster.local:8083/me"
+            - name: UNION_AUTH_TENANTCONTROLPLANEURL
+              value: "http://release-name-onebox.union.svc.cluster.local:8083"
+            - name: UNION_AUTH_TENANTAUTHSIGNINURL
+              value: "https://onebox.example.com/oauth2/start"
+            - name: UNION_AUTH_OVERRIDENORG
+              value: "onebox"
+          ports:
+            - name: http2-external
+              containerPort: 8080
+            - name: http2-internal
+              containerPort: 8081
+            - name: https-external
+              containerPort: 8443
+            - name: http-probe
+              containerPort: 8090
+            - name: https-probe
+              containerPort: 9443
+            - name: metrics
+              containerPort: 9000
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: config-volume
+              mountPath: /tmp/config
+          readinessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: internalkourier
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              httpHeaders:
+                - name: Host
+                  value: internalkourier
+              path: /ready
+              port: 8081
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 6
+          resources:
+            limits:
+              memory: 800Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+      volumes:
+        - name: config-volume
+          configMap:
+            name: release-name-onebox-kourier-bootstrap
+---
+# Source: onebox/templates/webhook.yaml
+# Secret injection into task pods in this namespace only. Named after the
+# namespace too: the object is cluster-scoped.
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: union-release-name-onebox
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+webhooks:
+  - name: flyte-pod-webhook.flyte.org
+    admissionReviewVersions: [v1, v1beta1]
+    clientConfig:
+      caBundle: dGVzdC1jYQ==
+      service:
+        name: release-name-onebox
+        namespace: union
+        path: /mutate--v1-pod
+        port: 9443
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: union
+    objectSelector:
+      matchLabels:
+        inject-flyte-secrets: "true"
+    reinvocationPolicy: Never
+    rules:
+      - apiGroups: ["*"]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: "*"
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 30
+
+---
+# Source: onebox/templates/nodeagent.yaml
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: volumes.union.ai
+  labels:
+    helm.sh/chart: onebox-2026.9.7
+    app.kubernetes.io/name: onebox
+    app.kubernetes.io/instance: release-name
+    app.kubernetes.io/version: "2026.9.7"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  # Node-local ephemeral inline volumes only: the broker premounts a FUSE
+  # channel per pod and hands its fd to the pod's unprivileged client.
+  volumeLifecycleModes:
+    - Ephemeral
+  attachRequired: false
+  podInfoOnMount: true
+  storageCapacity: false
+  fsGroupPolicy: None
