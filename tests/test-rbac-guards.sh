@@ -641,6 +641,24 @@ expect-manifest "the deprecated serving.enabled still turns app serving on" \
 expect-manifest "and an explicit apps.enabled still overrides it" absent "name: union-knative-controller-cluster-read" \
   "${zt[@]}" --set serving.enabled=true --set apps.enabled=false --set singleNamespace=false
 
+# The uvol broker's block mode makes the node kernel parse filesystem bytes a task controls.
+# With uvolMountBroker.block.allow unset it is on for every pod outside singleNamespace and off
+# under it. The template reads the singleNamespace define, not the raw low_privilege key, which
+# is null at the default and would turn block mode on for every pod on a default install.
+echo "- the uvol broker's block-mode default follows singleNamespace"
+expect-manifest "a default install renders no block-mode allow list" \
+  absent "blockAllow:"
+expect-manifest "nor does low_privilege: true, the alias" \
+  absent "blockAllow:" --set low_privilege=true
+expect-manifest "singleNamespace: false allows block mode for every pod" \
+  present "- namespace: '\*'" --set singleNamespace=false
+expect-manifest "and so does low_privilege: false" \
+  present "- namespace: '\*'" --set low_privilege=false
+expect-manifest "an explicit list is used as given under singleNamespace" \
+  present "- namespace: builders" --set 'uvolMountBroker.block.allow[0].namespace=builders'
+expect-manifest "and an empty list disables block mode outside it" \
+  absent "blockAllow:" --set singleNamespace=false --set-json 'uvolMountBroker.block.allow=[]'
+
 # singleNamespace decides scope, namespaces.enabled decides whether work namespaces
 # are pre-seeded, and commonServiceAccount.enabled decides identity sharing. The snapshot
 # fixtures pin the combinations a deployment uses; these pin that the three axes are actually

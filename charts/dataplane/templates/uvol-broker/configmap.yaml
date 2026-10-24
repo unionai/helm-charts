@@ -18,10 +18,12 @@ data:
       nodeCacheDir: {{ required "uvolMountBroker.nodeCache.hostPath is required when nodeCache is enabled" .Values.uvolMountBroker.nodeCache.hostPath }}
       {{- end }}
       {{- $block := .Values.uvolMountBroker.block | default dict }}
-      {{- /* block.allow unset: every pod unless low_privilege; any list (even []) is used as given */}}
+      {{- /* block.allow unset: every pod outside singleNamespace, and disabled under it;
+             any list (even []) is used as given. The singleNamespace define returns
+             "true" or "", and reads low_privilege as its alias. */}}
       {{- $allow := $block.allow }}
       {{- if kindIs "invalid" $allow }}
-      {{- $allow = ternary (list) (list (dict "namespace" "*")) (.Values.low_privilege | default false) }}
+      {{- $allow = ternary (list (dict "namespace" "*")) (list) (empty (include "singleNamespace" .)) }}
       {{- end }}
       {{- if $allow }}
       blockAllow:
