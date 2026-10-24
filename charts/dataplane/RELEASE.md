@@ -11,8 +11,10 @@ EAGER_API_KEY. Off by default; nothing renders differently while it is off.
 With it on:
 
 - the operator serves the token endpoint (`Service <operator>-sts`, port
-  `sts.port`), and its service account is bound to `system:auth-delegator` so
-  it can check projected tokens with a TokenReview;
+  `sts.port`). It verifies projected tokens offline against the cluster's
+  service-account issuer keys (read from the API server's OIDC discovery,
+  which every service account may read by default) and looks pods up in an
+  informer, so it adds no RBAC;
 - the leaseworker mounts the `union-sts-binding` Secret the operator creates,
   and stamps every task pod with a binding to its action attempt;
 - the `task-template` PodTemplate gives task pods a projected service-account
