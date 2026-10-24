@@ -86,4 +86,33 @@ webhooks:
         scope: "*"
     sideEffects: NoneOnDryRun
     timeoutSeconds: 30
+  {{- if .Values.secureNamespaces.enabled }}
+  # Task pods in secure namespaces get their secrets from the copies there.
+  - name: secure-namespace-secrets.union.ai
+    admissionReviewVersions: [v1, v1beta1]
+    clientConfig:
+      caBundle: {{ $ca }}
+      service:
+        name: {{ $name }}
+        namespace: {{ $ns }}
+        path: /mutate--v1-pod/secure-namespace-secrets
+        port: 9443
+    failurePolicy: Fail
+    matchPolicy: Equivalent
+    namespaceSelector:
+      matchExpressions:
+        - {key: union.ai/secure-namespace, operator: Exists}
+    objectSelector:
+      matchLabels:
+        inject-flyte-secrets: "true"
+    reinvocationPolicy: Never
+    rules:
+      - apiGroups: ["*"]
+        apiVersions: [v1]
+        operations: [CREATE]
+        resources: [pods]
+        scope: "*"
+    sideEffects: NoneOnDryRun
+    timeoutSeconds: 30
+  {{- end }}
 {{- end }}
